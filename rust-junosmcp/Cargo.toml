@@ -1,0 +1,22 @@
+[package]
+name        = "rust-junosmcp"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+authors.workspace    = true
+description = "MCP server for Juniper Junos devices, built on rustEZ."
+
+[[bin]]
+name = "rust-junosmcp"
+path = "src/main.rs"
+
+[dependencies]
+rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+tokio              = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow             = { workspace = true }
+# clap + rmcp pinned in later tasks

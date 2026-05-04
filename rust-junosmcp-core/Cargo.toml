@@ -1,0 +1,20 @@
+[package]
+name        = "rust-junosmcp-core"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+description = "Core logic and Junos tool handlers for rust-junosmcp."
+
+[dependencies]
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+schemars     = { workspace = true }
+rustez       = { workspace = true }
+
+[dev-dependencies]
+tempfile     = "3"
