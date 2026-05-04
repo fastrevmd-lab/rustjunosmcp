@@ -124,3 +124,125 @@ mod entry_tests {
         assert!(r.is_err(), "expected error for missing 'ip'");
     }
 }
+
+use crate::error::JmcpError;
+use std::collections::HashMap;
+use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct Inventory {
+    devices: HashMap<String, DeviceEntry>,
+    source_path: PathBuf,
+}
+
+impl Inventory {
+    /// Load and validate a `devices.json` file.
+    pub fn load(path: &Path) -> Result<Self, JmcpError> {
+        let bytes = std::fs::read(path)?;
+        let devices: HashMap<String, DeviceEntry> = serde_json::from_slice(&bytes)
+            .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
+        Self::validate(&devices)?;
+        Ok(Self {
+            devices,
+            source_path: path.to_path_buf(),
+        })
+    }
+
+    fn validate(devices: &HashMap<String, DeviceEntry>) -> Result<(), JmcpError> {
+        for (name, entry) in devices {
+            if entry.ip.trim().is_empty() {
+                return Err(JmcpError::InventoryInvalid(
+                    format!("router '{name}': ip is empty"),
+                ));
+            }
+            if entry.port == 0 {
+                return Err(JmcpError::InventoryInvalid(
+                    format!("router '{name}': port must be non-zero"),
+                ));
+            }
+            if entry.username.trim().is_empty() {
+                return Err(JmcpError::InventoryInvalid(
+                    format!("router '{name}': username is empty"),
+                ));
+            }
+            if let AuthConfig::SshKey { private_key_path } = &entry.auth {
+                if !private_key_path.exists() {
+                    return Err(JmcpError::KeyFileMissing(private_key_path.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write(name: &str, json: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::Builder::new()
+            .prefix(name)
+            .suffix(".json")
+            .tempfile()
+            .unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        f
+    }
+
+    #[test]
+    fn loads_valid_password_only_inventory() {
+        let f = write("ok", r#"{
+            "r1":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        let inv = Inventory::load(f.path()).unwrap();
+        assert_eq!(inv.devices.len(), 1);
+    }
+
+    #[test]
+    fn rejects_zero_port() {
+        let f = write("p0", r#"{
+            "r1":{"ip":"1.2.3.4","port":0,"username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_empty_ip() {
+        let f = write("ip", r#"{
+            "r1":{"ip":"","username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_missing_key_file() {
+        let f = write("missing", r#"{
+            "r1":{"ip":"1.2.3.4","username":"u",
+                  "auth":{"type":"ssh_key","private_key_path":"/nope/missing.pem"}}
+        }"#);
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::KeyFileMissing(_))));
+    }
+
+    #[test]
+    fn accepts_existing_key_file() {
+        let key = tempfile::NamedTempFile::new().unwrap();
+        let json = format!(r#"{{
+            "r1":{{"ip":"1.2.3.4","username":"u",
+                   "auth":{{"type":"ssh_key","private_key_path":"{}"}}}}
+        }}"#, key.path().display());
+        let f = write("withkey", &json);
+        let inv = Inventory::load(f.path()).unwrap();
+        assert_eq!(inv.devices.len(), 1);
+    }
+
+    #[test]
+    fn rejects_invalid_json() {
+        let f = write("bad", "{not json");
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+}
