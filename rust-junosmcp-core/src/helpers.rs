@@ -1,8 +1,7 @@
 //! Pure helper functions, easily unit-testable without device contact.
 
 use crate::error::JmcpError;
-use rustez::{ConfigPayload, Facts};
-use serde_json::{json, Value};
+use rustez::ConfigPayload;
 
 /// Map the optional `config_format` string from the MCP tool input to
 /// a `rustez::ConfigPayload` constructor closure. Default = "set".
@@ -22,25 +21,6 @@ pub fn validate_rollback_version(v: i64) -> Result<u32, JmcpError> {
     } else {
         Err(JmcpError::BadRollbackVersion(v))
     }
-}
-
-/// Hand-build a JSON object from `rustez::Facts`. rustez::Facts does not
-/// derive Serialize today (see followup #1); update this when it does.
-pub fn facts_to_json(f: &Facts) -> Value {
-    json!({
-        "hostname": f.hostname,
-        "model": f.model,
-        "version": f.version,
-        "serial_number": f.serial_number,
-        "personality": format!("{:?}", f.personality),
-        "domain": f.domain,
-        "fqdn": f.fqdn,
-        "is_cluster": f.is_cluster,
-        "route_engines": f.route_engines.iter().map(|re| json!({
-            "status": format!("{:?}", re),
-        })).collect::<Vec<_>>(),
-        "master_re": f.master_re,
-    })
 }
 
 #[cfg(test)]

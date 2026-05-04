@@ -2064,10 +2064,11 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "quick-xml",
  "rustnetconf",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

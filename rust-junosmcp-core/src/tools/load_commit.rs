@@ -1,8 +1,5 @@
 //! `load_and_commit_config` — lock candidate, load, diff, commit (with comment),
 //! unlock. Rollback on commit failure. Returns `{success, diff, error?}`.
-//!
-//! Commit comment is sent via raw RPC because `rustez::ConfigManager` does not
-//! yet expose `commit_with_comment` (followup #2).
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -11,21 +8,8 @@ use crate::tools::LoadCommitArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// XML-escape the commit comment for safe inclusion in the raw RPC body.
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\'', "&apos;")
-        .replace('"', "&quot;")
-}
-
 pub async fn handle(args: LoadCommitArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
-    let comment_xml = format!(
-        "<commit><log>{}</log></commit>",
-        xml_escape(&args.commit_comment),
-    );
 
     let mut dev = dm.open(&args.router_name).await?;
     let mut cfg = dev.config()?;
@@ -38,26 +22,20 @@ pub async fn handle(args: LoadCommitArgs, dm: Arc<DeviceManager>) -> Result<Valu
     }
     let diff = cfg.diff().await?.unwrap_or_default();
 
-    // Commit with comment via raw RPC (followup #2).
-    let commit_result = dev.rpc()?.call_xml(&comment_xml).await;
+    let commit_result = cfg.commit_with_comment(&args.commit_comment).await;
 
     let result = match commit_result {
         Ok(_) => json!({ "success": true, "diff": diff }),
         Err(e) => {
             // Discard the candidate so the next session starts clean.
             // rollback(0) discards uncommitted changes.
-            if let Ok(mut cfg2) = dev.config() {
-                let _ = cfg2.rollback(0).await;
-                let _ = cfg2.unlock().await;
-            }
+            let _ = cfg.rollback(0).await;
             json!({ "success": false, "diff": diff, "error": e.to_string() })
         }
     };
 
     // Best-effort unlock + close.
-    if let Ok(mut cfg2) = dev.config() {
-        let _ = cfg2.unlock().await;
-    }
+    let _ = cfg.unlock().await;
     let _ = dev.close().await;
     Ok(result)
 }
@@ -67,14 +45,6 @@ mod tests {
     use super::*;
     use crate::inventory::Inventory;
     use std::io::Write;
-
-    #[test]
-    fn xml_escape_handles_specials() {
-        assert_eq!(
-            xml_escape("a & <b> 'c' \"d\""),
-            "a &amp; &lt;b&gt; &apos;c&apos; &quot;d&quot;"
-        );
-    }
 
     #[tokio::test]
     async fn unknown_router_propagates_error() {

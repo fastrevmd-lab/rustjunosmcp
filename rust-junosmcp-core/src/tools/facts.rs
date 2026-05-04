@@ -1,11 +1,7 @@
 //! `gather_device_facts` — return device facts as a JSON object.
-//!
-//! Hand-builds the JSON because `rustez::Facts` does not derive `Serialize`
-//! (followup #1).
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::facts_to_json;
 use crate::tools::GatherFactsArgs;
 use serde_json::Value;
 use std::sync::Arc;
@@ -19,7 +15,7 @@ pub async fn handle(args: GatherFactsArgs, dm: Arc<DeviceManager>) -> Result<Val
         .await
         .map_err(|_| JmcpError::Timeout(timeout))?;
     let facts = facts_result?;
-    let value = facts_to_json(facts);
+    let value = serde_json::to_value(facts)?;
 
     let _ = dev.close().await;
     Ok(value)
