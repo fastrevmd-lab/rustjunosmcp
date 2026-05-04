@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout RustJunosMCP
+        uses: actions/checkout@v4
+        with:
+          path: RustJunosMCP
+
+      - name: Checkout rustEZ (path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: fastrevmd-lab/rustEZ
+          path: rustEZ
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: RustJunosMCP
+
+      - name: Format check (our packages)
+        working-directory: RustJunosMCP
+        run: cargo fmt -p rust-junosmcp-core -p rust-junosmcp -- --check
+
+      - name: Clippy (our packages)
+        working-directory: RustJunosMCP
+        run: cargo clippy -p rust-junosmcp-core -p rust-junosmcp --all-targets -- -D warnings
+
+      - name: Build
+        working-directory: RustJunosMCP
+        run: cargo build --workspace
+
+      - name: Unit + smoke tests
+        working-directory: RustJunosMCP
+        run: cargo test --workspace
+
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: RustJunosMCP
+      - uses: actions/checkout@v4
+        with:
+          repository: fastrevmd-lab/rustEZ
+          path: rustEZ
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - working-directory: RustJunosMCP
+        run: cargo audit
