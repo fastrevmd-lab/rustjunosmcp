@@ -4,4 +4,6 @@
 //! The binary crate `rust-junosmcp` wires this into the rmcp transport.
 
 pub mod error;
+pub mod inventory;
 pub use error::JmcpError;
+pub use inventory::AuthConfig;
