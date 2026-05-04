@@ -3,7 +3,9 @@
 //!
 //! The binary crate `rust-junosmcp` wires this into the rmcp transport.
 
+pub mod device_manager;
 pub mod error;
 pub mod inventory;
+pub use device_manager::DeviceManager;
 pub use error::JmcpError;
 pub use inventory::{AuthConfig, DeviceEntry, Inventory};
