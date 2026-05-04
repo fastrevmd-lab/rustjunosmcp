@@ -21,3 +21,6 @@ devices.json
 .tokens
 *.key
 *.pem
+
+# Build output
+dist/
