@@ -1,0 +1,19 @@
+# cargo-audit configuration. Advisories listed here are intentionally allowed
+# because they are unfixable from this crate (transitive dependencies with no
+# upstream fix). Each entry should include the upstream tracking link and be
+# re-evaluated whenever russh / rmcp publish new releases.
+
+[advisories]
+ignore = [
+    # Marvin Attack: potential key recovery via timing sidechannel in `rsa`.
+    # Reaches us transitively via russh -> rustnetconf -> rustEZ. No upstream
+    # fix is available. Not exploitable in this crate's use case (NETCONF
+    # client to managed devices, not a public-facing service).
+    # Track: https://github.com/Eugeny/russh/issues
+    "RUSTSEC-2023-0071",
+
+    # `paste` (proc-macro) marked unmaintained. Reaches us transitively via
+    # rmcp 0.8.5. No security impact; informational only.
+    # Track: https://github.com/modelcontextprotocol/rust-sdk
+    "RUSTSEC-2024-0436",
+]
