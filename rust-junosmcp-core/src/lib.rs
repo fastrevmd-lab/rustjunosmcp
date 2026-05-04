@@ -6,4 +6,4 @@
 pub mod error;
 pub mod inventory;
 pub use error::JmcpError;
-pub use inventory::AuthConfig;
+pub use inventory::{AuthConfig, DeviceEntry, Inventory};

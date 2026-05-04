@@ -246,3 +246,61 @@ mod load_tests {
         assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
     }
 }
+
+impl Inventory {
+    /// Look up a device by name.
+    pub fn get(&self, name: &str) -> Result<&DeviceEntry, JmcpError> {
+        self.devices.get(name)
+            .ok_or_else(|| JmcpError::UnknownRouter(name.to_string()))
+    }
+
+    /// Sorted list of router names. Used by `get_router_list`.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.devices.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Source path the inventory was loaded from. Used by v0.2 `reload_devices`.
+    pub fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+}
+
+#[cfg(test)]
+mod accessor_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn build(json: &str) -> Inventory {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        Inventory::load(f.path()).unwrap()
+    }
+
+    #[test]
+    fn get_returns_known_router() {
+        let inv = build(r#"{
+            "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        assert_eq!(inv.get("r1").unwrap().ip, "1.1.1.1");
+    }
+
+    #[test]
+    fn get_returns_unknown_router_error() {
+        let inv = build(r#"{
+            "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        let r = inv.get("nope");
+        assert!(matches!(r, Err(JmcpError::UnknownRouter(ref s)) if s == "nope"));
+    }
+
+    #[test]
+    fn names_returns_sorted() {
+        let inv = build(r#"{
+            "z":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}},
+            "a":{"ip":"1.1.1.2","username":"u","auth":{"type":"password","password":"x"}}
+        }"#);
+        assert_eq!(inv.names(), vec!["a".to_string(), "z".to_string()]);
+    }
+}
