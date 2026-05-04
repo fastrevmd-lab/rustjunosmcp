@@ -91,8 +91,11 @@ pub struct DeviceEntry {
     pub port: u16,
     pub username: String,
     pub auth: AuthConfig,
-    /// Optional path to OpenSSH config file (jumphost). Parsed but not yet
-    /// honored — see [`crate::error::JmcpError::SshConfigUnsupported`].
+    /// Optional path to an OpenSSH `ssh_config(5)` file. When set, the file
+    /// is loaded and `ip` is used as the alias to look up `ProxyJump` /
+    /// `ProxyCommand` settings. The entry's explicit `ip`, `port`,
+    /// `username`, and `auth` remain authoritative; only proxy settings are
+    /// pulled from the config file. Mirrors PyEZ semantics.
     #[serde(default)]
     pub ssh_config: Option<PathBuf>,
 }

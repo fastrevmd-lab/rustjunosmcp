@@ -3,7 +3,7 @@
 
 use crate::error::JmcpError;
 use crate::inventory::{AuthConfig, Inventory};
-use rustez::Device;
+use rustez::{Device, SshConfigFile};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -18,18 +18,33 @@ impl DeviceManager {
 
     /// Open a fresh `rustez::Device` for the named router. Caller is
     /// responsible for `close()`.
+    ///
+    /// When `ssh_config` is set on the entry, the file is loaded and the
+    /// entry's `ip` is used as the alias to obtain `ProxyJump` and
+    /// `ProxyCommand` settings (mirroring PyEZ). The entry's explicit
+    /// `ip`, `port`, `username`, and `auth` remain authoritative.
     pub async fn open(&self, router_name: &str) -> Result<Device, JmcpError> {
         let entry = self.inventory.get(router_name)?;
-
-        // ssh_config jumphost is v0.2 work — fail loudly so the LLM
-        // doesn't think it silently used the jumphost.
-        if entry.ssh_config.is_some() {
-            return Err(JmcpError::SshConfigUnsupported(router_name.into()));
-        }
 
         let mut builder = Device::connect(&entry.ip)
             .port(entry.port)
             .username(&entry.username);
+
+        if let Some(ssh_config_path) = &entry.ssh_config {
+            let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
+                JmcpError::SshConfigInvalid {
+                    router: router_name.to_string(),
+                    source,
+                }
+            })?;
+            let resolved = cfg.resolve(&entry.ip);
+            if !resolved.jump_hosts.is_empty() {
+                builder = builder.jump_hosts(resolved.jump_hosts);
+            }
+            if let Some(command) = resolved.proxy_command {
+                builder = builder.proxy_command(&command);
+            }
+        }
 
         builder = match &entry.auth {
             AuthConfig::Password { password } => builder.password(password),
@@ -72,16 +87,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ssh_config_set_returns_unsupported_error() {
+    async fn ssh_config_missing_file_returns_invalid_error() {
         let inv = build_inventory(
             r#"{
             "r1":{"ip":"127.0.0.1","username":"u",
-                  "ssh_config":"/tmp/never-used",
+                  "ssh_config":"/nonexistent/ssh/config",
                   "auth":{"type":"password","password":"x"}}
         }"#,
         );
         let dm = DeviceManager::new(inv);
         let r = dm.open("r1").await;
-        assert!(matches!(r, Err(JmcpError::SshConfigUnsupported(ref s)) if s == "r1"));
+        assert!(matches!(
+            r,
+            Err(JmcpError::SshConfigInvalid { ref router, .. }) if router == "r1"
+        ));
     }
 }

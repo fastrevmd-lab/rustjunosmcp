@@ -13,8 +13,12 @@ pub enum JmcpError {
     #[error("private key file not found: {0}")]
     KeyFileMissing(PathBuf),
 
-    #[error("ssh_config jumphost is not yet supported in the Rust port (router '{0}')")]
-    SshConfigUnsupported(String),
+    #[error("ssh_config invalid for router '{router}': {source}")]
+    SshConfigInvalid {
+        router: String,
+        #[source]
+        source: rustez::SshConfigError,
+    },
 
     #[error("invalid config_format '{0}' (expected set, text, or xml)")]
     BadFormat(String),
@@ -52,8 +56,14 @@ mod tests {
     }
 
     #[test]
-    fn ssh_config_unsupported_mentions_v0_2() {
-        let e = JmcpError::SshConfigUnsupported("r1".into());
+    fn ssh_config_invalid_mentions_router_and_cause() {
+        let e = JmcpError::SshConfigInvalid {
+            router: "r1".into(),
+            source: rustez::SshConfigError::Io {
+                path: std::path::PathBuf::from("/no/such/path"),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+            },
+        };
         let s = e.to_string();
         assert!(s.contains("ssh_config"));
         assert!(s.contains("r1"));

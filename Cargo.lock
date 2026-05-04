@@ -2064,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.8.4"
+version = "0.9.0"
 dependencies = [
  "quick-xml",
  "rustnetconf",
@@ -2089,9 +2089,9 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.8.2"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24885a18c89c3e1660390e2ae2ce4c4b7b3d19fb7316f7ff6ec8c0033b01aa0d"
+checksum = "411379bac2c2bedbdd987bdb886a8652ace6f9bac8a69207297ccd49aef6c480"
 dependencies = [
  "async-trait",
  "futures",
