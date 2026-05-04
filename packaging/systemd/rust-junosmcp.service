@@ -1,0 +1,38 @@
+[Unit]
+Description=Rust JunosMCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jmcp
+Group=jmcp
+ExecStart=/usr/local/bin/rust-junosmcp -f /etc/jmcp/devices.json
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jmcp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# v0.1 NOTE: stdio transport is not a great fit for systemd-managed daemons.
+# The unit is shipped now for forward-compat; primary v0.1 usage is via
+# `pct exec 115 -- rust-junosmcp -f /etc/jmcp/devices.json` invoked by the
+# MCP client. Once v0.2's streamable-http transport lands, this unit becomes
+# the canonical way to run the server.
+
+[Install]
+WantedBy=multi-user.target
