@@ -5,6 +5,7 @@
 
 pub mod device_manager;
 pub mod error;
+pub mod helpers;
 pub mod inventory;
 pub use device_manager::DeviceManager;
 pub use error::JmcpError;
