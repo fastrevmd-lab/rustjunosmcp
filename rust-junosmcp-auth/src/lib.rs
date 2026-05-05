@@ -2,9 +2,9 @@
 //!
 //! Pure data + I/O glue, no async, no HTTP.
 
-pub mod token;
-pub mod store;
 pub mod file;
+pub mod store;
+pub mod token;
 
-pub use store::{ScopeSet, TokenEntry, TokenStore};
 pub use file::{TokenStoreError, TokenStoreFile};
+pub use store::{ScopeSet, TokenEntry, TokenStore};

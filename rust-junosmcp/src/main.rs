@@ -66,9 +66,7 @@ async fn main() -> Result<()> {
             Some(Arc::new(arc_swap::ArcSwap::from_pointee(store)))
         }
         (None, true) => {
-            tracing::warn!(
-                "--allow-no-auth: streamable-http will accept unauthenticated requests"
-            );
+            tracing::warn!("--allow-no-auth: streamable-http will accept unauthenticated requests");
             None
         }
         (None, false) if matches!(args.transport, Transport::StreamableHttp) => {
@@ -77,12 +75,7 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    let handler = JmcpHandler::new(
-        inventory.clone(),
-        dev_manager,
-        policy,
-        token_store.clone(),
-    );
+    let handler = JmcpHandler::new(inventory.clone(), dev_manager, policy, token_store.clone());
 
     match args.transport {
         Transport::Stdio => {

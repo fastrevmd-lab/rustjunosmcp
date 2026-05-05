@@ -51,13 +51,14 @@ impl TokenHash {
     }
 
     pub fn parse(s: &str) -> Result<Self, ParseTokenHashError> {
-        let rest = s.strip_prefix("sha256:").ok_or(ParseTokenHashError::MissingPrefix)?;
+        let rest = s
+            .strip_prefix("sha256:")
+            .ok_or(ParseTokenHashError::MissingPrefix)?;
         if rest.len() != 43 {
             return Err(ParseTokenHashError::WrongLength { got: rest.len() });
         }
         // Validate base64url-unpadded char set by attempting a decode.
-        Base64UrlUnpadded::decode_vec(rest)
-            .map_err(|_| ParseTokenHashError::NotBase64Url)?;
+        Base64UrlUnpadded::decode_vec(rest).map_err(|_| ParseTokenHashError::NotBase64Url)?;
         Ok(TokenHash(s.to_string()))
     }
 
@@ -103,9 +104,17 @@ mod tests {
     fn mint_produces_43_char_base64url_secret() {
         let (secret, _hash) = Secret::mint();
         let s = secret.expose();
-        assert_eq!(s.len(), 43, "expected 43-char unpadded base64url, got {}", s.len());
-        assert!(s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
-            "non-base64url char in secret: {s:?}");
+        assert_eq!(
+            s.len(),
+            43,
+            "expected 43-char unpadded base64url, got {}",
+            s.len()
+        );
+        assert!(
+            s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            "non-base64url char in secret: {s:?}"
+        );
     }
 
     #[test]

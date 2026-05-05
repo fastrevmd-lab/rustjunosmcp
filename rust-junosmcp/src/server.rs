@@ -287,7 +287,9 @@ mod scope_tests {
     #[test]
     fn no_ctx_allows_anything() {
         let handler = make_handler();
-        assert!(handler.check_tool_scope(None, "execute_junos_command").is_ok());
+        assert!(handler
+            .check_tool_scope(None, "execute_junos_command")
+            .is_ok());
         assert!(handler
             .check_router_scope(None, "execute_junos_command", "r1")
             .is_ok());
@@ -301,7 +303,9 @@ mod scope_tests {
             routers: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
         };
-        assert!(handler.check_tool_scope(Some(&ctx), "get_router_list").is_ok());
+        assert!(handler
+            .check_tool_scope(Some(&ctx), "get_router_list")
+            .is_ok());
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_command"),
             Err(ScopeError::ToolNotInScope { .. })

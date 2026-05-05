@@ -8,7 +8,13 @@ use std::path::Path;
 
 pub fn run(action: TokenAction) -> Result<()> {
     match action {
-        TokenAction::Add { tokens_file, name, routers, tools, server_pid } => {
+        TokenAction::Add {
+            tokens_file,
+            name,
+            routers,
+            tools,
+            server_pid,
+        } => {
             let routers = parse_scope(routers)?;
             let tools = parse_scope(tools)?;
             let secret = TokenStoreFile::add(&tokens_file, &name, routers, tools)
@@ -21,7 +27,11 @@ pub fn run(action: TokenAction) -> Result<()> {
             Ok(())
         }
         TokenAction::List { tokens_file } => list(&tokens_file),
-        TokenAction::Revoke { tokens_file, name, server_pid } => {
+        TokenAction::Revoke {
+            tokens_file,
+            name,
+            server_pid,
+        } => {
             let removed = TokenStoreFile::revoke(&tokens_file, &name)
                 .with_context(|| format!("revoking '{name}'"))?;
             if removed {
@@ -32,7 +42,11 @@ pub fn run(action: TokenAction) -> Result<()> {
             sighup_if_requested(server_pid);
             Ok(())
         }
-        TokenAction::Rotate { tokens_file, name, server_pid } => {
+        TokenAction::Rotate {
+            tokens_file,
+            name,
+            server_pid,
+        } => {
             let secret = TokenStoreFile::rotate(&tokens_file, &name)
                 .with_context(|| format!("rotating '{name}'"))?;
             let mut out = std::io::stdout().lock();
@@ -55,14 +69,18 @@ fn parse_scope(parts: Vec<String>) -> Result<ScopeSet> {
 }
 
 fn list(path: &Path) -> Result<()> {
-    let store = TokenStoreFile::load(path, &[])
-        .with_context(|| format!("loading {}", path.display()))?;
+    let store =
+        TokenStoreFile::load(path, &[]).with_context(|| format!("loading {}", path.display()))?;
     if store.is_empty() {
         eprintln!("(no tokens)");
         return Ok(());
     }
     let mut out = std::io::stdout().lock();
-    writeln!(out, "{:<32} {:<24} {:<24} CREATED_AT", "NAME", "ROUTERS", "TOOLS")?;
+    writeln!(
+        out,
+        "{:<32} {:<24} {:<24} CREATED_AT",
+        "NAME", "ROUTERS", "TOOLS"
+    )?;
     for e in store.entries() {
         let routers = match &e.routers {
             ScopeSet::Wildcard => "*".into(),
@@ -72,7 +90,14 @@ fn list(path: &Path) -> Result<()> {
             ScopeSet::Wildcard => "*".into(),
             ScopeSet::Allowlist(v) => v.join(","),
         };
-        writeln!(out, "{:<32} {:<24} {:<24} {}", e.name, routers, tools, e.created_at.to_rfc3339())?;
+        writeln!(
+            out,
+            "{:<32} {:<24} {:<24} {}",
+            e.name,
+            routers,
+            tools,
+            e.created_at.to_rfc3339()
+        )?;
     }
     Ok(())
 }
@@ -84,8 +109,11 @@ fn sighup_if_requested(pid: Option<i32>) {
         // return ESRCH/EPERM via errno, which we capture below.
         let r = unsafe { libc::kill(pid, libc::SIGHUP) };
         if r != 0 {
-            tracing::warn!(pid, errno = std::io::Error::last_os_error().raw_os_error(),
-                "kill(SIGHUP) failed");
+            tracing::warn!(
+                pid,
+                errno = std::io::Error::last_os_error().raw_os_error(),
+                "kill(SIGHUP) failed"
+            );
         }
     }
 }

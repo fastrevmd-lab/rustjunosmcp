@@ -72,7 +72,9 @@ pub struct TokenEntry {
 }
 
 impl ScopeSet {
-    fn wildcard() -> ScopeSet { ScopeSet::Wildcard }
+    fn wildcard() -> ScopeSet {
+        ScopeSet::Wildcard
+    }
 }
 
 /// In-memory store. Lookup is O(n) linear over hash compares — small N
@@ -100,7 +102,9 @@ impl TokenStore {
     }
 
     pub fn find(&self, candidate_secret: &str) -> Option<&TokenEntry> {
-        self.entries.iter().find(|e| e.hash.verify(candidate_secret))
+        self.entries
+            .iter()
+            .find(|e| e.hash.verify(candidate_secret))
     }
 
     pub fn entries(&self) -> &[TokenEntry] {
@@ -206,8 +210,20 @@ mod tests {
         let (_, h1) = crate::token::Secret::mint();
         let (_, h2) = crate::token::Secret::mint();
         let dup = vec![
-            TokenEntry { name: "x".into(), hash: h1, routers: ScopeSet::Wildcard, tools: ScopeSet::Wildcard, created_at: chrono::Utc::now() },
-            TokenEntry { name: "x".into(), hash: h2, routers: ScopeSet::Wildcard, tools: ScopeSet::Wildcard, created_at: chrono::Utc::now() },
+            TokenEntry {
+                name: "x".into(),
+                hash: h1,
+                routers: ScopeSet::Wildcard,
+                tools: ScopeSet::Wildcard,
+                created_at: chrono::Utc::now(),
+            },
+            TokenEntry {
+                name: "x".into(),
+                hash: h2,
+                routers: ScopeSet::Wildcard,
+                tools: ScopeSet::Wildcard,
+                created_at: chrono::Utc::now(),
+            },
         ];
         assert!(TokenStore::try_new(dup).is_err());
     }

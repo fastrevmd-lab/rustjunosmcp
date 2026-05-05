@@ -66,30 +66,42 @@ pub enum Command {
 pub enum TokenAction {
     /// Mint a new token and append to the file.
     Add {
-        #[arg(long)] tokens_file: PathBuf,
-        #[arg(long)] name: String,
+        #[arg(long)]
+        tokens_file: PathBuf,
+        #[arg(long)]
+        name: String,
         /// Comma-separated router names, or '*' for all.
-        #[arg(long, value_delimiter = ',')] routers: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        routers: Vec<String>,
         /// Comma-separated tool names, or '*' for all.
-        #[arg(long, value_delimiter = ',')] tools: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        tools: Vec<String>,
         /// Send SIGHUP to this pid after writing.
-        #[arg(long)] server_pid: Option<i32>,
+        #[arg(long)]
+        server_pid: Option<i32>,
     },
     /// List token names + scopes (never the hash or secret).
     List {
-        #[arg(long)] tokens_file: PathBuf,
+        #[arg(long)]
+        tokens_file: PathBuf,
     },
     /// Remove a token by name.
     Revoke {
-        #[arg(long)] tokens_file: PathBuf,
-        #[arg(long)] name: String,
-        #[arg(long)] server_pid: Option<i32>,
+        #[arg(long)]
+        tokens_file: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        server_pid: Option<i32>,
     },
     /// Revoke + re-add under the same scopes; prints a new secret.
     Rotate {
-        #[arg(long)] tokens_file: PathBuf,
-        #[arg(long)] name: String,
-        #[arg(long)] server_pid: Option<i32>,
+        #[arg(long)]
+        tokens_file: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        server_pid: Option<i32>,
     },
 }
 
@@ -126,11 +138,17 @@ mod tests {
     #[test]
     fn parses_token_add_subcommand() {
         let cli = Cli::parse_from([
-            "rust-junosmcp", "token", "add",
-            "--tokens-file", "/tmp/t.json",
-            "--name", "alice",
-            "--routers", "*",
-            "--tools", "*",
+            "rust-junosmcp",
+            "token",
+            "add",
+            "--tokens-file",
+            "/tmp/t.json",
+            "--name",
+            "alice",
+            "--routers",
+            "*",
+            "--tools",
+            "*",
         ]);
         assert!(matches!(cli.command, Some(Command::Token { .. })));
     }

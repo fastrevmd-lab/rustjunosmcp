@@ -92,7 +92,8 @@ impl TokenStoreFile {
             }
         }
 
-        TokenStore::try_new(parsed.tokens).map_err(|e| TokenStoreError::Invalid(format!("duplicate: {}", e.0)))
+        TokenStore::try_new(parsed.tokens)
+            .map_err(|e| TokenStoreError::Invalid(format!("duplicate: {}", e.0)))
     }
 
     /// Atomically write the store to `path` (tempfile-in-same-dir → write →
@@ -100,10 +101,13 @@ impl TokenStoreFile {
     /// readers never see a half-written file.
     pub fn save(path: &Path, store: &TokenStore) -> Result<(), TokenStoreError> {
         use std::io::Write;
-        let parent = path.parent().ok_or_else(|| TokenStoreError::Invalid(
-            format!("path has no parent: {}", path.display())
-        ))?;
-        let on_disk = OnDisk { version: 1, tokens: store.entries().to_vec() };
+        let parent = path.parent().ok_or_else(|| {
+            TokenStoreError::Invalid(format!("path has no parent: {}", path.display()))
+        })?;
+        let on_disk = OnDisk {
+            version: 1,
+            tokens: store.entries().to_vec(),
+        };
         let json = serde_json::to_vec_pretty(&on_disk)?;
 
         // Use NamedTempFile::persist so the tempfile handle remains owned
@@ -116,7 +120,8 @@ impl TokenStoreFile {
             .tempfile_in(parent)?;
         tmp.write_all(&json)?;
         tmp.as_file().sync_all()?;
-        tmp.persist(path).map_err(|e| TokenStoreError::Io(e.error))?;
+        tmp.persist(path)
+            .map_err(|e| TokenStoreError::Io(e.error))?;
         Ok(())
     }
 
@@ -133,7 +138,8 @@ impl TokenStoreFile {
             for t in list {
                 if !KNOWN_TOOLS.contains(&t.as_str()) {
                     return Err(TokenStoreError::Invalid(format!(
-                        "unknown tool '{}': known tools are {:?}", t, KNOWN_TOOLS
+                        "unknown tool '{}': known tools are {:?}",
+                        t, KNOWN_TOOLS
                     )));
                 }
             }
@@ -145,7 +151,9 @@ impl TokenStoreFile {
             TokenStore::new(vec![])
         };
         if store.entries().iter().any(|e| e.name == name) {
-            return Err(TokenStoreError::Invalid(format!("token '{name}' already exists")));
+            return Err(TokenStoreError::Invalid(format!(
+                "token '{name}' already exists"
+            )));
         }
         let (secret, hash) = crate::token::Secret::mint();
         let mut entries = store.entries().to_vec();
@@ -156,7 +164,10 @@ impl TokenStoreFile {
             tools,
             created_at: chrono::Utc::now(),
         });
-        Self::save(path, &TokenStore::try_new(entries).map_err(|e| TokenStoreError::Invalid(e.0))?)?;
+        Self::save(
+            path,
+            &TokenStore::try_new(entries).map_err(|e| TokenStoreError::Invalid(e.0))?,
+        )?;
         Ok(secret)
     }
 
@@ -165,7 +176,12 @@ impl TokenStoreFile {
     pub fn revoke(path: &Path, name: &str) -> Result<bool, TokenStoreError> {
         let store = Self::load(path, &[])?;
         let before = store.len();
-        let entries: Vec<_> = store.entries().iter().filter(|e| e.name != name).cloned().collect();
+        let entries: Vec<_> = store
+            .entries()
+            .iter()
+            .filter(|e| e.name != name)
+            .cloned()
+            .collect();
         let removed = entries.len() < before;
         Self::save(path, &TokenStore::new(entries))?;
         Ok(removed)
@@ -236,7 +252,8 @@ mod tests {
 
     #[test]
     fn loads_one_token() {
-        let f = write_tmp(&format!(r#"{{
+        let f = write_tmp(&format!(
+            r#"{{
             "version":1,
             "tokens":[{{
                 "name":"a",
@@ -245,7 +262,8 @@ mod tests {
                 "tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }}]
-        }}"#));
+        }}"#
+        ));
         let store = TokenStoreFile::load(f.path(), &[]).unwrap();
         assert_eq!(store.len(), 1);
         assert_eq!(store.entries()[0].name, "a");
@@ -260,41 +278,47 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_names() {
-        let f = write_tmp(&format!(r#"{{
+        let f = write_tmp(&format!(
+            r#"{{
             "version":1,
             "tokens":[
                 {{"name":"a","hash":"{HASH_A}","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"}},
                 {{"name":"a","hash":"{HASH_B}","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"}}
             ]
-        }}"#));
+        }}"#
+        ));
         let err = TokenStoreFile::load(f.path(), &[]).unwrap_err();
         assert!(matches!(err, TokenStoreError::Invalid(s) if s.contains("duplicate")));
     }
 
     #[test]
     fn rejects_unknown_tool_name() {
-        let f = write_tmp(&format!(r#"{{
+        let f = write_tmp(&format!(
+            r#"{{
             "version":1,
             "tokens":[{{
                 "name":"a","hash":"{HASH_A}",
                 "routers":["*"],"tools":["does_not_exist"],
                 "created_at":"2026-05-05T00:00:00Z"
             }}]
-        }}"#));
+        }}"#
+        ));
         let err = TokenStoreFile::load(f.path(), &[]).unwrap_err();
         assert!(matches!(err, TokenStoreError::Invalid(s) if s.contains("does_not_exist")));
     }
 
     #[test]
     fn rejects_malformed_hash() {
-        let f = write_tmp(r#"{
+        let f = write_tmp(
+            r#"{
             "version":1,
             "tokens":[{
                 "name":"a","hash":"plaintext-bad",
                 "routers":["*"],"tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }]
-        }"#);
+        }"#,
+        );
         let err = TokenStoreFile::load(f.path(), &[]).unwrap_err();
         // Serde returns a Json error here because TokenHash deserialization fails.
         assert!(matches!(err, TokenStoreError::Json(_)));
@@ -305,14 +329,16 @@ mod tests {
         // "*" inside an allowlist is ambiguous (would never act as wildcard
         // since ScopeSet::From<Vec<String>> only treats single-element ["*"]
         // as Wildcard). Make this fatal at load to keep one canonical spelling.
-        let f = write_tmp(&format!(r#"{{
+        let f = write_tmp(&format!(
+            r#"{{
             "version":1,
             "tokens":[{{
                 "name":"a","hash":"{HASH_A}",
                 "routers":["*","r1"],"tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }}]
-        }}"#));
+        }}"#
+        ));
         let err = TokenStoreFile::load(f.path(), &[]).unwrap_err();
         assert!(matches!(err, TokenStoreError::Invalid(s) if s.contains("'*'")));
     }
@@ -321,14 +347,16 @@ mod tests {
     fn warns_but_keeps_unknown_router_name() {
         // unknown_routers: known_routers passed in is &[]; the entry references
         // "r1" which is not in that list. Load should still succeed.
-        let f = write_tmp(&format!(r#"{{
+        let f = write_tmp(&format!(
+            r#"{{
             "version":1,
             "tokens":[{{
                 "name":"a","hash":"{HASH_A}",
                 "routers":["r1"],"tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }}]
-        }}"#));
+        }}"#
+        ));
         let store = TokenStoreFile::load(f.path(), &[]).unwrap();
         assert_eq!(store.len(), 1);
     }
@@ -347,7 +375,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tokens.json");
         TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
-        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap()
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name() != "tokens.json")
             .collect();
@@ -363,13 +392,20 @@ mod tests {
         std::fs::write(path.join("dummy"), b"x").unwrap(); // make it non-empty so rename fails
 
         let err = TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap_err();
-        assert!(matches!(err, TokenStoreError::Io(_)), "expected Io, got {err:?}");
+        assert!(
+            matches!(err, TokenStoreError::Io(_)),
+            "expected Io, got {err:?}"
+        );
 
-        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap()
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name() != "tokens.json")
             .collect();
-        assert!(leftovers.is_empty(), "tempfile leaked on save failure: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "tempfile leaked on save failure: {leftovers:?}"
+        );
     }
 
     #[test]
@@ -383,7 +419,8 @@ mod tests {
             "alice",
             ScopeSet::Wildcard,
             ScopeSet::Allowlist(vec!["get_router_list".into()]),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(secret.expose().len(), 43);
 
         let store = TokenStoreFile::load(&path, &[]).unwrap();
@@ -401,7 +438,8 @@ mod tests {
         TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
         // Can't use `.unwrap_err()` here because `Secret` deliberately does
         // not impl `Debug` (keeps plaintext out of panic messages / logs).
-        let err = match TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard) {
+        let err = match TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard)
+        {
             Ok(_) => panic!("expected duplicate-name rejection"),
             Err(e) => e,
         };
@@ -434,11 +472,16 @@ mod tests {
         let path = dir.path().join("tokens.json");
         TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
         let _s1 = TokenStoreFile::add(
-            &path, "alice",
+            &path,
+            "alice",
             ScopeSet::Allowlist(vec!["mx-01".into()]),
             ScopeSet::Allowlist(vec!["get_router_list".into()]),
-        ).unwrap();
-        let hash_before = TokenStoreFile::load(&path, &[]).unwrap().entries()[0].hash.as_str().to_string();
+        )
+        .unwrap();
+        let hash_before = TokenStoreFile::load(&path, &[]).unwrap().entries()[0]
+            .hash
+            .as_str()
+            .to_string();
 
         let _s2 = TokenStoreFile::rotate(&path, "alice").unwrap();
         let store_after = TokenStoreFile::load(&path, &[]).unwrap();
@@ -446,8 +489,14 @@ mod tests {
         assert_eq!(entry.name, "alice");
         assert_ne!(entry.hash.as_str(), hash_before);
         // Scopes unchanged.
-        match &entry.routers { ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["mx-01".to_string()]), _ => panic!() }
-        match &entry.tools { ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["get_router_list".to_string()]), _ => panic!() }
+        match &entry.routers {
+            ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["mx-01".to_string()]),
+            _ => panic!(),
+        }
+        match &entry.tools {
+            ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["get_router_list".to_string()]),
+            _ => panic!(),
+        }
     }
 
     #[test]
