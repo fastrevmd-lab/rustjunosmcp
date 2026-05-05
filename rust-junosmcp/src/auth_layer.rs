@@ -52,7 +52,10 @@ pub async fn auth_layer(
             next.run(req).await
         }
         None => {
-            tracing::warn!("auth_failed: no matching token");
+            tracing::warn!(
+                remote = ?req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>(),
+                "auth_failed: no matching token"
+            );
             reject(StatusCode::UNAUTHORIZED, "invalid bearer token", false)
         }
     }
@@ -60,7 +63,11 @@ pub async fn auth_layer(
 
 fn parse_bearer(v: &HeaderValue) -> Option<&str> {
     let s = v.to_str().ok()?;
-    s.strip_prefix("Bearer ").map(|t| t.trim())
+    let token = s.strip_prefix("Bearer ")?.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token)
 }
 
 fn reject(code: StatusCode, msg: &str, include_challenge: bool) -> Response<Body> {
@@ -112,8 +119,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_bearer_empty_after_prefix() {
+    fn parse_bearer_rejects_empty_token() {
         let h = HeaderValue::from_static("Bearer ");
-        assert_eq!(parse_bearer(&h), Some(""));
+        assert_eq!(parse_bearer(&h), None);
     }
 }
