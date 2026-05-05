@@ -94,6 +94,120 @@ pub(crate) fn compile_rules(
         .collect()
 }
 
+// BlocklistRules is the return type of inv.blocklist_defaults(); not referenced
+// by name in the algorithm but included per spec for reader clarity.
+#[allow(unused_imports)]
+use crate::inventory::BlocklistRules;
+use std::collections::HashMap;
+
+/// Compiled, per-device blocklist policy. Built once at startup from the
+/// parsed inventory.
+#[derive(Debug)]
+pub struct Policy {
+    /// Compiled defaults (commands, config) shared by every device.
+    default_commands: Vec<CompiledRule>,
+    default_config: Vec<CompiledRule>,
+    /// Per-device additions to defaults.
+    device_commands: HashMap<String, Vec<CompiledRule>>,
+    device_config: HashMap<String, Vec<CompiledRule>>,
+}
+
+impl Policy {
+    /// Compile every glob in the inventory. Returns the first compile error
+    /// encountered, scoped to its source location.
+    pub fn build(inv: &crate::Inventory) -> Result<Self, JmcpError> {
+        let (default_commands, default_config) = match inv.blocklist_defaults() {
+            Some(d) => (
+                compile_rules(
+                    &d.commands,
+                    "_blocklist_defaults.commands",
+                    RuleSource::Defaults,
+                )?,
+                compile_rules(
+                    &d.config,
+                    "_blocklist_defaults.config",
+                    RuleSource::Defaults,
+                )?,
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+
+        let mut device_commands = HashMap::new();
+        let mut device_config = HashMap::new();
+        for name in inv.names() {
+            let entry = inv.get(&name)?;
+            if let Some(bl) = entry.blocklist.as_ref() {
+                let cmd_scope = format!("device '{name}'.blocklist.commands");
+                let cfg_scope = format!("device '{name}'.blocklist.config");
+                device_commands.insert(
+                    name.clone(),
+                    compile_rules(&bl.commands, &cmd_scope, RuleSource::Device)?,
+                );
+                device_config.insert(
+                    name.clone(),
+                    compile_rules(&bl.config, &cfg_scope, RuleSource::Device)?,
+                );
+            }
+        }
+
+        Ok(Self {
+            default_commands,
+            default_config,
+            device_commands,
+            device_config,
+        })
+    }
+
+    /// Effective command rules for a device = defaults ⊕ device.
+    pub fn command_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+        self.default_commands
+            .iter()
+            .chain(
+                self.device_commands
+                    .get(router)
+                    .into_iter()
+                    .flat_map(|v| v.iter()),
+            )
+            .collect()
+    }
+
+    /// Effective config rules for a device = defaults ⊕ device.
+    pub fn config_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+        self.default_config
+            .iter()
+            .chain(
+                self.device_config
+                    .get(router)
+                    .into_iter()
+                    .flat_map(|v| v.iter()),
+            )
+            .collect()
+    }
+
+    /// Counts for the startup info log.
+    pub fn rule_counts(&self) -> PolicyCounts {
+        let devices_with_rules = self
+            .device_commands
+            .keys()
+            .chain(self.device_config.keys())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        PolicyCounts {
+            default_commands: self.default_commands.len(),
+            default_config: self.default_config.len(),
+            devices_with_rules,
+        }
+    }
+}
+
+/// Summary numbers for startup logging.
+#[derive(Debug, Clone, Copy)]
+pub struct PolicyCounts {
+    pub default_commands: usize,
+    pub default_config: usize,
+    pub devices_with_rules: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +252,76 @@ mod tests {
             } => {
                 assert_eq!(scope, "_blocklist_defaults.commands");
                 assert_eq!(pattern, "[unterminated");
+            }
+            _ => panic!("expected BlocklistRuleInvalid, got {err:?}"),
+        }
+    }
+
+    use crate::Inventory;
+    use std::io::Write;
+
+    fn inv_from(json: &str) -> Inventory {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        Inventory::load(f.path()).unwrap()
+    }
+
+    #[test]
+    fn build_handles_inventory_with_no_rules() {
+        let inv = inv_from(
+            r#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let p = Policy::build(&inv).unwrap();
+        // r1 has no rules of either kind.
+        assert!(p.command_rules_for("r1").is_empty());
+        assert!(p.config_rules_for("r1").is_empty());
+    }
+
+    #[test]
+    fn build_merges_defaults_and_device_rules() {
+        let inv = inv_from(
+            r#"{
+                "_blocklist_defaults": {
+                    "commands": [{"action":"deny","pattern":"request system *"}]
+                },
+                "r1":{
+                    "ip":"1.1.1.1","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {
+                        "commands": [{"action":"allow","pattern":"request system reboot"}]
+                    }
+                }
+            }"#,
+        );
+        let p = Policy::build(&inv).unwrap();
+        let r1_cmds = p.command_rules_for("r1");
+        assert_eq!(r1_cmds.len(), 2);
+        // One Defaults, one Device.
+        assert!(r1_cmds.iter().any(|r| r.source == RuleSource::Defaults));
+        assert!(r1_cmds.iter().any(|r| r.source == RuleSource::Device));
+    }
+
+    #[test]
+    fn build_propagates_compile_error_with_device_scope() {
+        let inv = inv_from(
+            r#"{
+                "r1":{
+                    "ip":"1.1.1.1","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {
+                        "commands": [{"action":"deny","pattern":"[bad"}]
+                    }
+                }
+            }"#,
+        );
+        let err = Policy::build(&inv).unwrap_err();
+        match err {
+            JmcpError::BlocklistRuleInvalid { scope, .. } => {
+                assert!(
+                    scope.contains("r1"),
+                    "scope should mention router name, got {scope}"
+                );
+                assert!(scope.contains("commands"));
             }
             _ => panic!("expected BlocklistRuleInvalid, got {err:?}"),
         }

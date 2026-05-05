@@ -12,3 +12,4 @@ pub mod tools;
 pub use device_manager::DeviceManager;
 pub use error::JmcpError;
 pub use inventory::{AuthConfig, DeviceEntry, Inventory};
+pub use policy::Policy;
