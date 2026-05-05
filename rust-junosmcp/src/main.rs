@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    let handler = JmcpHandler::new(inventory.clone(), dev_manager, policy, token_store.clone());
+    let handler = JmcpHandler::new(inventory.clone(), dev_manager, policy);
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see

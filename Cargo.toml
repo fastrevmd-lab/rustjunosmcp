@@ -34,7 +34,6 @@ tower            = "0.5"
 tower-http       = "0.6"
 http             = "1"
 rustls           = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tokio-rustls     = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
 rustls-pemfile   = "2"
 axum-server      = { version = "0.8", default-features = false }
 rcgen            = "0.14"
