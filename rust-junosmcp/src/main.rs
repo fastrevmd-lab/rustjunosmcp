@@ -83,6 +83,8 @@ async fn main() -> Result<()> {
     // and skip this entirely.
     #[cfg(unix)]
     if let (Some(store_arc), Some(path)) = (token_store.clone(), args.tokens_file.clone()) {
+        // Snapshot of router names taken at startup. Inventory is immutable at runtime
+        // today; if that ever changes, this Vec must be reloaded too (or made an ArcSwap).
         let known: Vec<String> = inventory.names();
         tokio::spawn(async move {
             let mut hup = match tokio::signal::unix::signal(

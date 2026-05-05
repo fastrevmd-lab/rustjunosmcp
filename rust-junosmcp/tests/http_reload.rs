@@ -235,18 +235,28 @@ fn sighup_reloads_token_store() {
     let rc = unsafe { libc::kill(pid, libc::SIGHUP) };
     assert_eq!(rc, 0, "kill(SIGHUP) failed: errno");
 
-    // Allow the async signal handler to reload the store.
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Phase 2: same token, but now revoked + reloaded. Must be 401.
-    let r = http_post(
-        s.port,
-        Some(&secret),
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
-    );
+    // Phase 2: same token, but now revoked + reloaded. Poll until we observe
+    // 401 or hit the deadline. This is faster on the happy path than a fixed
+    // sleep and tolerates slow CI.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_code = 0u16;
+    let mut last_body = json!({});
+    while Instant::now() < deadline {
+        let r = http_post(
+            s.port,
+            Some(&secret),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        );
+        last_code = r.code;
+        last_body = r.body;
+        if last_code == 401 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
     assert_eq!(
-        r.code, 401,
-        "revoked token should be 401 after SIGHUP reload (body: {})",
-        r.body
+        last_code, 401,
+        "revoked token should be 401 within 5s of SIGHUP reload (body: {})",
+        last_body
     );
 }
