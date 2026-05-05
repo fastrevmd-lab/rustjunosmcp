@@ -17,6 +17,25 @@ instead of PyEZ.
 streamable-http transport, bearer-token auth, blocklist guardrails,
 `add_device` / `reload_devices` interactive tools.
 
+## Blocklist guardrails (v0.2)
+
+`devices.json` may carry an optional `_blocklist_defaults` block plus an
+optional `blocklist` field on each device entry. Rules use simple globs
+(`*`, `?`) and an `action` of `"deny"` or `"allow"`. Most-specific match
+wins; per-device rules tiebreak top-level defaults. See
+[`devices-template.json`](devices-template.json) for an example, and
+[`docs/superpowers/specs/2026-05-04-blocklist-guardrails-design.md`](docs/superpowers/specs/2026-05-04-blocklist-guardrails-design.md)
+for the full design.
+
+The blocklist applies to `execute_junos_command` and `load_and_commit_config`.
+For `load_and_commit_config`, `config_format` must be `set` whenever the
+device has any effective config rules; `text` and `xml` payloads are
+rejected pre-flight in that case.
+
+> **Compat note:** files using `_blocklist_defaults` or per-device
+> `blocklist` are not cross-compatible with Juniper/junos-mcp-server's
+> inventory format. Files without these fields remain drop-in compatible.
+
 ## Security warning
 
 This server lets an LLM run commands and push configuration changes against
