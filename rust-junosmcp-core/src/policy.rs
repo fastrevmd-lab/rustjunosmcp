@@ -271,6 +271,22 @@ impl Policy {
         }
     }
 
+
+    /// Decide whether `pfe_command` is allowed on `router`. Whitespace-normalized
+    /// before matching. Independent from `check_command`.
+    pub fn check_pfe_command<'a>(&'a self, router: &str, pfe_command: &str) -> Decision<'a> {
+        let normalized = normalize_input(pfe_command);
+        let rules = self.pfe_command_rules_for(router);
+        match evaluate(&rules, &normalized) {
+            Some(rule) if rule.action == Action::Deny => Decision::Deny {
+                rule,
+                source: rule.source,
+                line_number: None,
+            },
+            _ => Decision::Allow,
+        }
+    }
+
     /// Decide whether `config_text` is allowed on `router` for the given
     /// `config_format`. Returns `Err` if `config_format != "set"` and the
     /// device has any effective config rules.
@@ -685,5 +701,40 @@ mod tests {
         assert_eq!(p.pfe_command_rules_for("r1").len(), 1);
         assert_eq!(p.command_rules_for("r1")[0].pattern, "request system *");
         assert_eq!(p.pfe_command_rules_for("r1")[0].pattern, "set *");
+    }
+
+
+    #[test]
+    fn check_pfe_command_denies_when_pattern_matches() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"pfe_commands":[{"action":"deny","pattern":"set *"}]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        match p.check_pfe_command("r1", "set jnh 0 debug") {
+            Decision::Deny { rule, .. } => assert_eq!(rule.pattern, "set *"),
+            other => panic!("expected Deny, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_pfe_command_allows_when_no_rules() {
+        let p = build_policy(
+            r#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        assert!(matches!(p.check_pfe_command("r1", "show jnh 0 stats"), Decision::Allow));
+    }
+
+    #[test]
+    fn check_pfe_command_does_not_consult_command_rules() {
+        // A `commands` deny does NOT block a PFE call; the two rule lists are independent.
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"set *"}]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(matches!(p.check_pfe_command("r1", "set anything"), Decision::Allow));
     }
 }
