@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust-junosmcp-core", "rust-junosmcp"]
+members = ["rust-junosmcp-core", "rust-junosmcp", "rust-junosmcp-auth"]
 resolver = "2"
 
 [workspace.package]
@@ -21,3 +21,17 @@ anyhow       = "1"
 rustez       = { path = "../rustEZ/rustez" }
 globset      = "0.4"
 # rmcp 0.x — pinned at task 16; placeholder here
+
+# auth + remote transport (sub-project #2)
+arc-swap         = "1"
+sha2             = "0.10"
+rand             = "0.8"
+subtle           = "2"
+base64ct         = { version = "1", features = ["alloc"] }
+chrono           = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+axum             = "0.8"
+tower            = "0.5"
+tower-http       = "0.6"
+rustls           = "0.23"
+tokio-rustls     = "0.26"
+rustls-pemfile   = "2"
