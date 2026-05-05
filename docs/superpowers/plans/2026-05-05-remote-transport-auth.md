@@ -1835,25 +1835,36 @@ impl JmcpHandler {
 
 - [ ] **Step 2: Update each `#[tool]` adapter**
 
-Each adapter signature gains an `rmcp::handler::server::wrapper::Extensions`
-or equivalent. The exact API depends on the spike outcome; what follows
-assumes path A. If path B, replace `extensions.get::<CallerCtx>()` with a
-lookup in the global `RequestId → CallerCtx` map.
+Per the Task 0 spike, rmcp inserts the whole `http::request::Parts` into the
+per-request extensions, so the tool reads `CallerCtx` via
+`Extension<http::request::Parts>` and then `parts.extensions.get::<CallerCtx>()`.
+(Direct `Extension<CallerCtx>` does NOT work — rmcp does not auto-propagate
+arbitrary axum extensions; only the `Parts` object is forwarded.)
 
-For each existing `#[tool]` method, modify:
+Add a tiny helper at the top of `server.rs`:
+```rust
+use http::request::Parts;
+use rmcp::handler::server::tool::Extension;
+
+fn caller_ctx(parts: &Parts) -> Option<&crate::caller::CallerCtx> {
+    parts.extensions.get::<crate::caller::CallerCtx>()
+}
+```
+
+For each existing `#[tool]` method, modify the signature and body:
 
 ```rust
     #[tool(name = "execute_junos_command", description = "...")]
     async fn execute_junos_command(
         &self,
         Parameters(args): Parameters<ExecuteCommandArgs>,
-        extensions: rmcp::Extensions,    // <- new (or path-B equivalent)
+        Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let ctx = extensions.get::<crate::caller::CallerCtx>().cloned();
-        if let Err(e) = self.check_tool_scope(ctx.as_ref(), "execute_junos_command") {
+        let ctx = caller_ctx(&parts);
+        if let Err(e) = self.check_tool_scope(ctx, "execute_junos_command") {
             return Self::scope_to_call_result(e);
         }
-        if let Err(e) = self.check_router_scope(ctx.as_ref(), "execute_junos_command", &args.router_name) {
+        if let Err(e) = self.check_router_scope(ctx, "execute_junos_command", &args.router_name) {
             return Self::scope_to_call_result(e);
         }
         Self::to_call_result(
@@ -1861,6 +1872,17 @@ For each existing `#[tool]` method, modify:
         )
     }
 ```
+
+**Stdio compatibility caveat:** The spike confirmed `Extension<Parts>` works on
+the streamable-http path, but it did NOT verify the stdio path. The stdio
+transport (`transport-io`) does not have an `http::Request` to split into Parts,
+so a required `Extension<Parts>` extractor may fail under stdio. Before
+committing this task, the implementer must verify the existing stdio smoke tests
+(`lists_six_tools`, `denied_command_returns_tool_error`) still pass. If
+`Extension<Parts>` breaks stdio, switch the extractor to `Option<Extension<Parts>>`
+(rmcp's idiomatic optional extractor) and treat `None` the same as
+"no `CallerCtx` present" — `check_*_scope` already permits this. Document the
+finding in the commit message.
 
 Apply the same pattern to:
 - `gather_device_facts` (router scope)
@@ -1972,10 +1994,10 @@ axum       = { workspace = true }
 tower      = { workspace = true }
 tower-http = { workspace = true, features = ["trace"] }
 
-# rmcp gains the streamable-http feature (exact name from spike memo):
+# rmcp streamable-http feature (confirmed by Task 0 spike memo):
 rmcp = { version = "0.8", features = [
     "server", "macros", "transport-io", "schemars",
-    "transport-streamable-http-axum",   # confirmed by spike (or alternate name)
+    "transport-streamable-http-server",
 ] }
 ```
 
@@ -2050,37 +2072,44 @@ fn reject(code: StatusCode, msg: &str, include_challenge: bool) -> Response<Body
 
 `rust-junosmcp/src/http_transport.rs`:
 ```rust
-//! axum router: AuthLayer + rmcp streamable-http handler. The exact rmcp
-//! mount API depends on the spike outcome; this module is the only place
-//! that needs adjustment if that API changes.
+//! axum router: AuthLayer + rmcp streamable-http handler.
+//! Mount API confirmed by Task 0 spike (path A): rmcp's `StreamableHttpService`
+//! is a `tower::Service<http::Request<B>>`, mounted under axum 0.8 via
+//! `Router::nest_service("/mcp", svc)`. The service splits requests into
+//! `(Parts, Body)` and inserts the whole `http::request::Parts` into rmcp's
+//! per-request extensions, so anything our outer middleware put on the axum
+//! request extensions (e.g. `CallerCtx`) rides along inside `parts.extensions`.
 
 use crate::auth_layer::{auth_layer, AuthState};
 use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
-use axum::{routing::post, Router};
+use axum::Router;
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+};
 use rust_junosmcp_auth::TokenStore;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 pub async fn serve(
-    handler: JmcpHandler,
+    handler_factory: impl Fn() -> std::io::Result<JmcpHandler> + Send + Sync + Clone + 'static,
     addr: SocketAddr,
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
 ) -> Result<()> {
-    // Mount the rmcp streamable-http service. The exact construction will be
-    // filled in from the spike memo; the placeholder name here is rmcp's
-    // streamable-http handler factory.
-    let rmcp_router = rmcp::transport::streamable_http_axum::router(handler)
-        .context("building rmcp streamable-http router")?;
+    let svc = StreamableHttpService::new(
+        handler_factory,
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+
+    let rmcp_router = Router::new().nest_service("/mcp", svc);
 
     let app = if let Some(store) = token_store {
-        Router::new()
-            .merge(rmcp_router)
-            .layer(axum::middleware::from_fn_with_state(
-                AuthState { store },
-                auth_layer,
-            ))
+        rmcp_router.layer(axum::middleware::from_fn_with_state(
+            AuthState { store },
+            auth_layer,
+        ))
     } else {
         // --allow-no-auth path: no middleware, no token check.
         rmcp_router
@@ -2096,7 +2125,7 @@ pub async fn serve(
 }
 ```
 
-> **Spike-dependent line:** `rmcp::transport::streamable_http_axum::router(handler)`. Replace with the actual API from the spike memo. If rmcp doesn't expose a `Router`, hand-roll an HTTP handler that delegates to rmcp's per-request service.
+> The implementer should call `serve(...)` from `main.rs` by passing a closure that clones the prebuilt `JmcpHandler` (since `JmcpHandler::new` is cheap — it just wraps `Arc`s — but the factory shape lets rmcp build a fresh handler per session if we ever want stateless mode). The exact module path is `rmcp::transport::streamable_http_server::{StreamableHttpService, StreamableHttpServerConfig, session::local::LocalSessionManager}`.
 
 - [ ] **Step 4: Update `main.rs`**
 
