@@ -106,16 +106,17 @@ impl TokenStoreFile {
         let on_disk = OnDisk { version: 1, tokens: store.entries().to_vec() };
         let json = serde_json::to_vec_pretty(&on_disk)?;
 
-        let tmp = tempfile::Builder::new()
+        // Use NamedTempFile::persist so the tempfile handle remains owned
+        // until the rename succeeds. If write/sync/persist fails, Drop on
+        // NamedTempFile (or on the PersistError that owns it) cleans up the
+        // `.tokens-*.tmp` file — no leak.
+        let mut tmp = tempfile::Builder::new()
             .prefix(".tokens-")
             .suffix(".tmp")
             .tempfile_in(parent)?;
-        {
-            let (mut file, tmp_path) = tmp.keep().map_err(|e| TokenStoreError::Io(e.error))?;
-            file.write_all(&json)?;
-            file.sync_all()?;
-            std::fs::rename(&tmp_path, path)?;
-        }
+        tmp.write_all(&json)?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(path).map_err(|e| TokenStoreError::Io(e.error))?;
         Ok(())
     }
 
@@ -313,6 +314,24 @@ mod tests {
             .filter(|e| e.file_name() != "tokens.json")
             .collect();
         assert!(leftovers.is_empty(), "stray temp files: {leftovers:?}");
+    }
+
+    #[test]
+    fn save_failure_does_not_leak_tempfile() {
+        let dir = tempfile::tempdir().unwrap();
+        // Pre-create `tokens.json` as a directory; rename-onto-non-empty-dir fails on Linux.
+        let path = dir.path().join("tokens.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("dummy"), b"x").unwrap(); // make it non-empty so rename fails
+
+        let err = TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap_err();
+        assert!(matches!(err, TokenStoreError::Io(_)), "expected Io, got {err:?}");
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "tokens.json")
+            .collect();
+        assert!(leftovers.is_empty(), "tempfile leaked on save failure: {leftovers:?}");
     }
 
     #[test]
