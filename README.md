@@ -90,13 +90,13 @@ $EDITOR devices.json   # set ip / username / auth
 
 ```bash
 # Build (must run from parent dir containing both RustJunosMCP and rustEZ).
-docker build -f RustJunosMCP/Dockerfile -t rust-junosmcp:0.1 .
+docker build -f RustJunosMCP/Dockerfile -t rust-junosmcp:0.2 .
 
 # Run.
 docker run --rm -i \
   -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
   -v $PWD/keys:/etc/jmcp/keys:ro \
-  rust-junosmcp:0.1
+  rust-junosmcp:0.2
 ```
 
 ## LXC (Proxmox)
@@ -106,8 +106,8 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC).
-pct push 115 dist/rust-junosmcp_0.1.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.1.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.2.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.2.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json on the LXC, then:
 pct exec 115 -- systemctl enable --now rust-junosmcp
