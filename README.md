@@ -5,6 +5,15 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
+> ## v0.2.0 released
+>
+> Remote MCP transport is here: streamable-HTTP with bearer-token auth, per-token
+> router/tool scopes, optional rustls TLS, and SIGHUP hot-reload of the token
+> store. Stdio path is unchanged.
+>
+> See the [v0.2.0 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.0)
+> and the [Remote transport + auth](#remote-transport--auth-v02) section below.
+
 ## Feature scope
 
 ### v0.1 (released)
@@ -15,7 +24,7 @@ instead of PyEZ.
 - `devices.json` drop-in compatible (`auth.type` ∈ {`password`, `ssh_key`}).
 - Docker image (distroless) and LXC release tarball with systemd unit.
 
-### v0.2 (this branch)
+### v0.2 (released)
 
 - streamable-http transport (with optional rustls TLS).
 - bearer-token auth with per-token router/tool scopes.
