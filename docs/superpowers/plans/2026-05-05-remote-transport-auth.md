@@ -681,7 +681,7 @@ mod tests {
             "version":1,
             "tokens":[{
                 "name":"a",
-                "hash":"sha256:VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+                "hash":"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "routers":["*"],
                 "tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
@@ -704,8 +704,8 @@ mod tests {
         let f = write_tmp(r#"{
             "version":1,
             "tokens":[
-                {"name":"a","hash":"sha256:VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"},
-                {"name":"a","hash":"sha256:WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"}
+                {"name":"a","hash":"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"},
+                {"name":"a","hash":"sha256:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE","routers":["*"],"tools":["*"],"created_at":"2026-05-05T00:00:00Z"}
             ]
         }"#);
         let err = TokenStoreFile::load(f.path(), &[]).unwrap_err();
@@ -717,7 +717,7 @@ mod tests {
         let f = write_tmp(r#"{
             "version":1,
             "tokens":[{
-                "name":"a","hash":"sha256:VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+                "name":"a","hash":"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "routers":["*"],"tools":["does_not_exist"],
                 "created_at":"2026-05-05T00:00:00Z"
             }]
@@ -749,7 +749,7 @@ mod tests {
         let f = write_tmp(r#"{
             "version":1,
             "tokens":[{
-                "name":"a","hash":"sha256:VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+                "name":"a","hash":"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "routers":["*","r1"],"tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }]
@@ -765,7 +765,7 @@ mod tests {
         let f = write_tmp(r#"{
             "version":1,
             "tokens":[{
-                "name":"a","hash":"sha256:VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+                "name":"a","hash":"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "routers":["r1"],"tools":["*"],
                 "created_at":"2026-05-05T00:00:00Z"
             }]
