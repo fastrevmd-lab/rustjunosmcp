@@ -15,6 +15,7 @@ thiserror    = { workspace = true }
 tracing      = { workspace = true }
 schemars     = { workspace = true }
 rustez       = { workspace = true }
+globset      = "0.4"
 
 [dev-dependencies]
 tempfile     = "3"
