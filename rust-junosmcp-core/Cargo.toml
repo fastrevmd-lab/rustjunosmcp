@@ -16,6 +16,7 @@ tracing      = { workspace = true }
 schemars     = { workspace = true }
 rustez       = { workspace = true }
 globset      = { workspace = true }
+async-trait  = { workspace = true }
 
 [dev-dependencies]
 tempfile     = "3"
