@@ -12,7 +12,7 @@ use rust_junosmcp_core::{
         config_diff, execute_command, facts, get_config, load_commit, router_list, ConfigDiffArgs,
         ExecuteCommandArgs, GatherFactsArgs, GetConfigArgs, LoadCommitArgs,
     },
-    DeviceManager, Inventory,
+    DeviceManager, Inventory, Policy,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,11 +21,12 @@ use std::sync::Arc;
 pub struct JmcpHandler {
     inv: Arc<Inventory>,
     dm: Arc<DeviceManager>,
+    policy: Arc<Policy>,
 }
 
 impl JmcpHandler {
-    pub fn new(inv: Arc<Inventory>, dm: Arc<DeviceManager>) -> Self {
-        Self { inv, dm }
+    pub fn new(inv: Arc<Inventory>, dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
+        Self { inv, dm, policy }
     }
 
     fn to_call_result(
@@ -73,7 +74,9 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<ExecuteCommandArgs>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        Self::to_call_result(execute_command::handle(args, self.dm.clone()).await)
+        Self::to_call_result(
+            execute_command::handle(args, self.dm.clone(), self.policy.clone()).await,
+        )
     }
 
     #[tool(
@@ -106,7 +109,9 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<LoadCommitArgs>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        Self::to_call_result(load_commit::handle(args, self.dm.clone()).await)
+        Self::to_call_result(
+            load_commit::handle(args, self.dm.clone(), self.policy.clone()).await,
+        )
     }
 }
 
