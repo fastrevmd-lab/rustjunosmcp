@@ -5,17 +5,23 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
-## v0.1 scope
+## Feature scope
+
+### v0.1 (released)
 
 - 6 tools: `get_router_list`, `gather_device_facts`, `execute_junos_command`,
   `get_junos_config`, `junos_config_diff`, `load_and_commit_config`.
 - stdio transport only.
 - `devices.json` drop-in compatible (`auth.type` ∈ {`password`, `ssh_key`}).
 - Docker image (distroless) and LXC release tarball with systemd unit.
+
+### v0.2 (this branch)
+
 - streamable-http transport (with optional rustls TLS).
 - bearer-token auth with per-token router/tool scopes.
+- SIGHUP hot-reload of the token store.
 
-**Coming in v0.2:** PFE commands, batch execution, Jinja2 templates,
+**Coming after v0.2:** PFE commands, batch execution, Jinja2 templates,
 `add_device` / `reload_devices` interactive tools.
 
 ## Blocklist guardrails (v0.2)
@@ -168,17 +174,30 @@ guarantee of transport security.
 
 ### Hot reload
 
-After revoking or rotating a token, send `SIGHUP` to the running server to
-reload the token store without restarting:
+After revoking or rotating a token, the server reloads the token store without
+restarting. Pass `--server-pid <pid>` to any write subcommand and the SIGHUP
+is sent automatically after the file is written:
 
 ```bash
-# Revoke.
-cargo run -- token revoke --tokens-file tokens.json --name ops
+# Revoke — writes file, then signals the server.
+cargo run -- token revoke --tokens-file tokens.json --name ops --server-pid <pid>
 
-# Rotate (mints a new secret, preserves scopes).
-cargo run -- token rotate --tokens-file tokens.json --name ops
+# Rotate (mints a new secret, preserves scopes) — same pattern.
+cargo run -- token rotate --tokens-file tokens.json --name ops --server-pid <pid>
 
-# Trigger hot reload.
+# Add a new token and signal in one step.
+cargo run -- token add \
+  --tokens-file tokens.json \
+  --name ops2 \
+  --routers '*' \
+  --tools execute_junos_command,gather_device_facts \
+  --server-pid <pid>
+```
+
+If you need to trigger a reload without a token change (e.g., after editing the
+file by hand), send SIGHUP directly:
+
+```bash
 kill -HUP <pid>
 ```
 
@@ -188,7 +207,9 @@ kill -HUP <pid>
 |---|---|---|
 | _(none)_ | any | Refused — `--tokens-file` or `--allow-no-auth` required for streamable-http |
 | `--allow-no-auth` only | non-loopback | Refused — `--allow-no-auth` is loopback-only |
+| `--allow-no-auth` only | loopback | OK — but note: if you also supply `--tls-cert`/`--tls-key`, auth is still disabled; TLS gives confidentiality but any client that can reach the port has full tool access (foot-gun) |
 | `--tokens-file` only | non-loopback, no TLS | Refused — add `--tls-cert`/`--tls-key` or `--allow-insecure-bind` |
+| `--tokens-file --allow-insecure-bind` | non-loopback, no TLS | OK — tokens are checked; you are asserting external transport security |
 | `--tokens-file --tls-cert cert.pem --tls-key key.pem` | any | OK |
 
 ## CLI
