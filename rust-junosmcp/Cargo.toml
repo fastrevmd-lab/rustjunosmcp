@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
 tokio              = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }

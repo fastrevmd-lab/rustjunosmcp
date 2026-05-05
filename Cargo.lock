@@ -2040,6 +2040,7 @@ dependencies = [
  "anyhow",
  "clap",
  "rmcp",
+ "rust-junosmcp-auth",
  "rust-junosmcp-core",
  "schemars",
  "serde",

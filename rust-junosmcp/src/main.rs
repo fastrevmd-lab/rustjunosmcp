@@ -1,9 +1,10 @@
 mod cli;
 mod server;
+mod token_cmd;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use cli::{Cli, Transport};
+use cli::{Cli, Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_core::{DeviceManager, Inventory, Policy};
 use server::JmcpHandler;
@@ -20,6 +21,10 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Cli::parse();
+
+    if let Some(Command::Token { action }) = args.command {
+        return token_cmd::run(action);
+    }
 
     if matches!(args.transport, Transport::StreamableHttp) {
         bail!(
