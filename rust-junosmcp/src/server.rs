@@ -6,7 +6,9 @@
 
 use arc_swap::ArcSwap;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, Content, Extensions, Implementation, ServerCapabilities, ServerInfo,
+};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_auth::TokenStore;
 use rust_junosmcp_core::{
@@ -18,6 +20,27 @@ use rust_junosmcp_core::{
 };
 use serde_json::Value;
 use std::sync::Arc;
+
+/// Look up the per-request `CallerCtx` (inserted by the auth middleware on
+/// the streamable-http path). Returns `None` under stdio. The middleware
+/// inserts `CallerCtx` directly into the rmcp request-context extensions; on
+/// the streamable-http path rmcp also exposes the original `http::request::Parts`
+/// in the same extension map, but we only need `CallerCtx` here.
+fn caller_ctx(extensions: &Extensions) -> Option<&crate::caller::CallerCtx> {
+    extensions.get::<crate::caller::CallerCtx>()
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ScopeError {
+    #[error("token '{token}' is not authorized for tool '{tool}'")]
+    ToolNotInScope { token: String, tool: &'static str },
+    #[error("token '{token}' is not authorized for router '{router}' (tool '{tool}')")]
+    RouterNotInScope {
+        token: String,
+        router: String,
+        tool: &'static str,
+    },
+}
 
 #[derive(Clone)]
 pub struct JmcpHandler {
@@ -55,6 +78,50 @@ impl JmcpHandler {
             Err(e) => CallToolResult::error(vec![Content::text(e.to_string())]),
         })
     }
+
+    /// Convert `ScopeError` into the same kind of `CallToolResult { isError: true }`
+    /// that `JmcpError::Denied` produces. Mirrors `to_call_result`.
+    fn scope_to_call_result(e: ScopeError) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+    }
+
+    /// Check tool scope. Returns `Err(ScopeError)` if denied, `Ok(())` if allowed
+    /// or if no caller context is present (stdio path).
+    fn check_tool_scope(
+        &self,
+        ctx: Option<&crate::caller::CallerCtx>,
+        tool: &'static str,
+    ) -> Result<(), ScopeError> {
+        if let Some(ctx) = ctx {
+            if !ctx.tools.allows(tool) {
+                return Err(ScopeError::ToolNotInScope {
+                    token: ctx.token_name.clone(),
+                    tool,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Check router scope. Returns `Err(ScopeError)` if denied, `Ok(())` if allowed
+    /// or if no caller context is present (stdio path).
+    fn check_router_scope(
+        &self,
+        ctx: Option<&crate::caller::CallerCtx>,
+        tool: &'static str,
+        router: &str,
+    ) -> Result<(), ScopeError> {
+        if let Some(ctx) = ctx {
+            if !ctx.routers.allows(router) {
+                return Err(ScopeError::RouterNotInScope {
+                    token: ctx.token_name.clone(),
+                    router: router.to_string(),
+                    tool,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[tool_router]
@@ -66,7 +133,12 @@ impl JmcpHandler {
     async fn get_router_list(
         &self,
         Parameters(_): Parameters<rust_junosmcp_core::tools::EmptyArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(router_list::handle(self.inv.clone()).await)
     }
 
@@ -77,7 +149,15 @@ impl JmcpHandler {
     async fn gather_device_facts(
         &self,
         Parameters(args): Parameters<GatherFactsArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "gather_device_facts") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "gather_device_facts", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(facts::handle(args, self.dm.clone()).await)
     }
 
@@ -88,7 +168,15 @@ impl JmcpHandler {
     async fn execute_junos_command(
         &self,
         Parameters(args): Parameters<ExecuteCommandArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "execute_junos_command") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "execute_junos_command", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(
             execute_command::handle(args, self.dm.clone(), self.policy.clone()).await,
         )
@@ -101,7 +189,15 @@ impl JmcpHandler {
     async fn get_junos_config(
         &self,
         Parameters(args): Parameters<GetConfigArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "get_junos_config") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "get_junos_config", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(get_config::handle(args, self.dm.clone()).await)
     }
 
@@ -112,7 +208,15 @@ impl JmcpHandler {
     async fn junos_config_diff(
         &self,
         Parameters(args): Parameters<ConfigDiffArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "junos_config_diff") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "junos_config_diff", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(config_diff::handle(args, self.dm.clone()).await)
     }
 
@@ -123,7 +227,15 @@ impl JmcpHandler {
     async fn load_and_commit_config(
         &self,
         Parameters(args): Parameters<LoadCommitArgs>,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "load_and_commit_config") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "load_and_commit_config", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
         Self::to_call_result(load_commit::handle(args, self.dm.clone(), self.policy.clone()).await)
     }
 }
@@ -145,5 +257,60 @@ impl ServerHandler for JmcpHandler {
             ),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use crate::caller::CallerCtx;
+    use rust_junosmcp_auth::ScopeSet;
+
+    fn make_handler() -> JmcpHandler {
+        let inv = Arc::new(Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = Arc::new(Policy::build(&inv).unwrap());
+        JmcpHandler::new(inv, dm, policy, None)
+    }
+
+    #[test]
+    fn no_ctx_allows_anything() {
+        let handler = make_handler();
+        assert!(handler.check_tool_scope(None, "execute_junos_command").is_ok());
+        assert!(handler
+            .check_router_scope(None, "execute_junos_command", "r1")
+            .is_ok());
+    }
+
+    #[test]
+    fn tool_scope_denies_when_not_listed() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
+        };
+        assert!(handler.check_tool_scope(Some(&ctx), "get_router_list").is_ok());
+        assert!(matches!(
+            handler.check_tool_scope(Some(&ctx), "execute_junos_command"),
+            Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn router_scope_denies_when_not_listed() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Allowlist(vec!["r1".into()]),
+            tools: ScopeSet::Wildcard,
+        };
+        assert!(handler
+            .check_router_scope(Some(&ctx), "execute_junos_command", "r1")
+            .is_ok());
+        assert!(matches!(
+            handler.check_router_scope(Some(&ctx), "execute_junos_command", "r2"),
+            Err(ScopeError::RouterNotInScope { .. })
+        ));
     }
 }

@@ -2,8 +2,8 @@
 
 use rust_junosmcp_auth::{ScopeSet, TokenEntry};
 
-// T10 will consume this in the #[tool] adapters; T11 wires it through the auth middleware.
-#[allow(dead_code)]
+// Consumed by the #[tool] adapters via `caller_ctx(&parts)` in `server.rs`;
+// T11 wires it through the auth middleware on the streamable-http path.
 #[derive(Debug, Clone)]
 pub struct CallerCtx {
     pub token_name: String,

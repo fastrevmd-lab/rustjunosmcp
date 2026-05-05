@@ -189,6 +189,15 @@ struct InventoryFile {
 }
 
 impl Inventory {
+    /// Construct an empty inventory. Useful for tests that don't need real devices.
+    pub fn empty() -> Self {
+        Self {
+            devices: Default::default(),
+            blocklist_defaults: None,
+            source_path: PathBuf::new(),
+        }
+    }
+
     /// Load and validate a `devices.json` file.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
         let bytes = std::fs::read(path)?;
