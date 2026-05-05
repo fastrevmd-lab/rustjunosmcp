@@ -79,6 +79,31 @@ mod auth_tests {
     }
 }
 
+/// `deny` blocks the tool call; `allow` overrides a broader deny.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    Deny,
+    Allow,
+}
+
+/// One author-side rule: an action and a glob pattern.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RuleSpec {
+    pub action: Action,
+    pub pattern: String,
+}
+
+/// Per-domain rule lists (commands → execute_junos_command,
+/// config → load_and_commit_config).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct BlocklistRules {
+    #[serde(default)]
+    pub commands: Vec<RuleSpec>,
+    #[serde(default)]
+    pub config: Vec<RuleSpec>,
+}
+
 fn default_port() -> u16 {
     22
 }
@@ -339,5 +364,40 @@ mod accessor_tests {
         }"#,
         );
         assert_eq!(inv.names(), vec!["a".to_string(), "z".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod rule_type_tests {
+    use super::*;
+
+    #[test]
+    fn rule_spec_parses_deny() {
+        let json = r#"{"action":"deny","pattern":"request system *"}"#;
+        let r: RuleSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(r.pattern, "request system *");
+        assert!(matches!(r.action, Action::Deny));
+    }
+
+    #[test]
+    fn rule_spec_parses_allow() {
+        let json = r#"{"action":"allow","pattern":"show *"}"#;
+        let r: RuleSpec = serde_json::from_str(json).unwrap();
+        assert!(matches!(r.action, Action::Allow));
+    }
+
+    #[test]
+    fn rule_spec_rejects_unknown_action() {
+        let json = r#"{"action":"audit","pattern":"x"}"#;
+        let r: Result<RuleSpec, _> = serde_json::from_str(json);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn blocklist_rules_default_to_empty_lists() {
+        let json = r#"{}"#;
+        let b: BlocklistRules = serde_json::from_str(json).unwrap();
+        assert!(b.commands.is_empty());
+        assert!(b.config.is_empty());
     }
 }
