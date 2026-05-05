@@ -11,8 +11,9 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        config_diff, execute_command, facts, get_config, load_commit, router_list, ConfigDiffArgs,
-        ExecuteCommandArgs, GatherFactsArgs, GetConfigArgs, LoadCommitArgs,
+        batch, config_diff, execute_command, facts, get_config, load_commit, pfe, router_list,
+        ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs,
+        GetConfigArgs, LoadCommitArgs,
     },
     DeviceManager, Inventory, Policy,
 };
@@ -234,6 +235,48 @@ impl JmcpHandler {
         }
         Self::to_call_result(load_commit::handle(args, self.dm.clone(), self.policy.clone()).await)
     }
+
+    #[tool(
+        name = "execute_junos_pfe_command",
+        description = "Execute a single PFE-shell command on one router via 'request pfe execute target <fpc> command \"<cmd>\"'."
+    )]
+    async fn execute_junos_pfe_command(
+        &self,
+        Parameters(args): Parameters<ExecutePfeArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "execute_junos_pfe_command") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) =
+            self.check_router_scope(ctx, "execute_junos_pfe_command", &args.router_name)
+        {
+            return Self::scope_to_call_result(e);
+        }
+        Self::to_call_result(pfe::handle(args, self.dm.clone(), self.policy.clone()).await)
+    }
+
+    #[tool(
+        name = "execute_junos_command_batch",
+        description = "Run N operational CLI commands across M routers, parallel across routers, sequential per router. Returns a per-router array of {command, ok, value?, error?} entries."
+    )]
+    async fn execute_junos_command_batch(
+        &self,
+        Parameters(args): Parameters<ExecuteBatchArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "execute_junos_command_batch") {
+            return Self::scope_to_call_result(e);
+        }
+        for r in &args.routers {
+            if let Err(e) = self.check_router_scope(ctx, "execute_junos_command_batch", r) {
+                return Self::scope_to_call_result(e);
+            }
+        }
+        Self::to_call_result(batch::handle(args, self.dm.clone(), self.policy.clone()).await)
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -312,5 +355,43 @@ mod scope_tests {
             handler.check_router_scope(Some(&ctx), "execute_junos_command", "r2"),
             Err(ScopeError::RouterNotInScope { .. })
         ));
+    }
+
+    #[test]
+    fn pfe_scope_denial_rejects_call() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+        };
+        assert!(matches!(
+            handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
+            Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn batch_router_scope_first_failure_short_circuits() {
+        // Conceptually models the per-router loop: the adapter fails on the
+        // first router not in scope.
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Allowlist(vec!["r1".into()]),
+            tools: ScopeSet::Wildcard,
+        };
+        let routers = ["r1", "r2"];
+        let mut first_fail: Option<&str> = None;
+        for r in &routers {
+            if handler
+                .check_router_scope(Some(&ctx), "execute_junos_command_batch", r)
+                .is_err()
+            {
+                first_fail = Some(r);
+                break;
+            }
+        }
+        assert_eq!(first_fail, Some("r2"));
     }
 }
