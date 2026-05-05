@@ -6,6 +6,7 @@
 //! ```
 
 use rust_junosmcp_core::{
+    policy::Policy,
     tools::{
         config_diff, execute_command, facts, get_config, router_list, ConfigDiffArgs,
         ExecuteCommandArgs, GatherFactsArgs, GetConfigArgs,
@@ -19,7 +20,7 @@ fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("missing env var {name}"))
 }
 
-fn build_dm() -> Arc<DeviceManager> {
+fn build_inv() -> Arc<Inventory> {
     let host = env("JMCP_TEST_HOST");
     let user = env("JMCP_TEST_USER");
     let pass = env("JMCP_TEST_PASS");
@@ -31,8 +32,11 @@ fn build_dm() -> Arc<DeviceManager> {
     );
     let mut f = tempfile::NamedTempFile::new().unwrap();
     f.write_all(json.as_bytes()).unwrap();
-    let inv = Arc::new(Inventory::load(f.path()).unwrap());
-    Arc::new(DeviceManager::new(inv))
+    Arc::new(Inventory::load(f.path()).unwrap())
+}
+
+fn build_dm() -> Arc<DeviceManager> {
+    Arc::new(DeviceManager::new(build_inv()))
 }
 
 #[tokio::test]
@@ -60,7 +64,9 @@ async fn router_list_returns_lab() {
 #[tokio::test]
 #[ignore]
 async fn execute_show_version() {
-    let dm = build_dm();
+    let inv = build_inv();
+    let dm = Arc::new(DeviceManager::new(inv.clone()));
+    let pol = Arc::new(Policy::build(&inv).unwrap());
     let v = execute_command::handle(
         ExecuteCommandArgs {
             router_name: "lab".into(),
@@ -68,6 +74,7 @@ async fn execute_show_version() {
             timeout: 30,
         },
         dm,
+        pol,
     )
     .await
     .unwrap();

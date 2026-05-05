@@ -1,4 +1,13 @@
 {
+    "_blocklist_defaults": {
+        "commands": [
+            {"action": "deny", "pattern": "request system *"},
+            {"action": "deny", "pattern": "clear system commit"}
+        ],
+        "config": [
+            {"action": "deny", "pattern": "delete *"}
+        ]
+    },
     "r1": {
         "ip": "ip",
         "port": 22,
@@ -35,6 +44,11 @@
         "auth": {
             "type": "password",
             "password": "pwd"
+        },
+        "blocklist": {
+            "commands": [
+                {"action": "allow", "pattern": "request system reboot"}
+            ]
         }
     }
 }

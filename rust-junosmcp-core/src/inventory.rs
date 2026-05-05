@@ -79,6 +79,31 @@ mod auth_tests {
     }
 }
 
+/// `deny` blocks the tool call; `allow` overrides a broader deny.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    Deny,
+    Allow,
+}
+
+/// One author-side rule: an action and a glob pattern.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RuleSpec {
+    pub action: Action,
+    pub pattern: String,
+}
+
+/// Per-domain rule lists (commands → execute_junos_command,
+/// config → load_and_commit_config).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct BlocklistRules {
+    #[serde(default)]
+    pub commands: Vec<RuleSpec>,
+    #[serde(default)]
+    pub config: Vec<RuleSpec>,
+}
+
 fn default_port() -> u16 {
     22
 }
@@ -98,6 +123,10 @@ pub struct DeviceEntry {
     /// pulled from the config file. Mirrors PyEZ semantics.
     #[serde(default)]
     pub ssh_config: Option<PathBuf>,
+    /// Optional per-device blocklist rules. Merged with `_blocklist_defaults`
+    /// at policy build time. See [`BlocklistRules`].
+    #[serde(default)]
+    pub blocklist: Option<BlocklistRules>,
 }
 
 #[cfg(test)]
@@ -147,18 +176,28 @@ use std::path::Path;
 #[derive(Debug, Clone)]
 pub struct Inventory {
     devices: HashMap<String, DeviceEntry>,
+    blocklist_defaults: Option<BlocklistRules>,
     source_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct InventoryFile {
+    #[serde(default, rename = "_blocklist_defaults")]
+    blocklist_defaults: Option<BlocklistRules>,
+    #[serde(flatten)]
+    devices: HashMap<String, DeviceEntry>,
 }
 
 impl Inventory {
     /// Load and validate a `devices.json` file.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
         let bytes = std::fs::read(path)?;
-        let devices: HashMap<String, DeviceEntry> = serde_json::from_slice(&bytes)
+        let file: InventoryFile = serde_json::from_slice(&bytes)
             .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
-        Self::validate(&devices)?;
+        Self::validate(&file.devices)?;
         Ok(Self {
-            devices,
+            devices: file.devices,
+            blocklist_defaults: file.blocklist_defaults,
             source_path: path.to_path_buf(),
         })
     }
@@ -275,6 +314,73 @@ mod load_tests {
         let r = Inventory::load(f.path());
         assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
     }
+
+    #[test]
+    fn loads_inventory_with_blocklist_defaults_and_per_device_blocklist() {
+        let f = write(
+            "bl",
+            r#"{
+                "_blocklist_defaults": {
+                    "commands": [
+                        {"action":"deny","pattern":"request system *"}
+                    ],
+                    "config": [
+                        {"action":"deny","pattern":"delete *"}
+                    ]
+                },
+                "r1": {
+                    "ip":"1.2.3.4","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {
+                        "commands": [
+                            {"action":"allow","pattern":"request system reboot"}
+                        ]
+                    }
+                }
+            }"#,
+        );
+        let inv = Inventory::load(f.path()).unwrap();
+        let defaults = inv.blocklist_defaults().expect("defaults present");
+        assert_eq!(defaults.commands.len(), 1);
+        assert_eq!(defaults.config.len(), 1);
+        let r1 = inv.get("r1").unwrap();
+        let r1_bl = r1.blocklist.as_ref().expect("r1 has blocklist");
+        assert_eq!(r1_bl.commands.len(), 1);
+        assert!(r1_bl.config.is_empty());
+    }
+
+    #[test]
+    fn v0_1_inventory_without_blocklist_loads_unchanged() {
+        let f = write(
+            "v01",
+            r#"{
+                "r1":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        let inv = Inventory::load(f.path()).unwrap();
+        assert!(inv.blocklist_defaults().is_none());
+        assert!(inv.get("r1").unwrap().blocklist.is_none());
+    }
+
+    #[test]
+    fn missing_blocklist_subkeys_default_to_empty() {
+        let f = write(
+            "empty",
+            r#"{
+                "_blocklist_defaults": {},
+                "r1":{
+                    "ip":"1.2.3.4","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {}
+                }
+            }"#,
+        );
+        let inv = Inventory::load(f.path()).unwrap();
+        let d = inv.blocklist_defaults().unwrap();
+        assert!(d.commands.is_empty() && d.config.is_empty());
+        let r1bl = inv.get("r1").unwrap().blocklist.as_ref().unwrap();
+        assert!(r1bl.commands.is_empty() && r1bl.config.is_empty());
+    }
 }
 
 impl Inventory {
@@ -295,6 +401,12 @@ impl Inventory {
     /// Source path the inventory was loaded from. Used by v0.2 `reload_devices`.
     pub fn source_path(&self) -> &Path {
         &self.source_path
+    }
+
+    /// Top-level blocklist defaults merged into every device's effective rule
+    /// set. `None` if the file has no `_blocklist_defaults` key.
+    pub fn blocklist_defaults(&self) -> Option<&BlocklistRules> {
+        self.blocklist_defaults.as_ref()
     }
 }
 
@@ -339,5 +451,40 @@ mod accessor_tests {
         }"#,
         );
         assert_eq!(inv.names(), vec!["a".to_string(), "z".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod rule_type_tests {
+    use super::*;
+
+    #[test]
+    fn rule_spec_parses_deny() {
+        let json = r#"{"action":"deny","pattern":"request system *"}"#;
+        let r: RuleSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(r.pattern, "request system *");
+        assert!(matches!(r.action, Action::Deny));
+    }
+
+    #[test]
+    fn rule_spec_parses_allow() {
+        let json = r#"{"action":"allow","pattern":"show *"}"#;
+        let r: RuleSpec = serde_json::from_str(json).unwrap();
+        assert!(matches!(r.action, Action::Allow));
+    }
+
+    #[test]
+    fn rule_spec_rejects_unknown_action() {
+        let json = r#"{"action":"audit","pattern":"x"}"#;
+        let r: Result<RuleSpec, _> = serde_json::from_str(json);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn blocklist_rules_default_to_empty_lists() {
+        let json = r#"{}"#;
+        let b: BlocklistRules = serde_json::from_str(json).unwrap();
+        assert!(b.commands.is_empty());
+        assert!(b.config.is_empty());
     }
 }

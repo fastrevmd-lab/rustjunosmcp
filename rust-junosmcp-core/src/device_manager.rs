@@ -16,6 +16,12 @@ impl DeviceManager {
         Self { inventory }
     }
 
+    /// Borrow the inventory used to resolve devices. Used by tool handlers
+    /// that need to validate router names before running other checks.
+    pub fn inventory(&self) -> &Inventory {
+        &self.inventory
+    }
+
     /// Open a fresh `rustez::Device` for the named router. Caller is
     /// responsible for `close()`.
     ///

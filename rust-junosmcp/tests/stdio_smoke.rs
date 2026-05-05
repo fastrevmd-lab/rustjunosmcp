@@ -126,3 +126,106 @@ fn lists_six_tools() {
         "extra/missing tools: got {names:?}"
     );
 }
+
+#[test]
+fn denied_command_returns_tool_error() {
+    let status = std::process::Command::new("cargo")
+        .args(["build", "-p", "rust-junosmcp"])
+        .status()
+        .expect("cargo build");
+    assert!(status.success(), "cargo build failed");
+
+    // Inventory with a deny rule and one (unreachable) device. The deny
+    // short-circuits before any connection attempt, so unreachability is fine.
+    let inv = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        inv.path(),
+        r#"{
+            "_blocklist_defaults":{"commands":[{"action":"deny","pattern":"request system *"}]},
+            "r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(binary_path())
+        .args(["-f", inv.path().to_str().unwrap(), "-t", "stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn rust-junosmcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    fn send(stdin: &mut impl Write, msg: &Value) {
+        let line = serde_json::to_string(msg).unwrap();
+        writeln!(stdin, "{line}").unwrap();
+        stdin.flush().unwrap();
+    }
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize",
+            "params":{
+                "protocolVersion":"2025-03-26","capabilities":{},
+                "clientInfo":{"name":"smoke","version":"0.1"}
+            }
+        }),
+    );
+    send(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{
+                "name":"execute_junos_command",
+                "arguments":{
+                    "router_name":"r1",
+                    "command":"request system reboot",
+                    "timeout":1
+                }
+            }
+        }),
+    );
+
+    use std::io::{BufRead, BufReader};
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut response: Option<Value> = None;
+    let mut reader = BufReader::new(&mut stdout);
+    while Instant::now() < deadline && response.is_none() {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        let v: Value = match serde_json::from_str(line.trim()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("id") == Some(&json!(2)) {
+            response = Some(v);
+        }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let resp = response.expect("did not receive tools/call response within 15s");
+    // rmcp surfaces tool errors as a CallToolResult with `isError: true` and
+    // text content; assert both shape and message content.
+    let result = resp.pointer("/result").expect("missing /result");
+    assert_eq!(result.get("isError"), Some(&json!(true)));
+    let body = serde_json::to_string(result).unwrap();
+    assert!(
+        body.contains("denied by blocklist"),
+        "expected denial message in: {body}"
+    );
+    assert!(
+        body.contains("request system *"),
+        "expected matched-rule pattern in: {body}"
+    );
+}

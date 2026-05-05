@@ -19,4 +19,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 schemars     = "1.0"
 anyhow       = "1"
 rustez       = { path = "../rustEZ/rustez" }
+globset      = "0.4"
 # rmcp 0.x — pinned at task 16; placeholder here

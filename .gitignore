@@ -24,3 +24,6 @@ devices.json
 
 # Build output
 dist/
+
+# Local worktrees
+.worktrees/

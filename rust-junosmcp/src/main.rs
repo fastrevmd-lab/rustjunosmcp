@@ -5,14 +5,13 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use cli::{Cli, Transport};
 use rmcp::ServiceExt;
-use rust_junosmcp_core::{DeviceManager, Inventory};
+use rust_junosmcp_core::{DeviceManager, Inventory, Policy};
 use server::JmcpHandler;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Logs to stderr — stdout is reserved for MCP framing on stdio transport.
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -39,8 +38,18 @@ async fn main() -> Result<()> {
         "loaded inventory"
     );
 
+    let policy = Arc::new(Policy::build(&inventory).context("compiling blocklist policy")?);
+    let counts = policy.rule_counts();
+    tracing::info!(
+        default_command_rules = counts.default_commands,
+        default_config_rules = counts.default_config,
+        devices_with_rules = counts.devices_with_rules,
+        total_devices = inventory.names().len(),
+        "blocklist policy loaded"
+    );
+
     let dev_manager = Arc::new(DeviceManager::new(inventory.clone()));
-    let handler = JmcpHandler::new(inventory, dev_manager);
+    let handler = JmcpHandler::new(inventory, dev_manager, policy);
 
     let service = handler
         .serve((tokio::io::stdin(), tokio::io::stdout()))
