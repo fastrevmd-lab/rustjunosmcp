@@ -148,19 +148,21 @@ use std::collections::HashMap;
 /// parsed inventory.
 #[derive(Debug)]
 pub struct Policy {
-    /// Compiled defaults (commands, config) shared by every device.
+    /// Compiled defaults (commands, config, pfe_commands) shared by every device.
     default_commands: Vec<CompiledRule>,
     default_config: Vec<CompiledRule>,
+    default_pfe_commands: Vec<CompiledRule>,
     /// Per-device additions to defaults.
     device_commands: HashMap<String, Vec<CompiledRule>>,
     device_config: HashMap<String, Vec<CompiledRule>>,
+    device_pfe_commands: HashMap<String, Vec<CompiledRule>>,
 }
 
 impl Policy {
     /// Compile every glob in the inventory. Returns the first compile error
     /// encountered, scoped to its source location.
     pub fn build(inv: &crate::Inventory) -> Result<Self, JmcpError> {
-        let (default_commands, default_config) = match inv.blocklist_defaults() {
+        let (default_commands, default_config, default_pfe_commands) = match inv.blocklist_defaults() {
             Some(d) => (
                 compile_rules(
                     &d.commands,
@@ -172,17 +174,24 @@ impl Policy {
                     "_blocklist_defaults.config",
                     RuleSource::Defaults,
                 )?,
+                compile_rules(
+                    &d.pfe_commands,
+                    "_blocklist_defaults.pfe_commands",
+                    RuleSource::Defaults,
+                )?,
             ),
-            None => (Vec::new(), Vec::new()),
+            None => (Vec::new(), Vec::new(), Vec::new()),
         };
 
         let mut device_commands = HashMap::new();
         let mut device_config = HashMap::new();
+        let mut device_pfe_commands = HashMap::new();
         for name in inv.names() {
             let entry = inv.get(&name)?;
             if let Some(bl) = entry.blocklist.as_ref() {
                 let cmd_scope = format!("device '{name}'.blocklist.commands");
                 let cfg_scope = format!("device '{name}'.blocklist.config");
+                let pfe_scope = format!("device '{name}'.blocklist.pfe_commands");
                 let cmds = compile_rules(&bl.commands, &cmd_scope, RuleSource::Device)?;
                 if !cmds.is_empty() {
                     device_commands.insert(name.clone(), cmds);
@@ -191,14 +200,20 @@ impl Policy {
                 if !cfgs.is_empty() {
                     device_config.insert(name.clone(), cfgs);
                 }
+                let pfes = compile_rules(&bl.pfe_commands, &pfe_scope, RuleSource::Device)?;
+                if !pfes.is_empty() {
+                    device_pfe_commands.insert(name.clone(), pfes);
+                }
             }
         }
 
         Ok(Self {
             default_commands,
             default_config,
+            default_pfe_commands,
             device_commands,
             device_config,
+            device_pfe_commands,
         })
     }
 
@@ -221,6 +236,19 @@ impl Policy {
             .iter()
             .chain(
                 self.device_config
+                    .get(router)
+                    .into_iter()
+                    .flat_map(|v| v.iter()),
+            )
+            .collect()
+    }
+
+    /// Effective PFE-command rules for a device = defaults ⊕ device.
+    pub fn pfe_command_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+        self.default_pfe_commands
+            .iter()
+            .chain(
+                self.device_pfe_commands
                     .get(router)
                     .into_iter()
                     .flat_map(|v| v.iter()),
@@ -286,11 +314,13 @@ impl Policy {
             .device_commands
             .keys()
             .chain(self.device_config.keys())
+            .chain(self.device_pfe_commands.keys())
             .collect::<std::collections::HashSet<_>>()
             .len();
         PolicyCounts {
             default_commands: self.default_commands.len(),
             default_config: self.default_config.len(),
+            default_pfe_commands: self.default_pfe_commands.len(),
             devices_with_rules,
         }
     }
@@ -301,6 +331,7 @@ impl Policy {
 pub struct PolicyCounts {
     pub default_commands: usize,
     pub default_config: usize,
+    pub default_pfe_commands: usize,
     pub devices_with_rules: usize,
 }
 
@@ -613,5 +644,46 @@ mod tests {
         let payload = "delete interfaces ge-0/0/0\nset interfaces ge-0/0/0 description new";
         let r = p.check_config("r1", "set", payload).unwrap();
         assert!(matches!(r, Decision::Allow));
+    }
+
+    #[test]
+    fn build_collects_pfe_commands_from_defaults_and_device() {
+        let inv = inv_from(
+            r#"{
+                "_blocklist_defaults": {
+                    "pfe_commands": [{"action":"deny","pattern":"set *"}]
+                },
+                "r1":{
+                    "ip":"1.1.1.1","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {
+                        "pfe_commands": [{"action":"allow","pattern":"set debug *"}]
+                    }
+                }
+            }"#,
+        );
+        let p = Policy::build(&inv).unwrap();
+        let r1_pfe = p.pfe_command_rules_for("r1");
+        assert_eq!(r1_pfe.len(), 2);
+        assert!(r1_pfe.iter().any(|r| r.source == RuleSource::Defaults));
+        assert!(r1_pfe.iter().any(|r| r.source == RuleSource::Device));
+    }
+
+    #[test]
+    fn pfe_rules_independent_from_command_rules() {
+        let inv = inv_from(
+            r#"{
+                "_blocklist_defaults": {
+                    "commands": [{"action":"deny","pattern":"request system *"}],
+                    "pfe_commands": [{"action":"deny","pattern":"set *"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        let p = Policy::build(&inv).unwrap();
+        assert_eq!(p.command_rules_for("r1").len(), 1);
+        assert_eq!(p.pfe_command_rules_for("r1").len(), 1);
+        assert_eq!(p.command_rules_for("r1")[0].pattern, "request system *");
+        assert_eq!(p.pfe_command_rules_for("r1")[0].pattern, "set *");
     }
 }
