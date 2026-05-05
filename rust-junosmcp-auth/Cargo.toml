@@ -18,6 +18,4 @@ base64ct     = { workspace = true }
 chrono       = { workspace = true }
 arc-swap     = { workspace = true }
 tracing      = { workspace = true }
-
-[dev-dependencies]
 tempfile     = "3"

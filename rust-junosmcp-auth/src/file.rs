@@ -94,6 +94,81 @@ impl TokenStoreFile {
 
         TokenStore::try_new(parsed.tokens).map_err(|e| TokenStoreError::Invalid(format!("duplicate: {}", e.0)))
     }
+
+    /// Atomically write the store to `path` (tempfile-in-same-dir → write →
+    /// fsync → rename). The rename is atomic on the same filesystem, so
+    /// readers never see a half-written file.
+    pub fn save(path: &Path, store: &TokenStore) -> Result<(), TokenStoreError> {
+        use std::io::Write;
+        let parent = path.parent().ok_or_else(|| TokenStoreError::Invalid(
+            format!("path has no parent: {}", path.display())
+        ))?;
+        let on_disk = OnDisk { version: 1, tokens: store.entries().to_vec() };
+        let json = serde_json::to_vec_pretty(&on_disk)?;
+
+        let tmp = tempfile::Builder::new()
+            .prefix(".tokens-")
+            .suffix(".tmp")
+            .tempfile_in(parent)?;
+        {
+            let (mut file, tmp_path) = tmp.keep().map_err(|e| TokenStoreError::Io(e.error))?;
+            file.write_all(&json)?;
+            file.sync_all()?;
+            std::fs::rename(&tmp_path, path)?;
+        }
+        Ok(())
+    }
+
+    /// Mint a new token, append it to the store at `path`, and persist.
+    /// Returns the freshly-minted secret (the only time the plaintext exists).
+    pub fn add(
+        path: &Path,
+        name: &str,
+        routers: ScopeSet,
+        tools: ScopeSet,
+    ) -> Result<crate::token::Secret, TokenStoreError> {
+        // Validate tools against KNOWN_TOOLS up front.
+        if let ScopeSet::Allowlist(list) = &tools {
+            for t in list {
+                if !KNOWN_TOOLS.contains(&t.as_str()) {
+                    return Err(TokenStoreError::Invalid(format!(
+                        "unknown tool '{}': known tools are {:?}", t, KNOWN_TOOLS
+                    )));
+                }
+            }
+        }
+
+        let store = if path.exists() {
+            Self::load(path, &[])?
+        } else {
+            TokenStore::new(vec![])
+        };
+        if store.entries().iter().any(|e| e.name == name) {
+            return Err(TokenStoreError::Invalid(format!("token '{name}' already exists")));
+        }
+        let (secret, hash) = crate::token::Secret::mint();
+        let mut entries = store.entries().to_vec();
+        entries.push(TokenEntry {
+            name: name.into(),
+            hash,
+            routers,
+            tools,
+            created_at: chrono::Utc::now(),
+        });
+        Self::save(path, &TokenStore::try_new(entries).map_err(|e| TokenStoreError::Invalid(e.0))?)?;
+        Ok(secret)
+    }
+
+    /// Remove the named entry. Returns `true` if a token was removed,
+    /// `false` if no entry by that name existed (idempotent).
+    pub fn revoke(path: &Path, name: &str) -> Result<bool, TokenStoreError> {
+        let store = Self::load(path, &[])?;
+        let before = store.len();
+        let entries: Vec<_> = store.entries().iter().filter(|e| e.name != name).cloned().collect();
+        let removed = entries.len() < before;
+        Self::save(path, &TokenStore::new(entries))?;
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +292,82 @@ mod tests {
         }}"#));
         let store = TokenStoreFile::load(f.path(), &[]).unwrap();
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn save_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        let reloaded = TokenStoreFile::load(&path, &[]).unwrap();
+        assert_eq!(reloaded.len(), 0);
+    }
+
+    #[test]
+    fn save_is_atomic_no_temp_files_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "tokens.json")
+            .collect();
+        assert!(leftovers.is_empty(), "stray temp files: {leftovers:?}");
+    }
+
+    #[test]
+    fn add_appends_new_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+
+        let secret = TokenStoreFile::add(
+            &path,
+            "alice",
+            ScopeSet::Wildcard,
+            ScopeSet::Allowlist(vec!["get_router_list".into()]),
+        ).unwrap();
+        assert_eq!(secret.expose().len(), 43);
+
+        let store = TokenStoreFile::load(&path, &[]).unwrap();
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.entries()[0].name, "alice");
+        // Hash on disk is not the secret.
+        assert_ne!(store.entries()[0].hash.as_str(), secret.expose());
+    }
+
+    #[test]
+    fn add_rejects_duplicate_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+        // Can't use `.unwrap_err()` here because `Secret` deliberately does
+        // not impl `Debug` (keeps plaintext out of panic messages / logs).
+        let err = match TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard) {
+            Ok(_) => panic!("expected duplicate-name rejection"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, TokenStoreError::Invalid(s) if s.contains("alice")));
+    }
+
+    #[test]
+    fn revoke_removes_named_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+        let removed = TokenStoreFile::revoke(&path, "alice").unwrap();
+        assert!(removed);
+        assert_eq!(TokenStoreFile::load(&path, &[]).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn revoke_missing_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        let removed = TokenStoreFile::revoke(&path, "nobody").unwrap();
+        assert!(!removed);
     }
 }
