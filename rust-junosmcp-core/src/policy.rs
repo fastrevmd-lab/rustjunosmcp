@@ -94,6 +94,57 @@ pub(crate) fn compile_rules(
         .collect()
 }
 
+/// Outcome of a policy check.
+#[derive(Debug)]
+pub enum Decision<'a> {
+    Allow,
+    Deny {
+        rule: &'a CompiledRule,
+        source: RuleSource,
+        /// Set only for config-domain checks; identifies the offending line
+        /// (1-indexed, comment lines counted).
+        line_number: Option<usize>,
+    },
+}
+
+/// Trim and collapse runs of whitespace to a single space.
+pub(crate) fn normalize_input(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_ws = false;
+    for c in s.trim().chars() {
+        if c.is_whitespace() {
+            if !last_was_ws {
+                out.push(' ');
+                last_was_ws = true;
+            }
+        } else {
+            out.push(c);
+            last_was_ws = false;
+        }
+    }
+    out
+}
+
+/// Pick the most-specific matching rule. Tiebreak: device > defaults.
+fn evaluate<'r, 's>(
+    rules: &'s [&'r CompiledRule],
+    candidate: &str,
+) -> Option<&'r CompiledRule> {
+    rules
+        .iter()
+        .filter(|r| r.matcher.is_match(candidate))
+        .copied()
+        .max_by(|a, b| {
+            a.specificity
+                .cmp(&b.specificity)
+                .then_with(|| match (a.source, b.source) {
+                    (RuleSource::Device, RuleSource::Defaults) => std::cmp::Ordering::Greater,
+                    (RuleSource::Defaults, RuleSource::Device) => std::cmp::Ordering::Less,
+                    _ => std::cmp::Ordering::Equal,
+                })
+        })
+}
+
 use std::collections::HashMap;
 
 /// Compiled, per-device blocklist policy. Built once at startup from the
@@ -178,6 +229,21 @@ impl Policy {
                     .flat_map(|v| v.iter()),
             )
             .collect()
+    }
+
+    /// Decide whether `command` is allowed on `router`. Whitespace-normalized
+    /// before matching.
+    pub fn check_command<'a>(&'a self, router: &str, command: &str) -> Decision<'a> {
+        let normalized = normalize_input(command);
+        let rules = self.command_rules_for(router);
+        match evaluate(&rules, &normalized) {
+            Some(rule) if rule.action == Action::Deny => Decision::Deny {
+                rule,
+                source: rule.source,
+                line_number: None,
+            },
+            _ => Decision::Allow,
+        }
     }
 
     /// Counts for the startup info log.
@@ -344,6 +410,86 @@ mod tests {
                 assert!(scope.contains("commands"));
             }
             _ => panic!("expected BlocklistRuleInvalid, got {err:?}"),
+        }
+    }
+
+    use crate::policy::Decision;
+
+    fn build_policy(json: &str) -> Policy {
+        Policy::build(&inv_from(json)).unwrap()
+    }
+
+    #[test]
+    fn no_rules_allows() {
+        let p = build_policy(
+            r#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        assert!(matches!(p.check_command("r1", "show version"), Decision::Allow));
+    }
+
+    #[test]
+    fn equal_specificity_device_wins() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"request system *"}]},
+                "r1":{
+                    "ip":"1.1.1.1","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {"commands":[{"action":"allow","pattern":"request system *"}]}
+                }
+            }"#,
+        );
+        assert!(matches!(p.check_command("r1", "request system reboot"), Decision::Allow));
+    }
+
+    #[test]
+    fn more_specific_device_allow_overrides_broader_top_deny() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"request system *"}]},
+                "r1":{
+                    "ip":"1.1.1.1","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {"commands":[{"action":"allow","pattern":"request system reboot"}]}
+                }
+            }"#,
+        );
+        assert!(matches!(p.check_command("r1", "request system reboot"), Decision::Allow));
+        assert!(matches!(
+            p.check_command("r1", "request system halt"),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn whitespace_is_normalized() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"request system reboot"}]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(matches!(
+            p.check_command("r1", "  request   system\treboot  "),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn deny_carries_matched_rule_metadata() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"request system *"}]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        match p.check_command("r1", "request system reboot") {
+            Decision::Deny { rule, source, line_number } => {
+                assert_eq!(rule.pattern, "request system *");
+                assert_eq!(source, RuleSource::Defaults);
+                assert!(line_number.is_none());
+            }
+            other => panic!("expected Deny, got {other:?}"),
         }
     }
 }
