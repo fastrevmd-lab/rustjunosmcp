@@ -31,6 +31,7 @@ fn add_then_list_reports_name_no_secret() {
                "--tools", "get_router_list,get_junos_config"])
         .output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty(), "expected empty stderr on successful add, got: {}", String::from_utf8_lossy(&out.stderr));
     let secret = String::from_utf8(out.stdout).unwrap().trim().to_string();
     assert_eq!(secret.len(), 43);
 
@@ -89,6 +90,20 @@ fn rotate_changes_secret_keeps_scopes() {
     let body = std::fs::read_to_string(&tokens).unwrap();
     assert!(body.contains("\"r1\""));
     assert!(body.contains("execute_junos_command"));
+}
+
+#[test]
+fn add_rejects_wildcard_mixed_with_names() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let out = Command::new(binary_path())
+        .args(["token", "add", "--tokens-file", tokens.to_str().unwrap(),
+               "--name", "evil", "--routers", "*,mx-01", "--tools", "*"])
+        .output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(stderr.contains("'*'"), "expected '*'-related error, got: {stderr}");
 }
 
 #[test]

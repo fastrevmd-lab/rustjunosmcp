@@ -170,6 +170,44 @@ impl TokenStoreFile {
         Self::save(path, &TokenStore::new(entries))?;
         Ok(removed)
     }
+
+    /// Atomically rotate the secret for the named entry. Loads the store,
+    /// finds the entry by name (or returns `Invalid` if missing), mints a new
+    /// `(Secret, TokenHash)`, replaces the entry's hash and `created_at`
+    /// (preserving `routers` and `tools`), and saves the result in a single
+    /// atomic rename. Returns the freshly-minted secret.
+    ///
+    /// Unlike `revoke + add`, this is all-or-nothing: a failure mid-rotation
+    /// cannot leave the store without an entry for `name`.
+    pub fn rotate(path: &Path, name: &str) -> Result<crate::token::Secret, TokenStoreError> {
+        let store = Self::load(path, &[])?;
+        if !store.entries().iter().any(|e| e.name == name) {
+            return Err(TokenStoreError::Invalid(format!("no such token '{name}'")));
+        }
+        let (secret, hash) = crate::token::Secret::mint();
+        let entries: Vec<TokenEntry> = store
+            .entries()
+            .iter()
+            .map(|e| {
+                if e.name == name {
+                    TokenEntry {
+                        name: e.name.clone(),
+                        hash: hash.clone(),
+                        routers: e.routers.clone(),
+                        tools: e.tools.clone(),
+                        created_at: chrono::Utc::now(),
+                    }
+                } else {
+                    e.clone()
+                }
+            })
+            .collect();
+        Self::save(
+            path,
+            &TokenStore::try_new(entries).map_err(|e| TokenStoreError::Invalid(e.0))?,
+        )?;
+        Ok(secret)
+    }
 }
 
 #[cfg(test)]
@@ -388,5 +426,40 @@ mod tests {
         TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
         let removed = TokenStoreFile::revoke(&path, "nobody").unwrap();
         assert!(!removed);
+    }
+
+    #[test]
+    fn rotate_preserves_scopes_and_changes_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        let _s1 = TokenStoreFile::add(
+            &path, "alice",
+            ScopeSet::Allowlist(vec!["mx-01".into()]),
+            ScopeSet::Allowlist(vec!["get_router_list".into()]),
+        ).unwrap();
+        let hash_before = TokenStoreFile::load(&path, &[]).unwrap().entries()[0].hash.as_str().to_string();
+
+        let _s2 = TokenStoreFile::rotate(&path, "alice").unwrap();
+        let store_after = TokenStoreFile::load(&path, &[]).unwrap();
+        let entry = &store_after.entries()[0];
+        assert_eq!(entry.name, "alice");
+        assert_ne!(entry.hash.as_str(), hash_before);
+        // Scopes unchanged.
+        match &entry.routers { ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["mx-01".to_string()]), _ => panic!() }
+        match &entry.tools { ScopeSet::Allowlist(v) => assert_eq!(v, &vec!["get_router_list".to_string()]), _ => panic!() }
+    }
+
+    #[test]
+    fn rotate_missing_name_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        // Can't use `.unwrap_err()` because `Secret` deliberately does not impl `Debug`.
+        let err = match TokenStoreFile::rotate(&path, "ghost") {
+            Ok(_) => panic!("expected missing-name rejection"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, TokenStoreError::Invalid(s) if s.contains("ghost")));
     }
 }

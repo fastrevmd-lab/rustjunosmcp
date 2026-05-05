@@ -9,8 +9,8 @@ use std::path::Path;
 pub fn run(action: TokenAction) -> Result<()> {
     match action {
         TokenAction::Add { tokens_file, name, routers, tools, server_pid } => {
-            let routers = parse_scope(routers);
-            let tools = parse_scope(tools);
+            let routers = parse_scope(routers)?;
+            let tools = parse_scope(tools)?;
             let secret = TokenStoreFile::add(&tokens_file, &name, routers, tools)
                 .with_context(|| format!("adding token '{name}'"))?;
             // Print only the secret to stdout; nothing else, so it can be
@@ -33,14 +33,8 @@ pub fn run(action: TokenAction) -> Result<()> {
             Ok(())
         }
         TokenAction::Rotate { tokens_file, name, server_pid } => {
-            let store = TokenStoreFile::load(&tokens_file, &[])
-                .with_context(|| format!("loading {}", tokens_file.display()))?;
-            let existing = store.entries().iter().find(|e| e.name == name)
-                .ok_or_else(|| anyhow::anyhow!("no such token '{name}'"))?;
-            let routers = existing.routers.clone();
-            let tools = existing.tools.clone();
-            TokenStoreFile::revoke(&tokens_file, &name)?;
-            let secret = TokenStoreFile::add(&tokens_file, &name, routers, tools)?;
+            let secret = TokenStoreFile::rotate(&tokens_file, &name)
+                .with_context(|| format!("rotating '{name}'"))?;
             let mut out = std::io::stdout().lock();
             writeln!(out, "{}", secret.expose())?;
             sighup_if_requested(server_pid);
@@ -49,11 +43,14 @@ pub fn run(action: TokenAction) -> Result<()> {
     }
 }
 
-fn parse_scope(parts: Vec<String>) -> ScopeSet {
+fn parse_scope(parts: Vec<String>) -> Result<ScopeSet> {
+    if parts.iter().any(|p| p == "*") && parts.len() > 1 {
+        anyhow::bail!("scope cannot mix '*' with other names: {parts:?}");
+    }
     if parts.len() == 1 && parts[0] == "*" {
-        ScopeSet::Wildcard
+        Ok(ScopeSet::Wildcard)
     } else {
-        ScopeSet::Allowlist(parts)
+        Ok(ScopeSet::Allowlist(parts))
     }
 }
 
@@ -83,6 +80,8 @@ fn list(path: &Path) -> Result<()> {
 #[cfg(unix)]
 fn sighup_if_requested(pid: Option<i32>) {
     if let Some(pid) = pid {
+        // SAFETY: libc::kill is an FFI call with no preconditions on `pid`; invalid pids
+        // return ESRCH/EPERM via errno, which we capture below.
         let r = unsafe { libc::kill(pid, libc::SIGHUP) };
         if r != 0 {
             tracing::warn!(pid, errno = std::io::Error::last_os_error().raw_os_error(),
