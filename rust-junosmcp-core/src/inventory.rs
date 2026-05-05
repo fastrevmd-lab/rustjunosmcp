@@ -102,6 +102,8 @@ pub struct BlocklistRules {
     pub commands: Vec<RuleSpec>,
     #[serde(default)]
     pub config: Vec<RuleSpec>,
+    #[serde(default)]
+    pub pfe_commands: Vec<RuleSpec>,
 }
 
 fn default_port() -> u16 {
@@ -390,6 +392,45 @@ mod load_tests {
         let r1bl = inv.get("r1").unwrap().blocklist.as_ref().unwrap();
         assert!(r1bl.commands.is_empty() && r1bl.config.is_empty());
     }
+
+    #[test]
+    fn loads_inventory_with_pfe_commands() {
+        let f = write(
+            "pfe",
+            r#"{
+                "_blocklist_defaults": {
+                    "pfe_commands": [{"action":"deny","pattern":"set *"}]
+                },
+                "r1": {
+                    "ip":"1.2.3.4","username":"u",
+                    "auth":{"type":"password","password":"x"},
+                    "blocklist": {
+                        "pfe_commands": [{"action":"allow","pattern":"set debug *"}]
+                    }
+                }
+            }"#,
+        );
+        let inv = Inventory::load(f.path()).unwrap();
+        let d = inv.blocklist_defaults().expect("defaults present");
+        assert_eq!(d.pfe_commands.len(), 1);
+        assert_eq!(d.pfe_commands[0].pattern, "set *");
+        let r1bl = inv.get("r1").unwrap().blocklist.as_ref().unwrap();
+        assert_eq!(r1bl.pfe_commands.len(), 1);
+        assert_eq!(r1bl.pfe_commands[0].pattern, "set debug *");
+    }
+
+    #[test]
+    fn missing_pfe_commands_defaults_to_empty() {
+        let f = write(
+            "no_pfe",
+            r#"{
+                "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"x"}]},
+                "r1":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        let inv = Inventory::load(f.path()).unwrap();
+        assert!(inv.blocklist_defaults().unwrap().pfe_commands.is_empty());
+    }
 }
 
 impl Inventory {
@@ -495,5 +536,6 @@ mod rule_type_tests {
         let b: BlocklistRules = serde_json::from_str(json).unwrap();
         assert!(b.commands.is_empty());
         assert!(b.config.is_empty());
+        assert!(b.pfe_commands.is_empty());
     }
 }
