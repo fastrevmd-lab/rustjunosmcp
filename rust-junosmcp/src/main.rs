@@ -77,6 +77,38 @@ async fn main() -> Result<()> {
 
     let handler = JmcpHandler::new(inventory.clone(), dev_manager, policy, token_store.clone());
 
+    // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
+    // tokens file and atomically swap the ArcSwap so subsequent requests see
+    // the new state. Stdio mode and --allow-no-auth produce a None token_store
+    // and skip this entirely.
+    #[cfg(unix)]
+    if let (Some(store_arc), Some(path)) = (token_store.clone(), args.tokens_file.clone()) {
+        let known: Vec<String> = inventory.names();
+        tokio::spawn(async move {
+            let mut hup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to install SIGHUP handler; reload disabled");
+                    return;
+                }
+            };
+            while hup.recv().await.is_some() {
+                let known_refs: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
+                match TokenStoreFile::load(&path, &known_refs) {
+                    Ok(new_store) => {
+                        store_arc.store(Arc::new(new_store));
+                        tracing::info!(path = %path.display(), "token store reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "SIGHUP reload failed; keeping previous store");
+                    }
+                }
+            }
+        });
+    }
+
     match args.transport {
         Transport::Stdio => {
             let service = handler
