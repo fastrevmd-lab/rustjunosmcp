@@ -183,7 +183,11 @@ pub async fn handle(
                         "router": r,
                         "rendered_template": rendered,
                         "config_format": format,
-                        "commit_id": diff_or_id,
+                        // Note: rustez's commit() does not return a server-issued
+                        // commit identifier, so we surface the supplied
+                        // commit_comment instead. Field name reflects what is
+                        // actually returned.
+                        "commit_comment": diff_or_id,
                     })
                 }
             }
@@ -200,7 +204,9 @@ pub async fn handle(
 }
 
 /// Commit (or dry-run) a rendered config payload to one router.
-/// Returns the diff string in dry-run mode, or the commit comment in apply mode.
+/// Returns the diff string in dry-run mode, or the commit comment echo in apply
+/// mode. rustez does not return a server-issued commit identifier, so callers
+/// should treat the apply-mode return value as the comment that was used.
 async fn commit_one(
     router: &str,
     rendered: &str,
@@ -378,7 +384,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["router"], "r1");
         assert_eq!(rows[0]["rendered_template"], "set system host-name r1");
-        assert!(rows[0].get("commit_id").is_none());
+        assert!(rows[0].get("commit_comment").is_none());
         assert!(rows[0].get("error").is_none());
     }
 

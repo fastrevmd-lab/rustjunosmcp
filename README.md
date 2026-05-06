@@ -44,6 +44,7 @@ instead of PyEZ.
 - Vars sniff: first non-whitespace `{` → JSON, otherwise YAML. Both must produce a top-level object.
 - Strict-undefined: missing variables fail with the variable name rather than rendering empty.
 - Auto-format detection: leading `<` → `xml`, any `set ` / `delete ` line → `set`, otherwise `text`. Override via `config_format`.
+- Result shape: one row per router with `rendered_template`, `config_format`, and either `diff` (dry-run), `commit_comment` (apply-mode echo of the supplied comment — rustez does not return a server-issued commit id), or `error`.
 
 **Coming after v0.2.2:** `add_device` / `reload_devices` interactive tools (sub-project #4 PR #7).
 

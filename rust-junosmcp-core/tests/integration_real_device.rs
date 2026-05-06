@@ -235,7 +235,7 @@ async fn live_render_show_version_template_dry_run() {
     assert_eq!(row["router"], "r1");
     assert!(row.get("diff").is_some(), "expected dry-run diff field");
     assert!(
-        row.get("commit_id").is_none(),
-        "expected no commit_id in dry-run"
+        row.get("commit_comment").is_none(),
+        "expected no commit_comment in dry-run"
     );
 }
