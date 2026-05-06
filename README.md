@@ -5,16 +5,15 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
-> ## v0.2.1 released
+> ## v0.2.2 released
 >
-> PFE + batch tools: `execute_junos_pfe_command` (single FPC-targeted PFE call)
-> and `execute_junos_command_batch` (N routers x M commands, parallel across
-> routers). New independent `pfe_commands` blocklist list.
+> Reaches full upstream tool-surface parity (11 tools): adds
+> `render_and_apply_j2_template` (templates with YAML/JSON vars sniff),
+> `add_device` (atomic devices.json write), and `reload_devices` (file
+> swap). New CLI flags `--inventory-readonly` and
+> `--allow-password-auth-add`. SIGHUP now also reloads inventory.
 >
-> See the [v0.2.1 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.1)
-> and the [v0.2 follow-up: PFE + batch](#v02-follow-up-pfe--batch-released)
-> section below. v0.2.0 (remote transport + auth) notes remain at
-> [v0.2.0](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.0).
+> See the [v0.2.2 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.2).
 
 ## Feature scope
 
@@ -46,7 +45,14 @@ instead of PyEZ.
 - Auto-format detection: leading `<` → `xml`, any `set ` / `delete ` line → `set`, otherwise `text`. Override via `config_format`.
 - Result shape: one row per router with `rendered_template`, `config_format`, and either `diff` (dry-run), `commit_comment` (apply-mode echo of the supplied comment — rustez does not return a server-issued commit id), or `error`.
 
-**Coming after v0.2.2:** `add_device` / `reload_devices` interactive tools (sub-project #4 PR #7).
+### v0.2 follow-up: Inventory mutation (released)
+
+- `add_device` — add a Junos device to the in-memory inventory and persist to `devices.json`. Atomic write (tempfile + rename), preserves `_blocklist_defaults`, per-device `blocklist`, and other top-level fields. SHA-256-based TOCTOU guard rejects calls that race with external edits.
+- `reload_devices` — re-read the current `--device-mapping` (no args) or swap to a new inventory file (`file_name`). Reports added / removed / changed device names.
+- New CLI flags: `--inventory-readonly` (rejects both tools unconditionally), `--allow-password-auth-add` (permits `auth.type=password` in `add_device`; mutually exclusive with `--inventory-readonly`).
+- SIGHUP now also re-reads the inventory in addition to the token store.
+
+**Documented sharp edge:** `add_device` does not modify the token store. If a token has `--routers 'edge-*'` and you `add_device` for `core-3`, the existing token will not see the new router. Mint a new token or rotate scopes after `add_device`.
 
 ## Blocklist guardrails (v0.2)
 
@@ -268,6 +274,11 @@ Options:
           Disable bearer-token auth. Refuses to bind off-loopback
       --allow-insecure-bind
           Bind off-loopback over plain HTTP. Required for non-127.0.0.1 hosts when TLS is not configured
+      --inventory-readonly
+          Reject add_device and reload_devices unconditionally
+      --allow-password-auth-add
+          Permit add_device to accept auth.type=password (mutually exclusive
+          with --inventory-readonly)
   -h, --help
           Print help
   -V, --version
