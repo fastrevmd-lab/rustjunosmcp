@@ -2,12 +2,13 @@
 //!
 //! Drop-in compatible with Juniper/junos-mcp-server.
 
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Authentication config for a Junos device. Tagged enum mirrors the Python
 /// repo's `auth.type` discriminator.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     Password { password: String },
