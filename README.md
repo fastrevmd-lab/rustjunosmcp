@@ -87,6 +87,51 @@ rejected pre-flight in that case.
 > `blocklist` are not cross-compatible with Juniper/junos-mcp-server's
 > inventory format. Files without these fields remain drop-in compatible.
 
+## Performance
+
+Benchmarked against [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
+(Python/PyEZ) on the same vSRX lab devices, same network path.
+
+| Test | rust-junosmcp (v0.3.0) | junos-mcp (Python) | Speedup |
+|------|------------------------|--------------------|---------| 
+| 5 sequential commands | 30.4s (6.1s/cmd) | 52.2s (10.4s/cmd) | **1.7x** |
+| 5 parallel commands | 8.1s (1.6s/cmd) | 11.1s (2.2s/cmd) | **1.4x** |
+| 4 routers x 3 commands (batch) | 16.1s (1.3s/cmd) | N/A | Rust-only |
+
+Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
+on sequential commands to the same router. The batch tool runs routers in
+parallel with a configurable concurrency cap.
+
+## Confirmed commits (v0.3)
+
+`load_and_commit_config` supports Junos `commit confirmed` via the
+`confirm_timeout_mins` parameter. The router auto-rolls back after N
+minutes unless a follow-up commit confirms the change — a critical safety
+net for remote config pushes that might break management connectivity.
+
+```json
+{
+  "router_name": "core-1",
+  "config_text": "set interfaces ge-0/0/0 description test",
+  "confirm_timeout_mins": 10,
+  "commit_comment": "safe change with rollback window"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "diff": "[edit interfaces ge-0/0/0]\n+   description test;",
+  "confirmed": true,
+  "rollback_in_minutes": 10,
+  "message": "Commit confirmed: auto-rollback in 10 minutes unless confirmed. Send another commit to confirm."
+}
+```
+
+To confirm (prevent rollback), send another `load_and_commit_config` with
+the same config (or any valid config) without `confirm_timeout_mins`.
+
 ## Security warning
 
 This server lets an LLM run commands and push configuration changes against
