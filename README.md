@@ -123,8 +123,8 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC).
-pct push 115 dist/rust-junosmcp_0.2.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.2.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.2.1_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.2.1_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json on the LXC, then:
 pct exec 115 -- systemctl enable --now rust-junosmcp
