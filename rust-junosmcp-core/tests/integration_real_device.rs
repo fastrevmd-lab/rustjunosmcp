@@ -239,3 +239,50 @@ async fn live_render_show_version_template_dry_run() {
         "expected no commit_comment in dry-run"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn live_add_device_persists_then_reload() {
+    let host = env("JMCP_TEST_HOST");
+    let user = env("JMCP_TEST_USER");
+    let pass = env("JMCP_TEST_PASS");
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devices.json");
+    std::fs::write(&path, r#"{}"#).unwrap();
+
+    let inv = Arc::new(Inventory::load(&path).unwrap());
+    let hash = rust_junosmcp_core::inventory::hash_file(&path).unwrap();
+    let dm = Arc::new(DeviceManager::with_path(
+        inv,
+        path.clone(),
+        hash,
+        false,
+        true, // allow_password_auth_add=true for the live test
+    ));
+
+    let args = rust_junosmcp_core::tools::AddDeviceArgs {
+        device_name: Some("live-test".into()),
+        device_ip: Some(host.clone()),
+        device_port: Some(22),
+        username: Some(user.clone()),
+        auth: Some(rust_junosmcp_core::inventory::AuthConfig::Password {
+            password: pass.clone(),
+        }),
+    };
+
+    let r = rust_junosmcp_core::tools::add_device::handle(args, dm.clone())
+        .await
+        .expect("add_device handle ok");
+    assert_eq!(r["added"], "live-test");
+
+    // Reload no-args; must observe the device.
+    let r2 = rust_junosmcp_core::tools::reload_devices::handle(
+        rust_junosmcp_core::tools::ReloadDevicesArgs::default(),
+        dm.clone(),
+    )
+    .await
+    .expect("reload ok");
+    assert_eq!(r2["new_router_count"], 1);
+    assert!(dm.inventory().get("live-test").is_ok());
+}
