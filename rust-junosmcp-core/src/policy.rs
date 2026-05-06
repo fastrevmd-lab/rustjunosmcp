@@ -244,6 +244,15 @@ impl Policy {
             .collect()
     }
 
+    /// True if the per-router effective config rule list is non-empty.
+    pub fn has_config_rules_for(&self, router: &str) -> bool {
+        !self.default_config.is_empty()
+            || self
+                .device_config
+                .get(router)
+                .is_some_and(|v| !v.is_empty())
+    }
+
     /// Effective PFE-command rules for a device = defaults ⊕ device.
     pub fn pfe_command_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
         self.default_pfe_commands

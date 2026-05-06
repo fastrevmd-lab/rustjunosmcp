@@ -56,6 +56,7 @@ pub(crate) fn detect_format(rendered: &str) -> &'static str {
 }
 
 use crate::device_manager::DeviceManager;
+use crate::helpers::build_config_payload;
 use crate::policy::Policy;
 use crate::tools::TemplateArgs;
 use serde_json::json;
@@ -98,6 +99,17 @@ pub async fn handle(
         None => detect_format(&rendered).to_string(),
     };
 
+    // Format gate: if any selected router has effective config rules,
+    // the rendered format must be `set`. Same restriction as
+    // load_and_commit_config.
+    if format != "set" {
+        for r in &routers {
+            if policy.has_config_rules_for(r) {
+                return Err(JmcpError::TemplateFormatMismatch { format });
+            }
+        }
+    }
+
     if !args.apply_config {
         let mut rows = Vec::with_capacity(routers.len().max(1));
         if routers.is_empty() {
@@ -118,11 +130,113 @@ pub async fn handle(
         return Ok(json!({ "results": rows, "applied": false }));
     }
 
-    // Apply path lands in Task 8; until then, refuse.
-    let _ = &policy;
-    Err(JmcpError::Validation(
-        "apply_config=true is not yet wired (see Task 8)".into(),
-    ))
+    // Apply path: per-router blocklist on the rendered output, then commit.
+    let mut rows: Vec<serde_json::Value> = Vec::with_capacity(routers.len());
+    for r in &routers {
+        match policy.check_config(r, &format, &rendered)? {
+            crate::policy::Decision::Allow => {}
+            crate::policy::Decision::Deny {
+                rule,
+                source,
+                line_number,
+            } => {
+                let pattern = rule.pattern.clone();
+                let source_str = source.as_str();
+                tracing::warn!(
+                    tool = "render_and_apply_j2_template",
+                    router = %r,
+                    matched_rule = %pattern,
+                    rule_source = %source_str,
+                    line_number = ?line_number,
+                    "blocklist denied request",
+                );
+                rows.push(json!({
+                    "router": r,
+                    "rendered_template": rendered,
+                    "config_format": format,
+                    "error": format!("blocklist denied: pattern `{pattern}` from {source_str}"),
+                }));
+                continue;
+            }
+        }
+
+        let row = match commit_one(
+            r,
+            &rendered,
+            &format,
+            &args.commit_comment,
+            args.dry_run,
+            &dm,
+        )
+        .await
+        {
+            Ok(diff_or_id) => {
+                if args.dry_run {
+                    json!({
+                        "router": r,
+                        "rendered_template": rendered,
+                        "config_format": format,
+                        "diff": diff_or_id,
+                    })
+                } else {
+                    json!({
+                        "router": r,
+                        "rendered_template": rendered,
+                        "config_format": format,
+                        "commit_id": diff_or_id,
+                    })
+                }
+            }
+            Err(e) => json!({
+                "router": r,
+                "rendered_template": rendered,
+                "config_format": format,
+                "error": e.to_string(),
+            }),
+        };
+        rows.push(row);
+    }
+    Ok(json!({ "results": rows, "applied": !args.dry_run }))
+}
+
+/// Commit (or dry-run) a rendered config payload to one router.
+/// Returns the diff string in dry-run mode, or the commit comment in apply mode.
+async fn commit_one(
+    router: &str,
+    rendered: &str,
+    format: &str,
+    commit_comment: &str,
+    dry_run: bool,
+    dm: &Arc<DeviceManager>,
+) -> Result<String, JmcpError> {
+    let payload = build_config_payload(rendered.to_string(), Some(format))?;
+    let mut dev = dm.open(router).await?;
+    let mut cfg = dev.config()?;
+
+    cfg.lock().await?;
+    if let Err(e) = cfg.load(payload).await {
+        let _ = cfg.unlock().await;
+        let _ = dev.close().await;
+        return Err(JmcpError::from(e));
+    }
+    let diff = cfg.diff().await?.unwrap_or_default();
+
+    let result = if dry_run {
+        let _ = cfg.rollback(0).await;
+        Ok(diff)
+    } else {
+        match cfg.commit_with_comment(commit_comment).await {
+            Ok(_) => Ok(commit_comment.to_string()),
+            Err(e) => {
+                let _ = cfg.rollback(0).await;
+                Err(JmcpError::from(e))
+            }
+        }
+    };
+
+    let _ = cfg.unlock().await;
+    let _ = dev.close().await;
+    result
 }
 
 #[cfg(test)]
@@ -290,5 +404,51 @@ mod tests {
         a.router_name = Some("r1".into());
         let r = handle(a, dm, pol).await;
         assert!(matches!(r, Err(JmcpError::Validation(_))));
+    }
+
+    fn args_apply(routers: Vec<&str>, dry_run: bool) -> TemplateArgs {
+        let mut a = args_render_only(routers);
+        a.apply_config = true;
+        a.dry_run = dry_run;
+        a
+    }
+
+    #[tokio::test]
+    async fn apply_blocklist_rejects_rendered_payload_pre_connect() {
+        let inv = inv_with(
+            r#"{
+                "_blocklist_defaults":{"config":[{"action":"deny","pattern":"delete *"}]},
+                "r1":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let pol = Arc::new(Policy::build(&inv).unwrap());
+        let mut a = args_apply(vec!["r1"], false);
+        a.template_content = "set foo\ndelete protocols bgp".into();
+        a.vars_content = "{}".into();
+        let r = handle(a, dm, pol).await.unwrap();
+        let rows = r["results"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0]["error"].as_str().unwrap().contains("delete *"));
+    }
+
+    #[tokio::test]
+    async fn apply_text_format_with_rules_returns_format_mismatch() {
+        let inv = inv_with(
+            r#"{
+                "_blocklist_defaults":{"config":[{"action":"deny","pattern":"delete *"}]},
+                "r1":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let pol = Arc::new(Policy::build(&inv).unwrap());
+        let mut a = args_apply(vec!["r1"], false);
+        a.template_content = "system { host-name r1; }".into();
+        a.vars_content = "{}".into();
+        a.config_format = Some("text".into());
+        let r = handle(a, dm, pol).await;
+        assert!(
+            matches!(r, Err(JmcpError::TemplateFormatMismatch { ref format }) if format == "text")
+        );
     }
 }
