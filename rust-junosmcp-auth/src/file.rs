@@ -14,6 +14,8 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "junos_config_diff",
     "load_and_commit_config",
     "render_and_apply_j2_template",
+    "add_device",
+    "reload_devices",
 ];
 
 #[derive(Debug, thiserror::Error)]
