@@ -1,13 +1,184 @@
-//! Connection lifecycle management. Open-per-call — every tool invocation
-//! opens a fresh `rustez::Device`, runs its operation, and closes it.
+//! Connection lifecycle management with per-router session pooling.
+//!
+//! `DeviceManager::open()` returns a `PooledDevice` RAII guard. When the guard
+//! is dropped, the underlying `rustez::Device` is returned to a single-slot
+//! pool (keyed by router name) for reuse by the next caller — unless the
+//! config-db was left open, in which case the session is closed instead.
 
 use crate::error::JmcpError;
 use crate::inventory::{AuthConfig, Inventory};
 use arc_swap::ArcSwap;
 use rustez::{Device, SshConfigFile};
+use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+
+// ── Pool constants ──────────────────────────────────────────────────────
+
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+const POOL_REAPER_INTERVAL: Duration = Duration::from_secs(60);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+
+// ── Session pool ────────────────────────────────────────────────────────
+
+struct PoolEntry {
+    device: Device,
+    returned_at: Instant,
+}
+
+struct SessionPool {
+    slots: Mutex<HashMap<String, PoolEntry>>,
+    idle_timeout: Duration,
+}
+
+impl SessionPool {
+    fn new() -> Arc<Self> {
+        let pool = Arc::new(Self {
+            slots: Mutex::new(HashMap::new()),
+            idle_timeout: POOL_IDLE_TIMEOUT,
+        });
+        // Spawn the reaper only if we're inside a tokio runtime
+        // (unit tests using #[test] don't have one).
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let weak = Arc::downgrade(&pool);
+            handle.spawn(async move {
+                let mut interval = tokio::time::interval(POOL_REAPER_INTERVAL);
+                loop {
+                    interval.tick().await;
+                    let pool = match weak.upgrade() {
+                        Some(p) => p,
+                        None => return,
+                    };
+                    pool.evict_expired().await;
+                }
+            });
+        }
+        pool
+    }
+
+    async fn evict_expired(&self) {
+        let mut slots = self.slots.lock().await;
+        let now = Instant::now();
+        let expired: Vec<String> = slots
+            .iter()
+            .filter(|(_, e)| now.duration_since(e.returned_at) > self.idle_timeout)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in expired {
+            if let Some(entry) = slots.remove(&key) {
+                tokio::spawn(async move {
+                    let mut d = entry.device;
+                    let _ = d.close().await;
+                });
+            }
+        }
+    }
+
+    async fn try_checkout(&self, name: &str) -> Option<Device> {
+        let mut slots = self.slots.lock().await;
+        let entry = slots.remove(name)?;
+        let now = Instant::now();
+        if now.duration_since(entry.returned_at) > self.idle_timeout {
+            tokio::spawn(async move {
+                let mut d = entry.device;
+                let _ = d.close().await;
+            });
+            return None;
+        }
+        if !entry.device.session_alive() {
+            tokio::spawn(async move {
+                let mut d = entry.device;
+                let _ = d.close().await;
+            });
+            return None;
+        }
+        Some(entry.device)
+    }
+
+    async fn return_session(&self, name: String, dev: Device) {
+        if !dev.session_alive() {
+            let mut d = dev;
+            let _ = d.close().await;
+            return;
+        }
+        let mut slots = self.slots.lock().await;
+        if let Some(old) = slots.insert(
+            name,
+            PoolEntry {
+                device: dev,
+                returned_at: Instant::now(),
+            },
+        ) {
+            tokio::spawn(async move {
+                let mut d = old.device;
+                let _ = d.close().await;
+            });
+        }
+    }
+
+    async fn invalidate(&self, names: &[String]) {
+        let mut slots = self.slots.lock().await;
+        for name in names {
+            if let Some(entry) = slots.remove(name) {
+                tokio::spawn(async move {
+                    let mut d = entry.device;
+                    let _ = d.close().await;
+                });
+            }
+        }
+    }
+}
+
+// ── PooledDevice RAII guard ─────────────────────────────────────────────
+
+/// RAII wrapper around `Device` that returns the session to the pool on drop.
+///
+/// If the config-db is left open (e.g. tool crashed between lock and unlock),
+/// the session is closed instead of pooled.
+pub struct PooledDevice {
+    dev: Option<Device>,
+    router_name: String,
+    pool: Arc<SessionPool>,
+}
+
+impl Deref for PooledDevice {
+    type Target = Device;
+    fn deref(&self) -> &Device {
+        self.dev.as_ref().expect("PooledDevice used after drop")
+    }
+}
+
+impl DerefMut for PooledDevice {
+    fn deref_mut(&mut self) -> &mut Device {
+        self.dev.as_mut().expect("PooledDevice used after drop")
+    }
+}
+
+impl Drop for PooledDevice {
+    fn drop(&mut self) {
+        if let Some(dev) = self.dev.take() {
+            if dev.is_config_db_open() {
+                // Config DB left open — cannot reuse, must close.
+                tokio::spawn(async move {
+                    let mut d = dev;
+                    let _ = d.close().await;
+                });
+            } else {
+                // Return to pool for reuse.
+                let pool = self.pool.clone();
+                let name = self.router_name.clone();
+                tokio::spawn(async move {
+                    pool.return_session(name, dev).await;
+                });
+            }
+        }
+    }
+}
+
+// ── DeviceManager ───────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct DeviceManager {
@@ -17,6 +188,7 @@ pub struct DeviceManager {
     inventory_write_lock: Arc<Mutex<()>>,
     inventory_readonly: bool,
     allow_password_auth_add: bool,
+    pool: Arc<SessionPool>,
 }
 
 impl DeviceManager {
@@ -38,12 +210,10 @@ impl DeviceManager {
             inventory_write_lock: Arc::new(Mutex::new(())),
             inventory_readonly,
             allow_password_auth_add,
+            pool: SessionPool::new(),
         }
     }
 
-    /// Returns an owned snapshot of the current inventory. Cheap (Arc clone);
-    /// readers never block writers, and the snapshot stays valid even if the
-    /// inventory is hot-swapped after this call.
     pub fn inventory(&self) -> Arc<Inventory> {
         self.inventory.load_full()
     }
@@ -68,31 +238,39 @@ impl DeviceManager {
         self.inventory_write_lock.clone()
     }
 
-    /// Atomically swap inventory + path + hash. Caller must hold `write_lock`.
-    ///
-    /// Readers that need a coherent `(inventory, path, hash)` triple must also
-    /// hold `write_lock`; outside the lock these three swaps are observed in
-    /// arbitrary order.
     pub fn store_inventory(&self, inv: Arc<Inventory>, path: PathBuf, hash: [u8; 32]) {
         self.inventory.store(inv);
         self.inventory_path.store(Arc::new(path));
         self.inventory_hash.store(Arc::new(hash));
     }
 
-    /// Open a fresh `rustez::Device` for the named router. Caller is
-    /// responsible for `close()`.
-    ///
-    /// When `ssh_config` is set on the entry, the file is loaded and the
-    /// entry's `ip` is used as the alias to obtain `ProxyJump` and
-    /// `ProxyCommand` settings (mirroring PyEZ). The entry's explicit
-    /// `ip`, `port`, `username`, and `auth` remain authoritative.
-    pub async fn open(&self, router_name: &str) -> Result<Device, JmcpError> {
+    /// Drain pool entries for routers that were removed or whose config changed.
+    pub async fn invalidate_pool(&self, names: &[String]) {
+        self.pool.invalidate(names).await;
+    }
+
+    /// Open a `Device` for the named router, reusing a pooled session if one
+    /// is available and healthy. Returns a `PooledDevice` guard that
+    /// automatically returns the session to the pool on drop.
+    pub async fn open(&self, router_name: &str) -> Result<PooledDevice, JmcpError> {
         let inventory = self.inventory.load();
         let entry = inventory.get(router_name)?;
 
+        // Try the pool first.
+        if let Some(dev) = self.pool.try_checkout(router_name).await {
+            tracing::debug!(router = %router_name, "reusing pooled NETCONF session");
+            return Ok(PooledDevice {
+                dev: Some(dev),
+                router_name: router_name.to_string(),
+                pool: self.pool.clone(),
+            });
+        }
+
+        // No pooled session — open fresh.
         let mut builder = Device::connect(&entry.ip)
             .port(entry.port)
-            .username(&entry.username);
+            .username(&entry.username)
+            .keepalive_interval(KEEPALIVE_INTERVAL);
 
         if let Some(ssh_config_path) = &entry.ssh_config {
             let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
@@ -123,7 +301,12 @@ impl DeviceManager {
             }
         };
 
-        Ok(builder.open().await?)
+        let dev = builder.open().await?;
+        Ok(PooledDevice {
+            dev: Some(dev),
+            router_name: router_name.to_string(),
+            pool: self.pool.clone(),
+        })
     }
 }
 

@@ -222,7 +222,6 @@ async fn commit_one(
     cfg.lock().await?;
     if let Err(e) = cfg.load(payload).await {
         let _ = cfg.unlock().await;
-        let _ = dev.close().await;
         return Err(JmcpError::from(e));
     }
     let diff = cfg.diff().await?.unwrap_or_default();
@@ -241,7 +240,6 @@ async fn commit_one(
     };
 
     let _ = cfg.unlock().await;
-    let _ = dev.close().await;
     result
 }
 

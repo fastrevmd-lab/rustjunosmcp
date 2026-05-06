@@ -24,7 +24,6 @@ pub async fn handle(args: GetConfigArgs, dm: Arc<DeviceManager>) -> Result<Value
     let result = tokio::time::timeout(timeout, async {
         let mut dev = dm.open(&args.router_name).await?;
         let cfg_text = dev.cli("show configuration").await?;
-        let _ = dev.close().await;
         Ok::<_, JmcpError>(cfg_text)
     })
     .await
