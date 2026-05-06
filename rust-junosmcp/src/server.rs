@@ -12,8 +12,8 @@ use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
         batch, config_diff, execute_command, facts, get_config, load_commit, pfe, router_list,
-        ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs,
-        GetConfigArgs, LoadCommitArgs,
+        template, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs,
+        GatherFactsArgs, GetConfigArgs, LoadCommitArgs, TemplateArgs,
     },
     DeviceManager, Inventory, Policy,
 };
@@ -275,6 +275,35 @@ impl JmcpHandler {
             }
         }
         Self::to_call_result(batch::handle(args, self.dm.clone(), self.policy.clone()).await)
+    }
+
+    #[tool(
+        name = "render_and_apply_j2_template",
+        description = "Render a Jinja2 template (inline) with JSON or YAML vars. Optionally commit the rendered config to one or more routers; supports dry-run."
+    )]
+    async fn render_and_apply_j2_template(
+        &self,
+        Parameters(args): Parameters<TemplateArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "render_and_apply_j2_template") {
+            return Self::scope_to_call_result(e);
+        }
+        // Per-router scope is enforced inside the handler against the
+        // resolved router list (router_name OR router_names). Same as
+        // execute_junos_command_batch.
+        let resolved = match (&args.router_name, &args.router_names) {
+            (Some(one), None) => vec![one.clone()],
+            (None, Some(many)) => many.clone(),
+            _ => Vec::new(),
+        };
+        for r in &resolved {
+            if let Err(e) = self.check_router_scope(ctx, "render_and_apply_j2_template", r) {
+                return Self::scope_to_call_result(e);
+            }
+        }
+        Self::to_call_result(template::handle(args, self.dm.clone(), self.policy.clone()).await)
     }
 }
 
