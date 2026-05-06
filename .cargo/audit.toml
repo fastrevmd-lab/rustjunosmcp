@@ -16,4 +16,15 @@ ignore = [
     # rmcp 0.8.5. No security impact; informational only.
     # Track: https://github.com/modelcontextprotocol/rust-sdk
     "RUSTSEC-2024-0436",
+
+    # `serde_yml` 0.0.12 is unsound and unmaintained; YAML string handling
+    # has a potential issue but is not exploitable in our template variable
+    # parsing use case. This is the only available version on crates.io and
+    # is needed for the template tool (Task 1, PR #6).
+    # Track: https://github.com/dtolnay/serde-yaml (actively maintained fork exists)
+    "RUSTSEC-2025-0068",
+
+    # `libyml` 0.0.5 (transitive via serde_yml) is unsound and unmaintained.
+    # Same caveat as RUSTSEC-2025-0068.
+    "RUSTSEC-2025-0067",
 ]

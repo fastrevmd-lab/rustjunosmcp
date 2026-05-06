@@ -40,3 +40,5 @@ axum-server      = { version = "0.8", default-features = false }
 rcgen            = "0.14"
 tempfile         = "3"
 ureq             = "2"
+minijinja        = { version = "2", default-features = false, features = ["builtins", "loader"] }
+serde_yml        = "0.0.12"
