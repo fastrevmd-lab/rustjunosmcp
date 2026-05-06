@@ -13,6 +13,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_junos_config",
     "junos_config_diff",
     "load_and_commit_config",
+    "render_and_apply_j2_template",
 ];
 
 #[derive(Debug, thiserror::Error)]
