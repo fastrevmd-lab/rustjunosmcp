@@ -5,15 +5,19 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
-> ## v0.2.2 released
+> ## v0.3.0 released
 >
-> Reaches full upstream tool-surface parity (11 tools): adds
-> `render_and_apply_j2_template` (templates with YAML/JSON vars sniff),
-> `add_device` (atomic devices.json write), and `reload_devices` (file
-> swap). New CLI flags `--inventory-readonly` and
-> `--allow-password-auth-add`. SIGHUP now also reloads inventory.
+> Session pooling, reliability fixes, and commit confirm. NETCONF sessions
+> are now pooled per-router with a `PooledDevice` RAII guard (300s idle
+> timeout, 30s SSH keepalive, background reaper). Five bug fixes: XML
+> wrapper stripping for `get_junos_config` / `junos_config_diff`, correct
+> `show configuration | compare rollback` command, timeout now covers SSH
+> handshake, batch returns partial results for unknown routers. New
+> `confirm_timeout_mins` parameter on `load_and_commit_config` for
+> confirmed commits with auto-rollback. Switched `rustez` dependency from
+> path to crates.io 0.10.1.
 >
-> See the [v0.2.2 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.2).
+> See the [v0.3.0 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.3.0).
 
 ## Feature scope
 
@@ -54,6 +58,14 @@ instead of PyEZ.
 
 **Documented sharp edge:** `add_device` does not modify the token store. If a token has `--routers 'edge-*'` and you `add_device` for `core-3`, the existing token will not see the new router. Mint a new token or rotate scopes after `add_device`.
 
+### v0.3 (released)
+
+- **NETCONF session pooling** — `PooledDevice` RAII guard with per-router single-slot pool (300s idle timeout, 30s SSH keepalive, background reaper). Eliminates SSH handshake overhead on sequential commands.
+- **Tool reliability fixes** — XML wrapper stripping for `get_junos_config` and `junos_config_diff`, corrected `show configuration | compare rollback N` command, timeout now covers SSH connect + NETCONF handshake (not just CLI execution).
+- **Batch partial results** — `execute_junos_command_batch` returns inline error rows for unknown routers instead of aborting the entire batch. Blocklist violations remain strict.
+- **Confirmed commits** — `load_and_commit_config` gains `confirm_timeout_mins` parameter for `commit confirmed N` with auto-rollback safety net.
+- **crates.io dependency** — `rustez` switched from path dep to crates.io 0.10.1; CI no longer requires sibling repo checkout.
+
 ## Blocklist guardrails (v0.2)
 
 `devices.json` may carry an optional `_blocklist_defaults` block plus an
@@ -89,12 +101,10 @@ before deploying. The same warnings apply.
 ## Quick start (local)
 
 ```bash
-# Clone alongside rustEZ (path dependency in v0.1).
-git clone https://github.com/fastrevmd-lab/rustEZ.git
 git clone https://github.com/fastrevmd-lab/RustJunosMCP.git
 cd RustJunosMCP
 
-# Build.
+# Build (rustez pulled from crates.io automatically).
 cargo build --release
 
 # Configure devices.
@@ -121,14 +131,13 @@ $EDITOR devices.json   # set ip / username / auth
 ## Docker
 
 ```bash
-# Build (must run from parent dir containing both RustJunosMCP and rustEZ).
-docker build -f RustJunosMCP/Dockerfile -t rust-junosmcp:0.2 .
+docker build -t rust-junosmcp:0.3 .
 
 # Run.
 docker run --rm -i \
   -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
   -v $PWD/keys:/etc/jmcp/keys:ro \
-  rust-junosmcp:0.2
+  rust-junosmcp:0.3
 ```
 
 ## LXC (Proxmox)
@@ -138,8 +147,8 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC).
-pct push 115 dist/rust-junosmcp_0.2.2_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.2.2_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.3.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.3.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json on the LXC, then:
 pct exec 115 -- systemctl enable --now rust-junosmcp
