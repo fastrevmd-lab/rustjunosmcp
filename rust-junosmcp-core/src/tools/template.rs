@@ -40,6 +40,24 @@ pub(crate) fn render(template_content: &str, vars: &Value) -> Result<String, Jmc
         .map_err(|e| JmcpError::TemplateRender(format!("{e}")))
 }
 
+/// Auto-detect Junos config format from the rendered string.
+/// Returns "xml" if the first non-whitespace char is `<`, "set" if any line
+/// starts with `set ` or `delete `, otherwise "text".
+#[allow(dead_code)]
+pub(crate) fn detect_format(rendered: &str) -> &'static str {
+    let trimmed = rendered.trim_start();
+    if trimmed.starts_with('<') {
+        return "xml";
+    }
+    for line in rendered.lines() {
+        let line = line.trim_start();
+        if line.starts_with("set ") || line.starts_with("delete ") {
+            return "set";
+        }
+    }
+    "text"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +137,25 @@ mod tests {
     fn render_template_syntax_error_surfaces() {
         let r = render("{{ unterminated", &parse_vars("{}").unwrap());
         assert!(matches!(r, Err(JmcpError::TemplateSyntax(_))));
+    }
+
+    #[test]
+    fn format_autodetect_xml_for_leading_lt() {
+        assert_eq!(detect_format("<configuration>...</configuration>"), "xml");
+        assert_eq!(detect_format("\n  <foo/>"), "xml");
+    }
+
+    #[test]
+    fn format_autodetect_set_for_set_lines() {
+        assert_eq!(detect_format("set system host-name r1"), "set");
+        assert_eq!(detect_format("delete protocols bgp"), "set");
+        // Mixed input, but `set ` line wins:
+        assert_eq!(detect_format("set foo\n# comment\nbar"), "set");
+    }
+
+    #[test]
+    fn format_autodetect_text_otherwise() {
+        assert_eq!(detect_format("system {\n  host-name r1;\n}"), "text");
+        assert_eq!(detect_format(""), "text");
     }
 }
