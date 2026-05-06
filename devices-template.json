@@ -6,6 +6,9 @@
         ],
         "config": [
             {"action": "deny", "pattern": "delete *"}
+        ],
+        "pfe_commands": [
+            {"action": "deny", "pattern": "set *"}
         ]
     },
     "r1": {

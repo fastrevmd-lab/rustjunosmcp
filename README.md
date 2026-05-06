@@ -30,8 +30,14 @@ instead of PyEZ.
 - bearer-token auth with per-token router/tool scopes.
 - SIGHUP hot-reload of the token store.
 
-**Coming after v0.2:** PFE commands, batch execution, Jinja2 templates,
-`add_device` / `reload_devices` interactive tools.
+### v0.2 follow-up: PFE + batch (released)
+
+- `execute_junos_pfe_command` — single PFE-shell call against an explicit FPC target.
+- `execute_junos_command_batch` — N routers x M operational CLI commands, parallel across routers, per-command and optional whole-batch timeouts. Pre-flight blocklist + unknown-router checks; continue-on-error after pre-flight.
+- New `pfe_commands` rule list under `_blocklist_defaults` and per-device `blocklist`. Independent from `commands`.
+
+**Coming after v0.2:** Jinja2 templates, `add_device` / `reload_devices`
+interactive tools.
 
 ## Blocklist guardrails (v0.2)
 
@@ -42,6 +48,8 @@ wins; per-device rules tiebreak top-level defaults. See
 [`devices-template.json`](devices-template.json) for an example, and
 [`docs/superpowers/specs/2026-05-04-blocklist-guardrails-design.md`](docs/superpowers/specs/2026-05-04-blocklist-guardrails-design.md)
 for the full design.
+
+The `pfe_commands` rule list is independent: a deny on `commands` does not gate `execute_junos_pfe_command` and vice versa. Use it to restrict PFE inputs (e.g. `set *`) without affecting the operational CLI.
 
 The blocklist applies to `execute_junos_command` and `load_and_commit_config`.
 For `load_and_commit_config`, `config_format` must be `set` whenever the
