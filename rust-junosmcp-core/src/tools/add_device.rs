@@ -4,6 +4,7 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
 use crate::tools::AddDeviceArgs;
+use std::sync::Arc;
 
 /// Resolved + validated argument bundle. Produced by `validate()`.
 #[derive(Debug)]
@@ -98,12 +99,65 @@ fn is_valid_ip_or_hostname(s: &str) -> bool {
     })
 }
 
+pub async fn handle(
+    args: AddDeviceArgs,
+    dm: Arc<DeviceManager>,
+) -> Result<serde_json::Value, JmcpError> {
+    let resolved = validate(&args, &dm)?;
+
+    let lock = dm.write_lock();
+    let _guard = lock.lock().await;
+
+    let path = dm.inventory_path();
+    if path.as_os_str().is_empty() {
+        return Err(JmcpError::InventoryWrite(
+            "inventory has no on-disk path; add_device requires --device-mapping to point at a writable file".into(),
+        ));
+    }
+
+    // TOCTOU guard: re-read disk and verify hash.
+    let on_disk_hash =
+        crate::inventory::hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+    if on_disk_hash != dm.inventory_hash() {
+        return Err(JmcpError::InventoryDriftedOnDisk);
+    }
+
+    let raw = std::fs::read(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|e| JmcpError::InventoryParse(e.to_string()))?;
+
+    let updated = crate::inventory::insert_device(
+        &value,
+        &resolved.device_name,
+        &resolved.device_ip,
+        resolved.device_port,
+        &resolved.username,
+        &resolved.auth,
+    )?;
+
+    crate::inventory::write_atomic(&path, &updated)
+        .map_err(|e| JmcpError::InventoryWrite(e.to_string()))?;
+
+    let new_hash =
+        crate::inventory::hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+    let new_inv = Arc::new(
+        crate::inventory::Inventory::load(&path)
+            .map_err(|e| JmcpError::InventoryParse(e.to_string()))?,
+    );
+    dm.store_inventory(new_inv, path.clone(), new_hash);
+
+    Ok(serde_json::json!({
+        "added": resolved.device_name,
+        "inventory_path": path,
+        "router_count": dm.inventory().len(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::inventory::Inventory;
     use std::io::Write;
-    use std::sync::Arc;
 
     fn dm_with(json: &str, readonly: bool, allow_pw: bool) -> Arc<DeviceManager> {
         let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -219,5 +273,64 @@ mod tests {
             password: "x".into(),
         });
         validate(&a, &dm).unwrap();
+    }
+
+    #[tokio::test]
+    async fn add_device_persists_to_disk_and_swaps_in_memory() {
+        // Use a tempdir so the inventory file outlives dm_with's scope.
+        let dir = tempfile::TempDir::new().unwrap();
+        let inv_path = dir.path().join("devices.json");
+        let json = r#"{"core-1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#;
+        std::fs::write(&inv_path, json).unwrap();
+        let inv = Arc::new(Inventory::load(&inv_path).unwrap());
+        let hash = crate::inventory::hash_file(&inv_path).unwrap();
+        let dm = Arc::new(DeviceManager::with_path(
+            inv,
+            inv_path.clone(),
+            hash,
+            false,
+            true,
+        ));
+
+        let key = tempfile::NamedTempFile::new().unwrap();
+        let mut args = args_full();
+        args.auth = Some(AuthConfig::SshKey {
+            private_key_path: key.path().to_path_buf(),
+        });
+        let r = handle(args, dm.clone()).await.unwrap();
+        assert_eq!(r["added"], "core-3");
+        assert_eq!(dm.inventory().len(), 2);
+        // Verify disk was updated.
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dm.inventory_path()).unwrap()).unwrap();
+        assert!(on_disk.get("core-3").is_some());
+        // key tempfile must stay alive until after handle() returns.
+        drop(key);
+    }
+
+    #[tokio::test]
+    async fn add_device_drift_check_rejects_external_edit() {
+        // Use a tempdir so the inventory file stays alive after setup.
+        let dir = tempfile::TempDir::new().unwrap();
+        let inv_path = dir.path().join("devices.json");
+        std::fs::write(&inv_path, r#"{}"#).unwrap();
+        let inv = Arc::new(Inventory::load(&inv_path).unwrap());
+        let hash = crate::inventory::hash_file(&inv_path).unwrap();
+        let dm = Arc::new(DeviceManager::with_path(
+            inv,
+            inv_path.clone(),
+            hash,
+            false,
+            true,
+        ));
+
+        // Mutate the file from underneath us, but leave the in-memory hash stale.
+        std::fs::write(
+            dm.inventory_path(),
+            r#"{"sneaky":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+        let r = handle(args_full(), dm).await;
+        assert!(matches!(r, Err(JmcpError::InventoryDriftedOnDisk)));
     }
 }

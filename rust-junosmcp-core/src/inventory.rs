@@ -461,6 +461,16 @@ impl Inventory {
     pub fn blocklist_defaults(&self) -> Option<&BlocklistRules> {
         self.blocklist_defaults.as_ref()
     }
+
+    /// Number of devices currently in this inventory.
+    pub fn len(&self) -> usize {
+        self.devices.len()
+    }
+
+    /// True if the inventory has no devices.
+    pub fn is_empty(&self) -> bool {
+        self.devices.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -541,6 +551,43 @@ mod rule_type_tests {
         assert!(b.config.is_empty());
         assert!(b.pfe_commands.is_empty());
     }
+}
+
+/// Insert a new device into a `serde_json::Value`-shaped inventory.
+/// Preserves all existing top-level keys and key order. Returns the updated
+/// value. Errors if `name` already exists at top-level.
+pub fn insert_device(
+    inv: &serde_json::Value,
+    name: &str,
+    ip: &str,
+    port: u32,
+    username: &str,
+    auth: &AuthConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    let mut out = inv.clone();
+    let entry = serde_json::json!({
+        "ip": ip,
+        "port": port,
+        "username": username,
+        "auth": auth,
+    });
+
+    let inserted = if let Some(obj) = out.as_object_mut() {
+        if obj.contains_key(name) {
+            return Err(JmcpError::DeviceExists(name.to_string()));
+        }
+        obj.insert(name.to_string(), entry);
+        true
+    } else {
+        false
+    };
+
+    if !inserted {
+        return Err(JmcpError::InventoryParse(
+            "top-level inventory is not a JSON object".into(),
+        ));
+    }
+    Ok(out)
 }
 
 /// SHA-256 of the file at `path`. Returns zeros if the file doesn't exist
