@@ -249,8 +249,7 @@ impl JmcpHandler {
         if let Err(e) = self.check_tool_scope(ctx, "execute_junos_pfe_command") {
             return Self::scope_to_call_result(e);
         }
-        if let Err(e) =
-            self.check_router_scope(ctx, "execute_junos_pfe_command", &args.router_name)
+        if let Err(e) = self.check_router_scope(ctx, "execute_junos_pfe_command", &args.router_name)
         {
             return Self::scope_to_call_result(e);
         }

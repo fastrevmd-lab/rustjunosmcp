@@ -142,9 +142,7 @@ fn live_inv() -> Option<Arc<Inventory>> {
     );
     let mut f = tempfile::NamedTempFile::new().unwrap();
     f.write_all(json.as_bytes()).unwrap();
-    Some(Arc::new(
-        Inventory::load(f.path()).unwrap(),
-    ))
+    Some(Arc::new(Inventory::load(f.path()).unwrap()))
 }
 
 #[tokio::test]

@@ -162,26 +162,27 @@ impl Policy {
     /// Compile every glob in the inventory. Returns the first compile error
     /// encountered, scoped to its source location.
     pub fn build(inv: &crate::Inventory) -> Result<Self, JmcpError> {
-        let (default_commands, default_config, default_pfe_commands) = match inv.blocklist_defaults() {
-            Some(d) => (
-                compile_rules(
-                    &d.commands,
-                    "_blocklist_defaults.commands",
-                    RuleSource::Defaults,
-                )?,
-                compile_rules(
-                    &d.config,
-                    "_blocklist_defaults.config",
-                    RuleSource::Defaults,
-                )?,
-                compile_rules(
-                    &d.pfe_commands,
-                    "_blocklist_defaults.pfe_commands",
-                    RuleSource::Defaults,
-                )?,
-            ),
-            None => (Vec::new(), Vec::new(), Vec::new()),
-        };
+        let (default_commands, default_config, default_pfe_commands) =
+            match inv.blocklist_defaults() {
+                Some(d) => (
+                    compile_rules(
+                        &d.commands,
+                        "_blocklist_defaults.commands",
+                        RuleSource::Defaults,
+                    )?,
+                    compile_rules(
+                        &d.config,
+                        "_blocklist_defaults.config",
+                        RuleSource::Defaults,
+                    )?,
+                    compile_rules(
+                        &d.pfe_commands,
+                        "_blocklist_defaults.pfe_commands",
+                        RuleSource::Defaults,
+                    )?,
+                ),
+                None => (Vec::new(), Vec::new(), Vec::new()),
+            };
 
         let mut device_commands = HashMap::new();
         let mut device_config = HashMap::new();
@@ -270,7 +271,6 @@ impl Policy {
             _ => Decision::Allow,
         }
     }
-
 
     /// Decide whether `pfe_command` is allowed on `router`. Whitespace-normalized
     /// before matching. Independent from `check_command`.
@@ -703,7 +703,6 @@ mod tests {
         assert_eq!(p.pfe_command_rules_for("r1")[0].pattern, "set *");
     }
 
-
     #[test]
     fn check_pfe_command_denies_when_pattern_matches() {
         let p = build_policy(
@@ -723,7 +722,10 @@ mod tests {
         let p = build_policy(
             r#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        assert!(matches!(p.check_pfe_command("r1", "show jnh 0 stats"), Decision::Allow));
+        assert!(matches!(
+            p.check_pfe_command("r1", "show jnh 0 stats"),
+            Decision::Allow
+        ));
     }
 
     #[test]
@@ -735,6 +737,9 @@ mod tests {
                 "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
             }"#,
         );
-        assert!(matches!(p.check_pfe_command("r1", "set anything"), Decision::Allow));
+        assert!(matches!(
+            p.check_pfe_command("r1", "set anything"),
+            Decision::Allow
+        ));
     }
 }

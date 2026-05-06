@@ -132,7 +132,9 @@ pub async fn handle_with_runner(
         }
     }
 
-    let permits = Arc::new(tokio::sync::Semaphore::new(args.max_concurrent_routers as usize));
+    let permits = Arc::new(tokio::sync::Semaphore::new(
+        args.max_concurrent_routers as usize,
+    ));
     let cmd_timeout = std::time::Duration::from_secs(args.command_timeout);
     let routers_n = args.routers.len();
     let mut joinset: tokio::task::JoinSet<(usize, RouterResult)> = tokio::task::JoinSet::new();
@@ -246,7 +248,10 @@ async fn run_router(
         outs.push(outcome);
     }
     let _ = session.close().await;
-    RouterResult { router, commands: outs }
+    RouterResult {
+        router,
+        commands: outs,
+    }
 }
 
 #[cfg(test)]
@@ -467,7 +472,9 @@ mod tests {
             batch_timeout: None,
             max_concurrent_routers: 4,
         };
-        let v = super::handle_with_runner(args, dm, pol, runner).await.unwrap();
+        let v = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
         let results = parse_results(v);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].router, "r2");
@@ -495,7 +502,9 @@ mod tests {
             batch_timeout: None,
             max_concurrent_routers: 2,
         };
-        let _ = super::handle_with_runner(args, dm, pol, runner).await.unwrap();
+        let _ = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
         let observed = peak.load(Ordering::SeqCst);
         assert!(observed <= 2, "peak in-flight {observed} exceeded cap of 2");
         assert!(observed >= 1, "expected at least one cli call");
@@ -514,7 +523,9 @@ mod tests {
             batch_timeout: None,
             max_concurrent_routers: 1,
         };
-        let v = super::handle_with_runner(args, dm, pol, runner).await.unwrap();
+        let v = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
         let results = parse_results(v);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].commands.len(), 2);
@@ -540,7 +551,9 @@ mod tests {
             batch_timeout: Some(0),
             max_concurrent_routers: 4,
         };
-        let v = super::handle_with_runner(args, dm, pol, runner).await.unwrap();
+        let v = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
         let results = parse_results(v);
         assert_eq!(results.len(), 2);
         let r2 = results.iter().find(|r| r.router == "r2").unwrap();
@@ -562,7 +575,9 @@ mod tests {
             batch_timeout: None,
             max_concurrent_routers: 1,
         };
-        let v = super::handle_with_runner(args, dm, pol, runner).await.unwrap();
+        let v = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
         let results = parse_results(v);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].commands.len(), 3);

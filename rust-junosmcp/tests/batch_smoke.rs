@@ -11,18 +11,29 @@ fn binary_path() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.pop();
     p.push("target");
-    p.push(if cfg!(debug_assertions) { "debug" } else { "release" });
+    p.push(if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    });
     p.push("rust-junosmcp");
     p
 }
 
 fn ensure_built() {
-    let s = Command::new("cargo").args(["build", "-p", "rust-junosmcp"]).status().unwrap();
+    let s = Command::new("cargo")
+        .args(["build", "-p", "rust-junosmcp"])
+        .status()
+        .unwrap();
     assert!(s.success());
 }
 
 fn pick_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 struct Server {
@@ -41,11 +52,16 @@ fn spawn(inv_path: &std::path::Path, tokens_path: &std::path::Path) -> Server {
     let port = pick_port();
     let mut child = Command::new(binary_path())
         .args([
-            "-f", inv_path.to_str().unwrap(),
-            "-t", "streamable-http",
-            "-H", "127.0.0.1",
-            "-p", &port.to_string(),
-            "--tokens-file", tokens_path.to_str().unwrap(),
+            "-f",
+            inv_path.to_str().unwrap(),
+            "-t",
+            "streamable-http",
+            "-H",
+            "127.0.0.1",
+            "-p",
+            &port.to_string(),
+            "--tokens-file",
+            tokens_path.to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -56,11 +72,16 @@ fn spawn(inv_path: &std::path::Path, tokens_path: &std::path::Path) -> Server {
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut ready = false;
     loop {
-        if Instant::now() > deadline { break; }
+        if Instant::now() > deadline {
+            break;
+        }
         let mut line = String::new();
         match reader.read_line(&mut line) {
             Ok(0) => break,
-            Ok(_) if line.contains("streamable-http listening") => { ready = true; break; }
+            Ok(_) if line.contains("streamable-http listening") => {
+                ready = true;
+                break;
+            }
             Ok(_) => {}
             Err(_) => break,
         }
@@ -79,16 +100,28 @@ fn spawn(inv_path: &std::path::Path, tokens_path: &std::path::Path) -> Server {
             }
         }
     });
-    Server { child, port, _drain: drain }
+    Server {
+        child,
+        port,
+        _drain: drain,
+    }
 }
 
-struct PostResult { code: u16, body: Value, session_id: Option<String> }
+struct PostResult {
+    code: u16,
+    body: Value,
+    session_id: Option<String>,
+}
 
 fn http_post(port: u16, bearer: Option<&str>, sid: Option<&str>, body: Value) -> PostResult {
     let mut req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Accept", "application/json, text/event-stream");
-    if let Some(b) = bearer { req = req.set("Authorization", &format!("Bearer {b}")); }
-    if let Some(s) = sid { req = req.set("Mcp-Session-Id", s); }
+    if let Some(b) = bearer {
+        req = req.set("Authorization", &format!("Bearer {b}"));
+    }
+    if let Some(s) = sid {
+        req = req.set("Mcp-Session-Id", s);
+    }
     let (code, sid_out, ct, text) = match req.send_json(body) {
         Ok(r) => {
             let c = r.status();
@@ -105,14 +138,21 @@ fn http_post(port: u16, bearer: Option<&str>, sid: Option<&str>, body: Value) ->
     };
     let body_value = if ct.contains("text/event-stream") {
         text.lines()
-            .find_map(|l| l.strip_prefix("data:").and_then(|p| serde_json::from_str(p.trim()).ok()))
+            .find_map(|l| {
+                l.strip_prefix("data:")
+                    .and_then(|p| serde_json::from_str(p.trim()).ok())
+            })
             .unwrap_or(json!({}))
     } else if !text.is_empty() {
         serde_json::from_str(&text).unwrap_or(json!({"raw": text}))
     } else {
         json!({})
     };
-    PostResult { code, body: body_value, session_id: sid_out }
+    PostResult {
+        code,
+        body: body_value,
+        session_id: sid_out,
+    }
 }
 
 fn initialize(port: u16, bearer: &str) -> String {
@@ -122,9 +162,18 @@ fn initialize(port: u16, bearer: &str) -> String {
     let r = http_post(port, Some(bearer), None, init);
     assert_eq!(r.code, 200, "initialize failed: {:?}", r.body);
     let sid = r.session_id.expect("Mcp-Session-Id");
-    let n = http_post(port, Some(bearer), Some(&sid),
-        json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
-    assert!(n.code == 200 || n.code == 202, "initialized notification rejected: {} {:?}", n.code, n.body);
+    let n = http_post(
+        port,
+        Some(bearer),
+        Some(&sid),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    assert!(
+        n.code == 200 || n.code == 202,
+        "initialized notification rejected: {} {:?}",
+        n.code,
+        n.body
+    );
     sid
 }
 
@@ -137,11 +186,16 @@ fn write_tmp(json: &str) -> tempfile::NamedTempFile {
 fn add_token(tokens_path: &std::path::Path, name: &str, routers: &str, tools: &str) -> String {
     let out = Command::new(binary_path())
         .args([
-            "token", "add",
-            "--tokens-file", tokens_path.to_str().unwrap(),
-            "--name", name,
-            "--routers", routers,
-            "--tools", tools,
+            "token",
+            "add",
+            "--tokens-file",
+            tokens_path.to_str().unwrap(),
+            "--name",
+            name,
+            "--routers",
+            routers,
+            "--tools",
+            tools,
         ])
         .output()
         .unwrap();
@@ -164,7 +218,10 @@ fn batch_router_scope_first_failure_rejects_call() {
 
     let s = spawn(inv.path(), &toks);
     let sid = initialize(s.port, &secret);
-    let r = http_post(s.port, Some(&secret), Some(&sid),
+    let r = http_post(
+        s.port,
+        Some(&secret),
+        Some(&sid),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
             "name":"execute_junos_command_batch",
             "arguments":{
@@ -173,7 +230,8 @@ fn batch_router_scope_first_failure_rejects_call() {
                 "command_timeout":1,
                 "max_concurrent_routers":2
             }
-        }}));
+        }}),
+    );
     assert_eq!(r.code, 200);
     let result = r.body.pointer("/result").expect("result");
     assert_eq!(result.get("isError"), Some(&json!(true)));
@@ -196,7 +254,10 @@ fn batch_returns_per_router_error_rows_on_unreachable_ips() {
 
     let s = spawn(inv.path(), &toks);
     let sid = initialize(s.port, &secret);
-    let r = http_post(s.port, Some(&secret), Some(&sid),
+    let r = http_post(
+        s.port,
+        Some(&secret),
+        Some(&sid),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
             "name":"execute_junos_command_batch",
             "arguments":{
@@ -206,12 +267,17 @@ fn batch_returns_per_router_error_rows_on_unreachable_ips() {
                 "batch_timeout":3,
                 "max_concurrent_routers":2
             }
-        }}));
+        }}),
+    );
     assert_eq!(r.code, 200);
     let result = r.body.pointer("/result").expect("result");
     // Tool succeeded (not isError) — failures are inside the rows.
     assert_ne!(result.get("isError"), Some(&json!(true)));
-    let content = result.pointer("/content/0/text").expect("content text").as_str().unwrap();
+    let content = result
+        .pointer("/content/0/text")
+        .expect("content text")
+        .as_str()
+        .unwrap();
     let parsed: Value = serde_json::from_str(content).expect("content is JSON");
     let arr = parsed.as_array().expect("array of routers");
     assert_eq!(arr.len(), 2);
