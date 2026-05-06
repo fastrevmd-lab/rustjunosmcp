@@ -196,3 +196,46 @@ async fn live_pfe_show_jnh_stats_packet() {
     let output = v.get("output").and_then(|x| x.as_str()).unwrap();
     assert!(!output.trim().is_empty(), "expected non-empty PFE output");
 }
+
+#[tokio::test]
+#[ignore]
+async fn live_render_show_version_template_dry_run() {
+    let host = std::env::var("JMCP_TEST_HOST").expect("JMCP_TEST_HOST set");
+    let user = std::env::var("JMCP_TEST_USER").expect("JMCP_TEST_USER set");
+    let pass = std::env::var("JMCP_TEST_PASS").expect("JMCP_TEST_PASS set");
+
+    let inv_json = format!(
+        r#"{{"r1":{{"ip":{host:?},"username":{user:?},"auth":{{"type":"password","password":{pass:?}}}}}}}"#
+    );
+
+    // Use tempfile + Inventory::load to be explicit about the path requirement.
+    let mut f = tempfile::NamedTempFile::new().unwrap();
+    f.write_all(inv_json.as_bytes()).unwrap();
+    let inv = Arc::new(rust_junosmcp_core::inventory::Inventory::load(f.path()).unwrap());
+    let dm = Arc::new(rust_junosmcp_core::device_manager::DeviceManager::new(
+        inv.clone(),
+    ));
+    let pol = Arc::new(rust_junosmcp_core::policy::Policy::build(&inv).unwrap());
+
+    let args = rust_junosmcp_core::tools::TemplateArgs {
+        template_content: "set system host-name {{ name }}".into(),
+        vars_content: r#"{"name":"jmcp-test"}"#.into(),
+        router_name: Some("r1".into()),
+        router_names: None,
+        apply_config: true,
+        commit_comment: "rust-junosmcp template smoke".into(),
+        dry_run: true,
+        config_format: None,
+    };
+
+    let r = rust_junosmcp_core::tools::template::handle(args, dm, pol)
+        .await
+        .expect("handle ok");
+    let row = &r["results"][0];
+    assert_eq!(row["router"], "r1");
+    assert!(row.get("diff").is_some(), "expected dry-run diff field");
+    assert!(
+        row.get("commit_id").is_none(),
+        "expected no commit_id in dry-run"
+    );
+}
