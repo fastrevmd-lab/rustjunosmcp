@@ -3,23 +3,27 @@
 
 use crate::error::JmcpError;
 use crate::inventory::{AuthConfig, Inventory};
+use arc_swap::ArcSwap;
 use rustez::{Device, SshConfigFile};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct DeviceManager {
-    inventory: Arc<Inventory>,
+    inventory: Arc<ArcSwap<Inventory>>,
 }
 
 impl DeviceManager {
     pub fn new(inventory: Arc<Inventory>) -> Self {
-        Self { inventory }
+        Self {
+            inventory: Arc::new(ArcSwap::from(inventory)),
+        }
     }
 
-    /// Borrow the inventory used to resolve devices. Used by tool handlers
-    /// that need to validate router names before running other checks.
-    pub fn inventory(&self) -> &Inventory {
-        &self.inventory
+    /// Returns an owned snapshot of the current inventory. Cheap (Arc clone);
+    /// readers never block writers, and the snapshot stays valid even if the
+    /// inventory is hot-swapped after this call.
+    pub fn inventory(&self) -> Arc<Inventory> {
+        self.inventory.load_full()
     }
 
     /// Open a fresh `rustez::Device` for the named router. Caller is
@@ -30,7 +34,8 @@ impl DeviceManager {
     /// `ProxyCommand` settings (mirroring PyEZ). The entry's explicit
     /// `ip`, `port`, `username`, and `auth` remain authoritative.
     pub async fn open(&self, router_name: &str) -> Result<Device, JmcpError> {
-        let entry = self.inventory.get(router_name)?;
+        let inventory = self.inventory.load();
+        let entry = inventory.get(router_name)?;
 
         let mut builder = Device::connect(&entry.ip)
             .port(entry.port)
