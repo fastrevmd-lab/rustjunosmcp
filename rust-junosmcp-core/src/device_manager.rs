@@ -5,17 +5,39 @@ use crate::error::JmcpError;
 use crate::inventory::{AuthConfig, Inventory};
 use arc_swap::ArcSwap;
 use rustez::{Device, SshConfigFile};
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct DeviceManager {
     inventory: Arc<ArcSwap<Inventory>>,
+    inventory_path: Arc<ArcSwap<PathBuf>>,
+    inventory_hash: Arc<ArcSwap<[u8; 32]>>,
+    inventory_write_lock: Arc<Mutex<()>>,
+    inventory_readonly: bool,
+    allow_password_auth_add: bool,
 }
 
 impl DeviceManager {
     pub fn new(inventory: Arc<Inventory>) -> Self {
+        Self::with_path(inventory, PathBuf::new(), [0u8; 32], false, false)
+    }
+
+    pub fn with_path(
+        inventory: Arc<Inventory>,
+        path: PathBuf,
+        hash: [u8; 32],
+        inventory_readonly: bool,
+        allow_password_auth_add: bool,
+    ) -> Self {
         Self {
             inventory: Arc::new(ArcSwap::from(inventory)),
+            inventory_path: Arc::new(ArcSwap::from_pointee(path)),
+            inventory_hash: Arc::new(ArcSwap::from_pointee(hash)),
+            inventory_write_lock: Arc::new(Mutex::new(())),
+            inventory_readonly,
+            allow_password_auth_add,
         }
     }
 
@@ -24,6 +46,37 @@ impl DeviceManager {
     /// inventory is hot-swapped after this call.
     pub fn inventory(&self) -> Arc<Inventory> {
         self.inventory.load_full()
+    }
+
+    pub fn inventory_path(&self) -> PathBuf {
+        (**self.inventory_path.load()).clone()
+    }
+
+    pub fn inventory_hash(&self) -> [u8; 32] {
+        **self.inventory_hash.load()
+    }
+
+    pub fn inventory_readonly(&self) -> bool {
+        self.inventory_readonly
+    }
+
+    pub fn allow_password_auth_add(&self) -> bool {
+        self.allow_password_auth_add
+    }
+
+    pub fn write_lock(&self) -> Arc<Mutex<()>> {
+        self.inventory_write_lock.clone()
+    }
+
+    /// Atomically swap inventory + path + hash. Caller must hold `write_lock`.
+    ///
+    /// Readers that need a coherent `(inventory, path, hash)` triple must also
+    /// hold `write_lock`; outside the lock these three swaps are observed in
+    /// arbitrary order.
+    pub fn store_inventory(&self, inv: Arc<Inventory>, path: PathBuf, hash: [u8; 32]) {
+        self.inventory.store(inv);
+        self.inventory_path.store(Arc::new(path));
+        self.inventory_hash.store(Arc::new(hash));
     }
 
     /// Open a fresh `rustez::Device` for the named router. Caller is

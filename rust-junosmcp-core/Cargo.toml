@@ -20,6 +20,5 @@ async-trait  = { workspace = true }
 minijinja    = { workspace = true }
 serde_yml    = { workspace = true }
 arc-swap     = { workspace = true }
-
-[dev-dependencies]
-tempfile     = "3"
+tempfile     = { workspace = true }
+sha2         = { workspace = true }
