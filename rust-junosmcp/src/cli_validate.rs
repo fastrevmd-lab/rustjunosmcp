@@ -15,9 +15,15 @@ pub enum CliRefusal {
     InsecureBindRequired { host: String },
     #[error("--tls-cert and --tls-key must be set together (got cert={cert}, key={key})")]
     TlsPairIncomplete { cert: bool, key: bool },
+    #[error("--inventory-readonly and --allow-password-auth-add are mutually exclusive")]
+    InventoryFlagConflict,
 }
 
 pub fn validate(cli: &Cli) -> Result<(), CliRefusal> {
+    if cli.inventory_readonly && cli.allow_password_auth_add {
+        return Err(CliRefusal::InventoryFlagConflict);
+    }
+
     if cli.transport == Transport::Stdio {
         return Ok(());
     }
@@ -159,6 +165,15 @@ mod tests {
             "/tmp/c.pem",
         ]));
         assert!(matches!(r, Err(CliRefusal::TlsPairIncomplete { .. })));
+    }
+
+    #[test]
+    fn inventory_readonly_and_allow_password_auth_add_are_mutually_exclusive() {
+        let r = validate(&parse(&[
+            "--inventory-readonly",
+            "--allow-password-auth-add",
+        ]));
+        assert_eq!(r, Err(CliRefusal::InventoryFlagConflict));
     }
 
     #[test]

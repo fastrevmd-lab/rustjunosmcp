@@ -11,11 +11,12 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        batch, config_diff, execute_command, facts, get_config, load_commit, pfe, router_list,
-        template, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs,
-        GatherFactsArgs, GetConfigArgs, LoadCommitArgs, TemplateArgs,
+        add_device, batch, config_diff, execute_command, facts, get_config, load_commit, pfe,
+        reload_devices, router_list, template, AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs,
+        ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs, GetConfigArgs, LoadCommitArgs,
+        ReloadDevicesArgs, TemplateArgs,
     },
-    DeviceManager, Inventory, Policy,
+    DeviceManager, Policy,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -54,14 +55,13 @@ pub enum ScopeError {
 
 #[derive(Clone)]
 pub struct JmcpHandler {
-    inv: Arc<Inventory>,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 }
 
 impl JmcpHandler {
-    pub fn new(inv: Arc<Inventory>, dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
-        Self { inv, dm, policy }
+    pub fn new(dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
+        Self { dm, policy }
     }
 
     fn to_call_result(
@@ -136,7 +136,7 @@ impl JmcpHandler {
         if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(router_list::handle(self.inv.clone()).await)
+        Self::to_call_result(router_list::handle(self.dm.inventory()).await)
     }
 
     #[tool(
@@ -305,6 +305,41 @@ impl JmcpHandler {
         }
         Self::to_call_result(template::handle(args, self.dm.clone(), self.policy.clone()).await)
     }
+
+    #[tool(
+        name = "add_device",
+        description = "Add a Junos device to the in-memory inventory and persist to devices.json. Required fields: device_name, device_ip, username, auth (ssh_key or password). port defaults to 22. With clients that advertise elicitation, missing fields are prompted; otherwise the call returns MissingArguments."
+    )]
+    async fn add_device(
+        &self,
+        Parameters(args): Parameters<AddDeviceArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "add_device") {
+            return Self::scope_to_call_result(e);
+        }
+        // Elicitation: rmcp 0.8.5's elicit API is non-trivial to wire safely
+        // here; the handler returns MissingArguments for absent required fields,
+        // which is the documented contract for non-elicitation transports.
+        Self::to_call_result(add_device::handle(args, self.dm.clone()).await)
+    }
+
+    #[tool(
+        name = "reload_devices",
+        description = "Reload the inventory. With no args, re-reads the current --device-mapping. With file_name, swaps to a new inventory file. Reports added/removed/changed device names."
+    )]
+    async fn reload_devices(
+        &self,
+        Parameters(args): Parameters<ReloadDevicesArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "reload_devices") {
+            return Self::scope_to_call_result(e);
+        }
+        Self::to_call_result(reload_devices::handle(args, self.dm.clone()).await)
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -334,10 +369,10 @@ mod scope_tests {
     use rust_junosmcp_auth::ScopeSet;
 
     fn make_handler() -> JmcpHandler {
-        let inv = Arc::new(Inventory::empty());
+        let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let policy = Arc::new(Policy::build(&inv).unwrap());
-        JmcpHandler::new(inv, dm, policy)
+        JmcpHandler::new(dm, policy)
     }
 
     #[test]

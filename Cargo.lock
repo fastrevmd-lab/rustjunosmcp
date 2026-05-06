@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arc-swap",
  "base64ct",
@@ -2635,8 +2635,9 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "globset",
  "minijinja",
@@ -2645,6 +2646,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yml",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2907,6 +2909,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

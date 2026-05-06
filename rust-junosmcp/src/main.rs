@@ -55,7 +55,16 @@ async fn main() -> Result<()> {
         "blocklist policy loaded"
     );
 
-    let dev_manager = Arc::new(DeviceManager::new(inventory.clone()));
+    let inv_path = args.device_mapping.clone();
+    let inv_hash = rust_junosmcp_core::inventory::hash_file(&inv_path)
+        .with_context(|| format!("hashing {}", inv_path.display()))?;
+    let dev_manager = Arc::new(DeviceManager::with_path(
+        inventory.clone(),
+        inv_path,
+        inv_hash,
+        args.inventory_readonly,
+        args.allow_password_auth_add,
+    ));
 
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
@@ -77,7 +86,7 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    let handler = JmcpHandler::new(inventory.clone(), dev_manager, policy);
+    let handler = JmcpHandler::new(dev_manager.clone(), policy);
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see
@@ -85,9 +94,10 @@ async fn main() -> Result<()> {
     // and skip this entirely.
     #[cfg(unix)]
     if let (Some(store_arc), Some(path)) = (token_store.clone(), args.tokens_file.clone()) {
-        // Snapshot of router names taken at startup. Inventory is immutable at runtime
-        // today; if that ever changes, this Vec must be reloaded too (or made an ArcSwap).
-        let known: Vec<String> = inventory.names();
+        // Inventory is now mutable at runtime (add_device / reload_devices).
+        // We must refresh `known` from dev_manager.inventory().names() each iteration
+        // so token-scope validation sees the post-reload router set.
+        let dm = dev_manager.clone();
         tokio::spawn(async move {
             let mut hup = match tokio::signal::unix::signal(
                 tokio::signal::unix::SignalKind::hangup(),
@@ -99,6 +109,23 @@ async fn main() -> Result<()> {
                 }
             };
             while hup.recv().await.is_some() {
+                tracing::info!("SIGHUP: reloading token store and inventory");
+                // Reload inventory FIRST so the token store sees current routers.
+                match rust_junosmcp_core::tools::reload_devices::handle(
+                    rust_junosmcp_core::tools::ReloadDevicesArgs::default(),
+                    dm.clone(),
+                )
+                .await
+                {
+                    Ok(result) => {
+                        tracing::info!(?result, "inventory reloaded");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "inventory reload failed; keeping previous inventory");
+                    }
+                }
+                // Refresh known router names from the (possibly updated) inventory.
+                let known: Vec<String> = dm.inventory().names();
                 let known_refs: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
                 match TokenStoreFile::load(&path, &known_refs) {
                     Ok(new_store) => {

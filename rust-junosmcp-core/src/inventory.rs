@@ -2,12 +2,13 @@
 //!
 //! Drop-in compatible with Juniper/junos-mcp-server.
 
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Authentication config for a Junos device. Tagged enum mirrors the Python
 /// repo's `auth.type` discriminator.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     Password { password: String },
@@ -172,7 +173,9 @@ mod entry_tests {
 }
 
 use crate::error::JmcpError;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -458,6 +461,16 @@ impl Inventory {
     pub fn blocklist_defaults(&self) -> Option<&BlocklistRules> {
         self.blocklist_defaults.as_ref()
     }
+
+    /// Number of devices currently in this inventory.
+    pub fn len(&self) -> usize {
+        self.devices.len()
+    }
+
+    /// True if the inventory has no devices.
+    pub fn is_empty(&self) -> bool {
+        self.devices.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -537,5 +550,168 @@ mod rule_type_tests {
         assert!(b.commands.is_empty());
         assert!(b.config.is_empty());
         assert!(b.pfe_commands.is_empty());
+    }
+}
+
+/// Insert a new device into a `serde_json::Value`-shaped inventory.
+/// Preserves all existing top-level keys and key order. Returns the updated
+/// value. Errors if `name` already exists at top-level.
+pub fn insert_device(
+    inv: &serde_json::Value,
+    name: &str,
+    ip: &str,
+    port: u32,
+    username: &str,
+    auth: &AuthConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    let mut out = inv.clone();
+    let entry = serde_json::json!({
+        "ip": ip,
+        "port": port,
+        "username": username,
+        "auth": auth,
+    });
+
+    let inserted = if let Some(obj) = out.as_object_mut() {
+        if obj.contains_key(name) {
+            return Err(JmcpError::DeviceExists(name.to_string()));
+        }
+        obj.insert(name.to_string(), entry);
+        true
+    } else {
+        false
+    };
+
+    if !inserted {
+        return Err(JmcpError::InventoryParse(
+            "top-level inventory is not a JSON object".into(),
+        ));
+    }
+    Ok(out)
+}
+
+/// SHA-256 of the file at `path`. Returns zeros if the file doesn't exist
+/// (callers treat zeros as "no last-known content"). The all-zero output
+/// cannot collide with a real SHA-256 digest, so callers can rely on this
+/// sentinel for TOCTOU CAS checks.
+pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let digest = Sha256::digest(&bytes);
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&digest);
+            Ok(out)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok([0u8; 32]),
+        Err(e) => Err(e),
+    }
+}
+
+/// Atomically replace `path` with the JSON serialization of `value`.
+/// Same-filesystem rename via tempfile. Preserves existing file mode bits
+/// (Unix only). Round-trips an arbitrary `serde_json::Value` rather than the
+/// typed `InventoryFile` so callers can preserve unknown top-level keys
+/// (e.g. `_blocklist_defaults`, future extensions).
+pub fn write_atomic(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "inventory path has no parent directory",
+        )
+    })?;
+    if !parent.as_os_str().is_empty() && !parent.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("parent directory does not exist: {}", parent.display()),
+        ));
+    }
+    let resolved_parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+
+    let mut tmp = tempfile::NamedTempFile::new_in(resolved_parent)?;
+    let pretty = serde_json::to_string_pretty(value)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    tmp.write_all(pretty.as_bytes())?;
+    tmp.write_all(b"\n")?;
+    tmp.as_file().sync_all()?;
+
+    // Preserve mode bits if the target already exists.
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(path) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = meta.permissions().mode();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(mode))?;
+    }
+
+    // Surface the underlying io::Error from rename(2) (EXDEV, EACCES, ENOSPC,
+    // …) untouched rather than stringifying through PersistError.
+    tmp.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    fn fixture(json: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn atomic_write_replaces_file_in_place() {
+        let f = fixture(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let new_content = serde_json::json!({
+            "r2": {"ip":"10.0.0.2","username":"u","auth":{"type":"password","password":"x"}}
+        });
+        write_atomic(f.path(), &new_content).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(f.path()).unwrap()).unwrap();
+        assert!(on_disk.get("r2").is_some());
+        assert!(on_disk.get("r1").is_none());
+    }
+
+    #[test]
+    fn atomic_write_preserves_blocklist_defaults() {
+        let original = serde_json::json!({
+            "_blocklist_defaults": {"commands":[{"action":"deny","pattern":"request system reboot"}]},
+            "r1": {"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}
+        });
+        let f = fixture(&serde_json::to_string(&original).unwrap());
+
+        let mut updated = original.clone();
+        updated["r2"] = serde_json::json!({
+            "ip":"10.0.0.2","username":"u","auth":{"type":"password","password":"x"}
+        });
+
+        write_atomic(f.path(), &updated).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(f.path()).unwrap()).unwrap();
+        assert!(on_disk.get("_blocklist_defaults").is_some());
+        assert!(on_disk.get("r1").is_some());
+        assert!(on_disk.get("r2").is_some());
+    }
+
+    #[test]
+    fn atomic_write_preserves_key_order() {
+        // Requires serde_json's `preserve_order` feature; verify by building
+        // the input map in insertion order and checking on-disk byte order.
+        let mut map = serde_json::Map::new();
+        map.insert("first".into(), serde_json::json!({"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}));
+        map.insert("second".into(), serde_json::json!({"ip":"127.0.0.2","username":"u","auth":{"type":"password","password":"x"}}));
+        let val = serde_json::Value::Object(map);
+        let f = tempfile::NamedTempFile::new().unwrap();
+        write_atomic(f.path(), &val).unwrap();
+        let bytes = std::fs::read(f.path()).unwrap();
+        let s = std::str::from_utf8(&bytes).unwrap();
+        assert!(s.find("\"first\"").unwrap() < s.find("\"second\"").unwrap());
     }
 }

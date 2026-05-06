@@ -4,6 +4,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+pub mod add_device;
 pub mod batch;
 pub mod config_diff;
 pub mod execute_command;
@@ -11,6 +12,7 @@ pub mod facts;
 pub mod get_config;
 pub mod load_commit;
 pub mod pfe;
+pub mod reload_devices;
 pub mod router_list;
 pub mod template;
 
@@ -135,6 +137,33 @@ pub struct TemplateArgs {
     pub config_format: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct AddDeviceArgs {
+    /// Device name/identifier in the inventory map.
+    #[serde(default)]
+    pub device_name: Option<String>,
+    /// Device IP address or hostname.
+    #[serde(default)]
+    pub device_ip: Option<String>,
+    /// SSH port. Default 22.
+    #[serde(default)]
+    pub device_port: Option<u32>,
+    /// Username.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// Auth config (tagged enum: ssh_key | password).
+    #[serde(default)]
+    pub auth: Option<crate::inventory::AuthConfig>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ReloadDevicesArgs {
+    /// Optional path to a different inventory file. If omitted, re-reads
+    /// the current --device-mapping.
+    #[serde(default)]
+    pub file_name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +259,38 @@ mod tests {
             a.router_names.as_deref(),
             Some(&["r1".into(), "r2".into()][..])
         );
+    }
+
+    #[test]
+    fn add_device_args_all_optional() {
+        let v = serde_json::json!({});
+        let a: AddDeviceArgs = serde_json::from_value(v).unwrap();
+        assert!(a.device_name.is_none());
+        assert!(a.auth.is_none());
+    }
+
+    #[test]
+    fn add_device_args_accepts_full_payload() {
+        let v = serde_json::json!({
+            "device_name": "core-3",
+            "device_ip": "10.0.0.3",
+            "device_port": 22,
+            "username": "automation",
+            "auth": {"type":"ssh_key","private_key_path":"/etc/jmcp/keys/id"}
+        });
+        let a: AddDeviceArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.device_name.as_deref(), Some("core-3"));
+        assert_eq!(a.device_port, Some(22));
+        assert!(matches!(
+            a.auth,
+            Some(crate::inventory::AuthConfig::SshKey { .. })
+        ));
+    }
+
+    #[test]
+    fn reload_devices_args_file_name_optional() {
+        let v = serde_json::json!({});
+        let a: ReloadDevicesArgs = serde_json::from_value(v).unwrap();
+        assert!(a.file_name.is_none());
     }
 }

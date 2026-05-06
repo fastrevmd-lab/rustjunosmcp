@@ -51,6 +51,16 @@ pub struct Cli {
     /// Bind off-loopback over plain HTTP. Required for non-127.0.0.1 hosts when TLS is not configured.
     #[arg(long)]
     pub allow_insecure_bind: bool,
+
+    /// Reject add_device and reload_devices unconditionally.
+    /// Independent of token scopes.
+    #[arg(long)]
+    pub inventory_readonly: bool,
+
+    /// Permit add_device to accept auth.type="password".
+    /// Off by default. Mutually exclusive with --inventory-readonly.
+    #[arg(long)]
+    pub allow_password_auth_add: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -133,6 +143,13 @@ mod tests {
     fn parses_streamable_http_value() {
         let cli = Cli::parse_from(["rust-junosmcp", "-t", "streamable-http"]);
         assert_eq!(cli.transport, Transport::StreamableHttp);
+    }
+
+    #[test]
+    fn inventory_flags_off_by_default() {
+        let cli = Cli::parse_from(["rust-junosmcp"]);
+        assert!(!cli.inventory_readonly);
+        assert!(!cli.allow_password_auth_add);
     }
 
     #[test]
