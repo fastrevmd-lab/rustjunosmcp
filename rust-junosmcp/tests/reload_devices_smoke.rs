@@ -49,15 +49,11 @@ fn reload_with_file_name_swaps_inventory() {
         json!({"file_name": p2.to_str().unwrap()}),
     );
     assert_eq!(r["new_router_count"], 1, "got: {r}");
-    // The inventory swap response itself reports added/removed; verify it
-    // saw r9 added and r1 removed. (We can't use `get_router_list` to
-    // confirm because it reads the construction-time snapshot in
-    // `JmcpHandler.inv`, not `dm.inventory()`.)
-    let added: Vec<String> = serde_json::from_value(r["added"].clone()).unwrap();
-    let removed: Vec<String> = serde_json::from_value(r["removed"].clone()).unwrap();
-    assert!(added.contains(&"r9".to_string()), "added: {added:?}");
-    assert!(removed.contains(&"r1".to_string()), "removed: {removed:?}");
-    assert_eq!(r["inventory_path"], p2.to_str().unwrap());
+    let list = call_tool(&mut child, "get_router_list", json!({}));
+    let names: Vec<String> = serde_json::from_value(list.clone())
+        .unwrap_or_else(|e| panic!("get_router_list shape: {e}, got: {list}"));
+    assert!(names.contains(&"r9".to_string()), "names: {names:?}");
+    assert!(!names.contains(&"r1".to_string()), "names: {names:?}");
 }
 
 #[test]

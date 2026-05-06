@@ -16,7 +16,7 @@ use rust_junosmcp_core::{
         ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs, GetConfigArgs, LoadCommitArgs,
         ReloadDevicesArgs, TemplateArgs,
     },
-    DeviceManager, Inventory, Policy,
+    DeviceManager, Policy,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -55,14 +55,13 @@ pub enum ScopeError {
 
 #[derive(Clone)]
 pub struct JmcpHandler {
-    inv: Arc<Inventory>,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 }
 
 impl JmcpHandler {
-    pub fn new(inv: Arc<Inventory>, dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
-        Self { inv, dm, policy }
+    pub fn new(dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
+        Self { dm, policy }
     }
 
     fn to_call_result(
@@ -137,7 +136,7 @@ impl JmcpHandler {
         if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(router_list::handle(self.inv.clone()).await)
+        Self::to_call_result(router_list::handle(self.dm.inventory()).await)
     }
 
     #[tool(
@@ -370,10 +369,10 @@ mod scope_tests {
     use rust_junosmcp_auth::ScopeSet;
 
     fn make_handler() -> JmcpHandler {
-        let inv = Arc::new(Inventory::empty());
+        let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let policy = Arc::new(Policy::build(&inv).unwrap());
-        JmcpHandler::new(inv, dm, policy)
+        JmcpHandler::new(dm, policy)
     }
 
     #[test]

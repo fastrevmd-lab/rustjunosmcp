@@ -37,14 +37,13 @@ fn add_then_reload_then_router_list_shows_new_device() {
     assert_eq!(r["added"], "core-3", "got: {r}");
     assert_eq!(r["router_count"], 2, "got: {r}");
 
-    // NOTE: `get_router_list` reads `JmcpHandler.inv` (the construction-time
-    // snapshot), not `dm.inventory()`, so it does NOT reflect the freshly
-    // added device. Verify persistence by inspecting the on-disk inventory
-    // file directly instead.
-    let on_disk: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&inv_path).unwrap()).unwrap();
-    assert!(on_disk.get("core-3").is_some(), "core-3 not on disk");
-    assert!(on_disk.get("core-1").is_some(), "core-1 missing on disk");
+    // get_router_list reads dm.inventory() (live ArcSwap snapshot), so it
+    // reflects the freshly added device immediately.
+    let list = call_tool(&mut child, "get_router_list", json!({}));
+    let names: Vec<String> = serde_json::from_value(list.clone())
+        .unwrap_or_else(|e| panic!("get_router_list shape: {e}, got: {list}"));
+    assert!(names.contains(&"core-3".to_string()), "names: {names:?}");
+    assert!(names.contains(&"core-1".to_string()), "names: {names:?}");
 }
 
 #[test]
