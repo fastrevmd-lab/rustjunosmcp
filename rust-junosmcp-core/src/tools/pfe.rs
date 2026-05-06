@@ -58,20 +58,22 @@ pub async fn handle(
     }
 
     let timeout = Duration::from_secs(args.timeout);
-    let mut dev = dm.open(&args.router_name).await?;
-
+    let fpc_target = args.fpc_target.clone();
     let wrapper = format!(
         "request pfe execute target {} command \"{}\"",
         args.fpc_target, args.pfe_command
     );
-    let result = tokio::time::timeout(timeout, dev.cli(&wrapper))
-        .await
-        .map_err(|_| JmcpError::Timeout(timeout))?;
-
-    let _ = dev.close().await;
+    let result = tokio::time::timeout(timeout, async {
+        let mut dev = dm.open(&args.router_name).await?;
+        let output = dev.cli(&wrapper).await?;
+        let _ = dev.close().await;
+        Ok::<_, JmcpError>(output)
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout))??;
     Ok(json!({
-        "fpc_target": args.fpc_target,
-        "output": result?,
+        "fpc_target": fpc_target,
+        "output": result,
     }))
 }
 

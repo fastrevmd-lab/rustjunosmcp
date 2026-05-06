@@ -101,13 +101,42 @@ pub async fn handle_with_runner(
         ));
     }
 
-    // Pre-flight 1: every router must exist in inventory.
-    for r in &args.routers {
-        let _ = dm.inventory().get(r)?;
-    }
+    // Pre-flight 1: partition routers into valid (in inventory) and unknown.
+    let inventory = dm.inventory();
+    let mut valid_indices = Vec::new();
+    let mut preflight_results: Vec<Option<RouterResult>> =
+        (0..args.routers.len()).map(|_| None).collect();
 
-    // Pre-flight 2: blocklist check on every (router, command) pair.
-    for r in &args.routers {
+    for (idx, r) in args.routers.iter().enumerate() {
+        if inventory.get(r).is_err() {
+            tracing::warn!(
+                tool = "execute_junos_command_batch",
+                router = %r,
+                "router not found in device mapping, skipping",
+            );
+            preflight_results[idx] = Some(RouterResult {
+                router: r.clone(),
+                commands: args
+                    .commands
+                    .iter()
+                    .map(|c| CommandOutcome {
+                        command: c.clone(),
+                        ok: false,
+                        value: None,
+                        error: Some(format!("router '{}' not found in device mapping", r)),
+                    })
+                    .collect(),
+            });
+        } else {
+            valid_indices.push(idx);
+        }
+    }
+    drop(inventory);
+
+    // Pre-flight 2: blocklist check on every (valid router, command) pair.
+    // Security boundary — remains strict: one denied pair aborts the batch.
+    for &idx in &valid_indices {
+        let r = &args.routers[idx];
         for c in &args.commands {
             if let Decision::Deny { rule, source, .. } = policy.check_command(r, c) {
                 let pattern = rule.pattern.clone();
@@ -136,10 +165,11 @@ pub async fn handle_with_runner(
         args.max_concurrent_routers as usize,
     ));
     let cmd_timeout = std::time::Duration::from_secs(args.command_timeout);
-    let routers_n = args.routers.len();
+    let _routers_n = args.routers.len();
     let mut joinset: tokio::task::JoinSet<(usize, RouterResult)> = tokio::task::JoinSet::new();
 
-    for (idx, router_name) in args.routers.iter().cloned().enumerate() {
+    for &idx in &valid_indices {
+        let router_name = args.routers[idx].clone();
         let permits = permits.clone();
         let runner = runner.clone();
         let commands = args.commands.clone();
@@ -150,7 +180,7 @@ pub async fn handle_with_runner(
         });
     }
 
-    let mut results: Vec<Option<RouterResult>> = (0..routers_n).map(|_| None).collect();
+    let mut results = preflight_results;
 
     let collect = async {
         let mut js = joinset;
@@ -270,21 +300,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_router_in_list_aborts_preflight() {
+    async fn unknown_router_in_list_produces_inline_error() {
         let inv = inv_with(
             r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let pol = Arc::new(Policy::build(&inv).unwrap());
+        let (runner, _) = stub_runner(vec![("r1", OpenBehavior::Ok(Duration::from_millis(10)))]);
         let args = ExecuteBatchArgs {
             routers: vec!["r1".into(), "ghost".into()],
             commands: vec!["show version".into()],
-            command_timeout: 1,
+            command_timeout: 5,
             batch_timeout: None,
             max_concurrent_routers: 4,
         };
-        let r = super::handle(args, dm, pol).await;
-        assert!(matches!(r, Err(JmcpError::UnknownRouter(ref s)) if s == "ghost"));
+        let v = super::handle_with_runner(args, dm, pol, runner)
+            .await
+            .unwrap();
+        let results = parse_results(v);
+        assert_eq!(results.len(), 2);
+        // r1 should succeed
+        assert_eq!(results[0].router, "r1");
+        assert!(results[0].commands[0].ok);
+        // ghost should have inline error
+        assert_eq!(results[1].router, "ghost");
+        assert!(!results[1].commands[0].ok);
+        let err = results[1].commands[0].error.as_deref().unwrap();
+        assert!(err.contains("not found"), "got: {err}");
     }
 
     #[tokio::test]

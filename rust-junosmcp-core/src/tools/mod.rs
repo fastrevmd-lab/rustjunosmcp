@@ -49,6 +49,9 @@ pub struct ExecuteCommandArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetConfigArgs {
     pub router_name: String,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -57,6 +60,9 @@ pub struct ConfigDiffArgs {
     /// Rollback version to compare against (1-49).
     #[serde(default = "default_version")]
     pub version: i64,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -78,6 +84,10 @@ pub struct LoadCommitArgs {
     /// Commit comment recorded in the device commit log.
     #[serde(default = "default_commit_comment")]
     pub commit_comment: String,
+    /// If set, uses confirmed commit with auto-rollback after N minutes.
+    /// The router will automatically revert if not confirmed within this window.
+    #[serde(default)]
+    pub confirm_timeout_mins: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

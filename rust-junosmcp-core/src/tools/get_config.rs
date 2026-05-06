@@ -5,12 +5,31 @@ use crate::error::JmcpError;
 use crate::tools::GetConfigArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Strip `<configuration-information>` / `<configuration-output>` XML wrapper
+/// tags that Junos adds around CLI output delivered over NETCONF.
+fn strip_config_xml_wrapper(raw: &str) -> String {
+    if let Some(start) = raw.find("<configuration-output>") {
+        let content_start = start + "<configuration-output>".len();
+        if let Some(end) = raw[content_start..].find("</configuration-output>") {
+            return raw[content_start..content_start + end].trim().to_string();
+        }
+    }
+    raw.trim().to_string()
+}
 
 pub async fn handle(args: GetConfigArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
-    let mut dev = dm.open(&args.router_name).await?;
-    let cfg_text = dev.cli("show configuration").await?;
-    let _ = dev.close().await;
-    Ok(json!(cfg_text))
+    let timeout = Duration::from_secs(args.timeout);
+    let result = tokio::time::timeout(timeout, async {
+        let mut dev = dm.open(&args.router_name).await?;
+        let cfg_text = dev.cli("show configuration").await?;
+        let _ = dev.close().await;
+        Ok::<_, JmcpError>(cfg_text)
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout))??;
+    Ok(json!(strip_config_xml_wrapper(&result)))
 }
 
 #[cfg(test)]
@@ -33,6 +52,7 @@ mod tests {
         let r = handle(
             GetConfigArgs {
                 router_name: "nope".into(),
+                timeout: 5,
             },
             dm,
         )

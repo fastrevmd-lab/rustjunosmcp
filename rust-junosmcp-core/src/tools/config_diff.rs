@@ -1,4 +1,4 @@
-//! `junos_config_diff` — `show | compare rollback N` for N in 1..=49.
+//! `junos_config_diff` — compare running config against rollback N (1..=49).
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -6,14 +6,21 @@ use crate::helpers::validate_rollback_version;
 use crate::tools::ConfigDiffArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let version = validate_rollback_version(args.version)?;
-    let mut dev = dm.open(&args.router_name).await?;
-    let cmd = format!("show | compare rollback {version}");
-    let diff = dev.cli(&cmd).await?;
-    let _ = dev.close().await;
-    Ok(json!(diff))
+    let timeout = Duration::from_secs(args.timeout);
+    let result = tokio::time::timeout(timeout, async {
+        let mut dev = dm.open(&args.router_name).await?;
+        let cmd = format!("show configuration | compare rollback {version}");
+        let diff = dev.cli(&cmd).await?;
+        let _ = dev.close().await;
+        Ok::<_, JmcpError>(diff)
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout))??;
+    Ok(json!(result))
 }
 
 #[cfg(test)]
@@ -41,6 +48,7 @@ mod tests {
             ConfigDiffArgs {
                 router_name: "r1".into(),
                 version: 0,
+                timeout: 5,
             },
             dm(),
         )
@@ -54,6 +62,7 @@ mod tests {
             ConfigDiffArgs {
                 router_name: "r1".into(),
                 version: 50,
+                timeout: 5,
             },
             dm(),
         )

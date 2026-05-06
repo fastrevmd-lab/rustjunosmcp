@@ -88,6 +88,7 @@ async fn get_running_config() {
     let v = get_config::handle(
         GetConfigArgs {
             router_name: "lab".into(),
+            timeout: 360,
         },
         dm,
     )
@@ -106,6 +107,7 @@ async fn diff_against_rollback_1() {
         ConfigDiffArgs {
             router_name: "lab".into(),
             version: 1,
+            timeout: 360,
         },
         dm,
     )
