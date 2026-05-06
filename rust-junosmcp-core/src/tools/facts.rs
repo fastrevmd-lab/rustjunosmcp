@@ -13,7 +13,6 @@ pub async fn handle(args: GatherFactsArgs, dm: Arc<DeviceManager>) -> Result<Val
         let mut dev = dm.open(&args.router_name).await?;
         let facts = dev.facts().await?;
         let value = serde_json::to_value(facts)?;
-        let _ = dev.close().await;
         Ok::<_, JmcpError>(value)
     })
     .await

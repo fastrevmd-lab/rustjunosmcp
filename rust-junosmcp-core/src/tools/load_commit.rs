@@ -68,7 +68,6 @@ pub async fn handle(
     cfg.lock().await?;
     if let Err(e) = cfg.load(payload).await {
         let _ = cfg.unlock().await;
-        let _ = dev.close().await;
         return Err(JmcpError::from(e));
     }
     let diff = cfg.diff().await?.unwrap_or_default();
@@ -103,7 +102,6 @@ pub async fn handle(
     };
 
     let _ = cfg.unlock().await;
-    let _ = dev.close().await;
     Ok(result)
 }
 

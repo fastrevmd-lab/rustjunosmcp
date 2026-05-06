@@ -16,7 +16,7 @@ pub trait BatchRunner: Send + Sync {
     async fn open(&self, router: &str) -> Result<Box<dyn RouterSession>, JmcpError>;
 }
 
-struct RustEzSession(rustez::Device);
+struct RustEzSession(crate::device_manager::PooledDevice);
 
 #[async_trait]
 impl RouterSession for RustEzSession {
@@ -24,7 +24,8 @@ impl RouterSession for RustEzSession {
         Ok(self.0.cli(command).await?)
     }
     async fn close(&mut self) -> Result<(), JmcpError> {
-        Ok(self.0.close().await?)
+        // PooledDevice returns to pool on drop — no explicit close needed.
+        Ok(())
     }
 }
 

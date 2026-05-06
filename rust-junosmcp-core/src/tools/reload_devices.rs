@@ -56,6 +56,12 @@ pub async fn handle(
     let new_hash = hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
     dm.store_inventory(Arc::new(new_inv), path.clone(), new_hash);
 
+    // Invalidate pooled sessions for removed or changed routers.
+    let invalidate: Vec<String> = removed.iter().chain(changed.iter()).cloned().collect();
+    if !invalidate.is_empty() {
+        dm.invalidate_pool(&invalidate).await;
+    }
+
     Ok(json!({
         "previous_router_count": prev_count,
         "new_router_count": new_count,

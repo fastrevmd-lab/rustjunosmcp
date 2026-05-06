@@ -41,6 +41,18 @@ fn pick_port() -> u16 {
         .port()
 }
 
+/// Poll until TCP connections to `port` are accepted, or panic after `timeout`.
+fn wait_for_port(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("port {port} not accepting connections within {timeout:?}");
+}
+
 /// RAII child guard.
 struct Server {
     child: Child,
@@ -122,6 +134,10 @@ fn spawn_tls(inv_path: &Path, tokens_path: &Path, cert: &Path, key: &Path) -> Se
             }
         }
     });
+    // Wait for the TLS socket to actually accept connections — the stderr
+    // readiness line can fire before the listener is fully ready.
+    wait_for_port(port, Duration::from_secs(5));
+
     Server {
         child,
         port,

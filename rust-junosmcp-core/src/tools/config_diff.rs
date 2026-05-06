@@ -27,7 +27,6 @@ pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Valu
         let mut dev = dm.open(&args.router_name).await?;
         let cmd = format!("show configuration | compare rollback {version}");
         let diff = dev.cli(&cmd).await?;
-        let _ = dev.close().await;
         Ok::<_, JmcpError>(diff)
     })
     .await
