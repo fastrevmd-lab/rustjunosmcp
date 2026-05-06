@@ -19,12 +19,6 @@ jobs:
         with:
           path: RustJunosMCP
 
-      - name: Checkout rustEZ (path dep)
-        uses: actions/checkout@v5
-        with:
-          repository: fastrevmd-lab/rustEZ
-          path: rustEZ
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,10 +51,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: RustJunosMCP
-      - uses: actions/checkout@v5
-        with:
-          repository: fastrevmd-lab/rustEZ
-          path: rustEZ
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-audit --locked
       - working-directory: RustJunosMCP

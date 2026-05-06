@@ -2237,7 +2237,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
 dependencies = [
  "memchr",
- "serde",
 ]
 
 [[package]]
@@ -2399,9 +2398,9 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rfc6979"
-version = "0.5.0-rc.5"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23a3127ee32baec36af75b4107082d9bd823501ec14a4e016be4b6b37faa74ae"
+checksum = "5236ce872cac07e0fb3969b0cbf468c7d2f37d432f1b627dcb7b8d34563fb0c3"
 dependencies = [
  "hmac 0.13.0",
  "subtle",
@@ -2685,7 +2684,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.9.0"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84c404cc84a701fdac6370af393c8fb5b10f02b5eae25475420924cf60352462"
 dependencies = [
  "quick-xml",
  "rustnetconf",
@@ -2763,17 +2764,17 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "411379bac2c2bedbdd987bdb886a8652ace6f9bac8a69207297ccd49aef6c480"
+checksum = "5078381865ce3e2a24498062164a4a0c111c87bb01a7362226163d5668532efc"
 dependencies = [
  "async-trait",
- "futures",
  "quick-xml",
  "russh",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -3285,9 +3286,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.52.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "110a78583f19d5cdb2c5ccf321d1290344e71313c6c37d43520d386027d18386"
 dependencies = [
  "bytes",
  "libc",
@@ -3363,9 +3364,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.9"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a28f0d049ccfaa566e14e9663d304d8577427b368cb4710a20528690287a738b"
+checksum = "68d6fdd9f81c2819c9a8b0e0cd91660e7746a8e6ea2ba7c6b2b057985f6bcb51"
 dependencies = [
  "bitflags",
  "bytes",
@@ -4085,6 +4086,20 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "zerotrie"
