@@ -64,6 +64,25 @@ pub enum JmcpError {
         #[source]
         source: globset::Error,
     },
+
+    /// Jinja2 template failed to parse (`minijinja::Error` syntax kind).
+    /// Inner string carries the line/col-formatted message.
+    #[error("template syntax error: {0}")]
+    TemplateSyntax(String),
+
+    /// `vars_content` could not be parsed as JSON or YAML.
+    /// Inner string mentions which parser was attempted last.
+    #[error("template vars parse error: {0}")]
+    TemplateVars(String),
+
+    /// Render-time error (most commonly strict-undefined hits).
+    #[error("template render error: {0}")]
+    TemplateRender(String),
+
+    /// Rendered template uses `text` or `xml` format against a device with
+    /// active config blocklist rules. Same restriction as load_and_commit_config.
+    #[error("template format `{format}` not allowed: device has config rules; use `set`")]
+    TemplateFormatMismatch { format: String },
 }
 
 impl From<rustez::RustEzError> for JmcpError {
@@ -158,5 +177,13 @@ mod tests {
         let s = e.to_string();
         assert!(s.contains("invalid pfe_command"));
         assert!(s.contains("contains literal quote"));
+    }
+
+    #[test]
+    fn template_syntax_display() {
+        let e = JmcpError::TemplateSyntax("line 3: unexpected end-of-input".into());
+        let s = format!("{e}");
+        assert!(s.contains("template syntax"));
+        assert!(s.contains("line 3"));
     }
 }
