@@ -31,6 +31,17 @@ pub async fn handle(
         ));
     }
 
+    // Validate fpc_target format: must match fpc0, fpc1, etc.
+    if !args
+        .fpc_target
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(JmcpError::BadPfeCommand(
+            "fpc_target contains invalid characters".into(),
+        ));
+    }
+
     // Fail fast on unknown routers so the policy check has a valid target.
     let _ = dm.inventory().get(&args.router_name)?;
 
@@ -143,6 +154,27 @@ mod tests {
             }
             other => panic!("expected Denied, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_fpc_target() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let pol = Arc::new(Policy::build(&inv).unwrap());
+        let r = handle(
+            ExecutePfeArgs {
+                router_name: "r1".into(),
+                fpc_target: "fpc0; rm -rf /".into(),
+                pfe_command: "show jnh 0 stats".into(),
+                timeout: 5,
+            },
+            dm,
+            pol,
+        )
+        .await;
+        assert!(matches!(r, Err(JmcpError::BadPfeCommand(_))));
     }
 
     #[tokio::test]

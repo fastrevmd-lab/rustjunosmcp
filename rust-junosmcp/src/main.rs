@@ -98,6 +98,7 @@ async fn main() -> Result<()> {
         // We must refresh `known` from dev_manager.inventory().names() each iteration
         // so token-scope validation sees the post-reload router set.
         let dm = dev_manager.clone();
+        let hup_handler = handler.clone();
         tokio::spawn(async move {
             let mut hup = match tokio::signal::unix::signal(
                 tokio::signal::unix::SignalKind::hangup(),
@@ -118,6 +119,7 @@ async fn main() -> Result<()> {
                 .await
                 {
                     Ok(result) => {
+                        hup_handler.rebuild_policy();
                         tracing::info!(?result, "inventory reloaded");
                     }
                     Err(e) => {

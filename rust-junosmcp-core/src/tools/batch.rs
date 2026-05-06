@@ -166,7 +166,6 @@ pub async fn handle_with_runner(
         args.max_concurrent_routers as usize,
     ));
     let cmd_timeout = std::time::Duration::from_secs(args.command_timeout);
-    let _routers_n = args.routers.len();
     let mut joinset: tokio::task::JoinSet<(usize, RouterResult)> = tokio::task::JoinSet::new();
 
     for &idx in &valid_indices {

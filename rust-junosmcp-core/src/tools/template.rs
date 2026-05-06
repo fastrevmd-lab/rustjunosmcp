@@ -6,6 +6,7 @@
 use crate::error::JmcpError;
 use minijinja::{Environment, UndefinedBehavior};
 use serde_json::Value;
+use std::time::Duration;
 
 /// Parse `vars_content` as JSON if first non-whitespace char is `{`,
 /// otherwise as YAML. Both branches must produce a `Value::Object`.
@@ -167,6 +168,7 @@ pub async fn handle(
             &args.commit_comment,
             args.dry_run,
             &dm,
+            Duration::from_secs(args.timeout),
         )
         .await
         {
@@ -214,33 +216,40 @@ async fn commit_one(
     commit_comment: &str,
     dry_run: bool,
     dm: &Arc<DeviceManager>,
+    timeout: Duration,
 ) -> Result<String, JmcpError> {
     let payload = build_config_payload(rendered.to_string(), Some(format))?;
-    let mut dev = dm.open(router).await?;
-    let mut cfg = dev.config()?;
+    let commit_comment = commit_comment.to_string();
 
-    cfg.lock().await?;
-    if let Err(e) = cfg.load(payload).await {
-        let _ = cfg.unlock().await;
-        return Err(JmcpError::from(e));
-    }
-    let diff = cfg.diff().await?.unwrap_or_default();
+    tokio::time::timeout(timeout, async {
+        let mut dev = dm.open(router).await?;
+        let mut cfg = dev.config()?;
 
-    let result = if dry_run {
-        let _ = cfg.rollback(0).await;
-        Ok(diff)
-    } else {
-        match cfg.commit_with_comment(commit_comment).await {
-            Ok(_) => Ok(commit_comment.to_string()),
-            Err(e) => {
-                let _ = cfg.rollback(0).await;
-                Err(JmcpError::from(e))
-            }
+        cfg.lock().await?;
+        if let Err(e) = cfg.load(payload).await {
+            let _ = cfg.unlock().await;
+            return Err(JmcpError::from(e));
         }
-    };
+        let diff = cfg.diff().await?.unwrap_or_default();
 
-    let _ = cfg.unlock().await;
-    result
+        let result = if dry_run {
+            let _ = cfg.rollback(0).await;
+            Ok(diff)
+        } else {
+            match cfg.commit_with_comment(&commit_comment).await {
+                Ok(_) => Ok(commit_comment.clone()),
+                Err(e) => {
+                    let _ = cfg.rollback(0).await;
+                    Err(JmcpError::from(e))
+                }
+            }
+        };
+
+        let _ = cfg.unlock().await;
+        result
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout))?
 }
 
 #[cfg(test)]
@@ -367,6 +376,7 @@ mod tests {
             commit_comment: "test".into(),
             dry_run: false,
             config_format: None,
+            timeout: 5,
         }
     }
 

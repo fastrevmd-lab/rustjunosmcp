@@ -56,12 +56,23 @@ pub enum ScopeError {
 #[derive(Clone)]
 pub struct JmcpHandler {
     dm: Arc<DeviceManager>,
-    policy: Arc<Policy>,
+    policy: Arc<arc_swap::ArcSwap<Policy>>,
 }
 
 impl JmcpHandler {
     pub fn new(dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
-        Self { dm, policy }
+        Self {
+            dm,
+            policy: Arc::new(arc_swap::ArcSwap::from(policy)),
+        }
+    }
+
+    /// Rebuild the blocklist policy from the current inventory and store it.
+    /// Called after inventory mutations (add_device, reload_devices, SIGHUP).
+    pub fn rebuild_policy(&self) {
+        if let Ok(new_policy) = Policy::build(&self.dm.inventory()) {
+            self.policy.store(Arc::new(new_policy));
+        }
     }
 
     fn to_call_result(
@@ -175,7 +186,7 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
         Self::to_call_result(
-            execute_command::handle(args, self.dm.clone(), self.policy.clone()).await,
+            execute_command::handle(args, self.dm.clone(), self.policy.load_full()).await,
         )
     }
 
@@ -233,7 +244,9 @@ impl JmcpHandler {
         if let Err(e) = self.check_router_scope(ctx, "load_and_commit_config", &args.router_name) {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(load_commit::handle(args, self.dm.clone(), self.policy.clone()).await)
+        Self::to_call_result(
+            load_commit::handle(args, self.dm.clone(), self.policy.load_full()).await,
+        )
     }
 
     #[tool(
@@ -253,7 +266,7 @@ impl JmcpHandler {
         {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(pfe::handle(args, self.dm.clone(), self.policy.clone()).await)
+        Self::to_call_result(pfe::handle(args, self.dm.clone(), self.policy.load_full()).await)
     }
 
     #[tool(
@@ -274,7 +287,7 @@ impl JmcpHandler {
                 return Self::scope_to_call_result(e);
             }
         }
-        Self::to_call_result(batch::handle(args, self.dm.clone(), self.policy.clone()).await)
+        Self::to_call_result(batch::handle(args, self.dm.clone(), self.policy.load_full()).await)
     }
 
     #[tool(
@@ -303,7 +316,7 @@ impl JmcpHandler {
                 return Self::scope_to_call_result(e);
             }
         }
-        Self::to_call_result(template::handle(args, self.dm.clone(), self.policy.clone()).await)
+        Self::to_call_result(template::handle(args, self.dm.clone(), self.policy.load_full()).await)
     }
 
     #[tool(
@@ -322,7 +335,13 @@ impl JmcpHandler {
         // Elicitation: rmcp 0.8.5's elicit API is non-trivial to wire safely
         // here; the handler returns MissingArguments for absent required fields,
         // which is the documented contract for non-elicitation transports.
-        Self::to_call_result(add_device::handle(args, self.dm.clone()).await)
+        let result = add_device::handle(args, self.dm.clone()).await;
+        // Rebuild policy from updated inventory so new device's blocklist rules
+        // take effect immediately.
+        if result.is_ok() {
+            self.rebuild_policy();
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -338,7 +357,13 @@ impl JmcpHandler {
         if let Err(e) = self.check_tool_scope(ctx, "reload_devices") {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(reload_devices::handle(args, self.dm.clone()).await)
+        let result = reload_devices::handle(args, self.dm.clone()).await;
+        // Rebuild policy from updated inventory so blocklist rules track the
+        // new device set.
+        if result.is_ok() {
+            self.rebuild_policy();
+        }
+        Self::to_call_result(result)
     }
 }
 

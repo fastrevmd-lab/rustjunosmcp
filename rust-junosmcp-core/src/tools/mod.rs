@@ -88,6 +88,9 @@ pub struct LoadCommitArgs {
     /// The router will automatically revert if not confirmed within this window.
     #[serde(default)]
     pub confirm_timeout_mins: Option<u32>,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -145,6 +148,9 @@ pub struct TemplateArgs {
     /// Override format detection ('set', 'text', 'xml'). Auto-detected if omitted.
     #[serde(default)]
     pub config_format: Option<String>,
+    /// Connection timeout in seconds (per-router).
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -198,6 +204,7 @@ mod tests {
         let a: LoadCommitArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.config_format, "set");
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
+        assert_eq!(a.timeout, 360);
     }
 
     #[test]
@@ -255,6 +262,7 @@ mod tests {
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
         assert_eq!(a.router_name.as_deref(), Some("r1"));
         assert!(a.router_names.is_none());
+        assert_eq!(a.timeout, 360);
     }
 
     #[test]

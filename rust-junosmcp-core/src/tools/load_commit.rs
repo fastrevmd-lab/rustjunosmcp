@@ -8,6 +8,7 @@ use crate::policy::{Decision, Policy};
 use crate::tools::LoadCommitArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn excerpt(s: &str) -> String {
     if s.len() <= 120 {
@@ -62,46 +63,56 @@ pub async fn handle(
 
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
 
-    let mut dev = dm.open(&args.router_name).await?;
-    let mut cfg = dev.config()?;
-
-    cfg.lock().await?;
-    if let Err(e) = cfg.load(payload).await {
-        let _ = cfg.unlock().await;
-        return Err(JmcpError::from(e));
-    }
-    let diff = cfg.diff().await?.unwrap_or_default();
-
+    let timeout_dur = Duration::from_secs(args.timeout);
     let confirmed = args.confirm_timeout_mins.is_some();
-    let commit_result = if let Some(mins) = args.confirm_timeout_mins {
-        let seconds = mins * 60;
-        cfg.commit_confirmed(seconds).await
-    } else {
-        cfg.commit_with_comment(&args.commit_comment).await
-    };
+    let confirm_timeout_mins = args.confirm_timeout_mins;
+    let commit_comment = args.commit_comment.clone();
 
-    let result = match commit_result {
-        Ok(_) => {
-            let mut obj = json!({ "success": true, "diff": diff });
-            if confirmed {
-                let mins = args.confirm_timeout_mins.unwrap();
-                obj["confirmed"] = json!(true);
-                obj["rollback_in_minutes"] = json!(mins);
-                obj["message"] = json!(format!(
-                    "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
-                     Send another commit to confirm.",
-                    mins
-                ));
+    let result = tokio::time::timeout(timeout_dur, async {
+        let mut dev = dm.open(&args.router_name).await?;
+        let mut cfg = dev.config()?;
+
+        cfg.lock().await?;
+        if let Err(e) = cfg.load(payload).await {
+            let _ = cfg.unlock().await;
+            return Err(JmcpError::from(e));
+        }
+        let diff = cfg.diff().await?.unwrap_or_default();
+
+        let commit_result = if let Some(mins) = confirm_timeout_mins {
+            let seconds = mins * 60;
+            cfg.commit_confirmed(seconds).await
+        } else {
+            cfg.commit_with_comment(&commit_comment).await
+        };
+
+        let result = match commit_result {
+            Ok(_) => {
+                let mut obj = json!({ "success": true, "diff": diff });
+                if confirmed {
+                    let mins = confirm_timeout_mins.unwrap();
+                    obj["confirmed"] = json!(true);
+                    obj["rollback_in_minutes"] = json!(mins);
+                    obj["message"] = json!(format!(
+                        "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
+                         Send another commit to confirm.",
+                        mins
+                    ));
+                }
+                obj
             }
-            obj
-        }
-        Err(e) => {
-            let _ = cfg.rollback(0).await;
-            json!({ "success": false, "diff": diff, "error": e.to_string() })
-        }
-    };
+            Err(e) => {
+                let _ = cfg.rollback(0).await;
+                json!({ "success": false, "diff": diff, "error": e.to_string() })
+            }
+        };
 
-    let _ = cfg.unlock().await;
+        let _ = cfg.unlock().await;
+        Ok::<_, JmcpError>(result)
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout_dur))??;
+
     Ok(result)
 }
 
@@ -132,6 +143,7 @@ mod tests {
                 config_format: "set".into(),
                 commit_comment: "test".into(),
                 confirm_timeout_mins: None,
+                timeout: 5,
             },
             dm,
             pol,
@@ -154,6 +166,7 @@ mod tests {
                 config_format: "yaml".into(),
                 commit_comment: "test".into(),
                 confirm_timeout_mins: None,
+                timeout: 5,
             },
             dm,
             pol,
@@ -179,6 +192,7 @@ mod tests {
                 config_format: "xml".into(),
                 commit_comment: "test".into(),
                 confirm_timeout_mins: None,
+                timeout: 5,
             },
             dm,
             pol,
@@ -209,6 +223,7 @@ mod tests {
                 config_format: "set".into(),
                 commit_comment: "test".into(),
                 confirm_timeout_mins: None,
+                timeout: 5,
             },
             dm,
             pol,

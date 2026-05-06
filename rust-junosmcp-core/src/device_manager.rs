@@ -160,9 +160,12 @@ impl DerefMut for PooledDevice {
 impl Drop for PooledDevice {
     fn drop(&mut self) {
         if let Some(dev) = self.dev.take() {
+            let Ok(handle) = tokio::runtime::Handle::try_current() else {
+                return; // No runtime — session leaks but process doesn't crash
+            };
             if dev.is_config_db_open() {
                 // Config DB left open — cannot reuse, must close.
-                tokio::spawn(async move {
+                handle.spawn(async move {
                     let mut d = dev;
                     let _ = d.close().await;
                 });
@@ -170,7 +173,7 @@ impl Drop for PooledDevice {
                 // Return to pool for reuse.
                 let pool = self.pool.clone();
                 let name = self.router_name.clone();
-                tokio::spawn(async move {
+                handle.spawn(async move {
                     pool.return_session(name, dev).await;
                 });
             }

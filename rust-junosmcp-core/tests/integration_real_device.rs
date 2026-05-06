@@ -228,6 +228,7 @@ async fn live_render_show_version_template_dry_run() {
         commit_comment: "rust-junosmcp template smoke".into(),
         dry_run: true,
         config_format: None,
+        timeout: 360,
     };
 
     let r = rust_junosmcp_core::tools::template::handle(args, dm, pol)

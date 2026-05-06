@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Authentication config for a Junos device. Tagged enum mirrors the Python
 /// repo's `auth.type` discriminator.
-#[derive(Clone, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     Password { password: String },

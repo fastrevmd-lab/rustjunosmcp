@@ -21,7 +21,28 @@ pub async fn handle(
 
     let path: PathBuf = match args.file_name.as_deref() {
         None | Some("") => dm.inventory_path(),
-        Some(p) => PathBuf::from(p),
+        Some(p) => {
+            let candidate = PathBuf::from(p);
+            // Reject path traversal
+            if candidate
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(JmcpError::InventoryInvalid(
+                    "file_name must not contain '..' path components".into(),
+                ));
+            }
+            // If relative, resolve relative to current inventory directory
+            if candidate.is_relative() {
+                if let Some(parent) = dm.inventory_path().parent() {
+                    parent.join(&candidate)
+                } else {
+                    candidate
+                }
+            } else {
+                candidate
+            }
+        }
     };
 
     if !path.is_file() {
@@ -76,10 +97,7 @@ fn inventory_entry_equal(
     a: &crate::inventory::DeviceEntry,
     b: &crate::inventory::DeviceEntry,
 ) -> bool {
-    a.ip == b.ip
-        && a.port == b.port
-        && a.username == b.username
-        && format!("{:?}", a.auth) == format!("{:?}", b.auth)
+    a.ip == b.ip && a.port == b.port && a.username == b.username && a.auth == b.auth
 }
 
 #[cfg(test)]
@@ -212,5 +230,42 @@ mod tests {
         assert_eq!(added, vec!["new"]);
         assert_eq!(removed, vec!["gone"]);
         assert_eq!(changed, vec!["mut"]);
+    }
+
+    #[tokio::test]
+    async fn reload_rejects_path_traversal() {
+        let f = write_file(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = dm_at(f.path(), false);
+        let r = handle(
+            ReloadDevicesArgs {
+                file_name: Some("../../../etc/shadow".into()),
+            },
+            dm,
+        )
+        .await;
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(ref msg)) if msg.contains("..")));
+    }
+
+    #[tokio::test]
+    async fn reload_detects_password_change() {
+        let f1 = write_file(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"old"}}}"#,
+        );
+        let f2 = write_file(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"new"}}}"#,
+        );
+        let dm = dm_at(f1.path(), false);
+        let r = handle(
+            ReloadDevicesArgs {
+                file_name: Some(f2.path().to_string_lossy().to_string()),
+            },
+            dm,
+        )
+        .await
+        .unwrap();
+        let changed: Vec<String> = serde_json::from_value(r["changed"].clone()).unwrap();
+        assert_eq!(changed, vec!["r1"], "password change must be detected");
     }
 }
