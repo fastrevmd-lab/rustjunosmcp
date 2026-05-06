@@ -86,6 +86,44 @@ pub enum JmcpError {
 
     #[error("validation error: {0}")]
     Validation(String),
+
+    #[error("inventory is read-only (--inventory-readonly set)")]
+    InventoryReadonly,
+
+    #[error("device `{0}` already exists in the inventory")]
+    DeviceExists(String),
+
+    #[error("password authentication is not allowed for add_device; use --allow-password-auth-add to enable")]
+    PasswordAuthDisabled,
+
+    #[error("invalid device name `{0}`: must match ^[A-Za-z0-9_.-]+$")]
+    InvalidDeviceName(String),
+
+    #[error("invalid device IP/hostname `{0}`")]
+    InvalidDeviceIp(String),
+
+    #[error("invalid device port `{0}`: must be in 1..=65535")]
+    InvalidDevicePort(u32),
+
+    #[error("missing required arguments: {0:?}")]
+    MissingArguments(Vec<String>),
+
+    #[error(
+        "inventory file changed on disk between read and write; call reload_devices and retry"
+    )]
+    InventoryDriftedOnDisk,
+
+    #[error("inventory is empty (no devices)")]
+    EmptyInventory,
+
+    #[error("inventory file read error: {0}")]
+    InventoryRead(String),
+
+    #[error("inventory parse error: {0}")]
+    InventoryParse(String),
+
+    #[error("inventory file write error: {0}")]
+    InventoryWrite(String),
 }
 
 impl From<rustez::RustEzError> for JmcpError {
@@ -188,5 +226,83 @@ mod tests {
         let s = format!("{e}");
         assert!(s.contains("template syntax"));
         assert!(s.contains("line 3"));
+    }
+
+    #[test]
+    fn inventory_readonly_display_mentions_flag() {
+        let s = JmcpError::InventoryReadonly.to_string();
+        assert!(s.contains("--inventory-readonly"));
+    }
+
+    #[test]
+    fn device_exists_display_includes_name() {
+        let s = JmcpError::DeviceExists("r1".into()).to_string();
+        assert!(s.contains("`r1`"));
+        assert!(s.contains("already exists"));
+    }
+
+    #[test]
+    fn password_auth_disabled_display_mentions_flag() {
+        let s = JmcpError::PasswordAuthDisabled.to_string();
+        assert!(s.contains("--allow-password-auth-add"));
+    }
+
+    #[test]
+    fn invalid_device_name_display_includes_regex() {
+        let s = JmcpError::InvalidDeviceName("bad name".into()).to_string();
+        assert!(s.contains("bad name"));
+        assert!(s.contains("^[A-Za-z0-9_.-]+$"));
+    }
+
+    #[test]
+    fn invalid_device_ip_display_includes_value() {
+        let s = JmcpError::InvalidDeviceIp("not-an-ip".into()).to_string();
+        assert!(s.contains("not-an-ip"));
+    }
+
+    #[test]
+    fn invalid_device_port_display_includes_range() {
+        let s = JmcpError::InvalidDevicePort(70_000).to_string();
+        assert!(s.contains("70000"));
+        assert!(s.contains("1..=65535"));
+    }
+
+    #[test]
+    fn missing_arguments_display_uses_debug_format() {
+        let s = JmcpError::MissingArguments(vec!["router_name".into(), "ip".into()]).to_string();
+        assert!(s.contains("[\"router_name\", \"ip\"]"));
+    }
+
+    #[test]
+    fn inventory_drifted_display_recommends_reload() {
+        let s = JmcpError::InventoryDriftedOnDisk.to_string();
+        assert!(s.contains("reload_devices"));
+    }
+
+    #[test]
+    fn empty_inventory_display() {
+        let s = JmcpError::EmptyInventory.to_string();
+        assert!(s.contains("inventory is empty"));
+    }
+
+    #[test]
+    fn inventory_read_display_includes_cause() {
+        let s = JmcpError::InventoryRead("permission denied".into()).to_string();
+        assert!(s.contains("read"));
+        assert!(s.contains("permission denied"));
+    }
+
+    #[test]
+    fn inventory_parse_display_includes_cause() {
+        let s = JmcpError::InventoryParse("expected `{` at line 1".into()).to_string();
+        assert!(s.contains("parse"));
+        assert!(s.contains("expected `{`"));
+    }
+
+    #[test]
+    fn inventory_write_display_includes_cause() {
+        let s = JmcpError::InventoryWrite("disk full".into()).to_string();
+        assert!(s.contains("write"));
+        assert!(s.contains("disk full"));
     }
 }
