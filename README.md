@@ -38,8 +38,14 @@ instead of PyEZ.
 - `execute_junos_command_batch` — N routers x M operational CLI commands, parallel across routers, per-command and optional whole-batch timeouts. Pre-flight blocklist + unknown-router checks; continue-on-error after pre-flight.
 - New `pfe_commands` rule list under `_blocklist_defaults` and per-device `blocklist`. Independent from `commands`.
 
-**Coming after v0.2:** Jinja2 templates, `add_device` / `reload_devices`
-interactive tools.
+### v0.2 follow-up: Templates (released)
+
+- `render_and_apply_j2_template` — render a Jinja2 template (inline `template_content`) with JSON or YAML `vars_content`. Supports single (`router_name`) or multiple routers (`router_names`), dry-run, and full commit. Reuses the same blocklist + format gating as `load_and_commit_config`.
+- Vars sniff: first non-whitespace `{` → JSON, otherwise YAML. Both must produce a top-level object.
+- Strict-undefined: missing variables fail with the variable name rather than rendering empty.
+- Auto-format detection: leading `<` → `xml`, any `set ` / `delete ` line → `set`, otherwise `text`. Override via `config_format`.
+
+**Coming after v0.2.2:** `add_device` / `reload_devices` interactive tools (sub-project #4 PR #7).
 
 ## Blocklist guardrails (v0.2)
 
