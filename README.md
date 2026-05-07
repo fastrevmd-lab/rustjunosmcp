@@ -5,6 +5,21 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
+## Performance
+
+Benchmarked against [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
+(Python/PyEZ) on the same vSRX lab devices, same network path.
+
+| Test | rust-junosmcp (v0.3.0) | junos-mcp (Python) | Speedup |
+|------|------------------------|--------------------|---------| 
+| 5 sequential commands | 30.4s (6.1s/cmd) | 52.2s (10.4s/cmd) | **1.7x** |
+| 5 parallel commands | 8.1s (1.6s/cmd) | 11.1s (2.2s/cmd) | **1.4x** |
+| 4 routers x 3 commands (batch) | 16.1s (1.3s/cmd) | N/A | Rust-only |
+
+Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
+on sequential commands to the same router. The batch tool runs routers in
+parallel with a configurable concurrency cap.
+
 > ## v0.3.0 released
 >
 > Session pooling, reliability fixes, and commit confirm. NETCONF sessions
@@ -86,21 +101,6 @@ rejected pre-flight in that case.
 > **Compat note:** files using `_blocklist_defaults` or per-device
 > `blocklist` are not cross-compatible with Juniper/junos-mcp-server's
 > inventory format. Files without these fields remain drop-in compatible.
-
-## Performance
-
-Benchmarked against [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
-(Python/PyEZ) on the same vSRX lab devices, same network path.
-
-| Test | rust-junosmcp (v0.3.0) | junos-mcp (Python) | Speedup |
-|------|------------------------|--------------------|---------| 
-| 5 sequential commands | 30.4s (6.1s/cmd) | 52.2s (10.4s/cmd) | **1.7x** |
-| 5 parallel commands | 8.1s (1.6s/cmd) | 11.1s (2.2s/cmd) | **1.4x** |
-| 4 routers x 3 commands (batch) | 16.1s (1.3s/cmd) | N/A | Rust-only |
-
-Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
-on sequential commands to the same router. The batch tool runs routers in
-parallel with a configurable concurrency cap.
 
 ## Confirmed commits (v0.3)
 
