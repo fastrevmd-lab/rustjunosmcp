@@ -39,6 +39,7 @@ impl BatchRunner for DeviceManagerRunner {
     }
 }
 
+use crate::helpers::excerpt;
 use crate::policy::{Decision, Policy};
 use crate::tools::ExecuteBatchArgs;
 use serde::Serialize;
@@ -58,17 +59,6 @@ pub struct CommandOutcome {
 pub struct RouterResult {
     pub router: String,
     pub commands: Vec<CommandOutcome>,
-}
-
-fn excerpt(s: &str) -> String {
-    if s.len() <= 120 {
-        return s.to_string();
-    }
-    let mut end = 120;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
 }
 
 pub async fn handle(
@@ -99,6 +89,16 @@ pub async fn handle_with_runner(
     if args.max_concurrent_routers == 0 {
         return Err(JmcpError::InventoryInvalid(
             "execute_junos_command_batch: max_concurrent_routers must be > 0".into(),
+        ));
+    }
+    if args.routers.len() > 100 {
+        return Err(JmcpError::InventoryInvalid(
+            "execute_junos_command_batch: routers list exceeds maximum of 100".into(),
+        ));
+    }
+    if args.commands.len() > 50 {
+        return Err(JmcpError::InventoryInvalid(
+            "execute_junos_command_batch: commands list exceeds maximum of 50".into(),
         ));
     }
 

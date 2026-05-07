@@ -2,29 +2,19 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
+use crate::helpers::{excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
 use crate::tools::ExecuteCommandArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Truncate `s` to at most 120 chars on a char boundary.
-fn excerpt(s: &str) -> String {
-    if s.len() <= 120 {
-        return s.to_string();
-    }
-    let mut end = 120;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
-}
-
 pub async fn handle(
     args: ExecuteCommandArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
+    validate_input_length("command", &args.command)?;
     // Fail fast on unknown routers so the policy check has a valid target.
     let _ = dm.inventory().get(&args.router_name)?;
 

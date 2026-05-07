@@ -2,28 +2,19 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
+use crate::helpers::{excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
 use crate::tools::ExecutePfeArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn excerpt(s: &str) -> String {
-    if s.len() <= 120 {
-        return s.to_string();
-    }
-    let mut end = 120;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
-}
-
 pub async fn handle(
     args: ExecutePfeArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
+    validate_input_length("pfe_command", &args.pfe_command)?;
     // Reject quote-injection inputs before we build the wrapper.
     if args.pfe_command.contains('"') {
         return Err(JmcpError::BadPfeCommand(

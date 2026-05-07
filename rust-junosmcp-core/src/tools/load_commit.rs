@@ -3,29 +3,19 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::build_config_payload;
+use crate::helpers::{build_config_payload, excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
 use crate::tools::LoadCommitArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn excerpt(s: &str) -> String {
-    if s.len() <= 120 {
-        return s.to_string();
-    }
-    let mut end = 120;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
-}
-
 pub async fn handle(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
+    validate_input_length("config_text", &args.config_text)?;
     // Confirm the router exists before consulting the policy.
     let _ = dm.inventory().get(&args.router_name)?;
 
@@ -81,6 +71,8 @@ pub async fn handle(
 
         let commit_result = if let Some(mins) = confirm_timeout_mins {
             let seconds = mins * 60;
+            // rustez's commit_confirmed API does not accept a log comment;
+            // the comment is noted in the response but not sent to the device.
             cfg.commit_confirmed(seconds).await
         } else {
             cfg.commit_with_comment(&commit_comment).await
@@ -98,6 +90,12 @@ pub async fn handle(
                          Send another commit to confirm.",
                         mins
                     ));
+                    if !commit_comment.is_empty() {
+                        obj["note"] = json!(
+                            "commit_comment is not applied during confirmed commits \
+                             (rustez API limitation)"
+                        );
+                    }
                 }
                 obj
             }

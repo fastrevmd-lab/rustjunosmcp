@@ -142,6 +142,14 @@ before deploying. The same warnings apply.
 - Review configurations before allowing commit tools to run.
 - Restrict network access to the MCP server.
 - Don't deploy to untrusted networks.
+- Set `devices.json` permissions to `0600` — it contains SSH credentials.
+- `get_junos_config` returns the full config including `## SECRET-DATA`
+  hashed password lines. Restrict this tool's scope to trusted tokens.
+- `reload_devices` restricts `file_name` to the same directory as the
+  original `--device-mapping` path (no `..` traversal).
+- Text input fields (`command`, `config_text`, `template_content`,
+  `pfe_command`) are capped at 1 MB. Batch lists are capped at 100
+  routers and 50 commands.
 
 ## Quick start (local)
 

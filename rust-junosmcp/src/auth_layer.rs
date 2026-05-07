@@ -63,7 +63,14 @@ pub async fn auth_layer(
 
 fn parse_bearer(v: &HeaderValue) -> Option<&str> {
     let s = v.to_str().ok()?;
-    let token = s.strip_prefix("Bearer ")?.trim();
+    let header = s.trim();
+    if header.len() < 7 {
+        return None;
+    }
+    if !header[..7].eq_ignore_ascii_case("bearer ") {
+        return None;
+    }
+    let token = header[7..].trim();
     if token.is_empty() {
         return None;
     }
@@ -111,11 +118,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_bearer_case_sensitive_scheme() {
-        // RFC 6750 says Bearer is case-insensitive, but our parser is strict
-        // on `Bearer ` exactly. Document that behavior here.
+    fn parse_bearer_scheme_case_insensitive_lowercase() {
+        // RFC 6750: scheme is case-insensitive; "bearer" must work.
         let h = HeaderValue::from_static("bearer abc123");
-        assert_eq!(parse_bearer(&h), None);
+        assert_eq!(parse_bearer(&h), Some("abc123"));
+    }
+
+    #[test]
+    fn parse_bearer_scheme_case_insensitive_uppercase() {
+        // RFC 6750: "BEARER" must work.
+        let h = HeaderValue::from_static("BEARER abc123");
+        assert_eq!(parse_bearer(&h), Some("abc123"));
+    }
+
+    #[test]
+    fn parse_bearer_scheme_mixed_case() {
+        // RFC 6750: "Bearer" (canonical) must continue to work.
+        let h = HeaderValue::from_static("Bearer abc123");
+        assert_eq!(parse_bearer(&h), Some("abc123"));
     }
 
     #[test]

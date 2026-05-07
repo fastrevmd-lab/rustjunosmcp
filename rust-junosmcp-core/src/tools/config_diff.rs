@@ -2,23 +2,11 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::validate_rollback_version;
+use crate::helpers::{strip_config_xml_wrapper, validate_rollback_version};
 use crate::tools::ConfigDiffArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Strip `<configuration-information>` / `<configuration-output>` XML wrapper
-/// tags that Junos adds around CLI output delivered over NETCONF.
-fn strip_config_xml_wrapper(raw: &str) -> String {
-    if let Some(start) = raw.find("<configuration-output>") {
-        let content_start = start + "<configuration-output>".len();
-        if let Some(end) = raw[content_start..].find("</configuration-output>") {
-            return raw[content_start..content_start + end].trim().to_string();
-        }
-    }
-    raw.trim().to_string()
-}
 
 pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let version = validate_rollback_version(args.version)?;
