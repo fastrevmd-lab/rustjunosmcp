@@ -279,7 +279,8 @@ impl DeviceManager {
         let mut builder = Device::connect(&entry.ip)
             .port(entry.port)
             .username(&entry.username)
-            .keepalive_interval(KEEPALIVE_INTERVAL);
+            .keepalive_interval(KEEPALIVE_INTERVAL)
+            .rpc_timeout(POOL_RPC_TIMEOUT);
 
         if let Some(ssh_config_path) = &entry.ssh_config {
             let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
@@ -328,6 +329,18 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(json.as_bytes()).unwrap();
         Arc::new(Inventory::load(f.path()).unwrap())
+    }
+
+    #[test]
+    fn pool_rpc_timeout_is_at_least_one_hour() {
+        // POOL_RPC_TIMEOUT must comfortably exceed any plausible per-call
+        // MCP timeout so that the MCP-side `tokio::time::timeout` is the
+        // user-visible bound, not rustez's internal cap.
+        assert!(
+            POOL_RPC_TIMEOUT >= Duration::from_secs(3600),
+            "POOL_RPC_TIMEOUT must be >= 1h to cover long-running ops; got {:?}",
+            POOL_RPC_TIMEOUT
+        );
     }
 
     #[tokio::test]
