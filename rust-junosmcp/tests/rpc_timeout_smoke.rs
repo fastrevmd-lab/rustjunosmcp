@@ -1,10 +1,24 @@
-//! Smoke test: per-call MCP timeout is the user-visible bound, NOT the
-//! rustez internal 30 s cap.
+//! Smoke test: the MCP-side per-call `tokio::time::timeout(args.timeout, ...)`
+//! wrapper around `dm.open(...) + dev.cli(...)` returns a clean error within
+//! the requested bound, end-to-end through the tool dispatch path.
 //!
-//! Regression for a real-world bug seen on 2026-05-14 where
-//! `request system software add` ran to completion on a vSRX but the
-//! MCP returned RPC timeout at 30 s, blinding the operator for the
-//! remaining ~6 minutes of install + reboot.
+//! Context: while running a live Junos upgrade on 2026-05-14 we discovered
+//! `rustez::Device` has a hidden `DEFAULT_RPC_TIMEOUT = 30s` that wraps every
+//! post-handshake RPC. The fix in `device_manager.rs` raises that cap to 1 h
+//! via `POOL_RPC_TIMEOUT`, leaving the MCP-side per-call timeout as the sole
+//! user-visible bound (verified by the unit test
+//! `device_manager::tests::pool_rpc_timeout_is_at_least_one_hour` and by the
+//! manual real-device check in plan Task 5).
+//!
+//! What this test actually exercises: the request goes all the way through
+//! `execute_junos_command`'s `tokio::time::timeout(...)` wrapper against an
+//! unreachable IP (TEST-NET-1, RFC 5737), and the MCP returns `isError=true`
+//! within the requested 5 s. It does NOT distinguish the T2 fix being applied
+//! vs reverted — the rustez `connect()` (TCP + SSH + NETCONF hello) is not
+//! covered by `rpc_timeout`, only post-handshake RPCs are, so against an
+//! unreachable host the MCP outer timeout always fires first regardless. A
+//! true regression test for the rustez cap would need a local SSH/NETCONF
+//! mock that completes the handshake then stalls on an RPC; out of scope here.
 
 mod common;
 
@@ -40,14 +54,15 @@ fn execute_junos_command_outer_timeout_fires_before_rustez_cap() {
     );
     let elapsed = start.elapsed();
 
-    // Two observable properties of the fix:
-    // 1. The error returns within ~5 s (MCP outer timeout), well before
-    //    the legacy 30 s rustez cap. Allow generous slack for CI jitter
-    //    and the connect-attempt tail (TCP retries).
+    // Two observable properties:
+    // 1. The MCP-side `tokio::time::timeout(args.timeout, ...)` returns an
+    //    error within the requested bound (~5 s). The 25 s ceiling allows
+    //    generous slack for CI jitter and process spawn tail.
     assert!(
         elapsed.as_secs() < 25,
-        "Outer timeout should fire within MCP-side bound (~5s); got {:?}. \
-         If this exceeds 25s, rustez's internal cap is likely still in play.",
+        "MCP outer timeout should fire within the requested bound (~5s); \
+         got {:?}. If this exceeds 25s, the timeout wrapper around \
+         dm.open + dev.cli has regressed.",
         elapsed
     );
 
