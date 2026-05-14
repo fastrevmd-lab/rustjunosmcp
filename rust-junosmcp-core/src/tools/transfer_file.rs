@@ -493,3 +493,64 @@ Filesystem  Size Used Avail Capacity Mounted on
         assert!((400_000_000..420_000_000).contains(&n));
     }
 }
+
+/// Parse the sha256 from `file checksum sha-256 /var/tmp/foo` output. Junos prints:
+/// ```text
+/// SHA256 (/var/tmp/foo) = abc123...
+/// ```
+/// or, when the file is missing:
+/// ```text
+/// error: stat: /var/tmp/foo: No such file or directory
+/// ```
+/// Returns `Ok(Some([u8;32]))` on hit, `Ok(None)` if absent, `Err` on parse failure.
+pub fn parse_checksum_output(output: &str) -> Result<Option<[u8; 32]>, JmcpError> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("error:") && trimmed.contains("No such file") {
+            return Ok(None);
+        }
+        if let Some(eq) = trimmed.rfind('=') {
+            let hex = trimmed[eq + 1..].trim();
+            if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                let mut out = [0u8; 32];
+                for (i, byte) in out.iter_mut().enumerate() {
+                    let hi = u8::from_str_radix(&hex[i * 2..i * 2 + 1], 16).unwrap();
+                    let lo = u8::from_str_radix(&hex[i * 2 + 1..i * 2 + 2], 16).unwrap();
+                    *byte = (hi << 4) | lo;
+                }
+                return Ok(Some(out));
+            }
+        }
+    }
+    Err(JmcpError::Validation(format!(
+        "unable to parse checksum output: {output:?}"
+    )))
+}
+
+#[cfg(test)]
+mod checksum_tests {
+    use super::*;
+
+    #[test]
+    fn parses_present_file() {
+        let s = "SHA256 (/var/tmp/foo.tgz) = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n";
+        let h = parse_checksum_output(s).unwrap().unwrap();
+        assert_eq!(h[0], 0xba);
+        assert_eq!(h[31], 0xad);
+    }
+
+    #[test]
+    fn returns_none_for_missing_file() {
+        let s = "error: stat: /var/tmp/foo: No such file or directory\n";
+        assert!(parse_checksum_output(s).unwrap().is_none());
+    }
+
+    #[test]
+    fn errors_on_garbage_output() {
+        let s = "fzzt fzzt nothing here\n";
+        assert!(parse_checksum_output(s).is_err());
+    }
+}
