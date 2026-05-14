@@ -10,14 +10,25 @@ pub mod config_diff;
 pub mod execute_command;
 pub mod facts;
 pub mod get_config;
+pub mod list_staged_files;
 pub mod load_commit;
 pub mod pfe;
 pub mod reload_devices;
 pub mod router_list;
 pub mod template;
+pub mod transfer_file;
 
 fn default_timeout() -> u64 {
     360
+}
+fn default_transfer_timeout() -> u64 {
+    600
+}
+fn default_list_staged_timeout() -> u64 {
+    30
+}
+fn default_verify() -> bool {
+    true
 }
 fn default_version() -> i64 {
     1
@@ -180,6 +191,33 @@ pub struct ReloadDevicesArgs {
     pub file_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TransferFileArgs {
+    /// Target router name (must exist in inventory and use ssh_key auth).
+    pub router_name: String,
+    /// Basename of the file under the staging dir. Must not contain '/', '\\', or '..'.
+    pub source_path: String,
+    /// Overwrite if dest exists with different sha256. Default false.
+    #[serde(default)]
+    pub force: bool,
+    /// Post-transfer sha256 verification. Default true.
+    #[serde(default = "default_verify")]
+    pub verify: bool,
+    /// Per-call timeout in seconds. Default 600.
+    #[serde(default = "default_transfer_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListStagedFilesArgs {
+    /// Optional router name. If present, also lists the device's /var/tmp/.
+    #[serde(default)]
+    pub router_name: Option<String>,
+    /// Per-call timeout in seconds. Default 30.
+    #[serde(default = "default_list_staged_timeout")]
+    pub timeout: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +348,38 @@ mod tests {
         let v = serde_json::json!({});
         let a: ReloadDevicesArgs = serde_json::from_value(v).unwrap();
         assert!(a.file_name.is_none());
+    }
+
+    #[test]
+    fn transfer_file_args_defaults() {
+        let v = serde_json::json!({"router_name":"r1","source_path":"foo.tgz"});
+        let a: TransferFileArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.source_path, "foo.tgz");
+        assert!(!a.force);
+        assert!(a.verify);
+        assert_eq!(a.timeout, 600);
+    }
+
+    #[test]
+    fn transfer_file_args_rejects_missing_source() {
+        let v = serde_json::json!({"router_name":"r1"});
+        let r: Result<TransferFileArgs, _> = serde_json::from_value(v);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn list_staged_files_args_router_optional() {
+        let v = serde_json::json!({});
+        let a: ListStagedFilesArgs = serde_json::from_value(v).unwrap();
+        assert!(a.router_name.is_none());
+        assert_eq!(a.timeout, 30);
+    }
+
+    #[test]
+    fn list_staged_files_args_with_router() {
+        let v = serde_json::json!({"router_name":"vSRX-test10"});
+        let a: ListStagedFilesArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.router_name.as_deref(), Some("vSRX-test10"));
     }
 }
