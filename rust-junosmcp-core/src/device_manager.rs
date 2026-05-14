@@ -21,6 +21,12 @@ use tokio::sync::Mutex;
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const POOL_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+/// Per-RPC timeout pushed into `rustez::Device` at connect time. Set high so
+/// the MCP per-call `tokio::time::timeout(args.timeout, ...)` is the
+/// user-visible bound. Without this, `rustez` defaults to 30 s and silently
+/// truncates any long-running operational command (e.g. `request system
+/// software add ...`) regardless of the MCP-side timeout.
+const POOL_RPC_TIMEOUT: Duration = Duration::from_secs(3600);
 
 // ── Session pool ────────────────────────────────────────────────────────
 
