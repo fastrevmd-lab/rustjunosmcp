@@ -299,3 +299,96 @@ mod argv_tests {
         assert!(local < dest);
     }
 }
+
+/// Outcome of a single SCP invocation.
+#[derive(Clone, Debug)]
+pub struct ScpOutcome {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[async_trait::async_trait]
+pub trait ScpRunner: Send + Sync {
+    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome>;
+}
+
+/// Production runner — shells out to `scp` from system openssh-client.
+pub struct OpenSshScpRunner;
+
+#[async_trait::async_trait]
+impl ScpRunner for OpenSshScpRunner {
+    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome> {
+        let argv = build_scp_argv(job);
+        let out = tokio::process::Command::new("scp")
+            .args(&argv)
+            .kill_on_drop(true)
+            .output()
+            .await?;
+        Ok(ScpOutcome {
+            exit_code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        })
+    }
+}
+
+/// Test double that records calls and returns canned outcomes.
+#[cfg(test)]
+pub struct MockScpRunner {
+    pub outcome: ScpOutcome,
+    pub calls: tokio::sync::Mutex<Vec<Vec<String>>>,
+}
+
+#[cfg(test)]
+impl MockScpRunner {
+    pub fn ok() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            outcome: ScpOutcome {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            calls: tokio::sync::Mutex::new(Vec::new()),
+        })
+    }
+    pub fn with_outcome(o: ScpOutcome) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            outcome: o,
+            calls: tokio::sync::Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl ScpRunner for MockScpRunner {
+    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome> {
+        self.calls.lock().await.push(build_scp_argv(job));
+        Ok(self.outcome.clone())
+    }
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mock_records_argv_for_assertion() {
+        let runner = MockScpRunner::ok();
+        let job = ScpJob {
+            private_key_path: "/k".into(),
+            known_hosts_file: "/etc/jmcp/known_hosts".into(),
+            username: "root".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            local_path: "/var/lib/jmcp/staging/x.tgz".into(),
+            remote_dir: "/var/tmp/".into(),
+        };
+        let out = runner.run(&job).await.unwrap();
+        assert_eq!(out.exit_code, 0);
+        let calls = runner.calls.lock().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0][0], "-O");
+    }
+}
