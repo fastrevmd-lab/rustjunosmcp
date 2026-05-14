@@ -35,10 +35,38 @@ pub fn ensure_built() {
 }
 
 /// Write `json` to `dir/name` and return the full path.
+#[allow(dead_code)]
 pub fn write_inventory_in(dir: &Path, name: &str, json: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, json).expect("write inventory");
     path
+}
+
+/// Write a minimal JSON inventory to a temp file and return the handle.
+/// Each tuple: (name, ip, port, username, key_file_path).
+#[allow(dead_code)]
+pub fn write_inventory_temp(devices: &[(&str, &str, u16, &str, &str)]) -> tempfile::NamedTempFile {
+    use std::io::Write;
+    let mut f = tempfile::Builder::new()
+        .prefix("jmcp-inv-")
+        .suffix(".json")
+        .tempfile()
+        .expect("create temp inventory");
+    let mut obj = serde_json::Map::new();
+    for (name, ip, port, user, key) in devices {
+        obj.insert(
+            (*name).to_string(),
+            serde_json::json!({
+                "ip": ip,
+                "port": port,
+                "username": user,
+                "auth": { "type": "ssh_key", "private_key_path": key },
+            }),
+        );
+    }
+    let payload = serde_json::Value::Object(obj);
+    writeln!(f, "{}", serde_json::to_string_pretty(&payload).unwrap()).expect("write inventory");
+    f
 }
 
 /// Live `rust-junosmcp` child wired up for JSON-RPC over stdio.
