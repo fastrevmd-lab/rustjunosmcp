@@ -2,7 +2,7 @@
 //! directory to a Junos device's /var/tmp/, with idempotent skip and
 //! pre/post-transfer sha256 verification.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::JmcpError;
 
@@ -190,5 +190,112 @@ mod sha_tests {
     async fn nonexistent_file_returns_io_error() {
         let r = sha256_file(Path::new("/nonexistent/jmcp/file")).await;
         assert!(matches!(r, Err(JmcpError::Io(_))));
+    }
+}
+
+/// Inputs for one SCP invocation. All fields owned strings/paths so the
+/// runner can `tokio::process::Command::new("scp").args(...)` without further
+/// shell escaping.
+#[derive(Clone, Debug)]
+pub struct ScpJob {
+    pub private_key_path: PathBuf,
+    pub known_hosts_file: PathBuf,
+    pub username: String,
+    pub host: String,
+    pub port: u16,
+    pub local_path: PathBuf,
+    pub remote_dir: String, // e.g. "/var/tmp/"
+}
+
+/// Build the argv vector that `OpenSshScpRunner` will hand to `scp`. Pulled
+/// out so it can be asserted exactly in unit tests without spawning a process.
+pub fn build_scp_argv(job: &ScpJob) -> Vec<String> {
+    let dest = format!("{}@{}:{}", job.username, job.host, job.remote_dir);
+    vec![
+        "-O".into(),
+        "-i".into(),
+        job.private_key_path.display().to_string(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        format!("UserKnownHostsFile={}", job.known_hosts_file.display()),
+        "-o".into(),
+        "ConnectTimeout=15".into(),
+        "-o".into(),
+        "ServerAliveInterval=10".into(),
+        "-o".into(),
+        "ServerAliveCountMax=3".into(),
+        "-P".into(),
+        job.port.to_string(),
+        job.local_path.display().to_string(),
+        dest,
+    ]
+}
+
+#[cfg(test)]
+mod argv_tests {
+    use super::*;
+
+    fn job() -> ScpJob {
+        ScpJob {
+            private_key_path: "/etc/jmcp/keys/id".into(),
+            known_hosts_file: "/etc/jmcp/known_hosts".into(),
+            username: "root".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
+            remote_dir: "/var/tmp/".into(),
+        }
+    }
+
+    #[test]
+    fn argv_uses_dash_capital_o_for_legacy_protocol() {
+        // Junos disables SFTP-over-SSH; -O forces SCP1 wire protocol.
+        let v = build_scp_argv(&job());
+        assert_eq!(v[0], "-O");
+    }
+
+    #[test]
+    fn argv_includes_known_hosts_with_accept_new() {
+        let v = build_scp_argv(&job());
+        let joined = v.join(" ");
+        assert!(joined.contains("StrictHostKeyChecking=accept-new"));
+        assert!(joined.contains("UserKnownHostsFile=/etc/jmcp/known_hosts"));
+    }
+
+    #[test]
+    fn argv_includes_connect_and_alive_timeouts() {
+        let v = build_scp_argv(&job());
+        let joined = v.join(" ");
+        assert!(joined.contains("ConnectTimeout=15"));
+        assert!(joined.contains("ServerAliveInterval=10"));
+        assert!(joined.contains("ServerAliveCountMax=3"));
+    }
+
+    #[test]
+    fn argv_uses_uppercase_p_for_port() {
+        let v = build_scp_argv(&ScpJob {
+            port: 2200,
+            ..job()
+        });
+        let i = v.iter().position(|s| s == "-P").expect("has -P");
+        assert_eq!(v[i + 1], "2200");
+    }
+
+    #[test]
+    fn argv_dest_is_username_host_colon_dir() {
+        let v = build_scp_argv(&job());
+        assert_eq!(v.last().unwrap(), "root@10.0.0.1:/var/tmp/");
+    }
+
+    #[test]
+    fn argv_local_path_appears_before_dest() {
+        let v = build_scp_argv(&job());
+        let local = v
+            .iter()
+            .position(|s| s == "/var/lib/jmcp/staging/foo.tgz")
+            .unwrap();
+        let dest = v.iter().position(|s| s.starts_with("root@")).unwrap();
+        assert!(local < dest);
     }
 }
