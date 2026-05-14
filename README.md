@@ -132,6 +132,23 @@ Response:
 To confirm (prevent rollback), send another `load_and_commit_config` with
 the same config (or any valid config) without `confirm_timeout_mins`.
 
+## Long-running operational commands
+
+Each MCP tool exposes a per-call `timeout` parameter (default 360 s). This is
+the **sole user-visible bound** on operation duration; the underlying
+`rustez::Device` is configured with a 1-hour internal RPC timeout at
+connection time, so commands that legitimately take many minutes
+(`request system software add`, `request support information`,
+`request system snapshot`, etc.) will not be silently truncated.
+
+If you need to run an operation that exceeds 1 hour, split it into
+phases or invoke the work fire-and-forget on the device and poll for
+completion separately.
+
+**Caveat:** when a long-running RPC is followed by a device reboot, the
+NETCONF session will of course die. The session pool reconnects cleanly
+on the next call.
+
 ## Security warning
 
 This server lets an LLM run commands and push configuration changes against
