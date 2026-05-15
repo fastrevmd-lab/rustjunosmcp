@@ -116,11 +116,13 @@ fn spawn(inv_path: &std::path::Path, tokens_path: &std::path::Path) -> Server {
 }
 
 /// Outcome of a streamable-http POST: status, body parsed as JSON-RPC payload
-/// (extracted from SSE if needed), and any returned `Mcp-Session-Id`.
+/// (extracted from SSE if needed), any returned `Mcp-Session-Id`, and the
+/// `WWW-Authenticate` header if present (for RFC 6750 §3 assertions on 401).
 struct PostResult {
     code: u16,
     body: Value,
     session_id: Option<String>,
+    www_authenticate: Option<String>,
 }
 
 fn http_post(port: u16, bearer: Option<&str>, session_id: Option<&str>, body: Value) -> PostResult {
@@ -132,19 +134,21 @@ fn http_post(port: u16, bearer: Option<&str>, session_id: Option<&str>, body: Va
     if let Some(sid) = session_id {
         req = req.set("Mcp-Session-Id", sid);
     }
-    let (code, resp_session, content_type, text) = match req.send_json(body) {
+    let (code, resp_session, content_type, www_auth, text) = match req.send_json(body) {
         Ok(resp) => {
             let code = resp.status();
             let sid = resp.header("Mcp-Session-Id").map(str::to_string);
             let ct = resp.header("Content-Type").unwrap_or("").to_string();
+            let wa = resp.header("WWW-Authenticate").map(str::to_string);
             let text = resp.into_string().unwrap_or_default();
-            (code, sid, ct, text)
+            (code, sid, ct, wa, text)
         }
         Err(ureq::Error::Status(code, resp)) => {
             let sid = resp.header("Mcp-Session-Id").map(str::to_string);
             let ct = resp.header("Content-Type").unwrap_or("").to_string();
+            let wa = resp.header("WWW-Authenticate").map(str::to_string);
             let text = resp.into_string().unwrap_or_default();
-            (code, sid, ct, text)
+            (code, sid, ct, wa, text)
         }
         Err(e) => panic!("transport error: {e}"),
     };
@@ -159,6 +163,7 @@ fn http_post(port: u16, bearer: Option<&str>, session_id: Option<&str>, body: Va
         code,
         body: body_value,
         session_id: resp_session,
+        www_authenticate: www_auth,
     }
 }
 
@@ -228,6 +233,14 @@ fn missing_authorization_returns_401() {
         json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
     );
     assert_eq!(r.code, 401);
+    // RFC 6750 §3: every 401 must carry a Bearer challenge.
+    let challenge = r
+        .www_authenticate
+        .expect("401 must carry WWW-Authenticate per RFC 6750 §3");
+    assert!(
+        challenge.to_ascii_lowercase().starts_with("bearer"),
+        "challenge must use Bearer scheme: {challenge:?}"
+    );
 }
 
 #[test]
@@ -245,6 +258,20 @@ fn wrong_bearer_returns_401() {
         json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
     );
     assert_eq!(r.code, 401);
+    // RFC 6750 §3 + §3.1: 401 for a rejected token must include the Bearer
+    // challenge with error="invalid_token" so clients can distinguish a
+    // bearer rejection from an OAuth-discovery prompt.
+    let challenge = r
+        .www_authenticate
+        .expect("401 must carry WWW-Authenticate per RFC 6750 §3");
+    assert!(
+        challenge.to_ascii_lowercase().starts_with("bearer"),
+        "challenge must use Bearer scheme: {challenge:?}"
+    );
+    assert!(
+        challenge.contains(r#"error="invalid_token""#),
+        "wrong-bearer challenge must include error=\"invalid_token\" per RFC 6750 §3.1: {challenge:?}"
+    );
 }
 
 #[test]

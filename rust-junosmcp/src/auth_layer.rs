@@ -17,6 +17,15 @@ pub struct AuthState {
     pub store: Arc<ArcSwap<TokenStore>>,
 }
 
+/// RFC 6750 §3 bearer challenge for the "no credentials presented" cases.
+/// Bare scheme + realm is sufficient; `error=` is reserved for cases where
+/// the client *did* present a token (RFC 6750 §3.1).
+const CHALLENGE_NO_CREDENTIALS: &str = r#"Bearer realm="jmcp""#;
+
+/// RFC 6750 §3.1 challenge for the case where the client presented a
+/// syntactically-valid bearer token that did not match any known token.
+const CHALLENGE_INVALID_TOKEN: &str = r#"Bearer realm="jmcp", error="invalid_token", error_description="The access token is invalid""#;
+
 pub async fn auth_layer(
     axum::extract::State(state): axum::extract::State<AuthState>,
     mut req: Request<Body>,
@@ -30,7 +39,7 @@ pub async fn auth_layer(
             return reject(
                 StatusCode::UNAUTHORIZED,
                 "missing Authorization header",
-                true,
+                CHALLENGE_NO_CREDENTIALS,
             )
         }
     };
@@ -40,7 +49,7 @@ pub async fn auth_layer(
             return reject(
                 StatusCode::UNAUTHORIZED,
                 "Authorization header must use Bearer scheme",
-                true,
+                CHALLENGE_NO_CREDENTIALS,
             )
         }
     };
@@ -56,7 +65,11 @@ pub async fn auth_layer(
                 remote = ?req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>(),
                 "auth_failed: no matching token"
             );
-            reject(StatusCode::UNAUTHORIZED, "invalid bearer token", false)
+            reject(
+                StatusCode::UNAUTHORIZED,
+                "invalid bearer token",
+                CHALLENGE_INVALID_TOKEN,
+            )
         }
     }
 }
@@ -77,14 +90,17 @@ fn parse_bearer(v: &HeaderValue) -> Option<&str> {
     Some(token)
 }
 
-fn reject(code: StatusCode, msg: &str, include_challenge: bool) -> Response<Body> {
-    let mut resp = Response::builder().status(code);
-    if include_challenge {
-        resp = resp.header(header::WWW_AUTHENTICATE, "Bearer");
-    }
-    // OK: builder only fails on invalid header values; both `code` and the
-    // static "Bearer" challenge are valid by construction.
-    resp.body(Body::from(msg.to_string())).unwrap()
+/// Per RFC 6750 §3, every 401 from a bearer-protected resource MUST carry a
+/// `WWW-Authenticate: Bearer ...` challenge. `challenge` is the full header
+/// value (e.g. `Bearer realm="jmcp"` or `Bearer realm="jmcp", error="invalid_token"`).
+fn reject(code: StatusCode, msg: &str, challenge: &'static str) -> Response<Body> {
+    Response::builder()
+        .status(code)
+        .header(header::WWW_AUTHENTICATE, challenge)
+        .body(Body::from(msg.to_string()))
+        // OK: builder only fails on invalid header values; both `code` and the
+        // static challenge constants are valid by construction.
+        .unwrap()
 }
 
 #[cfg(test)]
