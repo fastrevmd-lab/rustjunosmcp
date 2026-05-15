@@ -132,6 +132,43 @@ Response:
 To confirm (prevent rollback), send another `load_and_commit_config` with
 the same config (or any valid config) without `confirm_timeout_mins`.
 
+## File transfers (`transfer_file` / `list_staged_files`)
+
+`transfer_file` pushes a host-staged file to `/var/tmp/<basename>` on a Junos
+device using legacy SCP (`scp -O`, since Junos disables the OpenSSH SFTP
+subsystem). It is **idempotent on SHA-256**: if the remote file already exists
+with a matching digest the call returns `status: "skipped"`. Pass `force: true`
+to overwrite when digests differ.
+
+**Auth:** SSH key only. Devices with `auth.type = "password"` are rejected with
+`[code=unsupported_auth]`. Add an SSH key to the device and reference its path
+via `auth.private_key_path` in `devices.json`.
+
+**On-disk surface:**
+
+| Path                          | Purpose                                       | Default mode | Owner       |
+| ----------------------------- | --------------------------------------------- | ------------ | ----------- |
+| `/var/lib/jmcp/staging/`      | Host-side stage for files awaiting transfer  | `0755`       | `jmcp:jmcp` |
+| `/etc/jmcp/known_hosts`       | SSH `known_hosts` consulted for every push    | `0644`       | `jmcp:jmcp` |
+
+Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
+
+`list_staged_files` returns the contents of the host staging dir. If
+`router_name` is supplied it also runs `file list /var/tmp/ detail` on the
+device and includes those entries under `device_files`.
+
+**Source path safety:** `source_path` must be a basename only (no `/`, no `\`,
+no `..`, no leading dot, ≤ 255 bytes); it is resolved relative to
+`--staging-dir` and never escapes it.
+
+**Pre-flight checks:** before scp, `transfer_file` runs
+`show system storage no-forwarding` and refuses to push when free space on
+`/var` is below `local_size + 32 MiB`.
+
+**Post-verify:** unless `verify: false` is passed, the device-side checksum is
+re-computed via `file checksum sha-256 /var/tmp/<basename>` and the file is
+deleted on mismatch.
+
 ## Long-running operational commands
 
 Each MCP tool exposes a per-call `timeout` parameter (default 360 s). This is
