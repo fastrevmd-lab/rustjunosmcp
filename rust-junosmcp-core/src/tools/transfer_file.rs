@@ -26,6 +26,91 @@ pub(crate) fn hex32(bytes: &[u8; 32]) -> String {
     s
 }
 
+/// Scrub OpenSSH/scp stderr before it lands in a `JmcpError::ScpFailed`
+/// surfaced to the MCP caller. Redacts:
+/// - absolute filesystem paths (e.g. `/root/.ssh/id_ed25519`, `/var/tmp/x`)
+///   → `<path>`
+/// - IPv4 dotted-quad addresses (e.g. `192.168.1.10`) → `<host>`
+///
+/// Rationale (issue #26, L1): in a multi-tenant or less-trusted deployment,
+/// raw `scp` stderr leaks the operator's filesystem layout (private-key
+/// paths, staging dir locations) and the device's IP. Both are unnecessary
+/// for diagnosing the underlying error reason, which we keep verbatim.
+/// In single-operator labs this is cosmetic; in shared deployments it
+/// matters.
+pub(crate) fn scrub_scp_stderr(stderr: &str) -> String {
+    let mut out = String::with_capacity(stderr.len());
+    let bytes = stderr.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        // Absolute path: starts with '/' and contains only path-safe ASCII.
+        // We accept the run of `[A-Za-z0-9./_+-]` after the leading '/'.
+        // Requires at least one non-'/' char after to avoid matching bare '/'.
+        if b == b'/' {
+            let mut j = i + 1;
+            while j < bytes.len() && is_path_byte(bytes[j]) {
+                j += 1;
+            }
+            if j > i + 1 {
+                out.push_str("<path>");
+                i = j;
+                continue;
+            }
+        }
+
+        // IPv4 dotted-quad: greedy match of d{1,3}(.d{1,3}){3}.
+        if b.is_ascii_digit() {
+            if let Some(end) = match_ipv4(&bytes[i..]) {
+                out.push_str("<host>");
+                i += end;
+                continue;
+            }
+        }
+
+        // Default: copy byte through. Safe because we only consume valid
+        // UTF-8 boundaries above (the substituted matches are all ASCII).
+        out.push(b as char);
+        i += 1;
+    }
+    out
+}
+
+fn is_path_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+')
+}
+
+/// If `bytes` starts with an IPv4 dotted-quad (`d{1,3}.d{1,3}.d{1,3}.d{1,3}`)
+/// not followed by another digit or '.', return the byte length consumed.
+fn match_ipv4(bytes: &[u8]) -> Option<usize> {
+    let mut idx = 0;
+    for octet in 0..4 {
+        // 1 to 3 digits
+        let start = idx;
+        while idx < bytes.len() && idx - start < 3 && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if idx == start {
+            return None;
+        }
+        if octet < 3 {
+            if idx >= bytes.len() || bytes[idx] != b'.' {
+                return None;
+            }
+            idx += 1;
+        }
+    }
+    // Must not be followed by another digit or '.' (would mean it's a longer
+    // numeric token, not an address).
+    if let Some(&next) = bytes.get(idx) {
+        if next.is_ascii_digit() || next == b'.' {
+            return None;
+        }
+    }
+    Some(idx)
+}
+
 /// Build the JSON response returned when the destination already holds a file
 /// with the same sha256 (idempotent skip). Kept as a pure helper so the shape
 /// is unit-testable without standing up a DeviceManager.
@@ -88,6 +173,76 @@ pub fn validate_source_basename(source: &str) -> Result<(), JmcpError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scrub_tests {
+    use super::*;
+
+    #[test]
+    fn redacts_absolute_path() {
+        let s = scrub_scp_stderr("Load key \"/root/.ssh/id_ed25519\": invalid format");
+        assert!(s.contains("<path>"), "{s}");
+        assert!(!s.contains("/root"), "{s}");
+        assert!(s.contains("invalid format"), "{s}");
+    }
+
+    #[test]
+    fn redacts_ipv4_address() {
+        let s = scrub_scp_stderr("ssh: connect to host 192.168.1.10 port 22: Connection timed out");
+        assert!(s.contains("<host>"), "{s}");
+        assert!(!s.contains("192.168"), "{s}");
+        assert!(s.contains("Connection timed out"), "{s}");
+        // "port 22" is left as-is — it's a service port number, not host info.
+        assert!(s.contains("port 22"), "{s}");
+    }
+
+    #[test]
+    fn redacts_multiple_paths_in_one_line() {
+        let s =
+            scrub_scp_stderr("scp: /var/tmp/foo.tgz: No such file or directory; checked /var/run");
+        assert!(!s.contains("/var"), "{s}");
+        assert_eq!(s.matches("<path>").count(), 2, "{s}");
+        assert!(s.contains("No such file or directory"), "{s}");
+    }
+
+    #[test]
+    fn keeps_diagnostic_text() {
+        let s = scrub_scp_stderr("Permission denied (publickey).");
+        // No paths or IPs to redact — message must pass through verbatim.
+        assert_eq!(s, "Permission denied (publickey).");
+    }
+
+    #[test]
+    fn preserves_newlines_and_structure() {
+        let input = "line1: /a/b\nline2: 10.0.0.1\nline3: ok";
+        let s = scrub_scp_stderr(input);
+        assert_eq!(s.lines().count(), 3, "{s}");
+        assert!(s.contains("<path>"));
+        assert!(s.contains("<host>"));
+        assert!(s.contains("ok"));
+    }
+
+    #[test]
+    fn does_not_match_partial_ipv4() {
+        // 1.2.3 is not a complete dotted-quad and must pass through.
+        let s = scrub_scp_stderr("version 1.2.3 detected");
+        assert_eq!(s, "version 1.2.3 detected");
+    }
+
+    #[test]
+    fn does_not_match_bare_digits() {
+        // Single number with no dots is not an IPv4 address.
+        let s = scrub_scp_stderr("exit code 42");
+        assert_eq!(s, "exit code 42");
+    }
+
+    #[test]
+    fn leaves_bare_slash_alone() {
+        // Single '/' with no following path chars should not become <path>.
+        let s = scrub_scp_stderr("a / b");
+        assert_eq!(s, "a / b");
+    }
 }
 
 #[cfg(test)]
@@ -826,9 +981,12 @@ pub async fn handle(
             {
                 return Err(JmcpError::ConnectTimeout(args.router_name.clone()));
             }
+            // Scrub paths/hostnames before surfacing to the MCP caller
+            // (issue #26, L1). The connect-timeout heuristic above runs on
+            // the unscrubbed stderr so its substring matches are unaffected.
             return Err(JmcpError::ScpFailed {
                 exit_code: outcome.exit_code,
-                stderr: outcome.stderr,
+                stderr: scrub_scp_stderr(&outcome.stderr),
             });
         }
 
