@@ -10,6 +10,12 @@
 //! TEST_DEVICE_NAME=vSRX-test10 TEST_INVENTORY_PATH=/etc/jmcp/devices.json \
 //!   cargo test -p rust-junosmcp-core --test integration_real_device transfer_file -- --ignored
 //! ```
+//!
+//! **Lab state:** these tests intentionally leave files at `/var/tmp/` on the
+//! target device — `rt-1kb.bin`, `rt-200mb.bin`, and `collide.bin`
+//! (the latter from `transfer_file_force_false_rejects_diff` whose negative
+//! second push is rejected, leaving "version-A" on the remote). Operator is
+//! responsible for any cleanup between runs.
 
 use rust_junosmcp_core::{
     policy::Policy,
