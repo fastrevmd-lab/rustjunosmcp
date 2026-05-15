@@ -61,6 +61,14 @@ pub struct Cli {
     /// Off by default. Mutually exclusive with --inventory-readonly.
     #[arg(long)]
     pub allow_password_auth_add: bool,
+
+    /// Directory used to stage files before scp push (transfer_file).
+    #[arg(long, default_value = "/var/lib/jmcp/staging")]
+    pub staging_dir: PathBuf,
+
+    /// SSH known_hosts file used for scp pushes (transfer_file).
+    #[arg(long, default_value = "/etc/jmcp/known_hosts")]
+    pub known_hosts_file: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -150,6 +158,35 @@ mod tests {
         let cli = Cli::parse_from(["rust-junosmcp"]);
         assert!(!cli.inventory_readonly);
         assert!(!cli.allow_password_auth_add);
+    }
+
+    #[test]
+    fn defaults_for_transfer_paths() {
+        let cli = Cli::parse_from(["rust-junosmcp"]);
+        assert_eq!(
+            cli.staging_dir,
+            std::path::PathBuf::from("/var/lib/jmcp/staging")
+        );
+        assert_eq!(
+            cli.known_hosts_file,
+            std::path::PathBuf::from("/etc/jmcp/known_hosts")
+        );
+    }
+
+    #[test]
+    fn parses_custom_transfer_paths() {
+        let cli = Cli::parse_from([
+            "rust-junosmcp",
+            "--staging-dir",
+            "/tmp/staging",
+            "--known-hosts-file",
+            "/tmp/khosts",
+        ]);
+        assert_eq!(cli.staging_dir, std::path::PathBuf::from("/tmp/staging"));
+        assert_eq!(
+            cli.known_hosts_file,
+            std::path::PathBuf::from("/tmp/khosts")
+        );
     }
 
     #[test]

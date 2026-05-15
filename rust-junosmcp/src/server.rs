@@ -11,10 +11,11 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        add_device, batch, config_diff, execute_command, facts, get_config, load_commit, pfe,
-        reload_devices, router_list, template, AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs,
-        ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs, GetConfigArgs, LoadCommitArgs,
-        ReloadDevicesArgs, TemplateArgs,
+        add_device, batch, config_diff, execute_command, facts, get_config, list_staged_files,
+        load_commit, pfe, reload_devices, router_list, template, transfer_file, AddDeviceArgs,
+        ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs,
+        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, TemplateArgs,
+        TransferFileArgs,
     },
     DeviceManager, Policy,
 };
@@ -57,14 +58,24 @@ pub enum ScopeError {
 pub struct JmcpHandler {
     dm: Arc<DeviceManager>,
     policy: Arc<arc_swap::ArcSwap<Policy>>,
+    transfer_cfg: rust_junosmcp_core::TransferConfig,
 }
 
 impl JmcpHandler {
-    pub fn new(dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
+    pub fn new(
+        dm: Arc<DeviceManager>,
+        policy: Arc<Policy>,
+        transfer_cfg: rust_junosmcp_core::TransferConfig,
+    ) -> Self {
         Self {
             dm,
             policy: Arc::new(arc_swap::ArcSwap::from(policy)),
+            transfer_cfg,
         }
+    }
+
+    pub fn transfer_config(&self) -> &rust_junosmcp_core::TransferConfig {
+        &self.transfer_cfg
     }
 
     /// Rebuild the blocklist policy from the current inventory and store it.
@@ -365,6 +376,100 @@ impl JmcpHandler {
         }
         Self::to_call_result(result)
     }
+
+    #[tool(
+        name = "transfer_file",
+        description = "Push a local file from the staging dir to /var/tmp/ on a Junos device via SCP. Idempotent on matching SHA-256."
+    )]
+    async fn transfer_file(
+        &self,
+        Parameters(args): Parameters<TransferFileArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "transfer_file") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "transfer_file", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
+        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
+        let router = args.router_name.clone();
+        let basename = args.source_path.clone();
+        let result =
+            transfer_file::handle(args, self.dm.clone(), self.transfer_config().clone()).await;
+        match &result {
+            Ok(v) => tracing::info!(
+                tool = "transfer_file",
+                token = token,
+                router = %router,
+                basename = %basename,
+                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
+                sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or(""),
+                "audit"
+            ),
+            Err(e) => tracing::info!(
+                tool = "transfer_file",
+                token = token,
+                router = %router,
+                basename = %basename,
+                outcome = "error",
+                error = %e,
+                "audit"
+            ),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "list_staged_files",
+        description = "List host-staging files (always); also lists /var/tmp/ on a Junos device when router_name is supplied"
+    )]
+    async fn list_staged_files(
+        &self,
+        Parameters(args): Parameters<ListStagedFilesArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "list_staged_files") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Some(router) = args.router_name.as_deref() {
+            if let Err(e) = self.check_router_scope(ctx, "list_staged_files", router) {
+                return Self::scope_to_call_result(e);
+            }
+        }
+        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
+        let router = args.router_name.clone().unwrap_or_default();
+        let result = list_staged_files::handle(
+            args,
+            self.dm.clone(),
+            self.transfer_config().staging_dir.clone(),
+        )
+        .await;
+        match &result {
+            Ok(v) => tracing::info!(
+                tool = "list_staged_files",
+                token = token,
+                router = %router,
+                staged_count = v
+                    .get("staged_files")
+                    .and_then(|a| a.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0),
+                "audit"
+            ),
+            Err(e) => tracing::info!(
+                tool = "list_staged_files",
+                token = token,
+                router = %router,
+                outcome = "error",
+                error = %e,
+                "audit"
+            ),
+        }
+        Self::to_call_result(result)
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -393,11 +498,21 @@ mod scope_tests {
     use crate::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
 
+    fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {
+        rust_junosmcp_core::TransferConfig {
+            staging_dir: std::path::PathBuf::from("/tmp/staging"),
+            known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
+            scp_runner: std::sync::Arc::new(
+                rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner,
+            ),
+        }
+    }
+
     fn make_handler() -> JmcpHandler {
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let policy = Arc::new(Policy::build(&inv).unwrap());
-        JmcpHandler::new(dm, policy)
+        JmcpHandler::new(dm, policy, test_transfer_cfg())
     }
 
     #[test]
@@ -456,6 +571,70 @@ mod scope_tests {
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
             Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn handler_carries_transfer_config() {
+        use rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner;
+        use rust_junosmcp_core::TransferConfig;
+
+        let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = Arc::new(Policy::build(&inv).unwrap());
+        let cfg = TransferConfig {
+            staging_dir: std::path::PathBuf::from("/tmp/x"),
+            known_hosts_file: std::path::PathBuf::from("/tmp/khosts"),
+            scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+        };
+        let h = JmcpHandler::new(dm, policy, cfg.clone());
+        assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
+    }
+
+    #[test]
+    fn transfer_file_tool_scope_denies_when_not_listed() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+        };
+        assert!(matches!(
+            handler.check_tool_scope(Some(&ctx), "transfer_file"),
+            Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn list_staged_files_tool_scope_denies_when_not_listed() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+        };
+        assert!(matches!(
+            handler.check_tool_scope(Some(&ctx), "list_staged_files"),
+            Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn transfer_file_router_scope_denies_when_not_listed() {
+        // Token has tool scope for transfer_file but only `other` is in router scope;
+        // a request for `vsrx-test10` must surface RouterNotInScope.
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Allowlist(vec!["other".into()]),
+            tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
+        };
+        assert!(handler
+            .check_tool_scope(Some(&ctx), "transfer_file")
+            .is_ok());
+        assert!(matches!(
+            handler.check_router_scope(Some(&ctx), "transfer_file", "vsrx-test10"),
+            Err(ScopeError::RouterNotInScope { .. })
         ));
     }
 

@@ -13,7 +13,7 @@ use clap::Parser;
 use cli::{Cli, Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_auth::file::TokenStoreFile;
-use rust_junosmcp_core::{DeviceManager, Inventory, Policy};
+use rust_junosmcp_core::{DeviceManager, Inventory, OpenSshScpRunner, Policy, TransferConfig};
 use server::JmcpHandler;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -86,7 +86,12 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    let handler = JmcpHandler::new(dev_manager.clone(), policy);
+    let transfer_cfg = TransferConfig {
+        staging_dir: args.staging_dir.clone(),
+        known_hosts_file: args.known_hosts_file.clone(),
+        scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+    };
+    let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg);
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see

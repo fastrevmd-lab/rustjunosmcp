@@ -81,6 +81,15 @@ parallel with a configurable concurrency cap.
 - **Confirmed commits** — `load_and_commit_config` gains `confirm_timeout_mins` parameter for `commit confirmed N` with auto-rollback safety net.
 - **crates.io dependency** — `rustez` switched from path dep to crates.io 0.10.1; CI no longer requires sibling repo checkout.
 
+### v0.4 (released)
+
+- **`transfer_file`** — idempotent SCP push (`scp -O`, since Junos disables OpenSSH SFTP) of a host-staged file to `/var/tmp/<basename>` on a Junos device. Pre-flight free-space check on `/var` (`local_size + 32 MiB` headroom), SHA-256 verify, post-transfer checksum re-validation with delete-on-mismatch. SSH-key auth only — password-auth devices rejected with `[code=unsupported_auth]`.
+- **`list_staged_files`** — lists host staging dir always, plus device `/var/tmp/` listing when `router_name` is supplied.
+- **Stable error codes** — every transfer failure carries an LLM-readable `[code=...]` Display tag (`bad_source_path`, `insufficient_disk`, `unsupported_auth`, `dest_exists_differs`, `scp_failed`, `connect_timeout`, `verify_mismatch`, `outer_timeout`, `device_probe_failed`).
+- **New CLI flags** — `--staging-dir` (default `/var/lib/jmcp/staging`) and `--known-hosts-file` (default `/etc/jmcp/known_hosts`).
+- **Packaging** — `install.sh` provisions the new on-disk surface owned by `jmcp:jmcp`. See the File transfers section below for details.
+- Tool count: 11 → 13.
+
 ## Blocklist guardrails (v0.2)
 
 `devices.json` may carry an optional `_blocklist_defaults` block plus an
@@ -131,6 +140,43 @@ Response:
 
 To confirm (prevent rollback), send another `load_and_commit_config` with
 the same config (or any valid config) without `confirm_timeout_mins`.
+
+## File transfers (`transfer_file` / `list_staged_files`)
+
+`transfer_file` pushes a host-staged file to `/var/tmp/<basename>` on a Junos
+device using legacy SCP (`scp -O`, since Junos disables the OpenSSH SFTP
+subsystem). It is **idempotent on SHA-256**: if the remote file already exists
+with a matching digest the call returns `status: "skipped"`. Pass `force: true`
+to overwrite when digests differ.
+
+**Auth:** SSH key only. Devices with `auth.type = "password"` are rejected with
+`[code=unsupported_auth]`. Add an SSH key to the device and reference its path
+via `auth.private_key_path` in `devices.json`.
+
+**On-disk surface:**
+
+| Path                          | Purpose                                       | Default mode | Owner       |
+| ----------------------------- | --------------------------------------------- | ------------ | ----------- |
+| `/var/lib/jmcp/staging/`      | Host-side stage for files awaiting transfer  | `0755`       | `jmcp:jmcp` |
+| `/etc/jmcp/known_hosts`       | SSH `known_hosts` consulted for every push    | `0644`       | `jmcp:jmcp` |
+
+Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
+
+`list_staged_files` returns the contents of the host staging dir. If
+`router_name` is supplied it also runs `file list /var/tmp/ detail` on the
+device and includes those entries under `device_files`.
+
+**Source path safety:** `source_path` must be a basename only (no `/`, no `\`,
+no `..`, no leading dot, ≤ 255 bytes); it is resolved relative to
+`--staging-dir` and never escapes it.
+
+**Pre-flight checks:** before scp, `transfer_file` runs
+`show system storage no-forwarding` and refuses to push when free space on
+`/var` is below `local_size + 32 MiB`.
+
+**Post-verify:** unless `verify: false` is passed, the device-side checksum is
+re-computed via `file checksum sha-256 /var/tmp/<basename>` and the file is
+deleted on mismatch.
 
 ## Long-running operational commands
 
