@@ -505,6 +505,9 @@ mod scope_tests {
             scp_runner: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner,
             ),
+            transfer_locks: std::sync::Arc::new(
+                rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
+            ),
         }
     }
 
@@ -586,6 +589,9 @@ mod scope_tests {
             staging_dir: std::path::PathBuf::from("/tmp/x"),
             known_hosts_file: std::path::PathBuf::from("/tmp/khosts"),
             scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+            transfer_locks: std::sync::Arc::new(
+                rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
+            ),
         };
         let h = JmcpHandler::new(dm, policy, cfg.clone());
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);

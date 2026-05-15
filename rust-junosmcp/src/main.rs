@@ -90,6 +90,10 @@ async fn main() -> Result<()> {
         staging_dir: args.staging_dir.clone(),
         known_hosts_file: args.known_hosts_file.clone(),
         scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+        // Process-wide per-router serialization (issue #26, L4).
+        transfer_locks: std::sync::Arc::new(
+            rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
+        ),
     };
     let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg);
 

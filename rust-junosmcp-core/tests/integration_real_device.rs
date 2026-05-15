@@ -336,6 +336,9 @@ fn setup_real_transfer_env() -> (Arc<DeviceManager>, TransferConfig, String) {
         staging_dir,
         known_hosts_file: std::path::PathBuf::from("/etc/jmcp/known_hosts"),
         scp_runner: Arc::new(OpenSshScpRunner),
+        transfer_locks: Arc::new(
+            rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
+        ),
     };
 
     (dm, cfg, device_name)
