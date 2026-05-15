@@ -4,14 +4,21 @@
 //! JMCP_TEST_HOST=10.0.0.1 JMCP_TEST_USER=admin JMCP_TEST_PASS=secret \
 //!   cargo test -p rust-junosmcp-core --test integration_real_device -- --ignored
 //! ```
+//!
+//! Transfer-file tests additionally require:
+//! ```text
+//! TEST_DEVICE_NAME=vSRX-test10 TEST_INVENTORY_PATH=/etc/jmcp/devices.json \
+//!   cargo test -p rust-junosmcp-core --test integration_real_device transfer_file -- --ignored
+//! ```
 
 use rust_junosmcp_core::{
     policy::Policy,
     tools::{
         batch, config_diff, execute_command, facts, get_config, pfe, router_list, ConfigDiffArgs,
         ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs, GetConfigArgs,
+        TransferFileArgs,
     },
-    DeviceManager, Inventory,
+    DeviceManager, Inventory, OpenSshScpRunner, TransferConfig,
 };
 use std::io::Write;
 use std::sync::Arc;
@@ -288,4 +295,192 @@ async fn live_add_device_persists_then_reload() {
     .expect("reload ok");
     assert_eq!(r2["new_router_count"], 1);
     assert!(dm.inventory().get("live-test").is_ok());
+}
+
+// --- Sub-project: transfer_file real-device round-trip tests ----------------
+//
+// Required env vars:
+//   TEST_DEVICE_NAME   — name of an inventory entry that uses ssh_key auth
+//   TEST_INVENTORY_PATH — absolute path to a devices.json with that entry
+//
+// These tests are #[ignore]'d and MUST NOT be run in CI without a live device.
+
+/// Build a (DeviceManager, TransferConfig, device_name) triple from env vars.
+///
+/// Panics with a descriptive message if the required env vars are missing,
+/// so operators see exactly what to set when running manually.
+fn setup_real_transfer_env() -> (Arc<DeviceManager>, TransferConfig, String) {
+    let device_name =
+        std::env::var("TEST_DEVICE_NAME").expect("set TEST_DEVICE_NAME=<inventory-entry-name>");
+    let inv_path = std::env::var("TEST_INVENTORY_PATH")
+        .expect("set TEST_INVENTORY_PATH=<path-to-devices.json>");
+    let inv_path = std::path::PathBuf::from(inv_path);
+
+    let inv = Arc::new(Inventory::load(&inv_path).unwrap());
+    let hash = rust_junosmcp_core::inventory::hash_file(&inv_path).unwrap();
+    let dm = Arc::new(DeviceManager::with_path(inv, inv_path, hash, false, false));
+
+    // Use a fresh temp dir as the staging area for each test suite invocation.
+    // We use `into_path()` so the directory persists for the duration of the
+    // test (the caller is responsible for cleanup; these are #[ignore]'d tests
+    // against a real lab device so operator-owned state is acceptable).
+    let staging_dir = tempfile::tempdir().unwrap().keep();
+
+    let cfg = TransferConfig {
+        staging_dir,
+        known_hosts_file: std::path::PathBuf::from("/etc/jmcp/known_hosts"),
+        scp_runner: Arc::new(OpenSshScpRunner),
+    };
+
+    (dm, cfg, device_name)
+}
+
+#[tokio::test]
+#[ignore = "real device — requires TEST_DEVICE_NAME + TEST_INVENTORY_PATH + ssh_key auth"]
+async fn transfer_file_round_trip_1kb() {
+    let (dm, cfg, device_name) = setup_real_transfer_env();
+
+    // Write a 1 KB file into the staging dir.
+    let filename = "rt-1kb.bin";
+    let payload = vec![0xABu8; 1024];
+    std::fs::write(cfg.staging_dir.join(filename), &payload).unwrap();
+
+    // First push — must report "transferred".
+    let result1 = rust_junosmcp_core::tools::transfer_file::handle(
+        TransferFileArgs {
+            router_name: device_name.clone(),
+            source_path: filename.into(),
+            force: false,
+            verify: true,
+            timeout: 120,
+        },
+        dm.clone(),
+        cfg.clone(),
+    )
+    .await
+    .expect("first push should succeed");
+
+    assert_eq!(result1["status"], "transferred", "first push: {result1}");
+    assert_eq!(result1["size_bytes"], 1024_u64, "first push size_bytes");
+
+    // Second push with identical content — must be idempotent ("skipped").
+    let result2 = rust_junosmcp_core::tools::transfer_file::handle(
+        TransferFileArgs {
+            router_name: device_name.clone(),
+            source_path: filename.into(),
+            force: false,
+            verify: true,
+            timeout: 120,
+        },
+        dm.clone(),
+        cfg.clone(),
+    )
+    .await
+    .expect("second push should succeed (idempotent skip)");
+
+    assert_eq!(
+        result2["status"], "skipped",
+        "second push should be skipped: {result2}"
+    );
+    assert_eq!(
+        result2["sha256"], result1["sha256"],
+        "sha256 must match between pushes"
+    );
+}
+
+#[tokio::test]
+#[ignore = "real device — 200 MB transfer, slow"]
+async fn transfer_file_round_trip_200mb() {
+    let (dm, cfg, device_name) = setup_real_transfer_env();
+
+    const SIZE: u64 = 200 * 1024 * 1024;
+    let filename = "rt-200mb.bin";
+
+    // Allocate and write a 200 MB file (all zeros — fast to generate).
+    {
+        use std::io::Write as _;
+        let path = cfg.staging_dir.join(filename);
+        let mut f = std::fs::File::create(&path).unwrap();
+        let chunk = vec![0u8; 64 * 1024];
+        let mut written: u64 = 0;
+        while written < SIZE {
+            let n = (SIZE - written).min(chunk.len() as u64) as usize;
+            f.write_all(&chunk[..n]).unwrap();
+            written += n as u64;
+        }
+    }
+
+    let result = rust_junosmcp_core::tools::transfer_file::handle(
+        TransferFileArgs {
+            router_name: device_name.clone(),
+            source_path: filename.into(),
+            force: true, // overwrite any previous run's leftover
+            verify: true,
+            timeout: 900, // 15 min — generous for a 200 MB SCP to a vSRX
+        },
+        dm.clone(),
+        cfg.clone(),
+    )
+    .await
+    .expect("200 MB push should succeed");
+
+    assert_eq!(result["status"], "transferred", "200 MB push: {result}");
+    assert_eq!(result["size_bytes"], SIZE, "size_bytes must equal 200 MiB");
+    assert_eq!(
+        result["verified"], true,
+        "post-transfer verification must pass"
+    );
+}
+
+#[tokio::test]
+#[ignore = "real device — requires TEST_DEVICE_NAME + TEST_INVENTORY_PATH + ssh_key auth"]
+async fn transfer_file_force_false_rejects_diff() {
+    let (dm, cfg, device_name) = setup_real_transfer_env();
+
+    let filename = "collide.bin";
+
+    // Push "version-A".
+    std::fs::write(cfg.staging_dir.join(filename), b"version-A").unwrap();
+    let r_a = rust_junosmcp_core::tools::transfer_file::handle(
+        TransferFileArgs {
+            router_name: device_name.clone(),
+            source_path: filename.into(),
+            force: true, // ensure a clean slate regardless of prior test runs
+            verify: true,
+            timeout: 120,
+        },
+        dm.clone(),
+        cfg.clone(),
+    )
+    .await
+    .expect("version-A push should succeed");
+    assert_eq!(r_a["status"], "transferred", "version-A push: {r_a}");
+
+    // Overwrite local staging file with "version-B" (different content, same name).
+    std::fs::write(cfg.staging_dir.join(filename), b"version-B").unwrap();
+
+    // Second push with force=false — must reject with DestExistsDiffers.
+    // The remote still holds "version-A" after the rejected B push.
+    // This is expected lab state for an #[ignore]'d test; cleanup is the
+    // operator's responsibility.
+    let res = rust_junosmcp_core::tools::transfer_file::handle(
+        TransferFileArgs {
+            router_name: device_name.clone(),
+            source_path: filename.into(),
+            force: false,
+            verify: true,
+            timeout: 120,
+        },
+        dm.clone(),
+        cfg.clone(),
+    )
+    .await;
+
+    assert!(
+        matches!(
+            res,
+            Err(rust_junosmcp_core::JmcpError::DestExistsDiffers { .. })
+        ),
+        "expected DestExistsDiffers, got: {res:?}"
+    );
 }
