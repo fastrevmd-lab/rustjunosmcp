@@ -561,3 +561,267 @@ Filesystem  Size Used Avail Capacity Mounted on
         assert!(matches!(d, PreflightDecision::ClusterUnsupported));
     }
 }
+
+use crate::device_manager::DeviceManager;
+use crate::error::JmcpError;
+use crate::inventory::AuthConfig;
+use crate::tools::transfer_file::{sha256_file, validate_source_basename, TransferConfig};
+use crate::tools::UpgradeJunosArgs;
+use std::sync::Arc;
+
+/// Tool-level config. Holds the shared `TransferConfig` so that:
+/// - `transfer_file` and `upgrade_junos` use the same per-router locks
+/// - staging dir + known hosts paths are configured in one place
+/// - the mockable `ScpRunner` is reachable when this tool calls into
+///   `transfer_file::handle` for the actual image push
+#[derive(Clone)]
+pub struct UpgradeConfig {
+    pub transfer_cfg: TransferConfig,
+}
+
+/// Stub: Task 9 replaces this with the real async NETCONF gather.
+#[allow(dead_code)]
+async fn gather_facts(
+    _router: &str,
+    _dm: Arc<DeviceManager>,
+    _image_basename: String,
+    _local_size: u64,
+    _local_sha: [u8; 32],
+) -> Result<PreflightFacts, JmcpError> {
+    Err(JmcpError::Validation(
+        "gather_facts stub called; implement in Task 9".into(),
+    ))
+}
+
+pub async fn handle(
+    args: UpgradeJunosArgs,
+    dm: Arc<DeviceManager>,
+    cfg: UpgradeConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    let timeout = std::time::Duration::from_secs(args.timeout);
+    tokio::time::timeout(timeout, run(args, dm, cfg))
+        .await
+        .map_err(|_| JmcpError::UpgradeOuterTimeout(timeout))?
+}
+
+async fn run(
+    args: UpgradeJunosArgs,
+    dm: Arc<DeviceManager>,
+    cfg: UpgradeConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    // 1. Basename validation (same allowlist as transfer_file).
+    validate_source_basename(&args.source_path)?;
+
+    // 2. Inventory lookup + auth check up front. We snapshot what we
+    //    need so the borrow drops before any await on dm.open().
+    {
+        let inv = dm.inventory();
+        let entry = inv.get(&args.router_name)?;
+        match &entry.auth {
+            AuthConfig::Password { .. } => {
+                return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+            }
+            AuthConfig::SshKey { .. } => {}
+        }
+    }
+
+    // 3. Staged file checks (mirror transfer_file pre-flight).
+    let local_path = cfg.transfer_cfg.staging_dir.join(&args.source_path);
+    let meta = std::fs::symlink_metadata(&local_path).map_err(|_| {
+        JmcpError::BadSourcePath(format!(
+            "staged file not found or unreadable: {}",
+            local_path.display()
+        ))
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(JmcpError::BadSourcePath(format!(
+            "staged path is a symlink, refusing to follow: {}",
+            local_path.display()
+        )));
+    }
+    if !meta.is_file() {
+        return Err(JmcpError::BadSourcePath(format!(
+            "staged path is not a regular file: {}",
+            local_path.display()
+        )));
+    }
+
+    // 4. Acquire per-router transfer lock (shared with transfer_file).
+    let _permit = cfg
+        .transfer_cfg
+        .transfer_locks
+        .acquire(&args.router_name)
+        .await;
+
+    // 5. Local sha256 + size (streamed, blocks of 64 KiB).
+    let (local_sha, local_size) = sha256_file(&local_path).await?;
+
+    // 6. Gather NETCONF facts. Stub until Task 9 wires it up.
+    let facts = gather_facts(
+        &args.router_name,
+        dm.clone(),
+        args.source_path.clone(),
+        local_size,
+        local_sha,
+    )
+    .await?;
+
+    // 7. Pure preflight decision.
+    dispatch_preflight(&args, &facts, dm.clone(), &cfg).await
+}
+
+/// Translate a PreflightDecision into a handle() outcome. Task 9
+/// stubs the Proceed arm; Tasks 10-11 fill in the destructive path.
+async fn dispatch_preflight(
+    args: &UpgradeJunosArgs,
+    facts: &PreflightFacts,
+    _dm: Arc<DeviceManager>,
+    _cfg: &UpgradeConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    match evaluate_preflight(facts, args) {
+        PreflightDecision::ClusterUnsupported => Err(JmcpError::UpgradeClusterUnsupported {
+            router: args.router_name.clone(),
+        }),
+        PreflightDecision::UnparseableVersion => Err(JmcpError::DeviceProbeFailed {
+            phase: "version_parse".into(),
+            message: "could not parse Junos version from `show version`".into(),
+        }),
+        PreflightDecision::UnparseableStorage => Err(JmcpError::DeviceProbeFailed {
+            phase: "storage_parse".into(),
+            message: "could not parse free bytes from `show system storage`".into(),
+        }),
+        PreflightDecision::AlreadyAtTarget { current_version } => Ok(serde_json::json!({
+            "status": "already_at_target",
+            "router": args.router_name,
+            "current_version": current_version,
+            "target_version": args.target_version,
+            "message": "device already running target version; no action taken"
+        })),
+        PreflightDecision::CommitConfirmedActive { rollback_secs } => {
+            Err(JmcpError::UpgradeCommitConfirmedActive {
+                router: args.router_name.clone(),
+                rollback_secs,
+            })
+        }
+        PreflightDecision::InsufficientDisk { free, required } => {
+            Err(JmcpError::InsufficientDisk {
+                free,
+                required,
+                message: format!(
+                    "device '{}' /var/tmp (install needs 2× image + 32 MiB headroom)",
+                    args.router_name
+                ),
+            })
+        }
+        PreflightDecision::ConfirmationRequired(payload) => {
+            Err(JmcpError::ConfirmationRequired { payload })
+        }
+        PreflightDecision::Proceed => Err(JmcpError::Validation(
+            "destructive path not yet implemented (Task 10/11)".into(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod handle_early_exit_tests {
+    use super::*;
+    use crate::device_manager::DeviceManager;
+    use crate::inventory::Inventory;
+    use crate::tools::{transfer_file::TransferLocks, UpgradeJunosArgs};
+    use std::io::Write;
+    use std::sync::Arc;
+
+    fn cfg(dir: &std::path::Path) -> UpgradeConfig {
+        UpgradeConfig {
+            transfer_cfg: crate::tools::transfer_file::TransferConfig {
+                staging_dir: dir.to_path_buf(),
+                known_hosts_file: "/etc/jmcp/known_hosts".into(),
+                scp_runner: crate::tools::transfer_file::MockScpRunner::ok(),
+                transfer_locks: Arc::new(TransferLocks::default()),
+            },
+        }
+    }
+
+    /// Holds the inventory plus the temp key file so the key's lifetime
+    /// covers the test (Inventory::load checks key existence at parse time).
+    struct InvWithKey {
+        inv: Arc<Inventory>,
+        _key: tempfile::NamedTempFile,
+        _json: tempfile::NamedTempFile,
+    }
+
+    fn build_inv(json_tmpl: &str) -> InvWithKey {
+        let key = tempfile::NamedTempFile::new().unwrap();
+        let key_path = key.path().to_string_lossy().to_string();
+        let json = json_tmpl.replace("__KEY__", &key_path);
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(json.as_bytes()).unwrap();
+        let inv = Arc::new(Inventory::load(f.path()).unwrap());
+        InvWithKey {
+            inv,
+            _key: key,
+            _json: f,
+        }
+    }
+
+    fn args(router: &str, source: &str) -> UpgradeJunosArgs {
+        UpgradeJunosArgs {
+            router_name: router.into(),
+            source_path: source.into(),
+            target_version: "25.4R1.12".into(),
+            confirm: false,
+            timeout: 10,
+            reboot_wait_secs: 5,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_bad_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(env.inv.clone()));
+        let r = handle(args("r1", "../etc/passwd"), dm, cfg(dir.path())).await;
+        assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
+    }
+
+    #[tokio::test]
+    async fn unknown_router_propagates() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("img.tgz"), b"abc").unwrap();
+        let env = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(env.inv.clone()));
+        let r = handle(args("nope", "img.tgz"), dm, cfg(dir.path())).await;
+        assert!(matches!(r, Err(crate::error::JmcpError::UnknownRouter(_))));
+    }
+
+    #[tokio::test]
+    async fn rejects_password_auth_before_transfer() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("img.tgz"), b"abc").unwrap();
+        let env = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(env.inv.clone()));
+        let r = handle(args("r1", "img.tgz"), dm, cfg(dir.path())).await;
+        assert!(matches!(r, Err(crate::error::JmcpError::UnsupportedAuth(ref s)) if s == "r1"));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_staged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(env.inv.clone()));
+        let r = handle(args("r1", "missing.tgz"), dm, cfg(dir.path())).await;
+        assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
+    }
+}
