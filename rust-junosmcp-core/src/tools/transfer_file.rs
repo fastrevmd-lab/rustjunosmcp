@@ -46,6 +46,12 @@ pub(crate) fn skipped_response(basename: &str, sha: &[u8; 32], size: u64) -> Val
 /// - leading '.' (dotfiles)
 /// - ".." anywhere (whole name or embedded, e.g. "a..b")
 /// - any '/', '\\', or "..".
+/// - any byte outside the ASCII allowlist `[A-Za-z0-9._-]`. This implicitly
+///   rejects NUL bytes, ASCII control chars, and *all* non-ASCII Unicode —
+///   including RTL overrides (U+202E), zero-width joiners, and homoglyph
+///   scripts that could mask the true filename in operator logs or shell
+///   expansions. Junos image / config artifacts are always plain ASCII so
+///   this allowlist is non-restrictive in practice. (issue #26, L2)
 pub fn validate_source_basename(source: &str) -> Result<(), JmcpError> {
     if source.is_empty() {
         return Err(JmcpError::BadSourcePath("source_path is empty".into()));
@@ -69,6 +75,16 @@ pub fn validate_source_basename(source: &str) -> Result<(), JmcpError> {
     if source.contains("..") {
         return Err(JmcpError::BadSourcePath(format!(
             "source_path '{source}' must not contain '..'"
+        )));
+    }
+    // ASCII allowlist: [A-Za-z0-9._-] only. Scan bytes so non-ASCII (multi-
+    // byte UTF-8) is rejected without needing to enumerate Unicode classes.
+    if let Some(bad) = source
+        .bytes()
+        .find(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')))
+    {
+        return Err(JmcpError::BadSourcePath(format!(
+            "source_path '{source}' contains disallowed byte 0x{bad:02x}; only [A-Za-z0-9._-] are permitted"
         )));
     }
     Ok(())
@@ -152,6 +168,69 @@ mod validate_tests {
     #[test]
     fn accepts_max_length_255() {
         assert!(validate_source_basename(&"a".repeat(255)).is_ok());
+    }
+
+    // ----- issue #26 L2: allowlist hardening -----
+
+    #[test]
+    fn rejects_nul_byte() {
+        assert!(matches!(
+            validate_source_basename("file\0.tgz"),
+            Err(JmcpError::BadSourcePath(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_ascii_control_chars() {
+        // newline, tab, BEL
+        for c in ["a\nb", "a\tb", "a\x07b"] {
+            assert!(
+                matches!(
+                    validate_source_basename(c),
+                    Err(JmcpError::BadSourcePath(_))
+                ),
+                "should reject {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_space() {
+        assert!(matches!(
+            validate_source_basename("a b.tgz"),
+            Err(JmcpError::BadSourcePath(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_unicode_rtl_override() {
+        // U+202E RIGHT-TO-LEFT OVERRIDE — used in filename-spoofing attacks.
+        assert!(matches!(
+            validate_source_basename("file\u{202e}gpj.tgz"),
+            Err(JmcpError::BadSourcePath(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_unicode_lookalike() {
+        // Cyrillic 'а' (U+0430) instead of Latin 'a'.
+        assert!(matches!(
+            validate_source_basename("\u{0430}bc.tgz"),
+            Err(JmcpError::BadSourcePath(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters() {
+        for c in ["a;b", "a|b", "a&b", "a$b", "a`b", "a*b", "a?b"] {
+            assert!(
+                matches!(
+                    validate_source_basename(c),
+                    Err(JmcpError::BadSourcePath(_))
+                ),
+                "should reject {c:?}"
+            );
+        }
     }
 }
 
