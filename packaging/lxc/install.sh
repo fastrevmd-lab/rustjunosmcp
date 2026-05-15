@@ -9,9 +9,19 @@ if ! id -u jmcp >/dev/null 2>&1; then
             --shell /usr/sbin/nologin jmcp
 fi
 
-mkdir -p /etc/jmcp /var/lib/jmcp
+mkdir -p /etc/jmcp /var/lib/jmcp /var/lib/jmcp/staging
 chown -R jmcp:jmcp /var/lib/jmcp
 chmod 755 /usr/local/bin/rust-junosmcp
+
+# File-transfer surface (transfer_file / list_staged_files).
+# Staging dir owner+mode is covered by the chown -R above; ensure mode is 0755.
+chmod 0755 /var/lib/jmcp/staging
+# known_hosts must exist (empty is fine) so the SCP runner can pin host keys.
+if [[ ! -f /etc/jmcp/known_hosts ]]; then
+    touch /etc/jmcp/known_hosts
+fi
+chown jmcp:jmcp /etc/jmcp/known_hosts
+chmod 0644 /etc/jmcp/known_hosts
 
 # Only install example if no real devices.json yet.
 if [[ ! -f /etc/jmcp/devices.json ]]; then
