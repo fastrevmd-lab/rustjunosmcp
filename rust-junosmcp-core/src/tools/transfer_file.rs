@@ -9,7 +9,36 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
 use crate::tools::TransferFileArgs;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+/// Required free-space headroom on `/var` beyond the local file size, in bytes.
+/// Junos needs working room for temp files and metadata; 32 MiB is generous
+/// enough to absorb log churn during a multi-GB upload without false negatives.
+pub(crate) const MIN_FREE_HEADROOM_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Format a 32-byte sha256 digest as 64 lowercase hex characters.
+pub(crate) fn hex32(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in bytes {
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
+}
+
+/// Build the JSON response returned when the destination already holds a file
+/// with the same sha256 (idempotent skip). Kept as a pure helper so the shape
+/// is unit-testable without standing up a DeviceManager.
+pub(crate) fn skipped_response(basename: &str, sha: &[u8; 32], size: u64) -> Value {
+    json!({
+        "status": "skipped",
+        "remote_path": format!("/var/tmp/{}", basename),
+        "size_bytes": size,
+        "sha256": hex32(sha),
+        "verified": true,
+        "message": "destination already present with matching sha256; no transfer performed",
+    })
+}
 
 /// Validate that `source_path` is a safe basename. Rejects:
 /// - empty
@@ -592,27 +621,121 @@ pub async fn handle(
             )));
         }
         // Compute local sha256 + size (streamed).
-        let (local_sha, _local_size) = sha256_file(&local_path).await?;
+        let (local_sha, local_size) = sha256_file(&local_path).await?;
 
         // NOTE: The order is intentional — local sha256 is computed BEFORE the
         // auth check. The `rejects_password_auth_with_unsupported_auth` test
         // assumes UnsupportedAuth fires after a successful sha256, so do not
         // reorder these without updating that test.
 
-        // Resolve device + check auth type.
+        // Resolve device + check auth type. Snapshot the fields we need before
+        // dropping the borrow so we can hand `dm` to `dm.open(...)` below.
         let inv = dm.inventory();
         let entry = inv.get(&args.router_name)?;
-        if let AuthConfig::Password { .. } = entry.auth {
-            return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+        let private_key_path = match &entry.auth {
+            AuthConfig::Password { .. } => {
+                return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+            }
+            AuthConfig::SshKey { private_key_path } => private_key_path.clone(),
+        };
+        let host = entry.ip.clone();
+        let port = entry.port;
+        let username = entry.username.clone();
+        drop(inv);
+
+        let basename = args.source_path.clone();
+        let remote_path = format!("/var/tmp/{}", basename);
+
+        // Open pooled NETCONF session for the pre-flight + post-verify CLI calls.
+        let mut dev = dm.open(&args.router_name).await?;
+
+        // 1. Free-disk pre-flight.
+        let storage_out = dev.cli("show system storage no-forwarding").await?;
+        let free_bytes = parse_storage_free_bytes(&storage_out)?;
+        let required = local_size.saturating_add(MIN_FREE_HEADROOM_BYTES);
+        if free_bytes < required {
+            return Err(JmcpError::InsufficientDisk {
+                free: free_bytes,
+                required,
+                message: format!("device '{}' /var/tmp", args.router_name),
+            });
         }
 
-        // The remaining steps (free-disk check, remote sha probe, scp, post-verify)
-        // land in Tasks 13 + 14. Stub a placeholder error so this task can ship
-        // independently with passing tests.
-        let _ = (local_sha, &cfg);
-        Err(JmcpError::Validation(
-            "transfer pipeline not yet implemented".into(),
-        ))
+        // 2. Probe remote checksum to support idempotent skip.
+        let probe_cmd = format!("file checksum sha-256 {}", remote_path);
+        let probe_out = dev.cli(&probe_cmd).await?;
+        let remote_sha_pre = parse_checksum_output(&probe_out)?;
+        if let Some(remote) = remote_sha_pre {
+            if remote == local_sha {
+                return Ok(skipped_response(&basename, &local_sha, local_size));
+            }
+            if !args.force {
+                return Err(JmcpError::DestExistsDiffers {
+                    dest: remote_path.clone(),
+                    local_sha: hex32(&local_sha),
+                    remote_sha: hex32(&remote),
+                });
+            }
+            // force=true: fall through to scp (overwrite).
+        }
+
+        // 3. SCP the file.
+        let job = ScpJob {
+            private_key_path,
+            known_hosts_file: cfg.known_hosts_file.clone(),
+            username,
+            host,
+            port,
+            local_path: local_path.clone(),
+            remote_dir: "/var/tmp/".into(),
+        };
+        let outcome = cfg.scp_runner.run(&job).await?;
+        if outcome.exit_code != 0 {
+            return Err(JmcpError::ScpFailed {
+                exit_code: outcome.exit_code,
+                stderr: outcome.stderr,
+            });
+        }
+
+        // 4. Post-transfer verify (re-run remote checksum).
+        let verify_out = dev.cli(&probe_cmd).await?;
+        let remote_sha_post = parse_checksum_output(&verify_out)?;
+        let (post, verified) = match remote_sha_post {
+            Some(s) => {
+                let matches = s == local_sha;
+                (s, matches)
+            }
+            None => {
+                // Remote file vanished after a successful scp — treat as
+                // verify mismatch with a sentinel placeholder so the caller
+                // still sees the canonical error.
+                if args.verify {
+                    return Err(JmcpError::VerifyMismatch {
+                        dest: remote_path.clone(),
+                        local_sha: hex32(&local_sha),
+                        remote_sha: "<missing>".into(),
+                    });
+                }
+                (local_sha, false)
+            }
+        };
+        if args.verify && !verified {
+            // Best-effort cleanup: ignore the result, the canonical error wins.
+            let _ = dev.cli(&format!("file delete {}", remote_path)).await;
+            return Err(JmcpError::VerifyMismatch {
+                dest: remote_path.clone(),
+                local_sha: hex32(&local_sha),
+                remote_sha: hex32(&post),
+            });
+        }
+
+        Ok(json!({
+            "status": "transferred",
+            "remote_path": remote_path,
+            "size_bytes": local_size,
+            "sha256": hex32(&local_sha),
+            "verified": verified,
+        }))
     })
     .await
     .map_err(|_| JmcpError::TransferOuterTimeout(timeout))?
@@ -730,6 +853,17 @@ mod handle_validation_tests {
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
+    }
+
+    #[tokio::test]
+    async fn skip_message_shape_helper_returns_expected_keys() {
+        let v = super::skipped_response("foo.tgz", &[0u8; 32], 1234);
+        assert_eq!(v["status"], "skipped");
+        assert_eq!(v["remote_path"], "/var/tmp/foo.tgz");
+        assert_eq!(v["size_bytes"], 1234);
+        assert_eq!(v["sha256"], "0".repeat(64));
+        assert_eq!(v["verified"], true);
+        assert!(v["message"].as_str().unwrap().contains("already present"));
     }
 
     #[tokio::test]
