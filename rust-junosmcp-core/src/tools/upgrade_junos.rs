@@ -341,3 +341,223 @@ mod diff_tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Preflight types + evaluator
+// ---------------------------------------------------------------------------
+
+/// Minimum free-disk headroom on top of `2 × image_size`. Junos install
+/// needs working space for unpack + new partition; 2× is a safe rule of
+/// thumb on top of the local image size, plus 32 MiB for slack.
+pub const UPGRADE_DISK_HEADROOM_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Estimated outage duration baked into the ConfirmationRequired
+/// payload. Derived from the 2026-05-14 vSRX-test18 timing (7 min
+/// total = 420 s) with a small headroom margin.
+pub const ESTIMATED_OUTAGE_SECONDS: u64 = 420;
+
+/// Raw outputs + local image facts handed to the pure preflight
+/// evaluator. Everything I/O happens upstream; this struct is the
+/// boundary between "talk to the world" and "decide what to do".
+#[derive(Debug, Clone)]
+pub struct PreflightFacts {
+    pub cluster_status_output: String,
+    pub version_output: String,
+    pub commit_output: String,
+    pub storage_output: String,
+    pub local_image_size: u64,
+    pub local_image_sha256: [u8; 32],
+    pub image_basename: String,
+}
+
+/// The decision the pure evaluator returns. Each variant maps to a
+/// concrete handle() outcome: an error, a skip-success, a confirmation
+/// payload, or "go ahead".
+#[derive(Debug)]
+pub enum PreflightDecision {
+    ClusterUnsupported,
+    UnparseableVersion,
+    UnparseableStorage,
+    AlreadyAtTarget { current_version: String },
+    CommitConfirmedActive { rollback_secs: u64 },
+    InsufficientDisk { free: u64, required: u64 },
+    ConfirmationRequired(serde_json::Value),
+    Proceed,
+}
+
+/// Pure preflight decision. Order of checks (each short-circuits):
+/// 1. Cluster → refuse (highest priority — never proceed on cluster)
+/// 2. Version parseable
+/// 3. Already-at-target → skip-success
+/// 4. Active commit-confirmed → refuse
+/// 5. Storage parseable + disk headroom OK
+/// 6. confirm=false → ConfirmationRequired
+/// 7. else → Proceed
+pub fn evaluate_preflight(
+    facts: &PreflightFacts,
+    args: &crate::tools::UpgradeJunosArgs,
+) -> PreflightDecision {
+    if detect_cluster_active(&facts.cluster_status_output) {
+        return PreflightDecision::ClusterUnsupported;
+    }
+    let current_version = match parse_junos_version(&facts.version_output) {
+        Some(v) => v,
+        None => return PreflightDecision::UnparseableVersion,
+    };
+    if current_version == args.target_version {
+        return PreflightDecision::AlreadyAtTarget { current_version };
+    }
+    if let Some(rollback_secs) = detect_active_commit_confirmed(&facts.commit_output) {
+        return PreflightDecision::CommitConfirmedActive { rollback_secs };
+    }
+    let free = match crate::tools::transfer_file::parse_storage_free_bytes(&facts.storage_output) {
+        Ok(b) => b,
+        Err(_) => return PreflightDecision::UnparseableStorage,
+    };
+    let required = facts
+        .local_image_size
+        .saturating_mul(2)
+        .saturating_add(UPGRADE_DISK_HEADROOM_BYTES);
+    if free < required {
+        return PreflightDecision::InsufficientDisk { free, required };
+    }
+    if !args.confirm {
+        let payload = serde_json::json!({
+            "code": "confirmation_required",
+            "router": args.router_name,
+            "current_version": current_version,
+            "target_version": args.target_version,
+            "image_basename": facts.image_basename,
+            "image_size_bytes": facts.local_image_size,
+            "device_var_free_bytes": free,
+            "estimated_outage_seconds": ESTIMATED_OUTAGE_SECONDS,
+            "preflight_blockers": [],
+            "warning": "DESTRUCTIVE: this will install a new Junos image and REBOOT the device, causing an outage of approximately 5–7 minutes. Re-call with confirm=true to proceed."
+        });
+        return PreflightDecision::ConfirmationRequired(payload);
+    }
+    PreflightDecision::Proceed
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn args() -> crate::tools::UpgradeJunosArgs {
+        crate::tools::UpgradeJunosArgs {
+            router_name: "vsrx-test10".into(),
+            source_path: "junos-25.4R1.12.tgz".into(),
+            target_version: "25.4R1.12".into(),
+            confirm: false,
+            timeout: 900,
+            reboot_wait_secs: 480,
+        }
+    }
+
+    fn baseline_facts() -> PreflightFacts {
+        PreflightFacts {
+            cluster_status_output: "error: Chassis cluster is not enabled.".into(),
+            version_output: "Junos: 24.4R1.9".into(),
+            commit_output: "0   2026-05-14 ...\n".into(),
+            storage_output: "\
+Filesystem  Size Used Avail Capacity Mounted on
+/dev/x      10G  2.1G 7.0G  23%      /.mount/var
+"
+            .into(),
+            local_image_size: 1_000_000_000,
+            local_image_sha256: [0; 32],
+            image_basename: "junos-25.4R1.12.tgz".into(),
+        }
+    }
+
+    #[test]
+    fn refuses_cluster_device() {
+        let mut f = baseline_facts();
+        f.cluster_status_output = "Cluster ID: 1\nnode0 primary".into();
+        let d = evaluate_preflight(&f, &args());
+        assert!(matches!(d, PreflightDecision::ClusterUnsupported));
+    }
+
+    #[test]
+    fn returns_already_at_target_when_version_matches() {
+        let mut f = baseline_facts();
+        f.version_output = "Junos: 25.4R1.12".into();
+        let d = evaluate_preflight(&f, &args());
+        match d {
+            PreflightDecision::AlreadyAtTarget { current_version } => {
+                assert_eq!(current_version, "25.4R1.12");
+            }
+            other => panic!("expected AlreadyAtTarget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refuses_active_commit_confirmed() {
+        let mut f = baseline_facts();
+        f.commit_output = "commit confirmed, rollback in 9m30s\n".into();
+        let d = evaluate_preflight(&f, &args());
+        match d {
+            PreflightDecision::CommitConfirmedActive { rollback_secs } => {
+                assert_eq!(rollback_secs, 570);
+            }
+            other => panic!("expected CommitConfirmedActive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refuses_insufficient_disk_for_2x_plus_headroom() {
+        let mut f = baseline_facts();
+        f.local_image_size = 4_000_000_000;
+        let d = evaluate_preflight(&f, &args());
+        match d {
+            PreflightDecision::InsufficientDisk { free, required } => {
+                assert!(free < required, "free={free} required={required}");
+            }
+            other => panic!("expected InsufficientDisk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn returns_confirmation_required_when_confirm_false() {
+        let f = baseline_facts();
+        let d = evaluate_preflight(&f, &args());
+        match d {
+            PreflightDecision::ConfirmationRequired(payload) => {
+                assert_eq!(payload["router"], "vsrx-test10");
+                assert_eq!(payload["current_version"], "24.4R1.9");
+                assert_eq!(payload["target_version"], "25.4R1.12");
+                assert_eq!(payload["image_basename"], "junos-25.4R1.12.tgz");
+                assert_eq!(payload["image_size_bytes"], 1_000_000_000);
+                assert!(payload["warning"].as_str().unwrap().contains("DESTRUCTIVE"));
+                assert!(payload["warning"].as_str().unwrap().contains("REBOOT"));
+            }
+            other => panic!("expected ConfirmationRequired, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn returns_proceed_when_confirm_true_and_everything_ok() {
+        let f = baseline_facts();
+        let mut a = args();
+        a.confirm = true;
+        let d = evaluate_preflight(&f, &a);
+        assert!(matches!(d, PreflightDecision::Proceed));
+    }
+
+    #[test]
+    fn unparseable_version_yields_proceed_block() {
+        let mut f = baseline_facts();
+        f.version_output = "garbage no junos line".into();
+        let d = evaluate_preflight(&f, &args());
+        assert!(matches!(d, PreflightDecision::UnparseableVersion));
+    }
+
+    #[test]
+    fn check_order_cluster_before_already_at_target() {
+        let mut f = baseline_facts();
+        f.cluster_status_output = "Cluster ID: 1\n".into();
+        f.version_output = "Junos: 25.4R1.12".into();
+        let d = evaluate_preflight(&f, &args());
+        assert!(matches!(d, PreflightDecision::ClusterUnsupported));
+    }
+}
