@@ -57,14 +57,28 @@ pub enum ScopeError {
 pub struct JmcpHandler {
     dm: Arc<DeviceManager>,
     policy: Arc<arc_swap::ArcSwap<Policy>>,
+    // Used by Task-17 tool methods; allow until they land.
+    #[allow(dead_code)]
+    transfer_cfg: rust_junosmcp_core::TransferConfig,
 }
 
 impl JmcpHandler {
-    pub fn new(dm: Arc<DeviceManager>, policy: Arc<Policy>) -> Self {
+    pub fn new(
+        dm: Arc<DeviceManager>,
+        policy: Arc<Policy>,
+        transfer_cfg: rust_junosmcp_core::TransferConfig,
+    ) -> Self {
         Self {
             dm,
             policy: Arc::new(arc_swap::ArcSwap::from(policy)),
+            transfer_cfg,
         }
+    }
+
+    // Used by Task-17 tool methods; allow until they land.
+    #[allow(dead_code)]
+    pub fn transfer_config(&self) -> &rust_junosmcp_core::TransferConfig {
+        &self.transfer_cfg
     }
 
     /// Rebuild the blocklist policy from the current inventory and store it.
@@ -393,11 +407,21 @@ mod scope_tests {
     use crate::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
 
+    fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {
+        rust_junosmcp_core::TransferConfig {
+            staging_dir: std::path::PathBuf::from("/tmp/staging"),
+            known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
+            scp_runner: std::sync::Arc::new(
+                rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner,
+            ),
+        }
+    }
+
     fn make_handler() -> JmcpHandler {
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let policy = Arc::new(Policy::build(&inv).unwrap());
-        JmcpHandler::new(dm, policy)
+        JmcpHandler::new(dm, policy, test_transfer_cfg())
     }
 
     #[test]
@@ -457,6 +481,23 @@ mod scope_tests {
             handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
             Err(ScopeError::ToolNotInScope { .. })
         ));
+    }
+
+    #[test]
+    fn handler_carries_transfer_config() {
+        use rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner;
+        use rust_junosmcp_core::TransferConfig;
+
+        let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = Arc::new(Policy::build(&inv).unwrap());
+        let cfg = TransferConfig {
+            staging_dir: std::path::PathBuf::from("/tmp/x"),
+            known_hosts_file: std::path::PathBuf::from("/tmp/khosts"),
+            scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+        };
+        let h = JmcpHandler::new(dm, policy, cfg.clone());
+        assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }
 
     #[test]
