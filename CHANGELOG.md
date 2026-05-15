@@ -4,6 +4,27 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — TBD
+
+Bugfix release for the v0.5.0 `upgrade_junos` / `transfer_file` storage
+preflight on older Junos layouts.
+
+### Fixed
+
+- **`parse_storage_free_bytes` on vSRX 24.x single-mount layout** (#36).
+  v0.5.0's parser required a row whose `Mounted on` column was `/var`
+  or `/.mount/var`. vSRX 24.x reports `/var` as a directory inside the
+  root `/.mount` filesystem rather than as its own mount, so the
+  parser fell through with `device_probe_failed (phase=storage_parse)`
+  and blocked every upgrade originating from 24.x. The parser now
+  records the `/.mount` row's `Avail` as a fallback and returns it
+  when no dedicated `/var` row is found. Order of preference for the
+  modern layout is unchanged: `/var` > `/.mount/var` > `/.mount`.
+
+### Tooling
+
+- Workspace version bumped to `0.5.1`.
+
 ## [0.5.0] — TBD
 
 Feature release: new `upgrade_junos` MCP tool brings the standalone
