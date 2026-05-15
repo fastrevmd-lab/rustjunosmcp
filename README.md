@@ -291,6 +291,26 @@ cargo run -- token add \
 > shape. Use `token add` rather than editing the file by hand — the hash field
 > must be a SHA-256 of the secret, not the plaintext.
 
+> **Run token subcommands as the service user.** When the systemd unit runs
+> the server as a dedicated user (e.g. `User=jmcp` in the packaged unit), the
+> file `token add`/`revoke`/`rotate` writes inherits the calling user's
+> ownership. If you run them as `root`, the resulting `tokens.json` will be
+> `root:root 0600` and the service user cannot read it — the server then
+> crash-loops on startup with `Permission denied`. Either:
+>
+> ```bash
+> # Preferred: run subcommands as the service user.
+> sudo -u jmcp rust-junosmcp token add --tokens-file /etc/jmcp/tokens.json ...
+>
+> # Or fix ownership after running as root.
+> rust-junosmcp token add --tokens-file /etc/jmcp/tokens.json ...
+> chown jmcp:jmcp /etc/jmcp/tokens.json
+> ```
+>
+> If the server hits this case on startup, the error message now reports the
+> file's uid/mode and the caller's uid so the fix is obvious without trawling
+> journald.
+
 ### Run with auth (streamable-http)
 
 ```bash
