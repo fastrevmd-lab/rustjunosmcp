@@ -28,6 +28,62 @@ pub fn parse_junos_version(output: &str) -> Option<String> {
     None
 }
 
+/// Detect whether `show chassis cluster status` reports an active
+/// chassis cluster. The standalone vSRX response is either an error
+/// line (`error: Chassis cluster is not enabled.`) or absent entirely;
+/// the active-cluster response contains a `Cluster ID:` line and per-
+/// node rows (`node0`, `node1`). We treat the presence of `Cluster ID:`
+/// as the canonical signal.
+pub fn detect_cluster_active(output: &str) -> bool {
+    output.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("Cluster ID:")
+    })
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::*;
+
+    const STANDALONE_NOT_CONFIGURED: &str = "\
+error: Chassis cluster is not enabled.";
+
+    const ACTIVE_CLUSTER: &str = "\
+Monitor Failure codes:
+    CS  Cold Sync monitoring        FL  Fabric Connection monitoring
+    GR  GRES monitoring             HW  Hardware monitoring
+
+Cluster ID: 1
+Node                  Priority Status         Preempt Manual   Monitor-failures
+
+Redundancy group: 0 , Failover count: 1
+node0                 100      primary        no      no       None
+node1                 1        secondary      no      no       None
+";
+
+    #[test]
+    fn not_configured_is_standalone() {
+        assert!(!detect_cluster_active(STANDALONE_NOT_CONFIGURED));
+    }
+
+    #[test]
+    fn active_cluster_detected() {
+        assert!(detect_cluster_active(ACTIVE_CLUSTER));
+    }
+
+    #[test]
+    fn empty_output_is_standalone() {
+        assert!(!detect_cluster_active(""));
+    }
+
+    #[test]
+    fn unrelated_output_is_standalone() {
+        assert!(!detect_cluster_active(
+            "Hostname: vsrx-test18\nJunos: 25.4R1.12"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod parse_version_tests {
     use super::*;
