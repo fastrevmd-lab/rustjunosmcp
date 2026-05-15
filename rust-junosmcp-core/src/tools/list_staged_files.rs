@@ -108,13 +108,94 @@ fn month_to_num(m: &str) -> u32 {
     }
 }
 
-// Stubbed handler so the module compiles; full impl lands in Task 11.
+use crate::device_manager::DeviceManager;
+use crate::tools::ListStagedFilesArgs;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StagedFileEntry {
+    pub name: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub mtime_iso: String,
+}
+
+/// Read the staging directory and return one entry per regular file. Computes
+/// sha256 of every file (cost ~3 s/GB on the LXC). Skips directories and
+/// dotfiles.
+pub async fn read_staging_dir(staging_dir: &Path) -> Result<Vec<StagedFileEntry>, JmcpError> {
+    let mut out = Vec::new();
+    if !staging_dir.exists() {
+        return Ok(out);
+    }
+    let mut rd = tokio::fs::read_dir(staging_dir).await?;
+    while let Some(entry) = rd.next_entry().await? {
+        let meta = entry.metadata().await?;
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let (sha, size) = crate::tools::transfer_file::sha256_file(&path).await?;
+        let mtime_iso = systemtime_to_iso(meta.modified().ok());
+        let mut hex = String::with_capacity(64);
+        for b in sha {
+            use std::fmt::Write as _;
+            let _ = write!(&mut hex, "{:02x}", b);
+        }
+        out.push(StagedFileEntry {
+            name,
+            size_bytes: size,
+            sha256: hex,
+            mtime_iso,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn systemtime_to_iso(t: Option<std::time::SystemTime>) -> String {
+    let Some(t) = t else {
+        return String::from("unknown");
+    };
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let dt =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).unwrap_or_else(chrono::Utc::now);
+    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
 pub async fn handle(
-    _args: crate::tools::ListStagedFilesArgs,
-    _dm: std::sync::Arc<crate::device_manager::DeviceManager>,
-    _staging_dir: std::path::PathBuf,
-) -> Result<serde_json::Value, JmcpError> {
-    Err(JmcpError::Validation("not yet implemented".into()))
+    args: ListStagedFilesArgs,
+    dm: Arc<DeviceManager>,
+    staging_dir: PathBuf,
+) -> Result<Value, JmcpError> {
+    let timeout = std::time::Duration::from_secs(args.timeout);
+    tokio::time::timeout(timeout, async move {
+        let staged = read_staging_dir(&staging_dir).await?;
+        let mut payload = json!({
+            "staging_dir": staging_dir.display().to_string(),
+            "staged_files": staged,
+            "device": Value::Null,
+            "device_files": Value::Null,
+        });
+        if let Some(router) = args.router_name {
+            // Confirm router exists; full device-side listing in Task 11.
+            let _ = dm.inventory().get(&router)?;
+            payload["device"] = json!(router);
+            payload["device_files"] = json!([]); // placeholder until Task 11
+        }
+        Ok::<_, JmcpError>(payload)
+    })
+    .await
+    .map_err(|_| JmcpError::Timeout(timeout))?
 }
 
 #[cfg(test)]
@@ -169,5 +250,81 @@ total 100
             "expected zero-padded day, got: {}",
             v[0].mtime_iso
         );
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+    use crate::inventory::Inventory;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn reads_empty_staging_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let inv = Arc::new(Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: None,
+                timeout: 5,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r["staged_files"].as_array().unwrap().len(), 0);
+        assert_eq!(r["device"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn reads_two_files_with_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.tgz"), b"abc").unwrap();
+        std::fs::write(dir.path().join("b.tgz"), b"defg").unwrap();
+        std::fs::write(dir.path().join(".hidden"), b"hi").unwrap();
+        let inv = Arc::new(Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: None,
+                timeout: 5,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
+        let arr = r["staged_files"].as_array().unwrap();
+        assert_eq!(arr.len(), 2, "dotfile should be skipped");
+        assert_eq!(arr[0]["name"], "a.tgz");
+        assert_eq!(arr[0]["size_bytes"], 3);
+        assert_eq!(
+            arr[0]["sha256"],
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_router_propagates_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(
+            br#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+        let inv = Arc::new(Inventory::load(f.path()).unwrap());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: Some("nope".into()),
+                timeout: 5,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await;
+        assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
     }
 }
