@@ -121,6 +121,11 @@ fn transfer_file_connect_timeout_against_test_net_1() {
         resp
     );
     let text = resp.to_string();
+    // TEST-NET-1 (192.0.2.0/24) is unroutable so scp always exits 255 with
+    // "Connection timed out" or "No route to host", both of which now produce
+    // [code=connect_timeout] via the remap in handle().  We keep the OR for
+    // slow CI runners where the outer tokio::time::timeout may fire first if
+    // the operator passes a very low `timeout` value.
     assert!(
         text.contains("code=connect_timeout") || text.contains("code=outer_timeout"),
         "expected [code=connect_timeout] or [code=outer_timeout] in response: {}",

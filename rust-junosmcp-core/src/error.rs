@@ -63,6 +63,9 @@ pub enum JmcpError {
     )]
     ConnectTimeout(String),
 
+    #[error("device probe failed [code=device_probe_failed] (phase={phase}): {message}")]
+    DeviceProbeFailed { phase: String, message: String },
+
     #[error(
         "post-transfer verify failed [code=verify_mismatch]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); destination file was deleted"
     )]
@@ -398,6 +401,17 @@ mod tests {
         let s = JmcpError::ConnectTimeout("vSRX-test10".into()).to_string();
         assert!(s.contains("code=connect_timeout"));
         assert!(s.contains("vSRX-test10"));
+    }
+
+    #[test]
+    fn device_probe_failed_display_includes_code_and_phase() {
+        let e = JmcpError::DeviceProbeFailed {
+            phase: "storage_probe".into(),
+            message: "rpc-error: ...".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("[code=device_probe_failed]"));
+        assert!(s.contains("storage_probe"));
     }
 
     #[test]

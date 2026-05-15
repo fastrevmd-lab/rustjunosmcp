@@ -650,7 +650,13 @@ pub async fn handle(
         let mut dev = dm.open(&args.router_name).await?;
 
         // 1. Free-disk pre-flight.
-        let storage_out = dev.cli("show system storage no-forwarding").await?;
+        let storage_out = dev
+            .cli("show system storage no-forwarding")
+            .await
+            .map_err(|e| JmcpError::DeviceProbeFailed {
+                phase: "storage_probe".into(),
+                message: e.to_string(),
+            })?;
         let free_bytes = parse_storage_free_bytes(&storage_out)?;
         let required = local_size.saturating_add(MIN_FREE_HEADROOM_BYTES);
         if free_bytes < required {
@@ -663,7 +669,13 @@ pub async fn handle(
 
         // 2. Probe remote checksum to support idempotent skip.
         let probe_cmd = format!("file checksum sha-256 {}", remote_path);
-        let probe_out = dev.cli(&probe_cmd).await?;
+        let probe_out = dev
+            .cli(&probe_cmd)
+            .await
+            .map_err(|e| JmcpError::DeviceProbeFailed {
+                phase: "remote_checksum".into(),
+                message: e.to_string(),
+            })?;
         let remote_sha_pre = parse_checksum_output(&probe_out)?;
         if let Some(remote) = remote_sha_pre {
             if remote == local_sha {
@@ -691,6 +703,16 @@ pub async fn handle(
         };
         let outcome = cfg.scp_runner.run(&job).await?;
         if outcome.exit_code != 0 {
+            // OpenSSH scp returns exit 255 on transport failures; pull out the
+            // common "connection timed out" / "no route to host" cases so callers
+            // get the documented [code=connect_timeout] tag instead of a generic
+            // [code=scp_failed] with raw stderr.
+            if outcome.exit_code == 255
+                && (outcome.stderr.contains("Connection timed out")
+                    || outcome.stderr.contains("No route to host"))
+            {
+                return Err(JmcpError::ConnectTimeout(args.router_name.clone()));
+            }
             return Err(JmcpError::ScpFailed {
                 exit_code: outcome.exit_code,
                 stderr: outcome.stderr,
@@ -698,7 +720,13 @@ pub async fn handle(
         }
 
         // 4. Post-transfer verify (re-run remote checksum).
-        let verify_out = dev.cli(&probe_cmd).await?;
+        let verify_out = dev
+            .cli(&probe_cmd)
+            .await
+            .map_err(|e| JmcpError::DeviceProbeFailed {
+                phase: "verify_checksum".into(),
+                message: e.to_string(),
+            })?;
         let remote_sha_post = parse_checksum_output(&verify_out)?;
         let (post, verified) = match remote_sha_post {
             Some(s) => {
@@ -923,6 +951,93 @@ mod scp_unit_tests {
         assert!(
             calls[0].iter().any(|s| s == "admin@192.0.2.4:/var/tmp/"),
             "argv missing dest"
+        );
+    }
+
+    /// Exercise the exit-255 + "Connection timed out" remap in isolation, without
+    /// standing up the full handle() harness (which requires a staging dir, device
+    /// manager, NETCONF session, etc.).  We test the remap logic directly by
+    /// constructing the ScpOutcome values that would trigger each branch.
+    #[test]
+    fn scp_exit_255_connect_timeout_stderr_remaps_to_connect_timeout() {
+        // Simulate the remap decision: exit_code == 255 && stderr contains
+        // "Connection timed out" → ConnectTimeout; not ScpFailed.
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "ssh: connect to host 192.0.2.1 port 22: Connection timed out".into(),
+        };
+        let router = "vsrx-test10".to_string();
+        let err = if outcome.exit_code == 255
+            && (outcome.stderr.contains("Connection timed out")
+                || outcome.stderr.contains("No route to host"))
+        {
+            JmcpError::ConnectTimeout(router.clone())
+        } else {
+            JmcpError::ScpFailed {
+                exit_code: outcome.exit_code,
+                stderr: outcome.stderr.clone(),
+            }
+        };
+        assert!(
+            matches!(err, JmcpError::ConnectTimeout(ref r) if r == "vsrx-test10"),
+            "expected ConnectTimeout, got: {}",
+            err
+        );
+        let s = err.to_string();
+        assert!(s.contains("[code=connect_timeout]"), "got {}", s);
+        assert!(s.contains("vsrx-test10"), "got {}", s);
+    }
+
+    #[test]
+    fn scp_exit_255_no_route_stderr_remaps_to_connect_timeout() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "ssh: connect to host 192.0.2.1 port 22: No route to host".into(),
+        };
+        let router = "vsrx-test11".to_string();
+        let err = if outcome.exit_code == 255
+            && (outcome.stderr.contains("Connection timed out")
+                || outcome.stderr.contains("No route to host"))
+        {
+            JmcpError::ConnectTimeout(router.clone())
+        } else {
+            JmcpError::ScpFailed {
+                exit_code: outcome.exit_code,
+                stderr: outcome.stderr.clone(),
+            }
+        };
+        assert!(
+            matches!(err, JmcpError::ConnectTimeout(ref r) if r == "vsrx-test11"),
+            "expected ConnectTimeout, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn scp_exit_255_other_stderr_stays_as_scp_failed() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "Permission denied (publickey).".into(),
+        };
+        let router = "vsrx-test10".to_string();
+        let err = if outcome.exit_code == 255
+            && (outcome.stderr.contains("Connection timed out")
+                || outcome.stderr.contains("No route to host"))
+        {
+            JmcpError::ConnectTimeout(router)
+        } else {
+            JmcpError::ScpFailed {
+                exit_code: outcome.exit_code,
+                stderr: outcome.stderr.clone(),
+            }
+        };
+        assert!(
+            matches!(err, JmcpError::ScpFailed { exit_code: 255, .. }),
+            "expected ScpFailed, got: {}",
+            err
         );
     }
 

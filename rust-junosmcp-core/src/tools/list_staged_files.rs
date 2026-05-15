@@ -189,7 +189,12 @@ pub async fn handle(
         if let Some(router) = args.router_name {
             let _ = dm.inventory().get(&router)?;
             let mut dev = dm.open(&router).await?;
-            let raw = dev.cli("file list /var/tmp/ detail").await?;
+            let raw = dev.cli("file list /var/tmp/ detail").await.map_err(|e| {
+                JmcpError::DeviceProbeFailed {
+                    phase: "list_var_tmp".into(),
+                    message: e.to_string(),
+                }
+            })?;
             let now = chrono::Utc::now();
             let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
             let entries = parse_var_tmp_listing(&raw, year);
