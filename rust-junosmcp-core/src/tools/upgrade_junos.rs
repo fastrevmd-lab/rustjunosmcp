@@ -579,18 +579,49 @@ pub struct UpgradeConfig {
     pub transfer_cfg: TransferConfig,
 }
 
-/// Stub: Task 9 replaces this with the real async NETCONF gather.
-#[allow(dead_code)]
 async fn gather_facts(
-    _router: &str,
-    _dm: Arc<DeviceManager>,
-    _image_basename: String,
-    _local_size: u64,
-    _local_sha: [u8; 32],
+    router: &str,
+    dm: Arc<DeviceManager>,
+    image_basename: String,
+    local_size: u64,
+    local_sha: [u8; 32],
 ) -> Result<PreflightFacts, JmcpError> {
-    Err(JmcpError::Validation(
-        "gather_facts stub called; implement in Task 9".into(),
-    ))
+    let mut dev = dm.open(router).await?;
+
+    let cluster_status_output =
+        run_probe(&mut dev, "show chassis cluster status", "cluster_probe").await?;
+    let version_output =
+        run_probe(&mut dev, "show version | match Junos:", "version_probe").await?;
+    let commit_output = run_probe(&mut dev, "show system commit", "commit_probe").await?;
+    let storage_output = run_probe(
+        &mut dev,
+        "show system storage no-forwarding",
+        "storage_probe",
+    )
+    .await?;
+
+    Ok(PreflightFacts {
+        cluster_status_output,
+        version_output,
+        commit_output,
+        storage_output,
+        local_image_size: local_size,
+        local_image_sha256: local_sha,
+        image_basename,
+    })
+}
+
+async fn run_probe(
+    dev: &mut crate::device_manager::PooledDevice,
+    command: &str,
+    phase: &'static str,
+) -> Result<String, JmcpError> {
+    dev.cli(command)
+        .await
+        .map_err(|e| JmcpError::DeviceProbeFailed {
+            phase: phase.into(),
+            message: e.to_string(),
+        })
 }
 
 pub async fn handle(
