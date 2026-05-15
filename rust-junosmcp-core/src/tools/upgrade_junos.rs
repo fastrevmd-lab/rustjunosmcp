@@ -213,3 +213,131 @@ mod commit_confirmed_tests {
         assert_eq!(detect_active_commit_confirmed(s), Some(300));
     }
 }
+
+use std::collections::BTreeMap;
+
+/// Per-command line-set diff. `added` = lines present in `post` but not
+/// `pre`; `removed` = lines present in `pre` but not `post`. Order
+/// follows first-seen in the source string. Whitespace-only lines are
+/// ignored.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BaselineDiff {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+/// Compute a per-command diff of baseline outputs. Commands present in
+/// only one side are reported with the full content in the appropriate
+/// `added` or `removed` list. Commands present in neither side are
+/// absent from the result.
+pub fn diff_baseline(
+    pre: &BTreeMap<String, String>,
+    post: &BTreeMap<String, String>,
+) -> BTreeMap<String, BaselineDiff> {
+    let mut out: BTreeMap<String, BaselineDiff> = BTreeMap::new();
+    let mut keys: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+    keys.extend(pre.keys());
+    keys.extend(post.keys());
+    for k in keys {
+        let pre_lines: Vec<&str> = pre
+            .get(k)
+            .map(|s| s.lines().map(str::trim).filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default();
+        let post_lines: Vec<&str> = post
+            .get(k)
+            .map(|s| s.lines().map(str::trim).filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default();
+        let pre_set: std::collections::HashSet<&str> = pre_lines.iter().copied().collect();
+        let post_set: std::collections::HashSet<&str> = post_lines.iter().copied().collect();
+        let added: Vec<String> = post_lines
+            .iter()
+            .filter(|l| !pre_set.contains(*l))
+            .map(|s| s.to_string())
+            .collect();
+        let removed: Vec<String> = pre_lines
+            .iter()
+            .filter(|l| !post_set.contains(*l))
+            .map(|s| s.to_string())
+            .collect();
+        out.insert(k.clone(), BaselineDiff { added, removed });
+    }
+    out
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn empty_baselines_produce_empty_diff() {
+        let pre: BTreeMap<String, String> = BTreeMap::new();
+        let post: BTreeMap<String, String> = BTreeMap::new();
+        let diff = diff_baseline(&pre, &post);
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn equal_outputs_have_empty_added_and_removed() {
+        let mut pre = BTreeMap::new();
+        pre.insert("show version".to_string(), "Junos: 24.4R1.9".to_string());
+        let post = pre.clone();
+        let diff = diff_baseline(&pre, &post);
+        let d = &diff["show version"];
+        assert!(d.added.is_empty());
+        assert!(d.removed.is_empty());
+    }
+
+    #[test]
+    fn added_line_appears_in_added() {
+        let mut pre = BTreeMap::new();
+        let mut post = BTreeMap::new();
+        pre.insert("show alarms".into(), "no alarms".into());
+        post.insert(
+            "show alarms".into(),
+            "no alarms\n1 alarms currently active".into(),
+        );
+        let diff = diff_baseline(&pre, &post);
+        let d = &diff["show alarms"];
+        assert_eq!(d.added, vec!["1 alarms currently active".to_string()]);
+        assert!(d.removed.is_empty());
+    }
+
+    #[test]
+    fn removed_line_appears_in_removed() {
+        let mut pre = BTreeMap::new();
+        let mut post = BTreeMap::new();
+        pre.insert(
+            "show interfaces".into(),
+            "ge-0/0/0 up up\nge-0/0/1 up up".into(),
+        );
+        post.insert("show interfaces".into(), "ge-0/0/0 up up".into());
+        let diff = diff_baseline(&pre, &post);
+        let d = &diff["show interfaces"];
+        assert!(d.added.is_empty());
+        assert_eq!(d.removed, vec!["ge-0/0/1 up up".to_string()]);
+    }
+
+    #[test]
+    fn whitespace_only_lines_ignored() {
+        let mut pre = BTreeMap::new();
+        let mut post = BTreeMap::new();
+        pre.insert("c".into(), "a\n   \nb".into());
+        post.insert("c".into(), "a\nb".into());
+        let diff = diff_baseline(&pre, &post);
+        assert!(diff["c"].added.is_empty());
+        assert!(diff["c"].removed.is_empty());
+    }
+
+    #[test]
+    fn commands_only_in_post_are_all_added() {
+        let pre: BTreeMap<String, String> = BTreeMap::new();
+        let mut post = BTreeMap::new();
+        post.insert("new cmd".into(), "x\ny".into());
+        let diff = diff_baseline(&pre, &post);
+        assert_eq!(
+            diff["new cmd"].added,
+            vec!["x".to_string(), "y".to_string()]
+        );
+    }
+}
