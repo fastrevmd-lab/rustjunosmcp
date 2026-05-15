@@ -848,6 +848,40 @@ mod checksum_tests {
     }
 }
 
+/// Per-router serialization for transfer_file. A confused or buggy caller
+/// fanning out N concurrent transfers to one device could otherwise
+/// exhaust the device's `/var/tmp` headroom or its session pool. Junos
+/// can't really benefit from concurrent SCP into `/var/tmp` anyway —
+/// the underlying transport serializes on the device side. (issue #26, L4)
+///
+/// Locks are created lazily on first use per router and cached for the
+/// lifetime of the process. Concurrency limit is 1 per router; other
+/// router pairs proceed in parallel.
+#[derive(Default)]
+pub struct TransferLocks {
+    map: tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+}
+
+impl TransferLocks {
+    /// Acquire the per-router permit. The returned guard releases the
+    /// permit on drop — including when a `handle()` call hits its outer
+    /// `tokio::time::timeout` or returns an error.
+    pub async fn acquire(&self, router: &str) -> tokio::sync::OwnedSemaphorePermit {
+        let sem = {
+            let mut g = self.map.lock().await;
+            g.entry(router.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
+                .clone()
+        };
+        // Semaphore is never closed (we keep the Arc alive), so the only
+        // way `acquire_owned` returns Err is if we explicitly called
+        // `close()`, which we never do.
+        sem.acquire_owned()
+            .await
+            .expect("transfer_locks semaphore should never be closed")
+    }
+}
+
 /// Configuration handed to `handle()`. Holds the staging-dir + known-hosts
 /// paths and the (mockable) ScpRunner. Built once in `main.rs` and cloned
 /// per call.
@@ -856,6 +890,11 @@ pub struct TransferConfig {
     pub staging_dir: std::path::PathBuf,
     pub known_hosts_file: std::path::PathBuf,
     pub scp_runner: Arc<dyn ScpRunner>,
+    /// Per-router concurrency limiter; defaults to an empty map that
+    /// lazy-creates one-permit semaphores on first use. Share the same
+    /// `Arc<TransferLocks>` across all transfer_file calls in the process
+    /// so the limit is process-wide (not per-call). (issue #26, L4)
+    pub transfer_locks: Arc<TransferLocks>,
 }
 
 pub async fn handle(
@@ -866,6 +905,11 @@ pub async fn handle(
     let timeout = std::time::Duration::from_secs(args.timeout);
     tokio::time::timeout(timeout, async move {
         validate_source_basename(&args.source_path)?;
+        // Per-router serialization (issue #26, L4). Acquired AFTER basename
+        // validation so an obviously-bogus source_path never queues behind
+        // a live transfer. Permit is dropped at end-of-block (success or
+        // error) when `_permit` falls out of scope.
+        let _permit = cfg.transfer_locks.acquire(&args.router_name).await;
         let local_path = cfg.staging_dir.join(&args.source_path);
         // symlink_metadata() does NOT follow symlinks — combined with the
         // explicit is_symlink() reject below, this guarantees we never read or
@@ -1041,6 +1085,76 @@ pub async fn handle(
 }
 
 #[cfg(test)]
+mod transfer_locks_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Two concurrent acquires on the same router must serialize: the
+    /// second can only complete after the first guard is dropped.
+    #[tokio::test]
+    async fn same_router_serializes() {
+        let locks = Arc::new(TransferLocks::default());
+        let counter = Arc::new(AtomicUsize::new(0));
+        let max_inflight = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let locks = locks.clone();
+            let counter = counter.clone();
+            let max_inflight = max_inflight.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = locks.acquire("r1").await;
+                let now = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                max_inflight.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                counter.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(
+            max_inflight.load(Ordering::SeqCst),
+            1,
+            "expected serialization to limit inflight to 1, got {}",
+            max_inflight.load(Ordering::SeqCst)
+        );
+    }
+
+    /// Different routers must NOT block each other. Two acquires on
+    /// distinct routers should be able to run concurrently.
+    #[tokio::test]
+    async fn different_routers_proceed_in_parallel() {
+        let locks = Arc::new(TransferLocks::default());
+        let permit1 = locks.acquire("r1").await;
+        // If `r2` were blocked by `r1`'s permit, this would hang past the
+        // timeout. A short 200ms upper bound is more than enough since
+        // there's no contention.
+        let acquired =
+            tokio::time::timeout(std::time::Duration::from_millis(200), locks.acquire("r2")).await;
+        assert!(
+            acquired.is_ok(),
+            "different routers should not block each other"
+        );
+        drop(permit1);
+    }
+
+    /// Permits are released on Drop — a successful release lets the next
+    /// waiter proceed immediately.
+    #[tokio::test]
+    async fn permit_release_on_drop() {
+        let locks = Arc::new(TransferLocks::default());
+        {
+            let _p = locks.acquire("r1").await;
+        } // permit dropped here
+        let p2 = tokio::time::timeout(std::time::Duration::from_millis(100), locks.acquire("r1"))
+            .await
+            .expect("permit should be available after drop");
+        drop(p2);
+    }
+}
+
+#[cfg(test)]
 mod handle_validation_tests {
     use super::*;
     use crate::inventory::Inventory;
@@ -1051,6 +1165,7 @@ mod handle_validation_tests {
             staging_dir: dir.to_path_buf(),
             known_hosts_file: "/etc/jmcp/known_hosts".into(),
             scp_runner: MockScpRunner::ok(),
+            transfer_locks: Arc::new(TransferLocks::default()),
         }
     }
 
