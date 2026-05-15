@@ -12,10 +12,10 @@ use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
         add_device, batch, config_diff, execute_command, facts, get_config, list_staged_files,
-        load_commit, pfe, reload_devices, router_list, template, transfer_file, AddDeviceArgs,
-        ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs,
-        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, TemplateArgs,
-        TransferFileArgs,
+        load_commit, pfe, reload_devices, router_list, template, transfer_file, upgrade_junos,
+        AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs,
+        GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs,
+        TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
     },
     DeviceManager, Policy,
 };
@@ -59,6 +59,7 @@ pub struct JmcpHandler {
     dm: Arc<DeviceManager>,
     policy: Arc<arc_swap::ArcSwap<Policy>>,
     transfer_cfg: rust_junosmcp_core::TransferConfig,
+    upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
 }
 
 impl JmcpHandler {
@@ -66,11 +67,13 @@ impl JmcpHandler {
         dm: Arc<DeviceManager>,
         policy: Arc<Policy>,
         transfer_cfg: rust_junosmcp_core::TransferConfig,
+        upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
     ) -> Self {
         Self {
             dm,
             policy: Arc::new(arc_swap::ArcSwap::from(policy)),
             transfer_cfg,
+            upgrade_cfg,
         }
     }
 
@@ -422,6 +425,27 @@ impl JmcpHandler {
     }
 
     #[tool(
+        name = "upgrade_junos",
+        description = "DESTRUCTIVE: installs a new Junos image and REBOOTS the device. Outage ~5-7 min. Requires confirm=true to proceed; first call with confirm=false returns a ConfirmationRequired error containing the upgrade plan (current version, target version, image, free disk, estimated outage). v1 supports standalone devices only; chassis clusters are refused."
+    )]
+    async fn upgrade_junos(
+        &self,
+        Parameters(args): Parameters<UpgradeJunosArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "upgrade_junos") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "upgrade_junos", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
+        Self::to_call_result(
+            upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone()).await,
+        )
+    }
+
+    #[tool(
         name = "list_staged_files",
         description = "List host-staging files (always); also lists /var/tmp/ on a Junos device when router_name is supplied"
     )]
@@ -515,7 +539,11 @@ mod scope_tests {
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let policy = Arc::new(Policy::build(&inv).unwrap());
-        JmcpHandler::new(dm, policy, test_transfer_cfg())
+        let transfer_cfg = test_transfer_cfg();
+        let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
+            transfer_cfg: transfer_cfg.clone(),
+        };
+        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
     }
 
     #[test]
@@ -593,7 +621,10 @@ mod scope_tests {
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
         };
-        let h = JmcpHandler::new(dm, policy, cfg.clone());
+        let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
+            transfer_cfg: cfg.clone(),
+        };
+        let h = JmcpHandler::new(dm, policy, cfg.clone(), upgrade_cfg);
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }
 

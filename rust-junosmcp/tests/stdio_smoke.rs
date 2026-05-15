@@ -1,5 +1,5 @@
 //! Spawn the `rust-junosmcp` binary, send MCP `initialize` + `tools/list` over
-//! stdin, parse responses on stdout, assert we advertise the 13 tools.
+//! stdin, parse responses on stdout, assert we advertise the 14 tools.
 
 use serde_json::{json, Value};
 use std::io::Write;
@@ -20,6 +20,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "reload_devices",
     "transfer_file",
     "list_staged_files",
+    "upgrade_junos",
 ];
 
 fn binary_path() -> std::path::PathBuf {
@@ -36,7 +37,7 @@ fn binary_path() -> std::path::PathBuf {
 }
 
 #[test]
-fn lists_thirteen_tools() {
+fn lists_fourteen_tools() {
     // Build first so the binary exists.
     let status = Command::new("cargo")
         .args(["build", "-p", "rust-junosmcp"])

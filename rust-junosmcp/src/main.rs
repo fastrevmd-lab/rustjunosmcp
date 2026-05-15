@@ -95,7 +95,10 @@ async fn main() -> Result<()> {
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
     };
-    let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg);
+    let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
+        transfer_cfg: transfer_cfg.clone(),
+    };
+    let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg, upgrade_cfg);
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see

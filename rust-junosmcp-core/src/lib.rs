@@ -14,3 +14,4 @@ pub use error::JmcpError;
 pub use inventory::{AuthConfig, DeviceEntry, Inventory};
 pub use policy::Policy;
 pub use tools::transfer_file::{OpenSshScpRunner, ScpJob, ScpOutcome, ScpRunner, TransferConfig};
+pub use tools::upgrade_junos::UpgradeConfig;
