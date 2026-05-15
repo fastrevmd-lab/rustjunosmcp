@@ -706,8 +706,8 @@ async fn run(
 async fn dispatch_preflight(
     args: &UpgradeJunosArgs,
     facts: &PreflightFacts,
-    _dm: Arc<DeviceManager>,
-    _cfg: &UpgradeConfig,
+    dm: Arc<DeviceManager>,
+    cfg: &UpgradeConfig,
 ) -> Result<serde_json::Value, JmcpError> {
     match evaluate_preflight(facts, args) {
         PreflightDecision::ClusterUnsupported => Err(JmcpError::UpgradeClusterUnsupported {
@@ -747,10 +747,90 @@ async fn dispatch_preflight(
         PreflightDecision::ConfirmationRequired(payload) => {
             Err(JmcpError::ConfirmationRequired { payload })
         }
-        PreflightDecision::Proceed => Err(JmcpError::Validation(
-            "destructive path not yet implemented (Task 10/11)".into(),
-        )),
+        PreflightDecision::Proceed => run_destructive(args, facts, dm.clone(), cfg).await,
     }
+}
+
+async fn run_destructive(
+    args: &UpgradeJunosArgs,
+    facts: &PreflightFacts,
+    dm: Arc<DeviceManager>,
+    cfg: &UpgradeConfig,
+) -> Result<serde_json::Value, JmcpError> {
+    use std::time::Instant;
+    let started = Instant::now();
+    let preflight_secs = started.elapsed().as_secs();
+
+    // Phase 1: pre-baseline.
+    let pre_baseline = capture_baseline(&args.router_name, dm.clone()).await?;
+    let phase1_done = Instant::now();
+
+    // Phase 2: transfer via transfer_file::handle (idempotent skip).
+    let transfer_args = crate::tools::TransferFileArgs {
+        router_name: args.router_name.clone(),
+        source_path: args.source_path.clone(),
+        force: false,
+        verify: true,
+        timeout: 600,
+    };
+    let _transfer_result =
+        crate::tools::transfer_file::handle(transfer_args, dm.clone(), cfg.transfer_cfg.clone())
+            .await?;
+    let phase2_done = Instant::now();
+
+    // Phase 3: install + reboot. Open a fresh session via the pool.
+    let install_stdout = match dm.open(&args.router_name).await {
+        Ok(mut dev) => {
+            let cmd = format!(
+                "request system software add /var/tmp/{} no-copy reboot",
+                args.source_path
+            );
+            match dev.cli(&cmd).await {
+                Ok(out) => out,
+                Err(e) => {
+                    if install_error_indicates_session_drop(&e.to_string()) {
+                        String::new()
+                    } else {
+                        return Err(JmcpError::DeviceProbeFailed {
+                            phase: "install_rpc".into(),
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        Err(e) => return Err(e),
+    };
+    let phase3_done = Instant::now();
+
+    // Stash everything we have so far for Task 11.
+    let _ = (preflight_secs, phase1_done, phase2_done, phase3_done, facts);
+    Err(JmcpError::Validation(format!(
+        "post-install phases 4-7 not yet implemented (Task 11); install_stdout_len={}, \
+         elapsed_so_far={:?}, baseline_keys={}",
+        install_stdout.len(),
+        started.elapsed(),
+        pre_baseline.len()
+    )))
+}
+
+async fn capture_baseline(
+    router: &str,
+    dm: Arc<DeviceManager>,
+) -> Result<std::collections::BTreeMap<String, String>, JmcpError> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut dev = dm.open(router).await?;
+    for cmd in BASELINE_COMMANDS {
+        match dev.cli(cmd).await {
+            Ok(s) => {
+                out.insert((*cmd).to_string(), s);
+            }
+            Err(e) => {
+                out.insert((*cmd).to_string(), format!("<error capturing: {e}>"));
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -854,5 +934,74 @@ mod handle_early_exit_tests {
         let dm = Arc::new(DeviceManager::new(env.inv.clone()));
         let r = handle(args("r1", "missing.tgz"), dm, cfg(dir.path())).await;
         assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
+    }
+}
+
+/// Commands captured in pre- and post- baselines. Order matters for
+/// stable response shape; informational only.
+pub const BASELINE_COMMANDS: &[&str] = &[
+    "show version",
+    "show interfaces terse | except \"\\.[0-9]+ \"",
+    "show route summary",
+    "show security flow session summary",
+    "show system alarms",
+    "show system core-dumps no-forwarding",
+];
+
+/// Classify whether the error returned by `dev.cli("request system
+/// software add ... reboot")` is the *expected* session-drop produced
+/// when the device starts rebooting mid-RPC, vs a real failure.
+pub fn install_error_indicates_session_drop(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    [
+        "connection closed",
+        "connection reset",
+        "broken pipe",
+        "unexpected eof",
+        "early eof",
+        "channel closed",
+        "session closed",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+#[cfg(test)]
+mod install_classifier_tests {
+    use super::*;
+
+    #[test]
+    fn detects_connection_closed() {
+        assert!(install_error_indicates_session_drop(
+            "Connection closed by peer"
+        ));
+    }
+
+    #[test]
+    fn detects_broken_pipe() {
+        assert!(install_error_indicates_session_drop(
+            "io error: Broken pipe"
+        ));
+    }
+
+    #[test]
+    fn detects_eof() {
+        assert!(install_error_indicates_session_drop(
+            "rustez: unexpected EOF on channel"
+        ));
+    }
+
+    #[test]
+    fn does_not_misclassify_syntax_error() {
+        assert!(!install_error_indicates_session_drop(
+            "error: syntax error, expecting <name>"
+        ));
+    }
+
+    #[test]
+    fn does_not_misclassify_rpc_error() {
+        assert!(!install_error_indicates_session_drop(
+            "rpc-error: package not found"
+        ));
     }
 }
