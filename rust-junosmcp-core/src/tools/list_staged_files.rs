@@ -122,14 +122,40 @@ pub struct StagedFileEntry {
     pub mtime_iso: String,
 }
 
+/// Maximum number of regular files reported by `read_staging_dir`. An
+/// operator who dumps thousands of files into the staging dir would
+/// otherwise produce a slow (sha256 is ~3 s/GB) and large MCP response.
+/// When the on-disk count exceeds this, the call returns the first N
+/// entries by name and sets `truncated = true` so the caller can detect
+/// the clamp. (issue #26, L5)
+pub const STAGING_DIR_MAX_ENTRIES: usize = 256;
+
+/// Outcome of reading the staging dir: the (possibly truncated) entries
+/// plus a flag indicating whether the on-disk count exceeded
+/// `STAGING_DIR_MAX_ENTRIES`. The `total_found` field is informational so
+/// the caller can show "showing 256 of 1340" in a UI.
+#[derive(Debug)]
+pub struct StagingDirResult {
+    pub entries: Vec<StagedFileEntry>,
+    pub truncated: bool,
+    pub total_found: usize,
+}
+
 /// Read the staging directory and return one entry per regular file. Computes
-/// sha256 of every file (cost ~3 s/GB on the LXC). Skips directories and
-/// dotfiles.
-pub async fn read_staging_dir(staging_dir: &Path) -> Result<Vec<StagedFileEntry>, JmcpError> {
-    let mut out = Vec::new();
+/// sha256 of every kept file (cost ~3 s/GB on the LXC). Skips directories,
+/// symlinks, and dotfiles. Caps at `STAGING_DIR_MAX_ENTRIES`; excess entries
+/// are dropped after a name-sort so truncation is deterministic and the
+/// sha256 cost is bounded.
+pub async fn read_staging_dir(staging_dir: &Path) -> Result<StagingDirResult, JmcpError> {
     if !staging_dir.exists() {
-        return Ok(out);
+        return Ok(StagingDirResult {
+            entries: Vec::new(),
+            truncated: false,
+            total_found: 0,
+        });
     }
+    // First pass: gather (name, path, size, mtime) cheaply. No sha256 yet.
+    let mut prelim: Vec<(String, PathBuf, u64, Option<std::time::SystemTime>)> = Vec::new();
     let mut rd = tokio::fs::read_dir(staging_dir).await?;
     while let Some(entry) = rd.next_entry().await? {
         // DirEntry::metadata() does not follow symlinks (uses fstatat with
@@ -147,9 +173,20 @@ pub async fn read_staging_dir(staging_dir: &Path) -> Result<Vec<StagedFileEntry>
         if name.starts_with('.') {
             continue;
         }
-        let path = entry.path();
+        prelim.push((name, entry.path(), meta.len(), meta.modified().ok()));
+    }
+    prelim.sort_by(|a, b| a.0.cmp(&b.0));
+    let total_found = prelim.len();
+    let truncated = total_found > STAGING_DIR_MAX_ENTRIES;
+    if truncated {
+        prelim.truncate(STAGING_DIR_MAX_ENTRIES);
+    }
+
+    // Second pass: hash only the kept entries.
+    let mut out = Vec::with_capacity(prelim.len());
+    for (name, path, _size_from_meta, mtime) in prelim {
         let (sha, size) = crate::tools::transfer_file::sha256_file(&path).await?;
-        let mtime_iso = systemtime_to_iso(meta.modified().ok());
+        let mtime_iso = systemtime_to_iso(mtime);
         let mut hex = String::with_capacity(64);
         for b in sha {
             use std::fmt::Write as _;
@@ -162,8 +199,11 @@ pub async fn read_staging_dir(staging_dir: &Path) -> Result<Vec<StagedFileEntry>
             mtime_iso,
         });
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    Ok(StagingDirResult {
+        entries: out,
+        truncated,
+        total_found,
+    })
 }
 
 fn systemtime_to_iso(t: Option<std::time::SystemTime>) -> String {
@@ -189,7 +229,9 @@ pub async fn handle(
         let staged = read_staging_dir(&staging_dir).await?;
         let mut payload = json!({
             "staging_dir": staging_dir.display().to_string(),
-            "staged_files": staged,
+            "staged_files": staged.entries,
+            "staged_files_truncated": staged.truncated,
+            "staged_files_total_found": staged.total_found,
             "device": Value::Null,
             "device_files": Value::Null,
         });
@@ -320,6 +362,59 @@ mod handle_tests {
             arr[0]["sha256"],
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[tokio::test]
+    async fn cap_at_max_entries_sets_truncated() {
+        // Write STAGING_DIR_MAX_ENTRIES + 5 small files; expect the response
+        // to clamp to STAGING_DIR_MAX_ENTRIES with truncated=true and the
+        // original total surfaced as staged_files_total_found. (#26 L5)
+        let dir = tempfile::tempdir().unwrap();
+        let n = STAGING_DIR_MAX_ENTRIES + 5;
+        for i in 0..n {
+            std::fs::write(dir.path().join(format!("f-{i:04}.bin")), b"x").unwrap();
+        }
+        let inv = Arc::new(Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: None,
+                timeout: 30,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
+        let arr = r["staged_files"].as_array().unwrap();
+        assert_eq!(arr.len(), STAGING_DIR_MAX_ENTRIES, "must clamp");
+        assert_eq!(r["staged_files_truncated"], serde_json::Value::Bool(true));
+        assert_eq!(r["staged_files_total_found"], serde_json::json!(n));
+        // Deterministic truncation: kept entries are the alphabetically-first
+        // STAGING_DIR_MAX_ENTRIES files (f-0000 .. f-0255 with the 0256+ ones
+        // dropped).
+        assert_eq!(arr.first().unwrap()["name"], "f-0000.bin");
+    }
+
+    #[tokio::test]
+    async fn below_cap_reports_truncated_false() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.tgz"), b"abc").unwrap();
+        std::fs::write(dir.path().join("b.tgz"), b"def").unwrap();
+        let inv = Arc::new(Inventory::empty());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: None,
+                timeout: 5,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r["staged_files_truncated"], serde_json::Value::Bool(false));
+        assert_eq!(r["staged_files_total_found"], serde_json::json!(2));
     }
 
     #[tokio::test]
