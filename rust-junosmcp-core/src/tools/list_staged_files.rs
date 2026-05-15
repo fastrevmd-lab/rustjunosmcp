@@ -187,10 +187,14 @@ pub async fn handle(
             "device_files": Value::Null,
         });
         if let Some(router) = args.router_name {
-            // Confirm router exists; full device-side listing in Task 11.
             let _ = dm.inventory().get(&router)?;
+            let mut dev = dm.open(&router).await?;
+            let raw = dev.cli("file list /var/tmp/ detail").await?;
+            let now = chrono::Utc::now();
+            let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
+            let entries = parse_var_tmp_listing(&raw, year);
             payload["device"] = json!(router);
-            payload["device_files"] = json!([]); // placeholder until Task 11
+            payload["device_files"] = serde_json::to_value(&entries)?;
         }
         Ok::<_, JmcpError>(payload)
     })
@@ -326,5 +330,44 @@ mod handle_tests {
         )
         .await;
         assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
+    }
+}
+
+#[cfg(test)]
+mod device_handle_tests {
+    use super::*;
+    use crate::inventory::Inventory;
+    use std::io::Write;
+
+    /// Smoke: when router_name is given but the device is unreachable, the call
+    /// returns an error (rustez connect failure), not silent success. This
+    /// guards against the device_files key being silently set to []
+    /// when the device isn't actually contacted.
+    #[tokio::test]
+    async fn unreachable_router_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        // 192.0.2.1 is TEST-NET-1, RFC 5737 — guaranteed unreachable.
+        let key = tempfile::NamedTempFile::new().unwrap();
+        let json = format!(
+            r#"{{"r1":{{"ip":"192.0.2.1","username":"u",
+                       "auth":{{"type":"ssh_key","private_key_path":"{}"}}}}}}"#,
+            key.path().display()
+        );
+        f.write_all(json.as_bytes()).unwrap();
+        let inv = Arc::new(Inventory::load(f.path()).unwrap());
+        let dm = Arc::new(DeviceManager::new(inv));
+        let r = handle(
+            ListStagedFilesArgs {
+                router_name: Some("r1".into()),
+                timeout: 5,
+            },
+            dm,
+            dir.path().to_path_buf(),
+        )
+        .await;
+        // Either Timeout, ConnectTimeout, or a Rustez connect failure. Just
+        // assert it's an error, not Ok with empty device_files.
+        assert!(r.is_err(), "expected error against TEST-NET-1, got {r:?}");
     }
 }
