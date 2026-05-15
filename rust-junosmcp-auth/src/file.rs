@@ -42,7 +42,7 @@ impl TokenStoreFile {
     /// unknown router names emit a `WARN` but keep the entry. Unknown tool
     /// names are fatal.
     pub fn load(path: &Path, known_routers: &[&str]) -> Result<TokenStore, TokenStoreError> {
-        let bytes = std::fs::read(path)?;
+        let bytes = std::fs::read(path).map_err(|e| friendly_read_error(path, e))?;
         let parsed: OnDisk = serde_json::from_slice(&bytes)?;
         if parsed.version != 1 {
             return Err(TokenStoreError::Invalid(format!(
@@ -228,6 +228,46 @@ impl TokenStoreFile {
             &TokenStore::try_new(entries).map_err(|e| TokenStoreError::Invalid(e.0))?,
         )?;
         Ok(secret)
+    }
+}
+
+/// Wrap `std::fs::read` errors with operator-actionable hints. The headline
+/// case (issue #22): an admin minted `tokens.json` as `root` while the
+/// systemd unit runs as `User=jmcp`, the service then crash-loops with a
+/// bare `Permission denied (os error 13)` that doesn't point at ownership.
+///
+/// When we get `EACCES` on Unix, surface the file's owner uid + mode and
+/// the running process's uid, plus a hint to either `sudo -u <user>` the
+/// token subcommands or `chown` the file. All other errors flow through
+/// unchanged.
+fn friendly_read_error(path: &Path, err: std::io::Error) -> TokenStoreError {
+    if err.kind() != std::io::ErrorKind::PermissionDenied {
+        return TokenStoreError::Io(err);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: `getuid()` has no preconditions and is async-signal-safe.
+        let caller_uid = unsafe { libc::getuid() };
+        let owner_info = match std::fs::metadata(path) {
+            Ok(md) => format!("owner uid {}, mode {:o}", md.uid(), md.mode() & 0o777),
+            // Metadata can fail (e.g. EACCES on the parent dir); fall back
+            // to caller info alone so the hint stays useful.
+            Err(_) => "owner unknown".to_string(),
+        };
+        return TokenStoreError::Invalid(format!(
+            "cannot read {}: permission denied ({owner_info}; running as uid {caller_uid}). \
+             Hint: if a systemd unit runs the server as a dedicated user (e.g. `User=jmcp`), \
+             token subcommands minted the file with the wrong ownership. Either \
+             `sudo -u <service-user> rust-junosmcp token ...` next time, or fix the \
+             current file: `chown <service-user>:<service-group> {}`",
+            path.display(),
+            path.display()
+        ));
+    }
+    #[cfg(not(unix))]
+    {
+        TokenStoreError::Io(err)
     }
 }
 
@@ -521,6 +561,53 @@ mod tests {
     fn known_tools_includes_pfe_and_batch() {
         assert!(KNOWN_TOOLS.contains(&"execute_junos_pfe_command"));
         assert!(KNOWN_TOOLS.contains(&"execute_junos_command_batch"));
+    }
+
+    /// Issue #22: when `tokens.json` is unreadable by the running process,
+    /// surface the file's mode and the caller's uid so the operator can fix
+    /// ownership without trawling logs. Unix-only because the friendly path
+    /// is `cfg(unix)`; the test would not be meaningful otherwise.
+    ///
+    /// Skipped when the test process is running as root, since root reads
+    /// regardless of mode bits and we'd never hit the `EACCES` path that the
+    /// test is exercising.
+    #[cfg(unix)]
+    #[test]
+    fn eacces_surfaces_friendly_message_with_uid_and_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: `getuid()` has no preconditions.
+        let caller_uid = unsafe { libc::getuid() };
+        if caller_uid == 0 {
+            eprintln!("skipping: running as root, can't reproduce EACCES on owned file");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        std::fs::write(&path, r#"{"version":1,"tokens":[]}"#).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let err = TokenStoreFile::load(&path, &[]).unwrap_err();
+        // Restore so tempdir cleanup can proceed even if assertions panic.
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+
+        let msg = match err {
+            TokenStoreError::Invalid(s) => s,
+            other => panic!("expected Invalid with friendly hint, got {other:?}"),
+        };
+        assert!(
+            msg.contains("permission denied"),
+            "missing core phrase: {msg}"
+        );
+        assert!(
+            msg.contains(&format!("uid {caller_uid}")),
+            "missing caller uid {caller_uid}: {msg}"
+        );
+        assert!(msg.contains("mode 0"), "missing file mode: {msg}");
+        assert!(
+            msg.contains("chown"),
+            "missing actionable chown hint: {msg}"
+        );
     }
 
     #[test]

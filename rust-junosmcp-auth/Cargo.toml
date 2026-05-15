@@ -19,3 +19,9 @@ chrono       = { workspace = true }
 arc-swap     = { workspace = true }
 tracing      = { workspace = true }
 tempfile     = "3"
+
+# Used only inside `cfg(unix)` blocks in `file.rs` to surface a friendlier
+# EACCES message (owner uid + mode vs. caller uid) when `tokens.json` cannot
+# be read by the running process — see issue #22.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
