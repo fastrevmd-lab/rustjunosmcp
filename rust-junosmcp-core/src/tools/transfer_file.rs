@@ -695,8 +695,11 @@ mod runner_tests {
 /// /dev/gpt/var            10G       2.1G       7.0G       23%   /.mount/var
 /// ```
 /// We want the `Avail` column on the row whose `Mounted on` equals `/.mount/var`
-/// (or `/var` for older Junos). Returns bytes.
+/// (or `/var` for older Junos). On vSRX 24.x and other single-mount layouts
+/// where `/var` lives inside the root `/.mount` filesystem rather than being
+/// its own mount, we fall back to the `/.mount` row's `Avail`. Returns bytes.
 pub fn parse_storage_free_bytes(output: &str) -> Result<u64, JmcpError> {
+    let mut root_mount_avail: Option<&str> = None;
     for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("Filesystem") {
@@ -711,11 +714,20 @@ pub fn parse_storage_free_bytes(output: &str) -> Result<u64, JmcpError> {
         if mount == "/var" || mount == "/.mount/var" {
             return parse_size_with_suffix(fields[3]);
         }
+        if mount == "/.mount" {
+            // vSRX 24.x and similar single-mount layouts host /var inside the
+            // root /.mount filesystem. Remember this row as a fallback for
+            // when no dedicated /var row is found.
+            root_mount_avail = Some(fields[3]);
+        }
+    }
+    if let Some(avail) = root_mount_avail {
+        return parse_size_with_suffix(avail);
     }
     Err(JmcpError::InsufficientDisk {
         free: 0,
         required: 0,
-        message: "no /var or /.mount/var row found in storage output".into(),
+        message: "no /var, /.mount/var, or /.mount row found in storage output".into(),
     })
 }
 
@@ -784,6 +796,36 @@ Filesystem  Size Used Avail Capacity Mounted on
 ";
         let n = parse_storage_free_bytes(s).unwrap();
         assert!((400_000_000..420_000_000).contains(&n));
+    }
+
+    #[test]
+    fn falls_back_to_root_mount_on_vsrx_24_layout() {
+        // vSRX 24.4 reports a single root mount at /.mount with /var
+        // living inside it — no dedicated /var or /.mount/var row.
+        let s = "\
+Filesystem              Size       Used      Avail  Capacity   Mounted on
+/dev/gpt/junos           13G       940M        11G        8%  /.mount
+tmpfs                   795M        24K       795M        0%  /.mount/tmp
+/var/jails/rest-api      13G       940M        11G        8%  /.mount/packages/mnt/junos-runtime/web-api/var
+tmpfs                   673M        1.1M      671M        0%  /.mount/mfs
+";
+        let n = parse_storage_free_bytes(s).unwrap();
+        // 11G ≈ 11_811_160_064
+        assert!((10_700_000_000..12_000_000_000).contains(&n), "got {n}");
+    }
+
+    #[test]
+    fn prefers_var_mount_over_root_when_both_present() {
+        // When /var/-specific and /.mount rows coexist (a hybrid that
+        // could appear on some Junos variants), the dedicated /var row wins.
+        let s = "\
+Filesystem              Size       Used      Avail  Capacity   Mounted on
+/dev/gpt/junos           14G       8.5G       4.4G       66%   /.mount
+/dev/gpt/var             10G       2.1G       7.0G       23%   /.mount/var
+";
+        let n = parse_storage_free_bytes(s).unwrap();
+        // Should match the 7.0G /.mount/var row, not the 4.4G /.mount row.
+        assert!((6_900_000_000..7_600_000_000).contains(&n), "got {n}");
     }
 }
 
