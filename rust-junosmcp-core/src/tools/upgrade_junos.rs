@@ -803,15 +803,57 @@ async fn run_destructive(
     };
     let phase3_done = Instant::now();
 
-    // Stash everything we have so far for Task 11.
-    let _ = (preflight_secs, phase1_done, phase2_done, phase3_done, facts);
-    Err(JmcpError::Validation(format!(
-        "post-install phases 4-7 not yet implemented (Task 11); install_stdout_len={}, \
-         elapsed_so_far={:?}, baseline_keys={}",
-        install_stdout.len(),
-        started.elapsed(),
-        pre_baseline.len()
-    )))
+    let _ = install_stdout;
+
+    // Phase 4: wait for NETCONF.
+    wait_for_netconf(
+        &args.router_name,
+        dm.clone(),
+        std::time::Duration::from_secs(args.reboot_wait_secs),
+    )
+    .await?;
+    let phase4_done = Instant::now();
+
+    // Phase 5: post-verify version.
+    let mut dev = dm.open(&args.router_name).await?;
+    let post_version_output =
+        run_probe(&mut dev, "show version | match Junos:", "postverify_probe").await?;
+    let observed =
+        parse_junos_version(&post_version_output).ok_or_else(|| JmcpError::DeviceProbeFailed {
+            phase: "postverify_parse".into(),
+            message: "could not parse post-install Junos version".into(),
+        })?;
+    if observed != args.target_version {
+        return Err(JmcpError::UpgradePostVerifyMismatch {
+            router: args.router_name.clone(),
+            expected: args.target_version.clone(),
+            observed,
+        });
+    }
+    drop(dev); // release the probe session before capture_baseline reopens
+    let phase5_done = Instant::now();
+
+    // Phase 6: post-baseline.
+    let post_baseline = capture_baseline(&args.router_name, dm.clone()).await?;
+
+    // Phase 7: assemble success response.
+    let from_version =
+        parse_junos_version(&facts.version_output).unwrap_or_else(|| "<unknown>".to_string());
+    Ok(build_success_response(BuildSuccessArgs {
+        router: &args.router_name,
+        from_version: &from_version,
+        to_version: &args.target_version,
+        image_basename: &args.source_path,
+        image_sha256: &facts.local_image_sha256,
+        elapsed_seconds: started.elapsed().as_secs(),
+        preflight_secs,
+        transfer_secs: (phase2_done - phase1_done).as_secs(),
+        install_secs: (phase3_done - phase2_done).as_secs(),
+        reboot_wait_secs: (phase4_done - phase3_done).as_secs(),
+        postverify_secs: (phase5_done - phase4_done).as_secs(),
+        pre_baseline: &pre_baseline,
+        post_baseline: &post_baseline,
+    }))
 }
 
 async fn capture_baseline(
@@ -1003,5 +1045,131 @@ mod install_classifier_tests {
         assert!(!install_error_indicates_session_drop(
             "rpc-error: package not found"
         ));
+    }
+}
+
+pub struct BuildSuccessArgs<'a> {
+    pub router: &'a str,
+    pub from_version: &'a str,
+    pub to_version: &'a str,
+    pub image_basename: &'a str,
+    pub image_sha256: &'a [u8; 32],
+    pub elapsed_seconds: u64,
+    pub preflight_secs: u64,
+    pub transfer_secs: u64,
+    pub install_secs: u64,
+    pub reboot_wait_secs: u64,
+    pub postverify_secs: u64,
+    pub pre_baseline: &'a std::collections::BTreeMap<String, String>,
+    pub post_baseline: &'a std::collections::BTreeMap<String, String>,
+}
+
+pub fn build_success_response(a: BuildSuccessArgs) -> serde_json::Value {
+    let diff = diff_baseline(a.pre_baseline, a.post_baseline);
+    serde_json::json!({
+        "status": "upgraded",
+        "router": a.router,
+        "from_version": a.from_version,
+        "to_version": a.to_version,
+        "image_basename": a.image_basename,
+        "image_sha256": crate::tools::transfer_file::hex32(a.image_sha256),
+        "elapsed_seconds": a.elapsed_seconds,
+        "phase_timings": {
+            "preflight_secs": a.preflight_secs,
+            "transfer_secs": a.transfer_secs,
+            "install_secs": a.install_secs,
+            "reboot_wait_secs": a.reboot_wait_secs,
+            "postverify_secs": a.postverify_secs,
+        },
+        "pre_baseline": a.pre_baseline,
+        "post_baseline": a.post_baseline,
+        "baseline_diff": diff,
+    })
+}
+
+/// Wait for NETCONF to reopen. Initial 30 s sleep (device is rebooting),
+/// then retry `dm.open(router)` every 15 s with a 10 s per-attempt
+/// deadline until either success or `budget` exhausted.
+async fn wait_for_netconf(
+    router: &str,
+    dm: Arc<DeviceManager>,
+    budget: std::time::Duration,
+) -> Result<(), JmcpError> {
+    let start = std::time::Instant::now();
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    loop {
+        let attempt_deadline = std::time::Duration::from_secs(10);
+        let dm_inner = dm.clone();
+        let router_str = router.to_string();
+        let attempt =
+            tokio::time::timeout(
+                attempt_deadline,
+                async move { dm_inner.open(&router_str).await },
+            )
+            .await;
+        match attempt {
+            Ok(Ok(_dev)) => return Ok(()),
+            _ => {
+                if start.elapsed() >= budget {
+                    return Err(JmcpError::UpgradeRebootTimeout {
+                        router: router.to_string(),
+                        waited_secs: budget.as_secs(),
+                    });
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn build_success_response_has_expected_keys() {
+        let mut pre = BTreeMap::new();
+        pre.insert("show version".into(), "Junos: 24.4R1.9".into());
+        let mut post = BTreeMap::new();
+        post.insert("show version".into(), "Junos: 25.4R1.12".into());
+
+        let sha = [0xab; 32];
+        let v = build_success_response(BuildSuccessArgs {
+            router: "vsrx-test10",
+            from_version: "24.4R1.9",
+            to_version: "25.4R1.12",
+            image_basename: "junos-25.4R1.12.tgz",
+            image_sha256: &sha,
+            elapsed_seconds: 423,
+            preflight_secs: 4,
+            transfer_secs: 84,
+            install_secs: 218,
+            reboot_wait_secs: 112,
+            postverify_secs: 5,
+            pre_baseline: &pre,
+            post_baseline: &post,
+        });
+        assert_eq!(v["status"], "upgraded");
+        assert_eq!(v["router"], "vsrx-test10");
+        assert_eq!(v["from_version"], "24.4R1.9");
+        assert_eq!(v["to_version"], "25.4R1.12");
+        assert_eq!(v["image_basename"], "junos-25.4R1.12.tgz");
+        assert_eq!(v["elapsed_seconds"], 423);
+        assert_eq!(v["phase_timings"]["preflight_secs"], 4);
+        assert_eq!(v["phase_timings"]["transfer_secs"], 84);
+        assert!(v["pre_baseline"]["show version"]
+            .as_str()
+            .unwrap()
+            .contains("24.4R1.9"));
+        assert!(v["post_baseline"]["show version"]
+            .as_str()
+            .unwrap()
+            .contains("25.4R1.12"));
+        assert!(v["baseline_diff"]["show version"]["added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x.as_str().unwrap().contains("25.4R1.12")));
     }
 }
