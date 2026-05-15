@@ -41,6 +41,42 @@ pub enum JmcpError {
         message: String,
     },
 
+    #[error(
+        "unsupported auth [code=unsupported_auth]: device '{0}' uses password auth; transfer_file requires ssh_key (add SshKey to inventory)"
+    )]
+    UnsupportedAuth(String),
+
+    #[error(
+        "destination already exists with different content [code=dest_exists_differs]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); pass force=true to overwrite"
+    )]
+    DestExistsDiffers {
+        dest: String,
+        local_sha: String,
+        remote_sha: String,
+    },
+
+    #[error("scp failed [code=scp_failed] (exit={exit_code}): {stderr}")]
+    ScpFailed { exit_code: i32, stderr: String },
+
+    #[error(
+        "scp connect timeout [code=connect_timeout]: device '{0}' may be unreachable or SSH (port 22) is filtered"
+    )]
+    ConnectTimeout(String),
+
+    #[error(
+        "post-transfer verify failed [code=verify_mismatch]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); destination file was deleted"
+    )]
+    VerifyMismatch {
+        dest: String,
+        local_sha: String,
+        remote_sha: String,
+    },
+
+    #[error(
+        "transfer outer timeout [code=outer_timeout] after {0:?}; raise the `timeout` arg or split the file"
+    )]
+    TransferOuterTimeout(std::time::Duration),
+
     #[error("operation timed out after {0:?}")]
     Timeout(std::time::Duration),
 
@@ -316,5 +352,70 @@ mod tests {
         let s = JmcpError::InventoryWrite("disk full".into()).to_string();
         assert!(s.contains("write"));
         assert!(s.contains("disk full"));
+    }
+
+    #[test]
+    fn bad_source_path_display_includes_code() {
+        let s = JmcpError::BadSourcePath("contains '/'".into()).to_string();
+        assert!(s.contains("code=bad_source_path"));
+        assert!(s.contains("contains '/'"));
+    }
+
+    #[test]
+    fn unsupported_auth_display_includes_remediation() {
+        let s = JmcpError::UnsupportedAuth("vSRX-test10".into()).to_string();
+        assert!(s.contains("code=unsupported_auth"));
+        assert!(s.contains("vSRX-test10"));
+        assert!(s.contains("ssh_key"));
+    }
+
+    #[test]
+    fn dest_exists_differs_display_includes_force_hint() {
+        let s = JmcpError::DestExistsDiffers {
+            dest: "/var/tmp/foo".into(),
+            local_sha: "aaa".into(),
+            remote_sha: "bbb".into(),
+        }
+        .to_string();
+        assert!(s.contains("code=dest_exists_differs"));
+        assert!(s.contains("force=true"));
+    }
+
+    #[test]
+    fn scp_failed_display_includes_stderr() {
+        let s = JmcpError::ScpFailed {
+            exit_code: 1,
+            stderr: "Permission denied".into(),
+        }
+        .to_string();
+        assert!(s.contains("code=scp_failed"));
+        assert!(s.contains("Permission denied"));
+        assert!(s.contains("exit=1"));
+    }
+
+    #[test]
+    fn connect_timeout_display_includes_hint() {
+        let s = JmcpError::ConnectTimeout("vSRX-test10".into()).to_string();
+        assert!(s.contains("code=connect_timeout"));
+        assert!(s.contains("vSRX-test10"));
+    }
+
+    #[test]
+    fn verify_mismatch_display_notes_deletion() {
+        let s = JmcpError::VerifyMismatch {
+            dest: "/var/tmp/foo".into(),
+            local_sha: "aaa".into(),
+            remote_sha: "bbb".into(),
+        }
+        .to_string();
+        assert!(s.contains("code=verify_mismatch"));
+        assert!(s.contains("deleted"));
+    }
+
+    #[test]
+    fn transfer_outer_timeout_display_includes_remediation() {
+        let s = JmcpError::TransferOuterTimeout(std::time::Duration::from_secs(60)).to_string();
+        assert!(s.contains("code=outer_timeout"));
+        assert!(s.contains("raise"));
     }
 }
