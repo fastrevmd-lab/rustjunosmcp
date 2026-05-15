@@ -17,6 +17,7 @@ pub mod reload_devices;
 pub mod router_list;
 pub mod template;
 pub mod transfer_file;
+pub mod upgrade_junos;
 
 fn default_timeout() -> u64 {
     360
@@ -26,6 +27,12 @@ fn default_transfer_timeout() -> u64 {
 }
 fn default_list_staged_timeout() -> u64 {
     30
+}
+fn default_upgrade_timeout() -> u64 {
+    900
+}
+fn default_reboot_wait_secs() -> u64 {
+    480
 }
 fn default_verify() -> bool {
     true
@@ -218,6 +225,31 @@ pub struct ListStagedFilesArgs {
     pub timeout: u64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpgradeJunosArgs {
+    /// Target router (must exist in inventory and use ssh_key auth).
+    pub router_name: String,
+    /// Basename of the staged image under the staging dir. Validated
+    /// against the same ASCII allowlist as transfer_file.
+    pub source_path: String,
+    /// Expected target version string, e.g. "25.4R1.12". Post-install
+    /// `show version` must match exactly or the call fails with
+    /// UpgradePostVerifyMismatch.
+    pub target_version: String,
+    /// REQUIRED to perform the destructive upgrade. Defaults to false.
+    /// When false the tool runs read-only pre-flight and returns the
+    /// upgrade plan as a ConfirmationRequired error.
+    #[serde(default)]
+    pub confirm: bool,
+    /// Per-call outer timeout in seconds. Default 900 (15 min).
+    #[serde(default = "default_upgrade_timeout")]
+    pub timeout: u64,
+    /// Wall-clock budget for NETCONF to reopen after install + reboot.
+    /// Default 480 (8 min).
+    #[serde(default = "default_reboot_wait_secs")]
+    pub reboot_wait_secs: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +413,59 @@ mod tests {
         let v = serde_json::json!({"router_name":"vSRX-test10"});
         let a: ListStagedFilesArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.router_name.as_deref(), Some("vSRX-test10"));
+    }
+
+    #[test]
+    fn upgrade_junos_args_defaults() {
+        let v = serde_json::json!({
+            "router_name": "vsrx-test10",
+            "source_path": "junos-25.4R1.12.tgz",
+            "target_version": "25.4R1.12"
+        });
+        let a: UpgradeJunosArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.router_name, "vsrx-test10");
+        assert_eq!(a.source_path, "junos-25.4R1.12.tgz");
+        assert_eq!(a.target_version, "25.4R1.12");
+        assert!(!a.confirm);
+        assert_eq!(a.timeout, 900);
+        assert_eq!(a.reboot_wait_secs, 480);
+    }
+
+    #[test]
+    fn upgrade_junos_args_rejects_missing_required() {
+        for missing in [
+            serde_json::json!({"source_path":"x.tgz","target_version":"25.4R1.12"}),
+            serde_json::json!({"router_name":"r1","target_version":"25.4R1.12"}),
+            serde_json::json!({"router_name":"r1","source_path":"x.tgz"}),
+        ] {
+            let r: Result<UpgradeJunosArgs, _> = serde_json::from_value(missing);
+            assert!(r.is_err(), "should reject missing required");
+        }
+    }
+
+    #[test]
+    fn upgrade_junos_args_accepts_confirm_true() {
+        let v = serde_json::json!({
+            "router_name": "r1",
+            "source_path": "x.tgz",
+            "target_version": "25.4R1.12",
+            "confirm": true
+        });
+        let a: UpgradeJunosArgs = serde_json::from_value(v).unwrap();
+        assert!(a.confirm);
+    }
+
+    #[test]
+    fn upgrade_junos_args_accepts_custom_timeouts() {
+        let v = serde_json::json!({
+            "router_name": "r1",
+            "source_path": "x.tgz",
+            "target_version": "25.4R1.12",
+            "timeout": 1800,
+            "reboot_wait_secs": 720
+        });
+        let a: UpgradeJunosArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.timeout, 1800);
+        assert_eq!(a.reboot_wait_secs, 720);
     }
 }
