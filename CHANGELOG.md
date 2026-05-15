@@ -4,6 +4,35 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — TBD
+
+Feature release: new `upgrade_junos` MCP tool brings the standalone
+vSRX upgrade workflow into the tool surface. Tool count 13 → 14.
+
+### Added
+
+- **`upgrade_junos` tool** — single MCP call automates the proven
+  standalone vSRX upgrade workflow: pre-baseline → transfer →
+  install + reboot → wait for NETCONF → post-verify → post-baseline
+  → response. Two-call confirm protocol: first call returns a
+  `ConfirmationRequired` JSON-RPC error carrying the full upgrade
+  plan (current version, target version, image, free disk,
+  estimated outage); operator re-calls with `confirm=true` to
+  perform the destructive workflow. Reuses the v0.4.1
+  `TransferLocks` semaphore so transfer_file + upgrade_junos
+  serialize per-router. Cluster (ISSU) devices are auto-detected
+  and refused — separate v2 tool planned.
+- 7 new structured `JmcpError` variants:
+  `ConfirmationRequired`, `UpgradeClusterUnsupported`,
+  `UpgradeCommitConfirmedActive`, `UpgradeInstallTimeout`,
+  `UpgradeRebootTimeout`, `UpgradePostVerifyMismatch`,
+  `UpgradeOuterTimeout`. All follow the `[code=<snake>]` Display
+  convention.
+
+### Tooling
+
+- Workspace version bumped to `0.5.0`.
+
 ## [0.4.1] — 2026-05-15
 
 Security + hardening release. No tool API changes; one server-side
