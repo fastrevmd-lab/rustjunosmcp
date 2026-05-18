@@ -3,19 +3,24 @@
 use crate::store::{ScopeSet, TokenEntry, TokenStore};
 use std::path::Path;
 
-/// All v0.1 tool names. New sub-projects extend this list.
+/// All known tool names, kept alphabetized. Must stay in sync with
+/// `rust_junosmcp::server::SERVER_TOOLS`; the
+/// `known_tools_matches_server_tools` integration test enforces this.
 pub const KNOWN_TOOLS: &[&str] = &[
-    "get_router_list",
-    "gather_device_facts",
-    "execute_junos_command",
-    "execute_junos_pfe_command",
-    "execute_junos_command_batch",
-    "get_junos_config",
-    "junos_config_diff",
-    "load_and_commit_config",
-    "render_and_apply_j2_template",
     "add_device",
+    "execute_junos_command",
+    "execute_junos_command_batch",
+    "execute_junos_pfe_command",
+    "gather_device_facts",
+    "get_junos_config",
+    "get_router_list",
+    "junos_config_diff",
+    "list_staged_files",
+    "load_and_commit_config",
     "reload_devices",
+    "render_and_apply_j2_template",
+    "transfer_file",
+    "upgrade_junos",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -625,6 +630,95 @@ mod tests {
             ScopeSet::Allowlist(vec![
                 "execute_junos_pfe_command".into(),
                 "execute_junos_command_batch".into(),
+            ]),
+        )
+        .unwrap();
+        let store = TokenStoreFile::load(&path, &[]).unwrap();
+        assert_eq!(store.len(), 1);
+    }
+
+    /// RJMCP-SEC-001: prior to v0.5.2 `KNOWN_TOOLS` was stale and operators
+    /// could not mint non-wildcard tokens for the three newest sensitive tools.
+    /// Lock these in so the regression cannot recur.
+    #[test]
+    fn known_tools_includes_transfer_list_staged_and_upgrade() {
+        assert!(KNOWN_TOOLS.contains(&"transfer_file"));
+        assert!(KNOWN_TOOLS.contains(&"list_staged_files"));
+        assert!(KNOWN_TOOLS.contains(&"upgrade_junos"));
+    }
+
+    #[test]
+    fn known_tools_is_alphabetized() {
+        let mut sorted = KNOWN_TOOLS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(
+            KNOWN_TOOLS,
+            sorted.as_slice(),
+            "KNOWN_TOOLS must stay alphabetized for easy diff/audit"
+        );
+    }
+
+    #[test]
+    fn load_accepts_scoped_transfer_file_token() {
+        let f = write_tmp(&format!(
+            r#"{{
+            "version":1,
+            "tokens":[{{
+                "name":"transfer-only","hash":"{HASH_A}",
+                "routers":["*"],"tools":["transfer_file"],
+                "created_at":"2026-05-18T00:00:00Z"
+            }}]
+        }}"#
+        ));
+        let store = TokenStoreFile::load(f.path(), &[]).unwrap();
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn load_accepts_scoped_list_staged_files_token() {
+        let f = write_tmp(&format!(
+            r#"{{
+            "version":1,
+            "tokens":[{{
+                "name":"list-only","hash":"{HASH_A}",
+                "routers":["*"],"tools":["list_staged_files"],
+                "created_at":"2026-05-18T00:00:00Z"
+            }}]
+        }}"#
+        ));
+        let store = TokenStoreFile::load(f.path(), &[]).unwrap();
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn load_accepts_scoped_upgrade_junos_token() {
+        let f = write_tmp(&format!(
+            r#"{{
+            "version":1,
+            "tokens":[{{
+                "name":"upgrade-only","hash":"{HASH_A}",
+                "routers":["*"],"tools":["upgrade_junos"],
+                "created_at":"2026-05-18T00:00:00Z"
+            }}]
+        }}"#
+        ));
+        let store = TokenStoreFile::load(f.path(), &[]).unwrap();
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn add_accepts_transfer_list_staged_and_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        let _ = TokenStoreFile::add(
+            &path,
+            "fleet-ops",
+            ScopeSet::Wildcard,
+            ScopeSet::Allowlist(vec![
+                "transfer_file".into(),
+                "list_staged_files".into(),
+                "upgrade_junos".into(),
             ]),
         )
         .unwrap();

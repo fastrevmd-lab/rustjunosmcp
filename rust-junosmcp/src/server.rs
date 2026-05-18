@@ -146,6 +146,71 @@ impl JmcpHandler {
     }
 }
 
+/// Single source of truth for the MCP tool names this server exposes.
+///
+/// Listed in source-declaration order below (alphabetized in `KNOWN_TOOLS`).
+/// Must stay in sync with `rust_junosmcp_auth::file::KNOWN_TOOLS`; the
+/// `server_tools_matches_known_tools_as_set` unit test enforces this.
+/// Drift here silently denies operators least-privilege token scopes for new
+/// tools (see RJMCP-SEC-001). This is a binary-crate tripwire consumed only
+/// by the inline test module, hence `allow(dead_code)`.
+#[allow(dead_code)]
+const SERVER_TOOLS: &[&str] = &[
+    "get_router_list",
+    "gather_device_facts",
+    "execute_junos_command",
+    "get_junos_config",
+    "junos_config_diff",
+    "load_and_commit_config",
+    "execute_junos_pfe_command",
+    "execute_junos_command_batch",
+    "render_and_apply_j2_template",
+    "add_device",
+    "reload_devices",
+    "transfer_file",
+    "upgrade_junos",
+    "list_staged_files",
+];
+
+#[cfg(test)]
+mod server_tools_const_tests {
+    use super::SERVER_TOOLS;
+    use rust_junosmcp_auth::file::KNOWN_TOOLS;
+    use std::collections::HashSet;
+
+    /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
+    /// the build. Bump this number deliberately when adding/removing tools.
+    #[test]
+    fn server_tools_len_is_14() {
+        assert_eq!(SERVER_TOOLS.len(), 14);
+    }
+
+    #[test]
+    fn server_tools_has_no_duplicates() {
+        let mut seen = HashSet::new();
+        for t in SERVER_TOOLS {
+            assert!(seen.insert(*t), "duplicate tool name in SERVER_TOOLS: {t}");
+        }
+    }
+
+    /// RJMCP-SEC-001: prevent `KNOWN_TOOLS` (auth crate) drifting from
+    /// `SERVER_TOOLS` (this crate). If a new `#[tool(name = "x")]` is added
+    /// without updating both, this test fails and the operator cannot mint a
+    /// scoped token for "x" — and would be tempted to fall back to wildcard.
+    #[test]
+    fn server_tools_matches_known_tools_as_set() {
+        let server: HashSet<&str> = SERVER_TOOLS.iter().copied().collect();
+        let known: HashSet<&str> = KNOWN_TOOLS.iter().copied().collect();
+        assert_eq!(
+            server,
+            known,
+            "SERVER_TOOLS / KNOWN_TOOLS drift: only-in-server={:?}, only-in-known={:?}",
+            server.difference(&known).collect::<Vec<_>>(),
+            known.difference(&server).collect::<Vec<_>>(),
+        );
+    }
+}
+
 #[tool_router]
 impl JmcpHandler {
     #[tool(
