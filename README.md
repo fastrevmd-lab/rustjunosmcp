@@ -58,8 +58,9 @@ parallel with a configurable concurrency cap.
 
 ### v0.2 follow-up: Templates (released)
 
-- `render_and_apply_j2_template` — render a Jinja2 template (inline `template_content`) with JSON or YAML `vars_content`. Supports single (`router_name`) or multiple routers (`router_names`), dry-run, and full commit. Reuses the same blocklist + format gating as `load_and_commit_config`.
-- Vars sniff: first non-whitespace `{` → JSON, otherwise YAML. Both must produce a top-level object.
+- `render_and_apply_j2_template` — render a Jinja2 template (inline `template_content`) with a JSON `vars_content` object. Supports single (`router_name`) or multiple routers (`router_names`), dry-run, and full commit. Reuses the same blocklist + format gating as `load_and_commit_config`.
+- Vars must be a top-level JSON object. **YAML is no longer accepted** as of v0.5.2 (RJMCP-SEC-002): the `serde_yml` / `libyml` advisory chain (RUSTSEC-2025-0067/-0068) was reachable from MCP input, so the YAML branch was removed.
+- Size caps: `template_content` and `vars_content` are each bounded at 64 KiB.
 - Strict-undefined: missing variables fail with the variable name rather than rendering empty.
 - Auto-format detection: leading `<` → `xml`, any `set ` / `delete ` line → `set`, otherwise `text`. Override via `config_format`.
 - Result shape: one row per router with `rendered_template`, `config_format`, and either `diff` (dry-run), `commit_comment` (apply-mode echo of the supplied comment — rustez does not return a server-issued commit id), or `error`.
@@ -162,6 +163,20 @@ via `auth.private_key_path` in `devices.json`.
 
 Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
 
+**Host-key policy (v0.5.2+):** scp runs with `StrictHostKeyChecking=yes` by
+default — unknown device host keys are refused. The `known_hosts` file must
+exist before the first `transfer_file` / `upgrade_junos` call, otherwise the
+tool errors with `[code=known_hosts_missing]`. Pre-populate it with the
+bundled helper:
+
+```bash
+scripts/scan-known-hosts.sh --inventory /etc/jmcp/devices.json \
+                            --known-hosts /etc/jmcp/known_hosts
+```
+
+For lab / first-contact use, pass `--ssh-accept-new-host-keys` to fall back
+to OpenSSH's `accept-new` (TOFU) mode.
+
 `list_staged_files` returns the contents of the host staging dir. If
 `router_name` is supplied it also runs `file list /var/tmp/ detail` on the
 device and includes those entries under `device_files`.
@@ -208,8 +223,10 @@ before deploying. The same warnings apply.
 - Set `devices.json` permissions to `0600` — it contains SSH credentials.
 - `get_junos_config` returns the full config including `## SECRET-DATA`
   hashed password lines. Restrict this tool's scope to trusted tokens.
-- `reload_devices` restricts `file_name` to the same directory as the
-  original `--device-mapping` path (no `..` traversal).
+- `reload_devices` requires `file_name` to be a *relative* path resolving
+  inside the original `--device-mapping` directory (since v0.5.2). Absolute
+  paths, `..` traversal, and symlinks pointing outside the inventory
+  directory are all rejected.
 - Text input fields (`command`, `config_text`, `template_content`,
   `pfe_command`) are capped at 1 MB. Batch lists are capped at 100
   routers and 50 commands.

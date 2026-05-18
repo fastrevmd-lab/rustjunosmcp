@@ -339,6 +339,10 @@ fn setup_real_transfer_env() -> (Arc<DeviceManager>, TransferConfig, String) {
         transfer_locks: Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
+        // `#[ignore]`-gated real-device test; host key is pinned in the
+        // operator's known_hosts. accept-new keeps first-contact runs
+        // working when the file is fresh.
+        accept_new_host_keys: true,
     };
 
     (dm, cfg, device_name)

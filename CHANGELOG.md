@@ -4,6 +4,70 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — TBD
+
+Security audit response. Six findings from the internal code review
+(`SECURITY_CODE_REVIEW_REPORT.md`, RJMCP-SEC-001..006) are now fixed.
+No breaking changes to the MCP wire protocol, but two operator-facing
+defaults change — see **Changed** below.
+
+### Fixed (security)
+
+- **SEC-001** — `KNOWN_TOOLS` drift. `transfer_file`,
+  `list_staged_files`, and `upgrade_junos` were missing from the auth
+  allowlist (the `tool:*` bearer-token scope check). A new drift
+  test (`known_tools_matches_server_tools`) now asserts
+  `KNOWN_TOOLS == SERVER_TOOLS` so future tool additions cannot bypass
+  RBAC by omission.
+- **SEC-002** — Drop YAML support in `render_and_apply_j2_template`'s
+  `vars_content`. The crate depended on `serde_yml`, which carries an
+  unmaintained-yaml advisory. `vars_content` is now strict JSON only.
+  Callers that were passing YAML must convert to JSON; the `vars_file`
+  path was already JSON.
+- **SEC-003** — Centralised inventory validation. Username and
+  private-key path fields are now validated on `add_device` and on
+  inventory load — rejects spaces, leading dashes, control characters,
+  and other shell-metacharacter classes that could be smuggled into an
+  SSH argv. Helpers live in `rust-junosmcp-core::inventory::validation`
+  so `add_device` and `Inventory::validate` share one source of truth.
+- **SEC-004** — `transfer_file` / `upgrade_junos` now default to
+  `StrictHostKeyChecking=yes`. Previously the server used TOFU
+  (`accept-new`) on first contact, which silently pinned any host key
+  presented during the first transfer. A new flag,
+  `--ssh-accept-new-host-keys`, restores the old behaviour for lab
+  bring-up. A helper script, `scripts/scan-known-hosts.sh`, drives
+  `ssh-keyscan` against `devices.json` and writes the pinned file
+  atomically.
+- **SEC-005** — `reload_devices` `file_name` argument is now restricted
+  to a relative basename inside the `--device-mapping` directory.
+  Absolute paths, `..` traversal, and symlinks whose target escapes
+  the inventory directory are all rejected with
+  `InventoryInvalid`. Errors carry the original arg verbatim for
+  debugging.
+- **SEC-006** — Drop the `rustls-pemfile` crate (flagged unmaintained
+  upstream). PEM parsing now uses `rustls-pki-types` directly
+  (`CertificateDer::pem_slice_iter`, `PrivateKeyDer::from_pem_slice`),
+  which ships in-tree with rustls 0.23.
+
+### Changed
+
+- **Default SSH host-key policy is now strict.** Operators who used
+  the v0.5.x server against a fresh fleet without first pre-populating
+  `known_hosts` will see `transfer_file` / `upgrade_junos` fail with
+  the `known_hosts_missing` error code. Two recovery paths: (a) run
+  `scripts/scan-known-hosts.sh --inventory /etc/jmcp/devices.json`
+  before first use, or (b) start the server with
+  `--ssh-accept-new-host-keys` for one-shot lab bring-up.
+- **`render_and_apply_j2_template` rejects YAML in `vars_content`.**
+  The schema documents `vars_content` as JSON; YAML was previously
+  accepted as a best-effort fallback. Callers should switch to JSON
+  (or use `vars_file`, which is unchanged).
+
+### Tooling
+
+- Workspace version bumped to `0.5.2`.
+- New helper script: `scripts/scan-known-hosts.sh`.
+
 ## [0.5.1] — TBD
 
 Bugfix release for the v0.5.0 `upgrade_junos` / `transfer_file` storage

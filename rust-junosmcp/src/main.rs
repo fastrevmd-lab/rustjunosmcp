@@ -86,6 +86,16 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
+    if args.ssh_accept_new_host_keys {
+        tracing::warn!(
+            "--ssh-accept-new-host-keys: scp will pin unknown host keys on first contact (TOFU). Use only in lab environments."
+        );
+    } else {
+        tracing::info!(
+            known_hosts = %args.known_hosts_file.display(),
+            "ssh host-key policy: StrictHostKeyChecking=yes (default since v0.5.2)"
+        );
+    }
     let transfer_cfg = TransferConfig {
         staging_dir: args.staging_dir.clone(),
         known_hosts_file: args.known_hosts_file.clone(),
@@ -94,6 +104,7 @@ async fn main() -> Result<()> {
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
+        accept_new_host_keys: args.ssh_accept_new_host_keys,
     };
     let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
         transfer_cfg: transfer_cfg.clone(),

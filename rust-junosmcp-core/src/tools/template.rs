@@ -1,27 +1,36 @@
 //! `render_and_apply_j2_template` — Jinja2 render with optional commit.
 //!
-//! Vars input is parsed as JSON if it starts with `{` (after whitespace) or
-//! YAML otherwise. Both must produce a top-level object.
+//! As of v0.5.2 (RJMCP-SEC-002), `vars_content` is parsed as JSON only.
+//! YAML support was removed because `serde_yml` / `libyml` are unmaintained
+//! and carry unfixed soundness advisories (RUSTSEC-2025-0067/-0068) that
+//! were reachable from untrusted MCP input. Both `template_content` and
+//! `vars_content` are now bounded at 64 KiB to limit parser/renderer cost.
 
 use crate::error::JmcpError;
 use minijinja::{Environment, UndefinedBehavior};
 use serde_json::Value;
 use std::time::Duration;
 
-/// Parse `vars_content` as JSON if first non-whitespace char is `{`,
-/// otherwise as YAML. Both branches must produce a `Value::Object`.
+/// Hard ceiling on `template_content` and `vars_content` byte length. Any
+/// real-world Junos config payload sits well below this; the cap exists to
+/// bound parser / renderer cost against a hostile token holder.
+pub(crate) const MAX_TEMPLATE_BYTES: usize = 65_536;
+
+/// Parse `vars_content` strictly as a JSON object. YAML is no longer
+/// accepted (see RJMCP-SEC-002). Input is rejected if it exceeds
+/// `MAX_TEMPLATE_BYTES` or does not deserialize to a top-level object.
 pub(crate) fn parse_vars(input: &str) -> Result<Value, JmcpError> {
-    let trimmed = input.trim_start();
-    let parsed = if trimmed.starts_with('{') {
-        serde_json::from_str::<Value>(input)
-            .map_err(|e| JmcpError::TemplateVars(format!("JSON parse failed: {e}")))?
-    } else {
-        serde_yml::from_str::<Value>(input)
-            .map_err(|e| JmcpError::TemplateVars(format!("YAML parse failed: {e}")))?
-    };
+    if input.len() > MAX_TEMPLATE_BYTES {
+        return Err(JmcpError::TemplateVars(format!(
+            "vars_content exceeds {MAX_TEMPLATE_BYTES}-byte limit ({} bytes)",
+            input.len()
+        )));
+    }
+    let parsed = serde_json::from_str::<Value>(input)
+        .map_err(|e| JmcpError::TemplateVars(format!("JSON parse failed: {e}")))?;
     if !parsed.is_object() {
         return Err(JmcpError::TemplateVars(
-            "vars_content must deserialize to a top-level object/map".into(),
+            "vars_content must deserialize to a top-level JSON object".into(),
         ));
     }
     Ok(parsed)
@@ -29,7 +38,14 @@ pub(crate) fn parse_vars(input: &str) -> Result<Value, JmcpError> {
 
 /// Render `template_content` with `vars` (a JSON object). Strict-undefined:
 /// missing variables surface as `JmcpError::TemplateRender`, not silently as "".
+/// Input over `MAX_TEMPLATE_BYTES` is rejected to bound renderer cost.
 pub(crate) fn render(template_content: &str, vars: &Value) -> Result<String, JmcpError> {
+    if template_content.len() > MAX_TEMPLATE_BYTES {
+        return Err(JmcpError::TemplateSyntax(format!(
+            "template_content exceeds {MAX_TEMPLATE_BYTES}-byte limit ({} bytes)",
+            template_content.len()
+        )));
+    }
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     let tmpl = env
@@ -257,42 +273,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vars_sniff_routes_json() {
+    fn vars_parses_json_object() {
         let v = parse_vars(r#"{"name":"r1","port":22}"#).unwrap();
         assert_eq!(v["name"], "r1");
         assert_eq!(v["port"], 22);
     }
 
     #[test]
-    fn vars_sniff_routes_yaml() {
-        let v = parse_vars("name: r1\nport: 22\n").unwrap();
-        assert_eq!(v["name"], "r1");
-        assert_eq!(v["port"], 22);
-    }
-
-    #[test]
-    fn vars_sniff_handles_leading_whitespace_for_json() {
+    fn vars_handles_leading_whitespace_before_json() {
         let v = parse_vars("   \n   {\"x\":1}").unwrap();
         assert_eq!(v["x"], 1);
     }
 
     #[test]
-    fn vars_sniff_rejects_non_object_json_array() {
+    fn vars_rejects_json_array() {
         let r = parse_vars("[1,2,3]");
-        assert!(matches!(r, Err(JmcpError::TemplateVars(_))));
+        match r {
+            Err(JmcpError::TemplateVars(s)) => assert!(s.contains("top-level JSON object")),
+            other => panic!("expected TemplateVars rejection, got {other:?}"),
+        }
+    }
+
+    /// RJMCP-SEC-002: YAML is no longer accepted. Previously a `vars_content`
+    /// that did not start with `{` was routed to `serde_yml`, which is
+    /// unsound/unmaintained (RUSTSEC-2025-0067/-0068). Now it must be a JSON
+    /// parse failure.
+    #[test]
+    fn vars_rejects_yaml_input_with_clear_json_error() {
+        let r = parse_vars("name: r1\nport: 22\n");
+        match r {
+            Err(JmcpError::TemplateVars(s)) => assert!(
+                s.contains("JSON parse failed"),
+                "error must steer caller toward JSON: {s}"
+            ),
+            other => panic!("expected TemplateVars rejection, got {other:?}"),
+        }
     }
 
     #[test]
-    fn vars_sniff_rejects_non_object_yaml_scalar() {
-        let r = parse_vars("just a string");
-        assert!(matches!(r, Err(JmcpError::TemplateVars(_))));
+    fn vars_rejects_non_object_scalar() {
+        let r = parse_vars("\"just a string\"");
+        match r {
+            Err(JmcpError::TemplateVars(s)) => assert!(s.contains("top-level JSON object")),
+            other => panic!("expected TemplateVars rejection, got {other:?}"),
+        }
+    }
+
+    /// 64 KiB cap is enforced before parsing — confirm both ends of the
+    /// boundary.
+    #[test]
+    fn vars_accepts_input_at_size_limit() {
+        // Build a JSON object whose total byte length lands exactly on the cap.
+        // Shape: `{"k":"<padding>"}` — outer wrapping is 8 chars, so padding
+        // fills the remaining (MAX - 8) bytes.
+        let padding = "a".repeat(MAX_TEMPLATE_BYTES - 8);
+        let input = format!("{{\"k\":\"{padding}\"}}");
+        assert_eq!(input.len(), MAX_TEMPLATE_BYTES);
+        let v = parse_vars(&input).unwrap();
+        assert!(v["k"].is_string());
     }
 
     #[test]
-    fn vars_sniff_surfaces_yaml_parse_error() {
-        // Stray colons + flow indentation will fail YAML parse.
-        let r = parse_vars("key: : :\n  - bad: : :\n");
-        assert!(matches!(r, Err(JmcpError::TemplateVars(s)) if s.contains("YAML")));
+    fn vars_rejects_input_over_size_limit() {
+        let oversize = "a".repeat(MAX_TEMPLATE_BYTES + 1);
+        let r = parse_vars(&oversize);
+        match r {
+            Err(JmcpError::TemplateVars(s)) => assert!(
+                s.contains("exceeds") && s.contains("limit"),
+                "error must mention the size limit: {s}"
+            ),
+            other => panic!("expected size-cap rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_rejects_template_over_size_limit() {
+        let oversize = "x".repeat(MAX_TEMPLATE_BYTES + 1);
+        let r = render(&oversize, &parse_vars("{}").unwrap());
+        match r {
+            Err(JmcpError::TemplateSyntax(s)) => assert!(
+                s.contains("exceeds") && s.contains("limit"),
+                "error must mention the size limit: {s}"
+            ),
+            other => panic!("expected size-cap rejection, got {other:?}"),
+        }
     }
 
     #[test]

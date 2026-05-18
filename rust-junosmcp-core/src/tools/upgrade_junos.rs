@@ -891,6 +891,9 @@ mod handle_early_exit_tests {
                 known_hosts_file: "/etc/jmcp/known_hosts".into(),
                 scp_runner: crate::tools::transfer_file::MockScpRunner::ok(),
                 transfer_locks: Arc::new(TransferLocks::default()),
+                // Test bypasses the known_hosts pre-check; covered by the
+                // dedicated pre-check tests in transfer_file.rs.
+                accept_new_host_keys: true,
             },
         }
     }

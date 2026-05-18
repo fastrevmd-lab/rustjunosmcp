@@ -146,9 +146,11 @@ fn spawn_tls(inv_path: &Path, tokens_path: &Path, cert: &Path, key: &Path) -> Se
 }
 
 fn build_tls_agent(cert_pem_path: &Path) -> ureq::Agent {
+    use rustls_pki_types::pem::PemObject;
+    use rustls_pki_types::CertificateDer;
     let pem = std::fs::read(cert_pem_path).unwrap();
     let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut &pem[..]) {
+    for cert in CertificateDer::pem_slice_iter(&pem) {
         roots.add(cert.unwrap()).unwrap();
     }
     // Ensure a default crypto provider is installed in the test process too.

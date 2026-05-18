@@ -10,6 +10,8 @@
 #![cfg(feature = "tls")]
 
 use anyhow::{anyhow, Context, Result};
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,15 +32,14 @@ pub fn load(cert: &Path, key: &Path) -> Result<Arc<rustls::ServerConfig>> {
     let cert_bytes = std::fs::read(cert).with_context(|| format!("read {}", cert.display()))?;
     let key_bytes = std::fs::read(key).with_context(|| format!("read {}", key.display()))?;
 
-    let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_bytes[..])
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&cert_bytes)
         .collect::<std::result::Result<_, _>>()
         .context("parse cert PEM")?;
     if certs.is_empty() {
         return Err(anyhow!("no certificates found in {}", cert.display()));
     }
-    let private_key = rustls_pemfile::private_key(&mut &key_bytes[..])
-        .context("parse key PEM")?
-        .ok_or_else(|| anyhow!("no private key found in {}", key.display()))?;
+    let private_key = PrivateKeyDer::from_pem_slice(&key_bytes)
+        .with_context(|| format!("parse key PEM from {}", key.display()))?;
 
     let cfg = rustls::ServerConfig::builder()
         .with_no_client_auth()

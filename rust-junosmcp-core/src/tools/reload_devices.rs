@@ -19,11 +19,14 @@ pub async fn handle(
     let lock = dm.write_lock();
     let _guard = lock.lock().await;
 
+    let prev_path = dm.inventory_path();
     let path: PathBuf = match args.file_name.as_deref() {
-        None | Some("") => dm.inventory_path(),
+        None | Some("") => prev_path.clone(),
         Some(p) => {
             let candidate = PathBuf::from(p);
-            // Reject path traversal
+            // Reject path traversal (defense-in-depth — the canonicalize
+            // check below also catches this, but failing early gives a
+            // clearer error.)
             if candidate
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -32,16 +35,17 @@ pub async fn handle(
                     "file_name must not contain '..' path components".into(),
                 ));
             }
-            // If relative, resolve relative to current inventory directory
-            if candidate.is_relative() {
-                if let Some(parent) = dm.inventory_path().parent() {
-                    parent.join(&candidate)
-                } else {
-                    candidate
-                }
-            } else {
-                candidate
+            // RJMCP-SEC-005: file_name must be a *relative* path inside the
+            // inventory directory. Absolute paths are rejected outright.
+            if candidate.is_absolute() {
+                return Err(JmcpError::InventoryInvalid(
+                    "file_name must be a relative path within the inventory directory".into(),
+                ));
             }
+            let parent = prev_path.parent().ok_or_else(|| {
+                JmcpError::InventoryInvalid("current inventory path has no parent directory".into())
+            })?;
+            parent.join(&candidate)
         }
     };
 
@@ -50,6 +54,31 @@ pub async fn handle(
             "not a regular file: {}",
             path.display(),
         )));
+    }
+
+    // RJMCP-SEC-005: after the file is confirmed to exist, canonicalize
+    // both the inventory directory and the candidate path and reject if
+    // the candidate escapes the directory (covers symlink-out attacks).
+    // Skip when the candidate equals the current inventory file — the
+    // "no file_name" path needs no further restriction.
+    if args.file_name.as_deref().is_some_and(|s| !s.is_empty()) {
+        let inv_dir = prev_path
+            .parent()
+            .ok_or_else(|| {
+                JmcpError::InventoryInvalid("current inventory path has no parent directory".into())
+            })?
+            .canonicalize()
+            .map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+        let resolved = path
+            .canonicalize()
+            .map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+        if !resolved.starts_with(&inv_dir) {
+            return Err(JmcpError::InventoryInvalid(format!(
+                "file_name resolves outside inventory directory (resolved={}, inventory_dir={})",
+                resolved.display(),
+                inv_dir.display(),
+            )));
+        }
     }
 
     let new_inv = Inventory::load(&path).map_err(|e| JmcpError::InventoryParse(e.to_string()))?;
@@ -75,6 +104,11 @@ pub async fn handle(
     }
 
     let new_hash = hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
+    tracing::info!(
+        prev = %prev_path.display(),
+        new = %path.display(),
+        "reload_devices: inventory swapped"
+    );
     dm.store_inventory(Arc::new(new_inv), path.clone(), new_hash);
 
     // Invalidate pooled sessions for removed or changed routers.
@@ -124,6 +158,22 @@ mod tests {
         f
     }
 
+    /// Write two inventory files into the same tempdir and return
+    /// `(dir, first_path, second_filename)` so callers can pass the second
+    /// inventory's *basename* as `file_name` (required by the v0.5.2 path
+    /// policy).
+    fn paired_inventories(
+        first_json: &str,
+        second_json: &str,
+    ) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p1 = dir.path().join("inventory.json");
+        let p2 = dir.path().join("inventory2.json");
+        std::fs::write(&p1, first_json).unwrap();
+        std::fs::write(&p2, second_json).unwrap();
+        (dir, p1, "inventory2.json".to_string())
+    }
+
     #[tokio::test]
     async fn reload_no_args_re_reads_current_path() {
         let f = write_file(
@@ -149,17 +199,15 @@ mod tests {
 
     #[tokio::test]
     async fn reload_with_file_name_swaps_inventory() {
-        let f1 = write_file(
+        let (_dir, p1, name2) = paired_inventories(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        );
-        let f2 = write_file(
             r#"{"r9":{"ip":"127.0.0.9","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        let dm = dm_at(f1.path(), false);
+        let dm = dm_at(&p1, false);
 
         let r = handle(
             ReloadDevicesArgs {
-                file_name: Some(f2.path().to_string_lossy().to_string()),
+                file_name: Some(name2),
             },
             dm.clone(),
         )
@@ -167,21 +215,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(r["new_router_count"], 1);
-        assert_eq!(r["inventory_path"], f2.path().to_string_lossy().as_ref());
         assert!(dm.inventory().get("r9").is_ok());
         assert!(dm.inventory().get("r1").is_err());
     }
 
     #[tokio::test]
     async fn reload_empty_inventory_rejected() {
-        let f = write_file(
+        let (_dir, p1, name2) = paired_inventories(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+            r#"{}"#,
         );
-        let dm = dm_at(f.path(), false);
-        let f_empty = write_file(r#"{}"#);
+        let dm = dm_at(&p1, false);
         let r = handle(
             ReloadDevicesArgs {
-                file_name: Some(f_empty.path().to_string_lossy().to_string()),
+                file_name: Some(name2),
             },
             dm,
         )
@@ -201,24 +248,22 @@ mod tests {
 
     #[tokio::test]
     async fn reload_reports_added_removed_changed_diff() {
-        let f1 = write_file(
+        let (_dir, p1, name2) = paired_inventories(
             r#"{
                 "keep":{"ip":"10.0.0.1","username":"u","auth":{"type":"password","password":"x"}},
                 "gone":{"ip":"10.0.0.2","username":"u","auth":{"type":"password","password":"x"}},
                 "mut":{"ip":"10.0.0.3","username":"u","auth":{"type":"password","password":"x"}}
             }"#,
-        );
-        let f2 = write_file(
             r#"{
                 "keep":{"ip":"10.0.0.1","username":"u","auth":{"type":"password","password":"x"}},
                 "mut":{"ip":"10.0.0.3","username":"v","auth":{"type":"password","password":"x"}},
                 "new":{"ip":"10.0.0.4","username":"u","auth":{"type":"password","password":"x"}}
             }"#,
         );
-        let dm = dm_at(f1.path(), false);
+        let dm = dm_at(&p1, false);
         let r = handle(
             ReloadDevicesArgs {
-                file_name: Some(f2.path().to_string_lossy().to_string()),
+                file_name: Some(name2),
             },
             dm,
         )
@@ -250,16 +295,14 @@ mod tests {
 
     #[tokio::test]
     async fn reload_detects_password_change() {
-        let f1 = write_file(
+        let (_dir, p1, name2) = paired_inventories(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"old"}}}"#,
-        );
-        let f2 = write_file(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"new"}}}"#,
         );
-        let dm = dm_at(f1.path(), false);
+        let dm = dm_at(&p1, false);
         let r = handle(
             ReloadDevicesArgs {
-                file_name: Some(f2.path().to_string_lossy().to_string()),
+                file_name: Some(name2),
             },
             dm,
         )
@@ -267,5 +310,64 @@ mod tests {
         .unwrap();
         let changed: Vec<String> = serde_json::from_value(r["changed"].clone()).unwrap();
         assert_eq!(changed, vec!["r1"], "password change must be detected");
+    }
+
+    /// RJMCP-SEC-005: absolute paths are rejected outright.
+    #[tokio::test]
+    async fn reload_rejects_absolute_path() {
+        let f = write_file(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = dm_at(f.path(), false);
+        let r = handle(
+            ReloadDevicesArgs {
+                file_name: Some("/etc/passwd".into()),
+            },
+            dm,
+        )
+        .await;
+        assert!(
+            matches!(r, Err(JmcpError::InventoryInvalid(ref msg)) if msg.contains("relative")),
+            "expected absolute-path rejection, got {r:?}"
+        );
+    }
+
+    /// RJMCP-SEC-005: a symlink inside the inventory dir that targets a
+    /// file outside that dir is rejected at canonicalization.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reload_rejects_symlink_escape() {
+        let inv_dir = tempfile::TempDir::new().unwrap();
+        let inv_path = inv_dir.path().join("inventory.json");
+        std::fs::write(
+            &inv_path,
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+
+        let outside_dir = tempfile::TempDir::new().unwrap();
+        let outside_target = outside_dir.path().join("evil.json");
+        std::fs::write(
+            &outside_target,
+            r#"{"r99":{"ip":"127.0.0.99","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+
+        // Sibling symlink inside the inventory dir pointing outside.
+        let escape = inv_dir.path().join("escape.json");
+        std::os::unix::fs::symlink(&outside_target, &escape).unwrap();
+
+        let dm = dm_at(&inv_path, false);
+        let r = handle(
+            ReloadDevicesArgs {
+                file_name: Some("escape.json".into()),
+            },
+            dm,
+        )
+        .await;
+        assert!(
+            matches!(r, Err(JmcpError::InventoryInvalid(ref msg)) if msg.contains("outside")),
+            "expected symlink-escape rejection, got {r:?}"
+        );
     }
 }

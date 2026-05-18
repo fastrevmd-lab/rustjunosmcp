@@ -2,6 +2,9 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
+use crate::inventory::validation::{
+    is_valid_auth_path, is_valid_device_name, is_valid_ip_or_hostname, is_valid_ssh_username,
+};
 use crate::inventory::AuthConfig;
 use crate::tools::AddDeviceArgs;
 use std::sync::Arc;
@@ -63,8 +66,21 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
     if matches!(auth, AuthConfig::Password { .. }) && !dm.allow_password_auth_add() {
         return Err(JmcpError::PasswordAuthDisabled);
     }
+    if let AuthConfig::SshKey { private_key_path } = &auth {
+        if !is_valid_auth_path(private_key_path) {
+            return Err(JmcpError::Validation(format!(
+                "invalid private_key_path `{}`: must be non-empty and must not start with '-'",
+                private_key_path.display()
+            )));
+        }
+    }
 
     let username = args.username.clone().unwrap();
+    if !is_valid_ssh_username(&username) {
+        return Err(JmcpError::Validation(format!(
+            "invalid username `{username}`: must match ^[A-Za-z0-9_.-]{{1,64}}$ and must not start with '-'"
+        )));
+    }
 
     Ok(ResolvedAdd {
         device_name,
@@ -72,30 +88,6 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         device_port,
         username,
         auth,
-    })
-}
-
-fn is_valid_device_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-}
-
-fn is_valid_ip_or_hostname(s: &str) -> bool {
-    if s.parse::<std::net::IpAddr>().is_ok() {
-        return true;
-    }
-    // RFC 1123 hostname: 1..=253 chars, labels split on '.', each label
-    // 1..=63 chars matching [A-Za-z0-9-] without leading/trailing hyphen.
-    if s.is_empty() || s.len() > 253 {
-        return false;
-    }
-    s.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     })
 }
 
@@ -273,6 +265,51 @@ mod tests {
             password: "x".into(),
         });
         validate(&a, &dm).unwrap();
+    }
+
+    #[test]
+    fn rejects_username_starting_with_dash() {
+        let dm = dm_with(r#"{}"#, false, false);
+        let mut a = args_full();
+        a.username = Some("-oProxyCommand=foo".into());
+        let r = validate(&a, &dm);
+        assert!(
+            matches!(r, Err(JmcpError::Validation(ref s)) if s.contains("username")),
+            "expected Validation error for dash-prefixed username, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_username_with_space() {
+        let dm = dm_with(r#"{}"#, false, false);
+        let mut a = args_full();
+        a.username = Some("user with space".into());
+        let r = validate(&a, &dm);
+        assert!(matches!(r, Err(JmcpError::Validation(_))));
+    }
+
+    #[test]
+    fn rejects_private_key_path_starting_with_dash() {
+        let dm = dm_with(r#"{}"#, false, false);
+        let mut a = args_full();
+        a.auth = Some(AuthConfig::SshKey {
+            private_key_path: "-evil".into(),
+        });
+        let r = validate(&a, &dm);
+        assert!(
+            matches!(r, Err(JmcpError::Validation(ref s)) if s.contains("private_key_path")),
+            "expected Validation error for dash-prefixed key path, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_typical_usernames() {
+        let dm = dm_with(r#"{}"#, false, false);
+        for name in ["admin", "netconf", "user.name", "user-name", "user_name"] {
+            let mut a = args_full();
+            a.username = Some(name.into());
+            validate(&a, &dm).unwrap_or_else(|e| panic!("expected '{name}' accepted, got {e:?}"));
+        }
     }
 
     #[tokio::test]

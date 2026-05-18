@@ -3,7 +3,7 @@ members = ["rust-junosmcp-core", "rust-junosmcp", "rust-junosmcp-auth"]
 resolver = "2"
 
 [workspace.package]
-version      = "0.5.1"
+version      = "0.5.2"
 edition      = "2021"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fastrevmd-lab/RustJunosMCP"
@@ -35,10 +35,9 @@ tower            = "0.5"
 tower-http       = "0.6"
 http             = "1"
 rustls           = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-rustls-pemfile   = "2"
+rustls-pki-types = { version = "1", features = ["std"] }
 axum-server      = { version = "0.8", default-features = false }
 rcgen            = "0.14"
 tempfile         = "3"
 ureq             = "2"
 minijinja        = { version = "2", default-features = false, features = ["builtins", "loader", "serde"] }
-serde_yml        = "0.0.12"

@@ -42,6 +42,9 @@ async fn live_upgrade_round_trip() {
         known_hosts_file: "/etc/jmcp/known_hosts".into(),
         scp_runner: Arc::new(OpenSshScpRunner),
         transfer_locks: Arc::new(TransferLocks::default()),
+        // Integration test is `#[ignore]`-gated and runs against a real
+        // lab device whose host key is pre-pinned; accept-new is safe.
+        accept_new_host_keys: true,
     };
     let cfg = UpgradeConfig { transfer_cfg };
     let args = UpgradeJunosArgs {

@@ -369,3 +369,64 @@ fn auth_then_scope_then_blocklist_ordering() {
         "expected blocklist denial, got {text}"
     );
 }
+
+/// RJMCP-SEC-001: a token scoped only to `transfer_file` must NOT be able to
+/// call `upgrade_junos`. Prior to v0.5.2, `KNOWN_TOOLS` was stale and minting a
+/// token scoped to `transfer_file` was outright rejected — so the only way to
+/// authorize `transfer_file` at all was a wildcard token, which also opened up
+/// `upgrade_junos` (destructive, reboots devices).
+#[test]
+fn tool_scope_transfer_only_cannot_call_upgrade_junos() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let toks = dir.path().join("tokens.json");
+    let out = Command::new(binary_path())
+        .args([
+            "token",
+            "add",
+            "--tokens-file",
+            toks.to_str().unwrap(),
+            "--name",
+            "transfer-only",
+            "--routers",
+            "*",
+            "--tools",
+            "transfer_file",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "token add must accept transfer_file scope post-SEC-001: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let secret = String::from_utf8(out.stdout).unwrap().trim().to_string();
+
+    let s = spawn(inv.path(), &toks);
+    let sid = initialize(s.port, &secret);
+    let r = http_post(
+        s.port,
+        Some(&secret),
+        Some(&sid),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name":"upgrade_junos",
+            "arguments":{
+                "router_name":"r1",
+                "source_path":"junos.tgz",
+                "target_version":"25.4R1.12",
+                "confirm":false
+            }
+        }}),
+    );
+    assert_eq!(r.code, 200, "body: {}", r.body);
+    let result = r.body.pointer("/result").expect("result");
+    assert_eq!(result.get("isError"), Some(&json!(true)));
+    let text = serde_json::to_string(result).unwrap();
+    assert!(
+        text.contains("not authorized for tool"),
+        "expected tool-scope denial for upgrade_junos, got: {text}"
+    );
+}
