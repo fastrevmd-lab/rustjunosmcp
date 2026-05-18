@@ -766,13 +766,13 @@ async fn run_destructive(
     let phase1_done = Instant::now();
 
     // Phase 2: transfer via transfer_file::handle (idempotent skip).
-    let transfer_args = crate::tools::TransferFileArgs {
-        router_name: args.router_name.clone(),
-        source_path: args.source_path.clone(),
-        force: false,
-        verify: true,
-        timeout: 600,
-    };
+    // The inner timeout matches the outer `args.timeout` rather than a
+    // magic constant so operators can extend the transfer budget for
+    // slow links by bumping a single knob (#42). The outer
+    // `tokio::time::timeout(args.timeout, run(…))` in `handle()` is
+    // still the wall bound — it will fire with `UpgradeOuterTimeout`
+    // before the inner call's own `tokio::time::timeout` does.
+    let transfer_args = build_transfer_args(args);
     let _transfer_result =
         crate::tools::transfer_file::handle(transfer_args, dm.clone(), cfg.transfer_cfg.clone())
             .await?;
@@ -854,6 +854,69 @@ async fn run_destructive(
         pre_baseline: &pre_baseline,
         post_baseline: &post_baseline,
     }))
+}
+
+/// Build the `TransferFileArgs` snapshot passed to `transfer_file::handle`
+/// from Phase 2 of `run_destructive`. Extracted so the timeout-plumbing
+/// (and any future per-call invariants like `force=false`) are unit-testable
+/// without spinning up a device or a Tokio runtime. (#42)
+pub(crate) fn build_transfer_args(args: &UpgradeJunosArgs) -> crate::tools::TransferFileArgs {
+    crate::tools::TransferFileArgs {
+        router_name: args.router_name.clone(),
+        source_path: args.source_path.clone(),
+        force: false,
+        verify: true,
+        timeout: args.timeout,
+    }
+}
+
+#[cfg(test)]
+mod build_transfer_args_tests {
+    use super::*;
+
+    fn args_with_timeout(timeout: u64) -> UpgradeJunosArgs {
+        UpgradeJunosArgs {
+            router_name: "vsrx-test10".into(),
+            source_path: "junos-25.4R1.12.tgz".into(),
+            target_version: "25.4R1.12".into(),
+            confirm: true,
+            timeout,
+            reboot_wait_secs: 480,
+        }
+    }
+
+    #[test]
+    fn forwards_timeout_from_upgrade_args() {
+        // Regression for #42: the inner transfer call previously used a
+        // hard-coded 600 s timeout regardless of the operator-supplied
+        // outer budget. Any value the operator picks must reach
+        // `TransferFileArgs.timeout` verbatim.
+        for t in [60_u64, 600, 900, 1800, 3600] {
+            let upgrade = args_with_timeout(t);
+            let transfer = build_transfer_args(&upgrade);
+            assert_eq!(transfer.timeout, t, "timeout should pass through");
+        }
+    }
+
+    #[test]
+    fn pins_force_false_verify_true() {
+        // Invariants the transfer call relies on. `force=false` so we
+        // never silently overwrite a divergent remote file; `verify=true`
+        // so we always post-checksum after scp.
+        let transfer = build_transfer_args(&args_with_timeout(900));
+        assert!(!transfer.force, "force must default to false");
+        assert!(transfer.verify, "verify must default to true");
+    }
+
+    #[test]
+    fn forwards_router_and_source() {
+        let mut upgrade = args_with_timeout(900);
+        upgrade.router_name = "vsrx-test11".into();
+        upgrade.source_path = "junos-25.4R1.12.tgz".into();
+        let transfer = build_transfer_args(&upgrade);
+        assert_eq!(transfer.router_name, "vsrx-test11");
+        assert_eq!(transfer.source_path, "junos-25.4R1.12.tgz");
+    }
 }
 
 async fn capture_baseline(

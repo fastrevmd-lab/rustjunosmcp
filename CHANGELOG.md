@@ -4,6 +4,47 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] — TBD
+
+Server-side correctness pass for the long-running `upgrade_junos`
+tool. No new tools or wire-protocol changes; two bug fixes and one
+observability gap closed.
+
+### Fixed
+
+- **`upgrade_junos.args.timeout` now actually constrains the transfer
+  phase** (#42). Previously the inner call to `transfer_file::handle`
+  used a hard-coded 600 s timeout regardless of the operator-supplied
+  `args.timeout` (default 900 s). Raising the outer budget had no
+  effect on the longest phase, so large-image transfers on slow links
+  hit a phantom 600 s cap. The inner call now uses `args.timeout`; the
+  outer `tokio::time::timeout(args.timeout, run(…))` remains the wall
+  bound, so `UpgradeOuterTimeout` fires as documented.
+
+### Added
+
+- **`audit tool="upgrade_junos"` log line on every result path** (#42).
+  `upgrade_junos` previously had no audit logging in the server-layer
+  wrapper, so operators could not distinguish "tool errored" from
+  "client disconnected mid-call" from "tool never ran." It now emits
+  the same `audit` shape as `transfer_file` / `list_staged_files` on
+  Ok, Err, and HTTP-cancellation paths. Cancellation lands via a
+  `Drop`-based guard with `outcome="cancelled"`.
+
+### Note
+
+- rmcp 0.8.5's streamable-HTTP transport already emits SSE `:`
+  keep-alive comments at 15 s intervals (`sse_keep_alive` default).
+  SSE-aware clients should hold the response stream open for the full
+  `args.timeout`. The original #42 symptom — `upgrade_junos` appearing
+  to hang ~6 min — was a curl `--max-time` wall-clock cap on the
+  smoke harness, not a server-side hang. Operators driving
+  `upgrade_junos` from curl must set `--max-time` ≥ `args.timeout`.
+
+### Tooling
+
+- Workspace version bumped to `0.5.4`.
+
 ## [0.5.3] — TBD
 
 Bugfix release for the `transfer_file` / `upgrade_junos` pre-transfer

@@ -42,6 +42,37 @@ fn caller_ctx(extensions: &Extensions) -> Option<&crate::caller::CallerCtx> {
         .and_then(|parts| parts.extensions.get::<crate::caller::CallerCtx>())
 }
 
+/// RAII guard that emits an `audit … outcome="cancelled"` line for
+/// `upgrade_junos` when the future is dropped without first setting
+/// `consumed = true`. Used to capture HTTP-transport cancellations
+/// (client read timeout, network reset, ctrl-C) which would otherwise
+/// leave no trace in the journal because the normal match arms below
+/// never run. (#42)
+struct UpgradeAuditGuard {
+    consumed: bool,
+    token: String,
+    router: String,
+    basename: String,
+    target_version: String,
+}
+
+impl Drop for UpgradeAuditGuard {
+    fn drop(&mut self) {
+        if self.consumed {
+            return;
+        }
+        tracing::info!(
+            tool = "upgrade_junos",
+            token = %self.token,
+            router = %self.router,
+            basename = %self.basename,
+            target_version = %self.target_version,
+            outcome = "cancelled",
+            "audit"
+        );
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ScopeError {
     #[error("token '{token}' is not authorized for tool '{tool}'")]
@@ -505,9 +536,49 @@ impl JmcpHandler {
         if let Err(e) = self.check_router_scope(ctx, "upgrade_junos", &args.router_name) {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(
-            upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone()).await,
-        )
+        let token = ctx
+            .map(|c| c.token_name.as_str())
+            .unwrap_or("stdio")
+            .to_string();
+        let router = args.router_name.clone();
+        let basename = args.source_path.clone();
+        let target_version = args.target_version.clone();
+        // Cancellation guard: if the rmcp HTTP transport drops this future
+        // mid-flight (e.g. client read timeout, ctrl-C, network reset),
+        // `guard` is dropped without `consumed = true`, so its `Drop`
+        // emits an `audit … outcome="cancelled"` line. The match below
+        // sets `consumed = true` for the normal Ok/Err paths. (#42)
+        let mut guard = UpgradeAuditGuard {
+            consumed: false,
+            token: token.clone(),
+            router: router.clone(),
+            basename: basename.clone(),
+            target_version: target_version.clone(),
+        };
+        let result = upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone()).await;
+        match &result {
+            Ok(v) => tracing::info!(
+                tool = "upgrade_junos",
+                token = %token,
+                router = %router,
+                basename = %basename,
+                target_version = %target_version,
+                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
+                "audit"
+            ),
+            Err(e) => tracing::info!(
+                tool = "upgrade_junos",
+                token = %token,
+                router = %router,
+                basename = %basename,
+                target_version = %target_version,
+                outcome = "error",
+                error = %e,
+                "audit"
+            ),
+        }
+        guard.consumed = true;
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -764,5 +835,98 @@ mod scope_tests {
             }
         }
         assert_eq!(first_fail, Some("r2"));
+    }
+}
+
+#[cfg(test)]
+mod upgrade_audit_guard_tests {
+    use super::UpgradeAuditGuard;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    /// MakeWriter that captures all formatted log output into a shared
+    /// buffer so tests can assert on the emitted line.
+    #[derive(Clone, Default)]
+    struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for CapturingWriter {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn run_with_capture<F: FnOnce()>(f: F) -> String {
+        let cap = CapturingWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(cap.clone())
+            .with_ansi(false)
+            .with_level(false)
+            .with_target(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = cap.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    fn guard() -> UpgradeAuditGuard {
+        UpgradeAuditGuard {
+            consumed: false,
+            token: "claude-client".into(),
+            router: "vsrx-test10".into(),
+            basename: "junos-25.4R1.12.tgz".into(),
+            target_version: "25.4R1.12".into(),
+        }
+    }
+
+    #[test]
+    fn emits_cancelled_audit_when_dropped_unconsumed() {
+        // Regression for #42: a future cancelled by the rmcp HTTP
+        // transport drops `UpgradeAuditGuard` without setting
+        // `consumed = true`. The journal must still capture the
+        // tool call.
+        let captured = run_with_capture(|| {
+            let g = guard();
+            drop(g);
+        });
+        // `tracing`'s default `fmt` layer formats `%`-display fields
+        // unquoted: `router=vsrx-test10 …`. Quoted-string fields (e.g.
+        // string literals or `?`-debug) show as `tool="upgrade_junos"`.
+        assert!(
+            captured.contains("audit"),
+            "expected an `audit` message in: {captured}"
+        );
+        assert!(captured.contains("tool=\"upgrade_junos\""));
+        assert!(captured.contains("router=vsrx-test10"));
+        assert!(captured.contains("basename=junos-25.4R1.12.tgz"));
+        assert!(captured.contains("target_version=25.4R1.12"));
+        assert!(captured.contains("outcome=\"cancelled\""));
+    }
+
+    #[test]
+    fn silent_when_consumed_true() {
+        // Normal Ok/Err paths set `consumed = true`; the guard must
+        // NOT emit a duplicate "cancelled" line on top of those.
+        let captured = run_with_capture(|| {
+            let mut g = guard();
+            g.consumed = true;
+            drop(g);
+        });
+        assert!(
+            !captured.contains("audit"),
+            "expected no audit output when consumed=true, got: {captured}"
+        );
     }
 }
