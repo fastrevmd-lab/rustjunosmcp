@@ -58,8 +58,9 @@ parallel with a configurable concurrency cap.
 
 ### v0.2 follow-up: Templates (released)
 
-- `render_and_apply_j2_template` — render a Jinja2 template (inline `template_content`) with JSON or YAML `vars_content`. Supports single (`router_name`) or multiple routers (`router_names`), dry-run, and full commit. Reuses the same blocklist + format gating as `load_and_commit_config`.
-- Vars sniff: first non-whitespace `{` → JSON, otherwise YAML. Both must produce a top-level object.
+- `render_and_apply_j2_template` — render a Jinja2 template (inline `template_content`) with a JSON `vars_content` object. Supports single (`router_name`) or multiple routers (`router_names`), dry-run, and full commit. Reuses the same blocklist + format gating as `load_and_commit_config`.
+- Vars must be a top-level JSON object. **YAML is no longer accepted** as of v0.5.2 (RJMCP-SEC-002): the `serde_yml` / `libyml` advisory chain (RUSTSEC-2025-0067/-0068) was reachable from MCP input, so the YAML branch was removed.
+- Size caps: `template_content` and `vars_content` are each bounded at 64 KiB.
 - Strict-undefined: missing variables fail with the variable name rather than rendering empty.
 - Auto-format detection: leading `<` → `xml`, any `set ` / `delete ` line → `set`, otherwise `text`. Override via `config_format`.
 - Result shape: one row per router with `rendered_template`, `config_format`, and either `diff` (dry-run), `commit_comment` (apply-mode echo of the supplied comment — rustez does not return a server-issued commit id), or `error`.

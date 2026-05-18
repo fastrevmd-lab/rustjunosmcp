@@ -144,9 +144,11 @@ pub struct ExecuteBatchArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TemplateArgs {
     /// Jinja2 template content as a string (inline; no file path).
+    /// Capped at 64 KiB.
     pub template_content: String,
-    /// Vars as a JSON or YAML string. Sniffed by first non-whitespace char.
-    /// Must deserialize to a top-level object/map.
+    /// Vars as a JSON object string. Must deserialize to a top-level JSON
+    /// object. Capped at 64 KiB. YAML is **not** accepted as of v0.5.2
+    /// (RJMCP-SEC-002).
     pub vars_content: String,
     /// Single router to apply to. Mutually exclusive with `router_names`.
     #[serde(default)]

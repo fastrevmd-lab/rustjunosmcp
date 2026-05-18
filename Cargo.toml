@@ -41,4 +41,3 @@ rcgen            = "0.14"
 tempfile         = "3"
 ureq             = "2"
 minijinja        = { version = "2", default-features = false, features = ["builtins", "loader", "serde"] }
-serde_yml        = "0.0.12"

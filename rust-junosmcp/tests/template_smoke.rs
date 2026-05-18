@@ -158,8 +158,11 @@ fn render_only_path_returns_rendered_string_with_json_vars() {
     assert_eq!(payload["applied"], false);
 }
 
+/// RJMCP-SEC-002: YAML `vars_content` is rejected at the tool boundary as of
+/// v0.5.2. The previous version of this test asserted YAML rendered cleanly;
+/// now it asserts the call surfaces a JSON parse error.
 #[test]
-fn render_only_path_with_yaml_vars() {
+fn yaml_vars_content_is_rejected_with_json_error() {
     ensure_built();
     let inv = write_inventory(
         r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
@@ -174,19 +177,21 @@ fn render_only_path_with_yaml_vars() {
             "router_name": "r1"
         }),
     );
-    let payload = extract_success_payload(&resp);
-    let rows = payload["results"].as_array().expect("results array");
-    let rendered = rows[0]["rendered_template"].as_str().unwrap();
-    assert!(
-        rendered.contains("set system host-name r1"),
-        "rendered missing host-name line: {rendered}"
+    let result = resp.pointer("/result").expect("missing /result");
+    assert_eq!(
+        result.get("isError"),
+        Some(&json!(true)),
+        "expected isError=true for YAML vars_content, got: {result}"
     );
+    let text = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .expect("missing /result/content/0/text")
+        .to_string();
     assert!(
-        rendered.contains("delete protocols bgp"),
-        "rendered missing delete line: {rendered}"
+        text.contains("JSON parse failed"),
+        "error should steer caller toward JSON; got: {text}"
     );
-    assert_eq!(rows[0]["config_format"], "set");
-    assert_eq!(payload["applied"], false);
 }
 
 #[test]

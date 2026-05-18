@@ -19,7 +19,6 @@ rustez       = { workspace = true }
 globset      = { workspace = true }
 async-trait  = { workspace = true }
 minijinja    = { workspace = true }
-serde_yml    = { workspace = true }
 arc-swap     = { workspace = true }
 tempfile     = { workspace = true }
 sha2         = { workspace = true }

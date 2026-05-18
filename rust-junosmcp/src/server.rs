@@ -371,7 +371,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "render_and_apply_j2_template",
-        description = "Render a Jinja2 template (inline) with JSON or YAML vars. Optionally commit the rendered config to one or more routers; supports dry-run."
+        description = "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more routers; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)"
     )]
     async fn render_and_apply_j2_template(
         &self,
