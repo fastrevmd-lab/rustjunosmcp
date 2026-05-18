@@ -4,6 +4,29 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] — TBD
+
+Bugfix release for the `transfer_file` / `upgrade_junos` pre-transfer
+checksum probe against Junos 24.x devices.
+
+### Fixed
+
+- **`parse_checksum_output` rejected Junos 24.x missing-file output**
+  (#40). The probe (`file checksum sha-256 /var/tmp/<name>`) returns
+  `sha256: (sha256: /var/tmp/<name>: No such file or directory) = directory`
+  on 24.x when the destination is absent, instead of the older
+  `error: stat: /var/tmp/<name>: No such file or directory` form. The
+  parser only recognized the older form, so the probe failed with
+  `validation error: unable to parse checksum output`, aborting the
+  transfer **before any scp was attempted**. Any line containing
+  `No such file or directory` is now treated as the missing-file
+  signal regardless of prefix; the success format (trailing 64-char
+  hex digest) is unambiguous.
+
+### Tooling
+
+- Workspace version bumped to `0.5.3`.
+
 ## [0.5.2] — TBD
 
 Security audit response. Six findings from the internal code review

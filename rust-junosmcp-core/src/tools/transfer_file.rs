@@ -870,9 +870,14 @@ Filesystem              Size       Used      Avail  Capacity   Mounted on
 /// ```text
 /// SHA256 (/var/tmp/foo) = abc123...
 /// ```
-/// or, when the file is missing:
+/// On older Junos, when the file is missing:
 /// ```text
 /// error: stat: /var/tmp/foo: No such file or directory
+/// ```
+/// On Junos 24.x, the missing-file form wraps the underlying `sha256(1)` stderr
+/// into the same line that would normally hold the hash (issue #40):
+/// ```text
+/// sha256: (sha256: /var/tmp/foo: No such file or directory) = directory
 /// ```
 /// Returns `Ok(Some([u8;32]))` on hit, `Ok(None)` if absent, `Err` on parse failure.
 pub fn parse_checksum_output(output: &str) -> Result<Option<[u8; 32]>, JmcpError> {
@@ -881,7 +886,12 @@ pub fn parse_checksum_output(output: &str) -> Result<Option<[u8; 32]>, JmcpError
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed.starts_with("error:") && trimmed.contains("No such file") {
+        // Any line carrying "No such file or directory" is the missing-file
+        // signal. Older Junos: prefixed with `error:`. Junos 24.x: wrapped
+        // inside `sha256: (...: No such file or directory) = directory`. The
+        // success format below never contains this phrase (it ends in a 64-char
+        // hex digest), so we can match it anywhere on the line safely.
+        if trimmed.contains("No such file or directory") {
             return Ok(None);
         }
         if let Some(eq) = trimmed.rfind('=') {
@@ -917,6 +927,17 @@ mod checksum_tests {
     #[test]
     fn returns_none_for_missing_file() {
         let s = "error: stat: /var/tmp/foo: No such file or directory\n";
+        assert!(parse_checksum_output(s).unwrap().is_none());
+    }
+
+    /// Junos 24.x wraps the BSD `sha256(1)` stderr into the would-be hash
+    /// line (issue #40). The trailing `= directory` token can't be confused
+    /// with a real 64-char hex digest, but the parser still needs to
+    /// recognize the `No such file or directory` phrase as the missing-file
+    /// signal rather than fall through to the "unable to parse" error.
+    #[test]
+    fn returns_none_for_missing_file_junos_24x_format() {
+        let s = "\nsha256: (sha256: /var/tmp/smoke.txt: No such file or directory) = directory\n";
         assert!(parse_checksum_output(s).unwrap().is_none());
     }
 
