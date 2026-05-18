@@ -4,6 +4,47 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] — TBD
+
+Dependency bump. `rustez 0.10.1 → 0.11.0` pulls in `rustnetconf 0.10
+→ 0.11`. Backward-compatible at the API level — no caller code in
+this repo changes.
+
+### Security
+
+- **rustez 0.11.0 inherits these upstream fixes** (per the rustEZ
+  0.10.1 → 0.11.0 audit cycle):
+  - **RZ-SEC-001** — `DeviceBuilder::host_key_verification()` is now
+    available for opt-in NETCONF SSH host-key pinning. Default is
+    unchanged (`AcceptAll` with warning) for backward compatibility.
+    RustJunosMCP does **not** yet opt in to fingerprint pinning at
+    the NETCONF layer; tracked as a follow-up. (Note: scp host-key
+    pinning via `known_hosts` is already strict since v0.5.2.)
+  - **RZ-SEC-002** — RUSTSEC-2023-0071 (rsa timing side-channel) is
+    documented as an accepted/tracked risk in the rustEZ CI ignore
+    list. No change to RustJunosMCP exposure.
+  - **RZ-SEC-003** — rustez now closes the auto-opened config DB on
+    load failure, preventing a leaked lock if a config load errors
+    after the DB was opened on the caller's behalf. RustJunosMCP's
+    `apply_junos_config` / template-render tools inherit the fix
+    transparently.
+  - **RZ-QUAL-001 / RZ-QUAL-002** — workspace package-drift CI check
+    and `rb_id` forwarding through `diff()`. No user-visible change
+    here, but reduces the risk of future rustez regressions affecting
+    our `diff_against_rollback` tool.
+
+### Verification
+
+- `cargo audit` against the post-bump `Cargo.lock` reports **zero
+  advisories** across 397 crates.
+- 321 unit tests pass; live `upgrade_junos` integration test passes;
+  `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo fmt --check` are clean.
+
+### Tooling
+
+- Workspace version bumped to `0.5.5`.
+
 ## [0.5.4] — TBD
 
 Server-side correctness pass for the long-running `upgrade_junos`

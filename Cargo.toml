@@ -3,7 +3,7 @@ members = ["rust-junosmcp-core", "rust-junosmcp", "rust-junosmcp-auth"]
 resolver = "2"
 
 [workspace.package]
-version      = "0.5.4"
+version      = "0.5.5"
 edition      = "2021"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fastrevmd-lab/RustJunosMCP"
@@ -19,7 +19,7 @@ async-trait      = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 schemars     = "1.0"
 anyhow       = "1"
-rustez       = "0.10.1"
+rustez       = "0.11.0"
 globset      = "0.4"
 # rmcp 0.x — pinned at task 16; placeholder here
 

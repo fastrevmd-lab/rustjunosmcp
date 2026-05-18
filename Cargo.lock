@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "arc-swap",
  "base64ct",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2675,9 +2675,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.10.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84c404cc84a701fdac6370af393c8fb5b10f02b5eae25475420924cf60352462"
+checksum = "66f4e7f823a90774d4b6f85c355e8ace85595c778dbf3e5710a192cfc0a99f3c"
 dependencies = [
  "quick-xml",
  "rustnetconf",
@@ -2746,9 +2746,9 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5078381865ce3e2a24498062164a4a0c111c87bb01a7362226163d5668532efc"
+checksum = "934b1c772b7847df65d310e23597daf7ee137edf1257e3094951c3f3b4573a1c"
 dependencies = [
  "async-trait",
  "quick-xml",
