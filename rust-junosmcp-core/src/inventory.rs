@@ -6,6 +6,169 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Shared input-validation helpers used by both `Inventory::validate`
+/// (load-time) and `add_device::validate` (runtime). Keeping these in one
+/// module guarantees the on-disk parser and the live-add API enforce the
+/// same character classes (RJMCP-SEC-003).
+pub(crate) mod validation {
+    use std::path::Path;
+
+    /// Device name: 1..=64 ASCII alnum + `_ . -`, never starting with `-`.
+    pub fn is_valid_device_name(s: &str) -> bool {
+        if s.is_empty() || s.len() > 64 || s.starts_with('-') {
+            return false;
+        }
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    }
+
+    /// IPv4/IPv6 literal or RFC 1123 hostname (1..=253 chars; labels 1..=63
+    /// of `[A-Za-z0-9-]`, no leading/trailing hyphen).
+    pub fn is_valid_ip_or_hostname(s: &str) -> bool {
+        if s.parse::<std::net::IpAddr>().is_ok() {
+            return true;
+        }
+        if s.is_empty() || s.len() > 253 {
+            return false;
+        }
+        s.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    }
+
+    /// SSH username: 1..=64 ASCII alnum + `_ . -`, must not start with `-`.
+    /// The leading-dash rejection prevents the value from being interpreted
+    /// as an SSH option flag (e.g. `-oProxyCommand=...`).
+    pub fn is_valid_ssh_username(s: &str) -> bool {
+        if s.is_empty() || s.len() > 64 || s.starts_with('-') {
+            return false;
+        }
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    }
+
+    /// SSH private-key path: non-empty, contains no NUL byte, and the
+    /// rendered string form must not begin with `-` (same SSH-flag concern
+    /// as usernames). Existence is checked separately by `Inventory::validate`.
+    pub fn is_valid_auth_path(p: &Path) -> bool {
+        let os = p.as_os_str();
+        if os.is_empty() {
+            return false;
+        }
+        // Reject embedded NUL — defends against unusual byte sequences in
+        // path-like inputs.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            if os.as_bytes().contains(&0) {
+                return false;
+            }
+        }
+        if let Some(s) = p.to_str() {
+            if s.starts_with('-') {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::path::PathBuf;
+
+        #[test]
+        fn device_name_accepts_canonical_forms() {
+            for ok in ["r1", "core-3", "user.name", "user_name", "vsrx-test10"] {
+                assert!(is_valid_device_name(ok), "should accept: {ok}");
+            }
+        }
+
+        #[test]
+        fn device_name_rejects_bad_forms() {
+            for bad in [
+                "",
+                " ",
+                "bad name",
+                "evil; rm -rf /",
+                "-leading-dash",
+                "a/b",
+                &"x".repeat(65),
+            ] {
+                assert!(!is_valid_device_name(bad), "should reject: {bad:?}");
+            }
+        }
+
+        #[test]
+        fn ip_or_hostname_accepts_addr_and_hostname() {
+            for ok in [
+                "10.0.0.1",
+                "127.0.0.1",
+                "::1",
+                "fe80::1",
+                "router-3.example.net",
+                "h",
+            ] {
+                assert!(is_valid_ip_or_hostname(ok), "should accept: {ok}");
+            }
+        }
+
+        #[test]
+        fn ip_or_hostname_rejects_junk() {
+            for bad in [
+                "",
+                "not an ip or host",
+                "10.0.0.1; rm -rf /",
+                "-bad.example",
+                "bad-.example",
+                ".",
+                "a..b",
+            ] {
+                assert!(!is_valid_ip_or_hostname(bad), "should reject: {bad:?}");
+            }
+        }
+
+        #[test]
+        fn ssh_username_accepts_typical_names() {
+            for ok in ["admin", "netconf", "user.name", "user-name", "user_name"] {
+                assert!(is_valid_ssh_username(ok), "should accept: {ok}");
+            }
+        }
+
+        #[test]
+        fn ssh_username_rejects_leading_dash_and_spaces() {
+            for bad in [
+                "",
+                " ",
+                "-oProxyCommand=foo",
+                "user with space",
+                "user/name",
+                &"x".repeat(65),
+            ] {
+                assert!(!is_valid_ssh_username(bad), "should reject: {bad:?}");
+            }
+        }
+
+        #[test]
+        fn auth_path_accepts_typical_paths() {
+            assert!(is_valid_auth_path(&PathBuf::from("/etc/jmcp/keys/id")));
+            assert!(is_valid_auth_path(&PathBuf::from("./key.pem")));
+            assert!(is_valid_auth_path(&PathBuf::from("relative/path")));
+        }
+
+        #[test]
+        fn auth_path_rejects_empty_or_leading_dash() {
+            assert!(!is_valid_auth_path(&PathBuf::from("")));
+            assert!(!is_valid_auth_path(&PathBuf::from("-evil")));
+            assert!(!is_valid_auth_path(&PathBuf::from("-oProxyCommand=foo")));
+        }
+    }
+}
+
 /// Authentication config for a Junos device. Tagged enum mirrors the Python
 /// repo's `auth.type` discriminator.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -217,10 +380,16 @@ impl Inventory {
     }
 
     fn validate(devices: &HashMap<String, DeviceEntry>) -> Result<(), JmcpError> {
+        use validation::*;
         for (name, entry) in devices {
-            if entry.ip.trim().is_empty() {
+            if !is_valid_device_name(name) {
                 return Err(JmcpError::InventoryInvalid(format!(
-                    "router '{name}': ip is empty"
+                    "router '{name}': name is invalid (must match ^[A-Za-z0-9_.-]{{1,64}}$, no leading '-')"
+                )));
+            }
+            if !is_valid_ip_or_hostname(&entry.ip) {
+                return Err(JmcpError::InventoryInvalid(format!(
+                    "router '{name}': ip/hostname is invalid"
                 )));
             }
             if entry.port == 0 {
@@ -228,12 +397,17 @@ impl Inventory {
                     "router '{name}': port must be non-zero"
                 )));
             }
-            if entry.username.trim().is_empty() {
+            if !is_valid_ssh_username(&entry.username) {
                 return Err(JmcpError::InventoryInvalid(format!(
-                    "router '{name}': username is empty"
+                    "router '{name}': username is invalid (must match ^[A-Za-z0-9_.-]{{1,64}}$, no leading '-')"
                 )));
             }
             if let AuthConfig::SshKey { private_key_path } = &entry.auth {
+                if !is_valid_auth_path(private_key_path) {
+                    return Err(JmcpError::InventoryInvalid(format!(
+                        "router '{name}': private_key_path is invalid (empty, contains NUL, or starts with '-')"
+                    )));
+                }
                 if !private_key_path.exists() {
                     return Err(JmcpError::KeyFileMissing(private_key_path.clone()));
                 }
@@ -292,6 +466,83 @@ mod load_tests {
         );
         let r = Inventory::load(f.path());
         assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_device_name_with_space() {
+        let f = write(
+            "badname",
+            r#"{
+            "bad name":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_ip_with_shell_metacharacters() {
+        let f = write(
+            "shellip",
+            r#"{
+            "r1":{"ip":"10.0.0.1; rm -rf /","username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_username_starting_with_dash() {
+        let f = write(
+            "badusr",
+            r#"{
+            "r1":{"ip":"1.2.3.4","username":"-oProxyCommand=foo","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_username_with_space() {
+        let f = write(
+            "spcusr",
+            r#"{
+            "r1":{"ip":"1.2.3.4","username":"user with space","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        let r = Inventory::load(f.path());
+        assert!(matches!(r, Err(JmcpError::InventoryInvalid(_))));
+    }
+
+    #[test]
+    fn rejects_private_key_path_starting_with_dash() {
+        // A `private_key_path` whose rendered string starts with `-` could be
+        // mis-parsed by ssh/scp as a CLI flag (e.g. `-oProxyCommand=...`).
+        // Validation must reject before any existence check.
+        let json = r#"{
+            "r1":{"ip":"1.2.3.4","username":"u",
+                   "auth":{"type":"ssh_key","private_key_path":"-oProxyCommand=foo"}}
+        }"#;
+        let f = write("dashkey", json);
+        let r = Inventory::load(f.path());
+        assert!(
+            matches!(r, Err(JmcpError::InventoryInvalid(ref s)) if s.contains("private_key_path")),
+            "expected InventoryInvalid for leading-dash path, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_typical_usernames() {
+        for name in ["admin", "netconf", "user.name", "user-name", "user_name"] {
+            let json = format!(
+                r#"{{"r1":{{"ip":"1.2.3.4","username":"{name}","auth":{{"type":"password","password":"x"}}}}}}"#,
+            );
+            let f = write("u", &json);
+            let inv = Inventory::load(f.path());
+            assert!(inv.is_ok(), "expected '{name}' accepted, got {inv:?}");
+        }
     }
 
     #[test]
