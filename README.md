@@ -163,6 +163,20 @@ via `auth.private_key_path` in `devices.json`.
 
 Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
 
+**Host-key policy (v0.5.2+):** scp runs with `StrictHostKeyChecking=yes` by
+default — unknown device host keys are refused. The `known_hosts` file must
+exist before the first `transfer_file` / `upgrade_junos` call, otherwise the
+tool errors with `[code=known_hosts_missing]`. Pre-populate it with the
+bundled helper:
+
+```bash
+scripts/scan-known-hosts.sh --inventory /etc/jmcp/devices.json \
+                            --known-hosts /etc/jmcp/known_hosts
+```
+
+For lab / first-contact use, pass `--ssh-accept-new-host-keys` to fall back
+to OpenSSH's `accept-new` (TOFU) mode.
+
 `list_staged_files` returns the contents of the host staging dir. If
 `router_name` is supplied it also runs `file list /var/tmp/ detail` on the
 device and includes those entries under `device_files`.

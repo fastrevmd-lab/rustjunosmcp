@@ -69,6 +69,13 @@ pub struct Cli {
     /// SSH known_hosts file used for scp pushes (transfer_file).
     #[arg(long, default_value = "/etc/jmcp/known_hosts")]
     pub known_hosts_file: PathBuf,
+
+    /// Accept and pin new device host keys on first contact (TOFU,
+    /// `StrictHostKeyChecking=accept-new`). Off by default — the server
+    /// uses `StrictHostKeyChecking=yes` and requires a pre-populated
+    /// `known_hosts` (see scripts/scan-known-hosts.sh). Lab-only.
+    #[arg(long)]
+    pub ssh_accept_new_host_keys: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -158,6 +165,18 @@ mod tests {
         let cli = Cli::parse_from(["rust-junosmcp"]);
         assert!(!cli.inventory_readonly);
         assert!(!cli.allow_password_auth_add);
+    }
+
+    #[test]
+    fn ssh_accept_new_host_keys_off_by_default() {
+        let cli = Cli::parse_from(["rust-junosmcp"]);
+        assert!(!cli.ssh_accept_new_host_keys);
+    }
+
+    #[test]
+    fn ssh_accept_new_host_keys_parses_when_set() {
+        let cli = Cli::parse_from(["rust-junosmcp", "--ssh-accept-new-host-keys"]);
+        assert!(cli.ssh_accept_new_host_keys);
     }
 
     #[test]

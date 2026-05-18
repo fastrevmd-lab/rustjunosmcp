@@ -597,6 +597,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
+            accept_new_host_keys: false,
         }
     }
 
@@ -685,6 +686,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
+            accept_new_host_keys: false,
         };
         let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
             transfer_cfg: cfg.clone(),

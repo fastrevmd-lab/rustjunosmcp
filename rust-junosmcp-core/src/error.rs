@@ -217,6 +217,11 @@ pub enum JmcpError {
 
     #[error("inventory file write error: {0}")]
     InventoryWrite(String),
+
+    #[error(
+        "known_hosts file missing or unreadable [code=known_hosts_missing]: {0}; run scripts/scan-known-hosts.sh to pre-populate it, or pass --ssh-accept-new-host-keys (lab only)"
+    )]
+    KnownHostsMissing(PathBuf),
 }
 
 impl From<rustez::RustEzError> for JmcpError {

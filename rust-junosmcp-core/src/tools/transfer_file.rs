@@ -473,18 +473,28 @@ pub struct ScpJob {
     pub port: u16,
     pub local_path: PathBuf,
     pub remote_dir: String, // e.g. "/var/tmp/"
+    /// When `true`, emit `StrictHostKeyChecking=accept-new` (TOFU); when
+    /// `false`, emit `StrictHostKeyChecking=yes` (strict — refuses unknown
+    /// host keys). Default for the server is `false` as of v0.5.2; opt in
+    /// via `--ssh-accept-new-host-keys` for lab provisioning.
+    pub accept_new_host_keys: bool,
 }
 
 /// Build the argv vector that `OpenSshScpRunner` will hand to `scp`. Pulled
 /// out so it can be asserted exactly in unit tests without spawning a process.
 pub fn build_scp_argv(job: &ScpJob) -> Vec<String> {
     let dest = format!("{}@{}:{}", job.username, job.host, job.remote_dir);
+    let host_key_policy = if job.accept_new_host_keys {
+        "StrictHostKeyChecking=accept-new"
+    } else {
+        "StrictHostKeyChecking=yes"
+    };
     vec![
         "-O".into(),
         "-i".into(),
         job.private_key_path.display().to_string(),
         "-o".into(),
-        "StrictHostKeyChecking=accept-new".into(),
+        host_key_policy.into(),
         "-o".into(),
         format!("UserKnownHostsFile={}", job.known_hosts_file.display()),
         "-o".into(),
@@ -525,6 +535,7 @@ mod argv_tests {
             port: 22,
             local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
             remote_dir: "/var/tmp/".into(),
+            accept_new_host_keys: false,
         }
     }
 
@@ -536,11 +547,36 @@ mod argv_tests {
     }
 
     #[test]
-    fn argv_includes_known_hosts_with_accept_new() {
+    fn argv_default_uses_strict_host_key_checking_yes() {
+        // RJMCP-SEC-004: default policy is strict; TOFU is opt-in.
         let v = build_scp_argv(&job());
         let joined = v.join(" ");
-        assert!(joined.contains("StrictHostKeyChecking=accept-new"));
+        assert!(
+            joined.contains("StrictHostKeyChecking=yes"),
+            "expected strict default, got: {joined}"
+        );
+        assert!(
+            !joined.contains("accept-new"),
+            "default must not emit accept-new, got: {joined}"
+        );
         assert!(joined.contains("UserKnownHostsFile=/etc/jmcp/known_hosts"));
+    }
+
+    #[test]
+    fn argv_flips_to_accept_new_when_flag_set() {
+        let v = build_scp_argv(&ScpJob {
+            accept_new_host_keys: true,
+            ..job()
+        });
+        let joined = v.join(" ");
+        assert!(
+            joined.contains("StrictHostKeyChecking=accept-new"),
+            "expected accept-new with flag set, got: {joined}"
+        );
+        assert!(
+            !joined.contains("StrictHostKeyChecking=yes"),
+            "must not also emit strict, got: {joined}"
+        );
     }
 
     #[test]
@@ -677,6 +713,7 @@ mod runner_tests {
             port: 22,
             local_path: "/var/lib/jmcp/staging/x.tgz".into(),
             remote_dir: "/var/tmp/".into(),
+            accept_new_host_keys: false,
         };
         let out = runner.run(&job).await.unwrap();
         assert_eq!(out.exit_code, 0);
@@ -937,6 +974,11 @@ pub struct TransferConfig {
     /// `Arc<TransferLocks>` across all transfer_file calls in the process
     /// so the limit is process-wide (not per-call). (issue #26, L4)
     pub transfer_locks: Arc<TransferLocks>,
+    /// Host-key policy passed through to every `ScpJob`. When `false`
+    /// (default since v0.5.2 — RJMCP-SEC-004) scp uses
+    /// `StrictHostKeyChecking=yes`, refusing unknown host keys. Opt in via
+    /// `--ssh-accept-new-host-keys` for first-contact TOFU in labs.
+    pub accept_new_host_keys: bool,
 }
 
 pub async fn handle(
@@ -947,6 +989,30 @@ pub async fn handle(
     let timeout = std::time::Duration::from_secs(args.timeout);
     tokio::time::timeout(timeout, async move {
         validate_source_basename(&args.source_path)?;
+        // RJMCP-SEC-004: known_hosts is mandatory unless the operator opted
+        // into TOFU (`--ssh-accept-new-host-keys`). Probing here keeps the
+        // failure mode loud and synchronous instead of hidden inside scp's
+        // stderr after a queue + connect round-trip.
+        match std::fs::metadata(&cfg.known_hosts_file) {
+            Ok(m) if m.is_file() => {}
+            _ if cfg.accept_new_host_keys => {
+                // TOFU mode tolerates a missing known_hosts (scp will create
+                // it on first contact). Still log so operators see what's
+                // happening.
+                tracing::info!(
+                    known_hosts = %cfg.known_hosts_file.display(),
+                    "transfer_file: known_hosts missing; running in accept-new (TOFU) mode"
+                );
+            }
+            _ => {
+                return Err(JmcpError::KnownHostsMissing(cfg.known_hosts_file.clone()));
+            }
+        }
+        tracing::info!(
+            router = %args.router_name,
+            host_key_policy = if cfg.accept_new_host_keys { "accept-new" } else { "strict" },
+            "transfer_file: host-key policy"
+        );
         // Per-router serialization (issue #26, L4). Acquired AFTER basename
         // validation so an obviously-bogus source_path never queues behind
         // a live transfer. Permit is dropped at end-of-block (success or
@@ -1054,6 +1120,7 @@ pub async fn handle(
             port,
             local_path: local_path.clone(),
             remote_dir: "/var/tmp/".into(),
+            accept_new_host_keys: cfg.accept_new_host_keys,
         };
         let outcome = cfg.scp_runner.run(&job).await?;
         if outcome.exit_code != 0 {
@@ -1208,6 +1275,11 @@ mod handle_validation_tests {
             known_hosts_file: "/etc/jmcp/known_hosts".into(),
             scp_runner: MockScpRunner::ok(),
             transfer_locks: Arc::new(TransferLocks::default()),
+            // Tests don't provide a real known_hosts file; opt into TOFU
+            // so the v0.5.2 pre-check (`KnownHostsMissing`) doesn't short-
+            // circuit them. A dedicated test below asserts that strict-mode
+            // + missing known_hosts fails closed.
+            accept_new_host_keys: true,
         }
     }
 
@@ -1238,6 +1310,39 @@ mod handle_validation_tests {
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
+    }
+
+    /// RJMCP-SEC-004: strict-mode (`accept_new_host_keys=false`) must fail
+    /// closed when the configured `known_hosts_file` is missing or not a
+    /// regular file. This fires before the staged-file check, so even a
+    /// missing source surfaces `KnownHostsMissing` first.
+    #[tokio::test]
+    async fn strict_mode_rejects_missing_known_hosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let inv = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv));
+        let mut c = cfg(dir.path());
+        c.accept_new_host_keys = false;
+        c.known_hosts_file = dir.path().join("no-such-known_hosts");
+        let r = handle(
+            TransferFileArgs {
+                router_name: "r1".into(),
+                source_path: "foo.tgz".into(),
+                force: false,
+                verify: true,
+                timeout: 5,
+            },
+            dm,
+            c,
+        )
+        .await;
+        assert!(
+            matches!(r, Err(JmcpError::KnownHostsMissing(_))),
+            "expected KnownHostsMissing in strict mode, got {r:?}"
+        );
     }
 
     #[tokio::test]
@@ -1405,6 +1510,7 @@ mod scp_unit_tests {
             known_hosts_file: "/etc/jmcp/known_hosts".into(),
             local_path: "/var/lib/jmcp/staging/abc/junos.tgz".into(),
             remote_dir: "/var/tmp/".into(),
+            accept_new_host_keys: false,
         };
         let outcome = (mock.clone() as Arc<dyn ScpRunner>)
             .run(&job)
