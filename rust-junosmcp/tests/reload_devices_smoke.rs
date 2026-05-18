@@ -36,17 +36,18 @@ fn reload_with_file_name_swaps_inventory() {
         "a.json",
         r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
-    let p2 = write_inventory_in(
+    let _p2 = write_inventory_in(
         dir.path(),
         "b.json",
         r#"{"r9":{"ip":"127.0.0.9","username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
     let mut child = spawn_stdio_server_with_args(&["-f", p1.to_str().unwrap()]);
 
+    // v0.5.2: file_name must be a relative basename inside the inventory dir.
     let r = call_tool(
         &mut child,
         "reload_devices",
-        json!({"file_name": p2.to_str().unwrap()}),
+        json!({"file_name": "b.json"}),
     );
     assert_eq!(r["new_router_count"], 1, "got: {r}");
     let list = call_tool(&mut child, "get_router_list", json!({}));

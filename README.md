@@ -223,8 +223,10 @@ before deploying. The same warnings apply.
 - Set `devices.json` permissions to `0600` — it contains SSH credentials.
 - `get_junos_config` returns the full config including `## SECRET-DATA`
   hashed password lines. Restrict this tool's scope to trusted tokens.
-- `reload_devices` restricts `file_name` to the same directory as the
-  original `--device-mapping` path (no `..` traversal).
+- `reload_devices` requires `file_name` to be a *relative* path resolving
+  inside the original `--device-mapping` directory (since v0.5.2). Absolute
+  paths, `..` traversal, and symlinks pointing outside the inventory
+  directory are all rejected.
 - Text input fields (`command`, `config_text`, `template_content`,
   `pfe_command`) are capped at 1 MB. Batch lists are capped at 100
   routers and 50 commands.
