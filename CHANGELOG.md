@@ -4,6 +4,48 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] — 2026-05-18
+
+Fixes a latent bug exposed (but not introduced) by v0.5.6: every
+NETCONF op command failed with `transport error: connection failed:
+SSH connect to <ip>:22 failed: Unknown server key`. Root cause —
+`DeviceManager` built the `rustez::Device` without ever calling
+`.host_key_verification(...)`, so it inherited the rustnetconf 0.11+
+default of `RejectAll` (fail-closed). v0.5.5 had the same bug; it was
+just unobserved until a live op command was run after the dep bump.
+
+### Fixed
+
+- **NETCONF SSH host-key policy is now wired through.** `DeviceManager`
+  carries a `HostKeyVerification` policy (new field) applied to every
+  fresh `Device` connect. Production posture mirrors scp:
+  - default → `HostKeyVerification::KnownHosts(args.known_hosts_file)`
+    (strict; reuses the pre-existing `/etc/jmcp/known_hosts` file that
+    was already populated for scp).
+  - `--ssh-accept-new-host-keys` → `HostKeyVerification::AcceptAll`
+    (lab/TOFU mode; same flag that already toggles scp behavior).
+  - No new CLI surface.
+
+### Added
+
+- `DeviceManager::with_host_key_policy(HostKeyVerification) -> Self` —
+  fluent setter for the new policy field. Default for the bare
+  `::new()` / `::with_path()` constructors remains `AcceptAll` so the
+  ~40 unit-test call sites keep working without plumbing.
+- `rust_junosmcp_core::HostKeyVerification` re-export (from rustez 0.12)
+  so the binary crate doesn't need its own rustez dep.
+
+### Verification
+
+- 323 unit tests pass (2 new: default-policy + setter coverage).
+- `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo fmt --check` are clean.
+- Live smoke test against vSRX-test10 from LXC 601 after deploy.
+
+### Tooling
+
+- Workspace version bumped to `0.5.7`.
+
 ## [0.5.6] — 2026-05-18
 
 Dependency bump. `rustez 0.11.0 → 0.12.0` pulls in `rustnetconf 0.11
