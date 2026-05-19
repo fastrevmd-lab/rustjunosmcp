@@ -42,14 +42,34 @@ fn caller_ctx(extensions: &Extensions) -> Option<&crate::caller::CallerCtx> {
         .and_then(|parts| parts.extensions.get::<crate::caller::CallerCtx>())
 }
 
-/// RAII guard that emits an `audit … outcome="cancelled"` line for
-/// `upgrade_junos` when the future is dropped without first setting
-/// `consumed = true`. Used to capture HTTP-transport cancellations
-/// (client read timeout, network reset, ctrl-C) which would otherwise
-/// leave no trace in the journal because the normal match arms below
-/// never run. (#42)
+/// Outcome of an `upgrade_junos` call, as observed by `UpgradeAuditGuard`.
+///
+/// - `Settled`: the normal Ok/Err path completed; the match arms below
+///   already emitted the canonical `audit` line, so the guard stays silent.
+/// - `Cancelled`: the in-flight call returned `JmcpError::Cancelled` because
+///   the rmcp `RequestContext::ct` fired (issue #44 Half A — explicit
+///   `notifications/cancelled` or server-side timeout). The guard emits
+///   `outcome="cancelled"` so the journal captures it.
+/// - `Unsettled`: the future was dropped before reaching either the
+///   `Settled` or `Cancelled` assignment. Under the rmcp 0.8.5
+///   streamable-HTTP transport this is the raw TCP-disconnect path (Half B,
+///   tracked upstream): the request token does not fire, but our future is
+///   nevertheless dropped. The guard emits `outcome="unsettled"` so this
+///   case stays auditable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpgradeOutcome {
+    Unsettled,
+    Cancelled,
+    Settled,
+}
+
+/// RAII guard that emits an `audit` line for `upgrade_junos` calls that
+/// did NOT reach the normal Ok/Err match arms below — i.e. cancellations
+/// (token fired) or future drops (transport disconnect under rmcp 0.8.5
+/// streamable-HTTP, Half B). The normal completed paths set
+/// `outcome = Settled` so the guard stays silent. (#44, #42)
 struct UpgradeAuditGuard {
-    consumed: bool,
+    outcome: UpgradeOutcome,
     token: String,
     router: String,
     basename: String,
@@ -58,29 +78,26 @@ struct UpgradeAuditGuard {
 
 impl Drop for UpgradeAuditGuard {
     fn drop(&mut self) {
-        // #44: confirm whether the rmcp streamable-HTTP transport actually
-        // drops the in-flight future on client disconnect (vs. detaching it).
-        // Fires on every drop, regardless of `consumed`, so we can correlate
-        // with the journal during a live destructive `upgrade_junos` interrupt.
-        // Uses INFO so it appears at default log level; the message string
-        // deliberately omits the token "audit" so the `silent_when_consumed_true`
-        // unit test still passes.
+        // #44 diagnostic: every drop logs once so we can correlate guard
+        // lifetime with the journal during a live destructive run.
         tracing::info!(
             tool = "upgrade_junos",
             router = %self.router,
-            consumed = self.consumed,
+            outcome = ?self.outcome,
             "upgrade_junos.drop_diag: guard dropped"
         );
-        if self.consumed {
-            return;
-        }
+        let outcome_str = match self.outcome {
+            UpgradeOutcome::Settled => return,
+            UpgradeOutcome::Cancelled => "cancelled",
+            UpgradeOutcome::Unsettled => "unsettled",
+        };
         tracing::info!(
             tool = "upgrade_junos",
             token = %self.token,
             router = %self.router,
             basename = %self.basename,
             target_version = %self.target_version,
-            outcome = "cancelled",
+            outcome = outcome_str,
             "audit"
         );
     }
@@ -497,6 +514,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<TransferFileArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "transfer_file") {
@@ -509,7 +527,7 @@ impl JmcpHandler {
         let router = args.router_name.clone();
         let basename = args.source_path.clone();
         let result =
-            transfer_file::handle(args, self.dm.clone(), self.transfer_config().clone()).await;
+            transfer_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
         match &result {
             Ok(v) => tracing::info!(
                 tool = "transfer_file",
@@ -541,6 +559,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<UpgradeJunosArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "upgrade_junos") {
@@ -568,19 +587,23 @@ impl JmcpHandler {
             target_version = %target_version,
             "upgrade_junos.entry_diag: handler entered, constructing guard"
         );
-        // Cancellation guard: if the rmcp HTTP transport drops this future
-        // mid-flight (e.g. client read timeout, ctrl-C, network reset),
-        // `guard` is dropped without `consumed = true`, so its `Drop`
-        // emits an `audit … outcome="cancelled"` line. The match below
-        // sets `consumed = true` for the normal Ok/Err paths. (#42)
+        // Cancellation guard: tracks the outcome so Drop can emit the
+        // appropriate audit line. (#42, #44 Half A)
+        // - Settled: normal Ok/Err completed → guard stays silent.
+        // - Cancelled: `JmcpError::Cancelled` returned → guard emits
+        //   `outcome="cancelled"`.
+        // - Unsettled (default): future was dropped without ever reaching
+        //   the assignment below — the rmcp 0.8.5 streamable-HTTP raw
+        //   TCP-disconnect path (Half B). Guard emits `outcome="unsettled"`.
         let mut guard = UpgradeAuditGuard {
-            consumed: false,
+            outcome: UpgradeOutcome::Unsettled,
             token: token.clone(),
             router: router.clone(),
             basename: basename.clone(),
             target_version: target_version.clone(),
         };
-        let result = upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone()).await;
+        let result =
+            upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone(), ct).await;
         match &result {
             Ok(v) => tracing::info!(
                 tool = "upgrade_junos",
@@ -602,7 +625,10 @@ impl JmcpHandler {
                 "audit"
             ),
         }
-        guard.consumed = true;
+        guard.outcome = match &result {
+            Err(rust_junosmcp_core::JmcpError::Cancelled) => UpgradeOutcome::Cancelled,
+            _ => UpgradeOutcome::Settled,
+        };
         Self::to_call_result(result)
     }
 
@@ -865,7 +891,7 @@ mod scope_tests {
 
 #[cfg(test)]
 mod upgrade_audit_guard_tests {
-    use super::UpgradeAuditGuard;
+    use super::{UpgradeAuditGuard, UpgradeOutcome};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -908,7 +934,7 @@ mod upgrade_audit_guard_tests {
 
     fn guard() -> UpgradeAuditGuard {
         UpgradeAuditGuard {
-            consumed: false,
+            outcome: UpgradeOutcome::Unsettled,
             token: "claude-client".into(),
             router: "vsrx-test10".into(),
             basename: "junos-25.4R1.12.tgz".into(),
@@ -917,11 +943,10 @@ mod upgrade_audit_guard_tests {
     }
 
     #[test]
-    fn emits_cancelled_audit_when_dropped_unconsumed() {
-        // Regression for #42: a future cancelled by the rmcp HTTP
-        // transport drops `UpgradeAuditGuard` without setting
-        // `consumed = true`. The journal must still capture the
-        // tool call.
+    fn emits_unsettled_audit_when_dropped_without_outcome() {
+        // #44 Half B / #42: a future dropped by the rmcp HTTP transport
+        // without the in-band cancel token firing leaves the guard at
+        // `Unsettled`. The journal must still capture the tool call.
         let captured = run_with_capture(|| {
             let g = guard();
             drop(g);
@@ -937,21 +962,35 @@ mod upgrade_audit_guard_tests {
         assert!(captured.contains("router=vsrx-test10"));
         assert!(captured.contains("basename=junos-25.4R1.12.tgz"));
         assert!(captured.contains("target_version=25.4R1.12"));
+        assert!(captured.contains("outcome=\"unsettled\""));
+    }
+
+    #[test]
+    fn emits_cancelled_audit_when_outcome_cancelled() {
+        // #44 Half A: when `JmcpError::Cancelled` is observed (the rmcp
+        // request token fired), the handler sets `outcome=Cancelled` and
+        // the guard emits `outcome="cancelled"` in the audit line.
+        let captured = run_with_capture(|| {
+            let mut g = guard();
+            g.outcome = UpgradeOutcome::Cancelled;
+            drop(g);
+        });
         assert!(captured.contains("outcome=\"cancelled\""));
     }
 
     #[test]
-    fn silent_when_consumed_true() {
-        // Normal Ok/Err paths set `consumed = true`; the guard must
-        // NOT emit a duplicate "cancelled" line on top of those.
+    fn silent_when_outcome_settled() {
+        // Normal Ok/Err paths set `outcome = Settled`; the guard must
+        // NOT emit a duplicate `audit` line on top of the canonical
+        // status/error one.
         let captured = run_with_capture(|| {
             let mut g = guard();
-            g.consumed = true;
+            g.outcome = UpgradeOutcome::Settled;
             drop(g);
         });
         assert!(
             !captured.contains("audit"),
-            "expected no audit output when consumed=true, got: {captured}"
+            "expected no audit output when outcome=Settled, got: {captured}"
         );
     }
 }

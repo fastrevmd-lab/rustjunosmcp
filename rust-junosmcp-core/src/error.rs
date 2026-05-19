@@ -125,6 +125,9 @@ pub enum JmcpError {
     #[error("operation timed out after {0:?}")]
     Timeout(std::time::Duration),
 
+    #[error("operation cancelled by client [code=cancelled]")]
+    Cancelled,
+
     #[error(transparent)]
     Rustez(Box<rustez::RustEzError>),
 
@@ -559,5 +562,12 @@ mod tests {
         let s = JmcpError::UpgradeOuterTimeout(std::time::Duration::from_secs(900)).to_string();
         assert!(s.contains("[code=upgrade_outer_timeout]"), "got {s}");
         assert!(s.contains("900s"), "got {s}");
+    }
+
+    #[test]
+    fn cancelled_display_includes_code() {
+        let s = JmcpError::Cancelled.to_string();
+        assert!(s.contains("[code=cancelled]"), "got {s}");
+        assert!(s.contains("cancelled by client"), "got {s}");
     }
 }
