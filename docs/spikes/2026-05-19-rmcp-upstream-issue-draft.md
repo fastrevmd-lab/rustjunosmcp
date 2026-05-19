@@ -8,7 +8,7 @@ cancellation plumbing in `service.rs` (`local_ct_pool`); the new
 (graceful-shutdown signal) and is **not** wired to per-request HTTP body
 lifecycle. Bug is expected to reproduce on `main` — still needs a runtime
 test to confirm.
-**Status:** draft — pre-filing, hold until minimal-repro confirmed
+**Status:** draft — repro confirmed, holding for personal review before filing
 
 ---
 
@@ -40,8 +40,11 @@ away (Ctrl-C, network drop, client-side read timeout).
 - axum 0.8.x
 - tokio 1.x
 
-(I have not yet confirmed against `main`. Will do before filing — included
-here for completeness once verified.)
+Code walk of `main` (`rmcp-v1.7.0`, `cd2f5f1`) shows the same
+`local_ct_pool` shape and the same two-fire-site pattern; the new
+`StreamableHttpServerConfig::cancellation_token` field is a server-wide
+graceful-shutdown signal, not a per-request HTTP body hook. Runtime
+verification against `main` not done.
 
 ### Reproduction
 
@@ -270,19 +273,19 @@ shapes that look plausible from the code walk above:
 
 Happy to PR (1) if maintainers prefer that direction.
 
-### Workarounds shipped downstream
+### Workarounds available today
 
-In our project ([RustJunosMCP / fastrevmd-lab](https://github.com/fastrevmd-lab/RustJunosMCP),
-PR #54 / issue #44) we plumb `RequestContext::ct` through every
-long-running tool and `select!` at every await point, so the two paths
-rmcp 0.8.5 *does* honor today work end to end:
+Plumbing `RequestContext::ct` through every long-running tool and
+`select!`-ing at every await point makes the two paths rmcp 0.8.5 *does*
+honor today work end to end:
 
 - explicit `notifications/cancelled`
 - per-request server timeout
 
-The TCP-disconnect case is the remaining gap; we surface it via an
-audit `outcome="unsettled"` line emitted from a Drop guard, but the
-guard fires too late to actually abort the work.
+The TCP-disconnect case is the remaining gap. A Drop guard around the
+tool future can detect "future ran to completion after the client went
+away" *after the fact* for audit purposes, but cannot abort the work
+in-flight.
 
 ### Environment
 
@@ -292,10 +295,26 @@ guard fires too late to actually abort the work.
 
 ### Related
 
-- Issue/PR in our repo with full trace + design notes:
-  [fastrevmd-lab/RustJunosMCP#44](https://github.com/fastrevmd-lab/RustJunosMCP/issues/44)
-  (the design doc at `docs/spikes/2026-05-19-rmcp-streamable-http-disconnect-half-b.md`
-  has the live-trace evidence).
+No direct duplicate found in the issue tracker. Adjacent work:
+
+- **#493 / PR #494** (merged 2025-12-02) "Gracefully shutdown is hang
+  while a SSE connection is established" — added the server-wide
+  `StreamableHttpServerConfig::cancellation_token` for graceful
+  shutdown by cutting off the SSE body. Same code area as this issue
+  but the opposite direction: server-initiated shutdown, not
+  client-initiated TCP disconnect. PR #494's body cutoff does **not**
+  propagate into the per-request `local_ct_pool`, so it does not fire
+  `RequestContext::ct` either.
+- **#528 / SEP-1686 Tasks** (completed 2025-12-22) — explicit
+  long-running-task capability with disconnection/reconnection semantics.
+  Architecturally adjacent: a tool migrated to the Tasks API would have
+  a different lifecycle; this issue is about the existing tool-call API.
+- **#529 / SEP-1699** (completed 2026-01-09) — server-side disconnect
+  mid-stream. Different direction.
+
+Other partially-overlapping but distinct issues: #266 (connection-handle
+leak), #347 / #572 / #220 (client-side or stdio shutdown), #754 (client
+hang in stateless+json_response).
 
 ---
 
@@ -324,18 +343,16 @@ Status of the original 6 items:
       on `StreamableHttpServerConfig` in both 0.8.5 (default 15s) and
       `main` (with builder `with_sse_keep_alive`). Contributor PR can
       use it without breaking changes.
-- [ ] Strip our company-specific framing if filing as a personal issue;
-      or keep the RustJunosMCP cross-link if filing on behalf of the
-      project — **deferred until filing decision**
+- [x] Strip company-specific framing — **DONE**; filing as a personal
+      issue, RustJunosMCP cross-link removed from Workarounds + Related.
 
 Remaining blockers before filing:
 
-1. ~~Build the minimal repro~~ — **done**; 281 polls past disconnect
-   captured.
-2. (Optional but cheap) re-run the same repro against rmcp `main` with
+1. (Optional but cheap) re-run the same repro against rmcp `main` with
    a git dep to confirm the same behavior. Recommended but not strictly
    required given the code walk evidence.
-3. Decide identity for filing (project vs personal); strip company
-   framing if personal.
-4. Polish the issue body for upstream tone (drop the "I'm not requesting
-   a specific implementation" hedge once we're confident in option 1).
+2. ~~Search the upstream issue tracker for prior art~~ — **done**;
+   "Related" section now references #493/PR #494, #528, #529, and
+   distinguishes adjacent-but-distinct issues. No direct duplicate.
+3. Final tone polish (consider dropping the "I am not requesting a
+   specific implementation" hedge if confident in option 1).
