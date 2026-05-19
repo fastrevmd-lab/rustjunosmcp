@@ -8,7 +8,7 @@
 use crate::error::JmcpError;
 use crate::inventory::{AuthConfig, Inventory};
 use arc_swap::ArcSwap;
-use rustez::{Device, SshConfigFile};
+use rustez::{Device, HostKeyVerification, SshConfigFile};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -197,6 +197,10 @@ pub struct DeviceManager {
     inventory_write_lock: Arc<Mutex<()>>,
     inventory_readonly: bool,
     allow_password_auth_add: bool,
+    /// SSH host-key verification policy applied to every NETCONF connect.
+    /// Defaults to `AcceptAll` for unit-test ergonomics; production callers
+    /// (`main.rs`) override via [`Self::with_host_key_policy`].
+    host_key_policy: HostKeyVerification,
     pool: Arc<SessionPool>,
 }
 
@@ -219,8 +223,18 @@ impl DeviceManager {
             inventory_write_lock: Arc::new(Mutex::new(())),
             inventory_readonly,
             allow_password_auth_add,
+            host_key_policy: HostKeyVerification::AcceptAll,
             pool: SessionPool::new(),
         }
+    }
+
+    /// Override the SSH host-key verification policy applied to every
+    /// NETCONF connect. Production callers should set this to either
+    /// `HostKeyVerification::KnownHosts(<path>)` (strict, recommended) or
+    /// `HostKeyVerification::AcceptAll` (lab/TOFU mode).
+    pub fn with_host_key_policy(mut self, policy: HostKeyVerification) -> Self {
+        self.host_key_policy = policy;
+        self
     }
 
     pub fn inventory(&self) -> Arc<Inventory> {
@@ -280,7 +294,8 @@ impl DeviceManager {
             .port(entry.port)
             .username(&entry.username)
             .keepalive_interval(KEEPALIVE_INTERVAL)
-            .rpc_timeout(POOL_RPC_TIMEOUT);
+            .rpc_timeout(POOL_RPC_TIMEOUT)
+            .host_key_verification(self.host_key_policy.clone());
 
         if let Some(ssh_config_path) = &entry.ssh_config {
             let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
@@ -353,6 +368,31 @@ mod tests {
         let dm = DeviceManager::new(inv);
         let r = dm.open("nope").await;
         assert!(matches!(r, Err(JmcpError::UnknownRouter(ref s)) if s == "nope"));
+    }
+
+    #[test]
+    fn default_host_key_policy_is_accept_all() {
+        // Backward-compat: `DeviceManager::new` and `with_path` default to
+        // AcceptAll so the ~40 unit-test call sites don't have to plumb a
+        // policy through. Production wiring (`main.rs`) overrides via
+        // `.with_host_key_policy(...)`.
+        let inv = build_inventory(r#"{}"#);
+        let dm = DeviceManager::new(inv);
+        assert!(matches!(dm.host_key_policy, HostKeyVerification::AcceptAll));
+    }
+
+    #[test]
+    fn with_host_key_policy_overrides_default() {
+        let inv = build_inventory(r#"{}"#);
+        let dm = DeviceManager::new(inv).with_host_key_policy(HostKeyVerification::KnownHosts(
+            PathBuf::from("/etc/jmcp/known_hosts"),
+        ));
+        match &dm.host_key_policy {
+            HostKeyVerification::KnownHosts(p) => {
+                assert_eq!(p, &PathBuf::from("/etc/jmcp/known_hosts"))
+            }
+            other => panic!("expected KnownHosts, got {:?}", other),
+        }
     }
 
     #[tokio::test]
