@@ -58,6 +58,18 @@ struct UpgradeAuditGuard {
 
 impl Drop for UpgradeAuditGuard {
     fn drop(&mut self) {
+        // #44: confirm whether the rmcp streamable-HTTP transport actually
+        // drops the in-flight future on client disconnect (vs. detaching it).
+        // Fires on every drop, regardless of `consumed`, so we can correlate
+        // with the journal during a live destructive `upgrade_junos` interrupt.
+        // Silent at default INFO level; enable with `RUST_LOG=debug` for the
+        // verification run.
+        tracing::debug!(
+            tool = "upgrade_junos",
+            router = %self.router,
+            consumed = self.consumed,
+            "UpgradeAuditGuard::drop fired"
+        );
         if self.consumed {
             return;
         }
