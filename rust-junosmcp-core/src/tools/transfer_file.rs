@@ -1038,7 +1038,17 @@ pub async fn handle(
         // validation so an obviously-bogus source_path never queues behind
         // a live transfer. Permit is dropped at end-of-block (success or
         // error) when `_permit` falls out of scope.
+        tracing::info!(
+            router = %args.router_name,
+            step = "lock_acquire_pre",
+            "transfer_file.step_diag"
+        );
         let _permit = cfg.transfer_locks.acquire(&args.router_name).await;
+        tracing::info!(
+            router = %args.router_name,
+            step = "lock_acquire_post",
+            "transfer_file.step_diag"
+        );
         let local_path = cfg.staging_dir.join(&args.source_path);
         // symlink_metadata() does NOT follow symlinks — combined with the
         // explicit is_symlink() reject below, this guarantees we never read or
@@ -1062,7 +1072,19 @@ pub async fn handle(
             )));
         }
         // Compute local sha256 + size (streamed).
+        tracing::info!(
+            router = %args.router_name,
+            step = "sha256_pre",
+            local_path = %local_path.display(),
+            "transfer_file.step_diag"
+        );
         let (local_sha, local_size) = sha256_file(&local_path).await?;
+        tracing::info!(
+            router = %args.router_name,
+            step = "sha256_post",
+            local_size,
+            "transfer_file.step_diag"
+        );
 
         // NOTE: The order is intentional — local sha256 is computed BEFORE the
         // auth check. The `rejects_password_auth_with_unsupported_auth` test
@@ -1088,7 +1110,17 @@ pub async fn handle(
         let remote_path = format!("/var/tmp/{}", basename);
 
         // Open pooled NETCONF session for the pre-flight + post-verify CLI calls.
+        tracing::info!(
+            router = %args.router_name,
+            step = "dm_open_pre",
+            "transfer_file.step_diag"
+        );
         let mut dev = dm.open(&args.router_name).await?;
+        tracing::info!(
+            router = %args.router_name,
+            step = "dm_open_post",
+            "transfer_file.step_diag"
+        );
 
         // 1. Free-disk pre-flight.
         let storage_out = dev
@@ -1118,6 +1150,12 @@ pub async fn handle(
                 message: e.to_string(),
             })?;
         let remote_sha_pre = parse_checksum_output(&probe_out)?;
+        tracing::info!(
+            router = %args.router_name,
+            step = "remote_checksum_done",
+            remote_sha_some = remote_sha_pre.is_some(),
+            "transfer_file.step_diag"
+        );
         if let Some(remote) = remote_sha_pre {
             if remote == local_sha {
                 return Ok(skipped_response(&basename, &local_sha, local_size));
@@ -1143,7 +1181,18 @@ pub async fn handle(
             remote_dir: "/var/tmp/".into(),
             accept_new_host_keys: cfg.accept_new_host_keys,
         };
+        tracing::info!(
+            router = %args.router_name,
+            phase = "scp_start",
+            "transfer_file.scp_diag"
+        );
         let outcome = cfg.scp_runner.run(&job).await?;
+        tracing::info!(
+            router = %args.router_name,
+            phase = "scp_done",
+            exit_code = outcome.exit_code,
+            "transfer_file.scp_diag"
+        );
         if outcome.exit_code != 0 {
             // OpenSSH scp returns exit 255 on transport failures; pull out the
             // common "connection timed out" / "no route to host" cases so callers

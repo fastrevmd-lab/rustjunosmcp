@@ -761,9 +761,20 @@ async fn run_destructive(
     let started = Instant::now();
     let preflight_secs = started.elapsed().as_secs();
 
+    tracing::info!(
+        router = %args.router_name,
+        phase = "destructive_entry",
+        "upgrade_junos.phase_diag"
+    );
+
     // Phase 1: pre-baseline.
     let pre_baseline = capture_baseline(&args.router_name, dm.clone()).await?;
     let phase1_done = Instant::now();
+    tracing::info!(
+        router = %args.router_name,
+        phase = "pre_baseline_done",
+        "upgrade_junos.phase_diag"
+    );
 
     // Phase 2: transfer via transfer_file::handle (idempotent skip).
     // The inner timeout matches the outer `args.timeout` rather than a
@@ -773,10 +784,20 @@ async fn run_destructive(
     // still the wall bound — it will fire with `UpgradeOuterTimeout`
     // before the inner call's own `tokio::time::timeout` does.
     let transfer_args = build_transfer_args(args);
+    tracing::info!(
+        router = %args.router_name,
+        phase = "transfer_start",
+        "upgrade_junos.phase_diag"
+    );
     let _transfer_result =
         crate::tools::transfer_file::handle(transfer_args, dm.clone(), cfg.transfer_cfg.clone())
             .await?;
     let phase2_done = Instant::now();
+    tracing::info!(
+        router = %args.router_name,
+        phase = "transfer_done",
+        "upgrade_junos.phase_diag"
+    );
 
     // Phase 3: install + reboot. Open a fresh session via the pool.
     let install_stdout = match dm.open(&args.router_name).await {
