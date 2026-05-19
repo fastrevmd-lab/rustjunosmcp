@@ -58,13 +58,26 @@ async fn main() -> Result<()> {
     let inv_path = args.device_mapping.clone();
     let inv_hash = rust_junosmcp_core::inventory::hash_file(&inv_path)
         .with_context(|| format!("hashing {}", inv_path.display()))?;
-    let dev_manager = Arc::new(DeviceManager::with_path(
-        inventory.clone(),
-        inv_path,
-        inv_hash,
-        args.inventory_readonly,
-        args.allow_password_auth_add,
-    ));
+    // Mirror the scp host-key posture for NETCONF SSH:
+    //   default → strict KnownHosts lookup against --known-hosts-file
+    //   --ssh-accept-new-host-keys → lab/TOFU mode (AcceptAll)
+    // Without this opt-in the rustez/rustnetconf 0.11+ default is RejectAll
+    // (fail-closed) and every op command would error `Unknown server key`.
+    let host_key_policy = if args.ssh_accept_new_host_keys {
+        rust_junosmcp_core::HostKeyVerification::AcceptAll
+    } else {
+        rust_junosmcp_core::HostKeyVerification::KnownHosts(args.known_hosts_file.clone())
+    };
+    let dev_manager = Arc::new(
+        DeviceManager::with_path(
+            inventory.clone(),
+            inv_path,
+            inv_hash,
+            args.inventory_readonly,
+            args.allow_password_auth_add,
+        )
+        .with_host_key_policy(host_key_policy),
+    );
 
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
@@ -88,12 +101,12 @@ async fn main() -> Result<()> {
 
     if args.ssh_accept_new_host_keys {
         tracing::warn!(
-            "--ssh-accept-new-host-keys: scp will pin unknown host keys on first contact (TOFU). Use only in lab environments."
+            "--ssh-accept-new-host-keys: scp pins unknown host keys on first contact (TOFU); NETCONF SSH uses HostKeyVerification::AcceptAll. Use only in lab environments."
         );
     } else {
         tracing::info!(
             known_hosts = %args.known_hosts_file.display(),
-            "ssh host-key policy: StrictHostKeyChecking=yes (default since v0.5.2)"
+            "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
         );
     }
     let transfer_cfg = TransferConfig {
