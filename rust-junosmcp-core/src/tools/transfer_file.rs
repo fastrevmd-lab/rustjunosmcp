@@ -5,11 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::cancel::{select_cancel, select_cancel_raw};
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
 use crate::tools::TransferFileArgs;
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 /// Required free-space headroom on `/var` beyond the local file size, in bytes.
 /// Junos needs working room for temp files and metadata; 32 MiB is generous
@@ -416,6 +418,56 @@ pub async fn sha256_file(path: &Path) -> Result<([u8; 32], u64), JmcpError> {
     .map_err(|e| JmcpError::Io(std::io::Error::other(e)))?
 }
 
+/// Cancel-aware variant of [`sha256_file`]. Checks `ct.is_cancelled()`
+/// between every 64 KiB read block (~5 ms cadence at SATA SSD speeds),
+/// and additionally races the `JoinHandle` against `ct.cancelled()` so a
+/// wedged blocking syscall doesn't keep us blocked past the cancel.
+///
+/// Used by `transfer_file::handle` and `upgrade_junos::run`. The
+/// non-cancellable [`sha256_file`] is preserved for downstream callers
+/// (and the `sha_tests` module).
+pub(crate) async fn sha256_file_cancellable(
+    path: &Path,
+    ct: &CancellationToken,
+) -> Result<([u8; 32], u64), JmcpError> {
+    let path = path.to_path_buf();
+    let inner_ct = ct.clone();
+    let handle = tokio::task::spawn_blocking(move || -> Result<([u8; 32], u64), JmcpError> {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let mut f = std::fs::File::open(&path)?;
+        let mut hasher = Sha256::new();
+        let mut buf = [0u8; 64 * 1024];
+        let mut size: u64 = 0;
+        loop {
+            // Cancel check between blocks. For a 1.3 GB image at ~250 MB/s
+            // this is ~5 ms per check — fast cancel without measurable
+            // hashing overhead.
+            if inner_ct.is_cancelled() {
+                return Err(JmcpError::Cancelled);
+            }
+            let n = f.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            size += n as u64;
+        }
+        let out: [u8; 32] = hasher.finalize().into();
+        Ok((out, size))
+    });
+    tokio::select! {
+        biased;
+        _ = ct.cancelled() => {
+            // The spawn_blocking thread will notice on its next iteration
+            // and return Cancelled; we don't await it (leak-acceptable for
+            // a finite-duration hash).
+            Err(JmcpError::Cancelled)
+        }
+        r = handle => r.map_err(|e| JmcpError::Io(std::io::Error::other(e)))?,
+    }
+}
+
 #[cfg(test)]
 mod sha_tests {
     use super::*;
@@ -458,6 +510,23 @@ mod sha_tests {
     async fn nonexistent_file_returns_io_error() {
         let r = sha256_file(Path::new("/nonexistent/jmcp/file")).await;
         assert!(matches!(r, Err(JmcpError::Io(_))));
+    }
+
+    /// T2 (issue #44 Half A): `sha256_file_cancellable` short-circuits to
+    /// `JmcpError::Cancelled` when the caller's token is already cancelled
+    /// before the helper is awaited.
+    #[tokio::test]
+    async fn sha256_cancellable_pre_cancelled_returns_cancelled() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(b"abc").unwrap();
+        f.flush().unwrap();
+        let ct = CancellationToken::new();
+        ct.cancel();
+        let r = sha256_file_cancellable(f.path(), &ct).await;
+        assert!(
+            matches!(r, Err(JmcpError::Cancelled)),
+            "expected Cancelled, got {r:?}"
+        );
     }
 }
 
@@ -639,7 +708,12 @@ pub struct ScpOutcome {
 
 #[async_trait::async_trait]
 pub trait ScpRunner: Send + Sync {
-    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome>;
+    /// Run the SCP job, racing against `ct.cancelled()`. On cancel,
+    /// production impls MUST kill the underlying child process (or
+    /// otherwise abort the work) and return
+    /// `std::io::Error::new(ErrorKind::Interrupted, "cancelled")` so
+    /// the caller can map it to `JmcpError::Cancelled`.
+    async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome>;
 }
 
 /// Production runner — shells out to `scp` from system openssh-client.
@@ -647,17 +721,36 @@ pub struct OpenSshScpRunner;
 
 #[async_trait::async_trait]
 impl ScpRunner for OpenSshScpRunner {
-    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome> {
+    async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
         let argv = build_scp_argv(job);
-        let out = tokio::process::Command::new("scp")
+        use tokio::io::AsyncReadExt;
+        let mut child = tokio::process::Command::new("scp")
             .args(&argv)
             .kill_on_drop(true)
-            .output()
-            .await?;
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let mut stdout_pipe = child.stdout.take().expect("piped");
+        let mut stderr_pipe = child.stderr.take().expect("piped");
+        let status = tokio::select! {
+            biased;
+            _ = ct.cancelled() => {
+                tracing::info!(pid = ?child.id(), "transfer_file.scp_diag phase=\"cancelled\": killing scp child");
+                let _ = child.start_kill();
+                // Reap so we don't leak a zombie in the process table.
+                let _ = child.wait().await;
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+            }
+            s = child.wait() => s?,
+        };
+        let mut so = Vec::new();
+        let mut se = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut so).await;
+        let _ = stderr_pipe.read_to_end(&mut se).await;
         Ok(ScpOutcome {
-            exit_code: out.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit_code: status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&so).into_owned(),
+            stderr: String::from_utf8_lossy(&se).into_owned(),
         })
     }
 }
@@ -667,6 +760,10 @@ impl ScpRunner for OpenSshScpRunner {
 pub struct MockScpRunner {
     pub outcome: ScpOutcome,
     pub calls: tokio::sync::Mutex<Vec<Vec<String>>>,
+    /// When `Some`, the runner sleeps this long (cancel-aware) before
+    /// returning the outcome. Used by cancellation tests to assert the
+    /// SCP call observes a mid-flight cancel.
+    pub delay: Option<std::time::Duration>,
 }
 
 #[cfg(test)]
@@ -679,12 +776,27 @@ impl MockScpRunner {
                 stderr: String::new(),
             },
             calls: tokio::sync::Mutex::new(Vec::new()),
+            delay: None,
         })
     }
     pub fn with_outcome(o: ScpOutcome) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             outcome: o,
             calls: tokio::sync::Mutex::new(Vec::new()),
+            delay: None,
+        })
+    }
+    /// Construct a mock that sleeps `d` (cancel-aware) before returning,
+    /// to exercise the cancel-during-scp path in tests.
+    pub fn with_delay(d: std::time::Duration) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            outcome: ScpOutcome {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            calls: tokio::sync::Mutex::new(Vec::new()),
+            delay: Some(d),
         })
     }
 }
@@ -692,8 +804,17 @@ impl MockScpRunner {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl ScpRunner for MockScpRunner {
-    async fn run(&self, job: &ScpJob) -> std::io::Result<ScpOutcome> {
+    async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
         self.calls.lock().await.push(build_scp_argv(job));
+        if let Some(d) = self.delay {
+            tokio::select! {
+                biased;
+                _ = ct.cancelled() => {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+                }
+                _ = tokio::time::sleep(d) => {}
+            }
+        }
         Ok(self.outcome.clone())
     }
 }
@@ -715,11 +836,43 @@ mod runner_tests {
             remote_dir: "/var/tmp/".into(),
             accept_new_host_keys: false,
         };
-        let out = runner.run(&job).await.unwrap();
+        let ct = CancellationToken::new();
+        let out = runner.run(&job, &ct).await.unwrap();
         assert_eq!(out.exit_code, 0);
         let calls = runner.calls.lock().await;
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0][0], "-O");
+    }
+
+    /// T4 (issue #44 Half A): a `MockScpRunner::with_delay` runner, raced
+    /// against a token that fires mid-flight, returns `io::ErrorKind::Interrupted`
+    /// — the same shape the real `OpenSshScpRunner` returns when it calls
+    /// `child.start_kill()` on cancel. `transfer_file::handle` then maps
+    /// `Interrupted` to `JmcpError::Cancelled`.
+    #[tokio::test]
+    async fn mock_runner_with_delay_cancels_to_interrupted() {
+        let runner = MockScpRunner::with_delay(std::time::Duration::from_secs(5));
+        let job = ScpJob {
+            private_key_path: "/k".into(),
+            known_hosts_file: "/etc/jmcp/known_hosts".into(),
+            username: "root".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            local_path: "/var/lib/jmcp/staging/x.tgz".into(),
+            remote_dir: "/var/tmp/".into(),
+            accept_new_host_keys: false,
+        };
+        let ct = CancellationToken::new();
+        let ct2 = ct.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            ct2.cancel();
+        });
+        let r = tokio::time::timeout(std::time::Duration::from_millis(500), runner.run(&job, &ct))
+            .await
+            .expect("runner should return well within 500ms after cancel");
+        let err = r.expect_err("expected Interrupted error");
+        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted, "got {err:?}");
     }
 }
 
@@ -1006,9 +1159,16 @@ pub async fn handle(
     args: TransferFileArgs,
     dm: Arc<DeviceManager>,
     cfg: TransferConfig,
+    ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     let timeout = std::time::Duration::from_secs(args.timeout);
     tokio::time::timeout(timeout, async move {
+        // Issue #44 Half A: short-circuit if the request was cancelled
+        // before we even entered the body (e.g. notifications/cancelled
+        // arrived during dispatch).
+        if ct.is_cancelled() {
+            return Err(JmcpError::Cancelled);
+        }
         validate_source_basename(&args.source_path)?;
         // RJMCP-SEC-004: known_hosts is mandatory unless the operator opted
         // into TOFU (`--ssh-accept-new-host-keys`). Probing here keeps the
@@ -1043,7 +1203,7 @@ pub async fn handle(
             step = "lock_acquire_pre",
             "transfer_file.step_diag"
         );
-        let _permit = cfg.transfer_locks.acquire(&args.router_name).await;
+        let _permit = select_cancel_raw(&ct, cfg.transfer_locks.acquire(&args.router_name)).await?;
         tracing::info!(
             router = %args.router_name,
             step = "lock_acquire_post",
@@ -1078,7 +1238,7 @@ pub async fn handle(
             local_path = %local_path.display(),
             "transfer_file.step_diag"
         );
-        let (local_sha, local_size) = sha256_file(&local_path).await?;
+        let (local_sha, local_size) = sha256_file_cancellable(&local_path, &ct).await?;
         tracing::info!(
             router = %args.router_name,
             step = "sha256_post",
@@ -1115,7 +1275,7 @@ pub async fn handle(
             step = "dm_open_pre",
             "transfer_file.step_diag"
         );
-        let mut dev = dm.open(&args.router_name).await?;
+        let mut dev = select_cancel(&ct, dm.open(&args.router_name)).await?;
         tracing::info!(
             router = %args.router_name,
             step = "dm_open_post",
@@ -1123,9 +1283,8 @@ pub async fn handle(
         );
 
         // 1. Free-disk pre-flight.
-        let storage_out = dev
-            .cli("show system storage no-forwarding")
-            .await
+        let storage_out = select_cancel_raw(&ct, dev.cli("show system storage no-forwarding"))
+            .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "storage_probe".into(),
                 message: e.to_string(),
@@ -1142,9 +1301,8 @@ pub async fn handle(
 
         // 2. Probe remote checksum to support idempotent skip.
         let probe_cmd = format!("file checksum sha-256 {}", remote_path);
-        let probe_out = dev
-            .cli(&probe_cmd)
-            .await
+        let probe_out = select_cancel_raw(&ct, dev.cli(&probe_cmd))
+            .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "remote_checksum".into(),
                 message: e.to_string(),
@@ -1186,7 +1344,14 @@ pub async fn handle(
             phase = "scp_start",
             "transfer_file.scp_diag"
         );
-        let outcome = cfg.scp_runner.run(&job).await?;
+        let outcome = cfg
+            .scp_runner
+            .run(&job, &ct)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::Interrupted => JmcpError::Cancelled,
+                _ => JmcpError::Io(e),
+            })?;
         tracing::info!(
             router = %args.router_name,
             phase = "scp_done",
@@ -1214,9 +1379,8 @@ pub async fn handle(
         }
 
         // 4. Post-transfer verify (re-run remote checksum).
-        let verify_out = dev
-            .cli(&probe_cmd)
-            .await
+        let verify_out = select_cancel_raw(&ct, dev.cli(&probe_cmd))
+            .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "verify_checksum".into(),
                 message: e.to_string(),
@@ -1399,6 +1563,7 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
@@ -1429,6 +1594,7 @@ mod handle_validation_tests {
             },
             dm,
             c,
+            CancellationToken::new(),
         )
         .await;
         assert!(
@@ -1455,6 +1621,7 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
@@ -1479,6 +1646,7 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         assert!(matches!(r, Err(JmcpError::UnsupportedAuth(ref s)) if s == "r1"));
@@ -1509,6 +1677,7 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         match r {
@@ -1541,6 +1710,7 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
@@ -1576,9 +1746,51 @@ mod handle_validation_tests {
             },
             dm,
             cfg(dir.path()),
+            CancellationToken::new(),
         )
         .await;
         assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
+    }
+
+    /// T1 (issue #44 Half A): a token cancelled before `handle` is invoked
+    /// must cause `handle` to return `JmcpError::Cancelled` immediately,
+    /// before any validation, lock acquisition, or device I/O. The body's
+    /// first statement is `if ct.is_cancelled() { return Cancelled }` — this
+    /// test pins that fast-path so a future refactor cannot accidentally
+    /// move the check.
+    #[tokio::test]
+    async fn pre_cancelled_token_returns_cancelled_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let inv = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv));
+        let ct = CancellationToken::new();
+        ct.cancel();
+        let r = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            handle(
+                TransferFileArgs {
+                    router_name: "r1".into(),
+                    // Deliberately invalid basename: if the cancel pre-check
+                    // were skipped we would observe `BadSourcePath` instead.
+                    source_path: "../etc/passwd".into(),
+                    force: false,
+                    verify: true,
+                    timeout: 5,
+                },
+                dm,
+                cfg(dir.path()),
+                ct,
+            ),
+        )
+        .await
+        .expect("handle should return well within 200ms when pre-cancelled");
+        assert!(
+            matches!(r, Err(JmcpError::Cancelled)),
+            "expected Cancelled, got {r:?}"
+        );
     }
 }
 
@@ -1604,8 +1816,9 @@ mod scp_unit_tests {
             remote_dir: "/var/tmp/".into(),
             accept_new_host_keys: false,
         };
+        let ct = CancellationToken::new();
         let outcome = (mock.clone() as Arc<dyn ScpRunner>)
-            .run(&job)
+            .run(&job, &ct)
             .await
             .unwrap();
         assert_eq!(outcome.exit_code, 0);

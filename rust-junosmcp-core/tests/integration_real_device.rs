@@ -28,6 +28,7 @@ use rust_junosmcp_core::{
 };
 use std::io::Write;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("missing env var {name}"))
@@ -369,6 +370,7 @@ async fn transfer_file_round_trip_1kb() {
         },
         dm.clone(),
         cfg.clone(),
+        CancellationToken::new(),
     )
     .await
     .expect("first push should succeed");
@@ -387,6 +389,7 @@ async fn transfer_file_round_trip_1kb() {
         },
         dm.clone(),
         cfg.clone(),
+        CancellationToken::new(),
     )
     .await
     .expect("second push should succeed (idempotent skip)");
@@ -433,6 +436,7 @@ async fn transfer_file_round_trip_200mb() {
         },
         dm.clone(),
         cfg.clone(),
+        CancellationToken::new(),
     )
     .await
     .expect("200 MB push should succeed");
@@ -464,6 +468,7 @@ async fn transfer_file_force_false_rejects_diff() {
         },
         dm.clone(),
         cfg.clone(),
+        CancellationToken::new(),
     )
     .await
     .expect("version-A push should succeed");
@@ -486,6 +491,7 @@ async fn transfer_file_force_false_rejects_diff() {
         },
         dm.clone(),
         cfg.clone(),
+        CancellationToken::new(),
     )
     .await;
 

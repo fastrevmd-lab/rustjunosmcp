@@ -562,12 +562,16 @@ Filesystem  Size Used Avail Capacity Mounted on
     }
 }
 
+use crate::cancel::{select_cancel, select_cancel_raw};
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
-use crate::tools::transfer_file::{sha256_file, validate_source_basename, TransferConfig};
+use crate::tools::transfer_file::{
+    sha256_file_cancellable, validate_source_basename, TransferConfig,
+};
 use crate::tools::UpgradeJunosArgs;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Tool-level config. Holds the shared `TransferConfig` so that:
 /// - `transfer_file` and `upgrade_junos` use the same per-router locks
@@ -585,18 +589,20 @@ async fn gather_facts(
     image_basename: String,
     local_size: u64,
     local_sha: [u8; 32],
+    ct: &CancellationToken,
 ) -> Result<PreflightFacts, JmcpError> {
-    let mut dev = dm.open(router).await?;
+    let mut dev = select_cancel(ct, dm.open(router)).await?;
 
     let cluster_status_output =
-        run_probe(&mut dev, "show chassis cluster status", "cluster_probe").await?;
+        run_probe(&mut dev, "show chassis cluster status", "cluster_probe", ct).await?;
     let version_output =
-        run_probe(&mut dev, "show version | match Junos:", "version_probe").await?;
-    let commit_output = run_probe(&mut dev, "show system commit", "commit_probe").await?;
+        run_probe(&mut dev, "show version | match Junos:", "version_probe", ct).await?;
+    let commit_output = run_probe(&mut dev, "show system commit", "commit_probe", ct).await?;
     let storage_output = run_probe(
         &mut dev,
         "show system storage no-forwarding",
         "storage_probe",
+        ct,
     )
     .await?;
 
@@ -615,9 +621,10 @@ async fn run_probe(
     dev: &mut crate::device_manager::PooledDevice,
     command: &str,
     phase: &'static str,
+    ct: &CancellationToken,
 ) -> Result<String, JmcpError> {
-    dev.cli(command)
-        .await
+    select_cancel_raw(ct, dev.cli(command))
+        .await?
         .map_err(|e| JmcpError::DeviceProbeFailed {
             phase: phase.into(),
             message: e.to_string(),
@@ -628,9 +635,10 @@ pub async fn handle(
     args: UpgradeJunosArgs,
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
+    ct: CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
     let timeout = std::time::Duration::from_secs(args.timeout);
-    tokio::time::timeout(timeout, run(args, dm, cfg))
+    tokio::time::timeout(timeout, run(args, dm, cfg, ct))
         .await
         .map_err(|_| JmcpError::UpgradeOuterTimeout(timeout))?
 }
@@ -639,7 +647,12 @@ async fn run(
     args: UpgradeJunosArgs,
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
+    ct: CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
+    // Issue #44 Half A: short-circuit if already cancelled before entry.
+    if ct.is_cancelled() {
+        return Err(JmcpError::Cancelled);
+    }
     // 1. Basename validation (same allowlist as transfer_file).
     validate_source_basename(&args.source_path)?;
 
@@ -690,7 +703,7 @@ async fn run(
     // which is why CI + the gated live test never tripped it. The inner
     // `transfer_file::handle` still serializes parallel callers against
     // the same router; preflight is read-only and safe to overlap.
-    let (local_sha, local_size) = sha256_file(&local_path).await?;
+    let (local_sha, local_size) = sha256_file_cancellable(&local_path, &ct).await?;
 
     // 6. Gather NETCONF facts. Stub until Task 9 wires it up.
     let facts = gather_facts(
@@ -699,11 +712,12 @@ async fn run(
         args.source_path.clone(),
         local_size,
         local_sha,
+        &ct,
     )
     .await?;
 
     // 7. Pure preflight decision.
-    dispatch_preflight(&args, &facts, dm.clone(), &cfg).await
+    dispatch_preflight(&args, &facts, dm.clone(), &cfg, &ct).await
 }
 
 /// Translate a PreflightDecision into a handle() outcome. Task 9
@@ -713,6 +727,7 @@ async fn dispatch_preflight(
     facts: &PreflightFacts,
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
+    ct: &CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
     match evaluate_preflight(facts, args) {
         PreflightDecision::ClusterUnsupported => Err(JmcpError::UpgradeClusterUnsupported {
@@ -752,7 +767,7 @@ async fn dispatch_preflight(
         PreflightDecision::ConfirmationRequired(payload) => {
             Err(JmcpError::ConfirmationRequired { payload })
         }
-        PreflightDecision::Proceed => run_destructive(args, facts, dm.clone(), cfg).await,
+        PreflightDecision::Proceed => run_destructive(args, facts, dm.clone(), cfg, ct).await,
     }
 }
 
@@ -761,6 +776,7 @@ async fn run_destructive(
     facts: &PreflightFacts,
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
+    ct: &CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
     use std::time::Instant;
     let started = Instant::now();
@@ -773,7 +789,7 @@ async fn run_destructive(
     );
 
     // Phase 1: pre-baseline.
-    let pre_baseline = capture_baseline(&args.router_name, dm.clone()).await?;
+    let pre_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
     let phase1_done = Instant::now();
     tracing::info!(
         router = %args.router_name,
@@ -794,9 +810,13 @@ async fn run_destructive(
         phase = "transfer_start",
         "upgrade_junos.phase_diag"
     );
-    let _transfer_result =
-        crate::tools::transfer_file::handle(transfer_args, dm.clone(), cfg.transfer_cfg.clone())
-            .await?;
+    let _transfer_result = crate::tools::transfer_file::handle(
+        transfer_args,
+        dm.clone(),
+        cfg.transfer_cfg.clone(),
+        ct.clone(),
+    )
+    .await?;
     let phase2_done = Instant::now();
     tracing::info!(
         router = %args.router_name,
@@ -805,14 +825,33 @@ async fn run_destructive(
     );
 
     // Phase 3: install + reboot. Open a fresh session via the pool.
-    let install_stdout = match dm.open(&args.router_name).await {
+    //
+    // Issue #44 Half A note: the `dev.cli(...)` install RPC is intentionally
+    // NOT raced against cancellation. Once Junos accepts the
+    // `request system software add ... reboot` command, the upgrade is
+    // already in flight server-side; cancelling the client future cannot
+    // undo it. We do race the *pre-RPC* `dm.open()` and the *post-RPC*
+    // reboot-wait/post-verify steps below. A cancel during the install RPC
+    // surfaces only after the RPC returns (or its session drops).
+    let install_stdout = match select_cancel(ct, dm.open(&args.router_name)).await {
         Ok(mut dev) => {
             let cmd = format!(
                 "request system software add /var/tmp/{} no-copy reboot",
                 args.source_path
             );
             match dev.cli(&cmd).await {
-                Ok(out) => out,
+                Ok(out) => {
+                    if ct.is_cancelled() {
+                        tracing::warn!(
+                            router = %args.router_name,
+                            phase = "install_rpc",
+                            "upgrade_junos.cancel_diag: cancel observed after install RPC; \
+                             device upgrade already committed server-side"
+                        );
+                        return Err(JmcpError::Cancelled);
+                    }
+                    out
+                }
                 Err(e) => {
                     if install_error_indicates_session_drop(&e.to_string()) {
                         String::new()
@@ -836,14 +875,20 @@ async fn run_destructive(
         &args.router_name,
         dm.clone(),
         std::time::Duration::from_secs(args.reboot_wait_secs),
+        ct,
     )
     .await?;
     let phase4_done = Instant::now();
 
     // Phase 5: post-verify version.
-    let mut dev = dm.open(&args.router_name).await?;
-    let post_version_output =
-        run_probe(&mut dev, "show version | match Junos:", "postverify_probe").await?;
+    let mut dev = select_cancel(ct, dm.open(&args.router_name)).await?;
+    let post_version_output = run_probe(
+        &mut dev,
+        "show version | match Junos:",
+        "postverify_probe",
+        ct,
+    )
+    .await?;
     let observed =
         parse_junos_version(&post_version_output).ok_or_else(|| JmcpError::DeviceProbeFailed {
             phase: "postverify_parse".into(),
@@ -860,7 +905,7 @@ async fn run_destructive(
     let phase5_done = Instant::now();
 
     // Phase 6: post-baseline.
-    let post_baseline = capture_baseline(&args.router_name, dm.clone()).await?;
+    let post_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
 
     // Phase 7: assemble success response.
     let from_version =
@@ -948,11 +993,12 @@ mod build_transfer_args_tests {
 async fn capture_baseline(
     router: &str,
     dm: Arc<DeviceManager>,
+    ct: &CancellationToken,
 ) -> Result<std::collections::BTreeMap<String, String>, JmcpError> {
     let mut out = std::collections::BTreeMap::new();
-    let mut dev = dm.open(router).await?;
+    let mut dev = select_cancel(ct, dm.open(router)).await?;
     for cmd in BASELINE_COMMANDS {
-        match dev.cli(cmd).await {
+        match select_cancel_raw(ct, dev.cli(cmd)).await? {
             Ok(s) => {
                 out.insert((*cmd).to_string(), s);
             }
@@ -1028,7 +1074,13 @@ mod handle_early_exit_tests {
                      "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(env.inv.clone()));
-        let r = handle(args("r1", "../etc/passwd"), dm, cfg(dir.path())).await;
+        let r = handle(
+            args("r1", "../etc/passwd"),
+            dm,
+            cfg(dir.path()),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
     }
 
@@ -1041,7 +1093,13 @@ mod handle_early_exit_tests {
                      "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(env.inv.clone()));
-        let r = handle(args("nope", "img.tgz"), dm, cfg(dir.path())).await;
+        let r = handle(
+            args("nope", "img.tgz"),
+            dm,
+            cfg(dir.path()),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(r, Err(crate::error::JmcpError::UnknownRouter(_))));
     }
 
@@ -1054,7 +1112,13 @@ mod handle_early_exit_tests {
                      "auth":{"type":"password","password":"x"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(env.inv.clone()));
-        let r = handle(args("r1", "img.tgz"), dm, cfg(dir.path())).await;
+        let r = handle(
+            args("r1", "img.tgz"),
+            dm,
+            cfg(dir.path()),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(r, Err(crate::error::JmcpError::UnsupportedAuth(ref s)) if s == "r1"));
     }
 
@@ -1066,8 +1130,42 @@ mod handle_early_exit_tests {
                      "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(env.inv.clone()));
-        let r = handle(args("r1", "missing.tgz"), dm, cfg(dir.path())).await;
+        let r = handle(
+            args("r1", "missing.tgz"),
+            dm,
+            cfg(dir.path()),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
+    }
+
+    /// T5 (issue #44 Half A): a token cancelled before `upgrade_junos::handle`
+    /// is invoked must cause it to return `JmcpError::Cancelled` before any
+    /// inventory lookup, file stat, or device I/O. Pins the
+    /// `if ct.is_cancelled()` short-circuit at the top of `run()`.
+    #[tokio::test]
+    async fn pre_cancelled_token_returns_cancelled_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        // Deliberately omit any staged file — if the cancel pre-check were
+        // skipped, BadSourcePath would surface instead.
+        let env = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"ssh_key","private_key_path":"__KEY__"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(env.inv.clone()));
+        let ct = CancellationToken::new();
+        ct.cancel();
+        let r = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            handle(args("r1", "missing.tgz"), dm, cfg(dir.path()), ct),
+        )
+        .await
+        .expect("handle should return well within 200ms when pre-cancelled");
+        assert!(
+            matches!(r, Err(crate::error::JmcpError::Cancelled)),
+            "expected Cancelled, got {r:?}"
+        );
     }
 }
 
@@ -1186,19 +1284,22 @@ async fn wait_for_netconf(
     router: &str,
     dm: Arc<DeviceManager>,
     budget: std::time::Duration,
+    ct: &CancellationToken,
 ) -> Result<(), JmcpError> {
     let start = std::time::Instant::now();
-    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    select_cancel_raw(ct, tokio::time::sleep(std::time::Duration::from_secs(30))).await?;
     loop {
         let attempt_deadline = std::time::Duration::from_secs(10);
         let dm_inner = dm.clone();
         let router_str = router.to_string();
-        let attempt =
+        let attempt = select_cancel_raw(
+            ct,
             tokio::time::timeout(
                 attempt_deadline,
                 async move { dm_inner.open(&router_str).await },
-            )
-            .await;
+            ),
+        )
+        .await?;
         match attempt {
             Ok(Ok(_dev)) => return Ok(()),
             _ => {
@@ -1208,7 +1309,8 @@ async fn wait_for_netconf(
                         waited_secs: budget.as_secs(),
                     });
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                select_cancel_raw(ct, tokio::time::sleep(std::time::Duration::from_secs(15)))
+                    .await?;
             }
         }
     }
