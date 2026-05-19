@@ -4,6 +4,55 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] — 2026-05-19
+
+Cooperative cancellation for long-running destructive tools (issue #44
+"Half A") + Drop-guard audit diagnostics, plus the upstream rmcp design
+work for the remaining "Half B" gap.
+
+### Added
+
+- **`#[tool]` handlers honor `RequestContext::ct`.** Every long-running
+  await point in `upgrade_junos` and `transfer_file` now races against
+  the per-request `CancellationToken`. When the token fires (either
+  from an explicit `notifications/cancelled` from the client, or from
+  the server-side per-request timeout), the handler returns
+  `JmcpError::Cancelled` rather than running to completion.
+- **`rust_junosmcp_core::cancel`** — small `select_cancel{,_raw}`
+  helpers using a biased select so cancellation wins ties cleanly.
+- **`JmcpError::Cancelled`** with `[code=cancelled]` display, surfaced
+  through the MCP error path.
+- **`UpgradeOutcome::{Settled, Cancelled, Unsettled}`** drives the
+  audit log line so an operator can distinguish a natural success/fail
+  from a token-fired cancel from a future that ran to completion after
+  the client went away.
+
+### Investigated / documented (no functional change)
+
+- **`docs/spikes/2026-05-19-rmcp-streamable-http-disconnect-half-b.md`**
+  — design notes for the rmcp-transport-side gap (raw TCP disconnect ->
+  request cancellation). Cannot be fixed downstream; requires an rmcp
+  patch.
+- **`docs/spikes/2026-05-19-rmcp-upstream-issue-draft.md`** — issue
+  body prepared for filing against `modelcontextprotocol/rust-sdk`,
+  with minimal repro, observed log evidence (281 polls past
+  disconnect), code-walk root cause, and two candidate fix shapes.
+- **`docs/spikes/2026-05-19-rmcp-disconnect-repro-server.log`** —
+  captured server log from the live minimal repro.
+
+### Verification
+
+- Workspace unit + integration tests all pass; new coverage for the
+  cancellation paths in `transfer_file` and `upgrade_junos`.
+- `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- `cargo audit` clean (last CI run on the PR #54 head).
+- Bundles PRs #50 (Drop-guard instrumentation) and #54 (Half A
+  cooperative cancellation).
+
+### Tooling
+
+- Workspace version bumped to `0.5.9`.
+
 ## [0.5.7] — 2026-05-18
 
 Fixes a latent bug exposed (but not introduced) by v0.5.6: every
