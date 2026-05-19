@@ -1,8 +1,9 @@
-# Upstream rmcp issue — filing-ready
+# Upstream rmcp issue — filed
 
 **Target repo:** `modelcontextprotocol/rust-sdk`
-**Filing as:** personal (no project affiliation in body)
-**Status:** ready to file pending final read-through
+**Filed as:** `fastrevmd-lab` (no project affiliation in body)
+**Filed issue:** [modelcontextprotocol/rust-sdk#857](https://github.com/modelcontextprotocol/rust-sdk/issues/857) (2026-05-19 20:29 UTC)
+**Status:** filed, awaiting triage
 
 The block below is the verbatim issue content. Everything before the
 `==== ISSUE BODY ====` separator is internal-only and must not be
