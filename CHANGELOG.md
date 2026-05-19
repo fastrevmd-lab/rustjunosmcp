@@ -4,6 +4,37 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] — 2026-05-18
+
+Dependency bump. `rustez 0.11.0 → 0.12.0` pulls in `rustnetconf 0.11
+→ 0.12`. Additive only — no caller code in this repo changes.
+
+### Added (upstream surface)
+
+- **`HostKeyVerification::KnownHosts(PathBuf)`** is now re-exported by
+  rustez (from `rustnetconf 0.12`). Callers may point at an OpenSSH
+  `known_hosts` file instead of pinning a single fingerprint at the
+  NETCONF layer. RustJunosMCP does not yet opt in to NETCONF host-key
+  verification (tracked as a follow-up); scp host-key pinning via
+  `known_hosts` remains strict since v0.5.2.
+
+### Fixed (upstream)
+
+- Stale rustez doc comments on `DeviceBuilder::host_key_verification`
+  and Python `Device.__init__` corrected — they now reflect the
+  `RejectAll` default introduced in `rustnetconf 0.11`.
+
+### Verification
+
+- `cargo audit` against the post-bump `Cargo.lock` reports **zero
+  advisories** across 397 crates.
+- 321 unit tests pass; `cargo clippy --workspace --all-targets --
+  -D warnings` and `cargo fmt --check` are clean.
+
+### Tooling
+
+- Workspace version bumped to `0.5.6`.
+
 ## [0.5.5] — TBD
 
 Dependency bump. `rustez 0.10.1 → 0.11.0` pulls in `rustnetconf 0.10
