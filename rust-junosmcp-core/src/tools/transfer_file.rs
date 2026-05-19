@@ -1251,6 +1251,28 @@ mod transfer_locks_tests {
         );
     }
 
+    /// Issue #51 regression: holding a permit for a router and then
+    /// awaiting `acquire` for the SAME router on the SAME task is a
+    /// self-deadlock — the inner future can never make progress because
+    /// the outer scope holds the only permit. This test documents that
+    /// invariant so the upgrade_junos path (which used to acquire the
+    /// permit in `run()` and then call `transfer_file::handle()` which
+    /// re-acquires it) cannot regress.
+    #[tokio::test]
+    async fn same_task_reacquire_deadlocks() {
+        let locks = Arc::new(TransferLocks::default());
+        let outer = locks.acquire("r1").await;
+        let inner =
+            tokio::time::timeout(std::time::Duration::from_millis(100), locks.acquire("r1")).await;
+        assert!(
+            inner.is_err(),
+            "re-acquiring the same-router permit on the same task should deadlock; \
+             if this test passes, the locking primitive changed and #51's fix may \
+             no longer be load-bearing"
+        );
+        drop(outer);
+    }
+
     /// Different routers must NOT block each other. Two acquires on
     /// distinct routers should be able to run concurrently.
     #[tokio::test]

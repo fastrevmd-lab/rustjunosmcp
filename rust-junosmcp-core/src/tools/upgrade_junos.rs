@@ -677,14 +677,19 @@ async fn run(
         )));
     }
 
-    // 4. Acquire per-router transfer lock (shared with transfer_file).
-    let _permit = cfg
-        .transfer_cfg
-        .transfer_locks
-        .acquire(&args.router_name)
-        .await;
-
-    // 5. Local sha256 + size (streamed, blocks of 64 KiB).
+    // 4. Local sha256 + size (streamed, blocks of 64 KiB).
+    //
+    // Issue #51: we deliberately do NOT acquire the per-router transfer
+    // lock here. Earlier versions acquired it as a "Phase 4" preflight
+    // step, but `run_destructive` then calls `transfer_file::handle()`,
+    // which re-acquires the same per-router permit on the same task —
+    // a self-deadlock that hung every real upgrade at Phase 2 the moment
+    // preflight returned `Proceed`. The cases that mask the bug
+    // (`already_at_target`, `ClusterUnsupported`, `ConfirmationRequired`)
+    // return before `dispatch_preflight` ever reaches `run_destructive`,
+    // which is why CI + the gated live test never tripped it. The inner
+    // `transfer_file::handle` still serializes parallel callers against
+    // the same router; preflight is read-only and safe to overlap.
     let (local_sha, local_size) = sha256_file(&local_path).await?;
 
     // 6. Gather NETCONF facts. Stub until Task 9 wires it up.
