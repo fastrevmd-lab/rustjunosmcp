@@ -9,6 +9,7 @@ pub mod batch;
 pub mod config_diff;
 pub mod execute_command;
 pub mod facts;
+pub mod fetch_file;
 pub mod get_config;
 pub mod list_staged_files;
 pub mod load_commit;
@@ -210,6 +211,28 @@ pub struct TransferFileArgs {
     #[serde(default)]
     pub force: bool,
     /// Post-transfer sha256 verification. Default true.
+    #[serde(default = "default_verify")]
+    pub verify: bool,
+    /// Per-call timeout in seconds. Default 600.
+    #[serde(default = "default_transfer_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FetchFileArgs {
+    /// Source router name (must exist in inventory and use ssh_key auth).
+    pub router_name: String,
+    /// Basename of the file under the device's /var/tmp/. Must not contain
+    /// '/', '\\', or '..'. Same allowlist as transfer_file.
+    pub remote_path: String,
+    /// Optional override for the local basename written under the staging
+    /// directory. Defaults to `remote_path`. Same allowlist applies.
+    #[serde(default)]
+    pub local_name: Option<String>,
+    /// Overwrite if local dest exists with different sha256. Default false.
+    #[serde(default)]
+    pub force: bool,
+    /// Post-fetch sha256 verification (local vs remote). Default true.
     #[serde(default = "default_verify")]
     pub verify: bool,
     /// Per-call timeout in seconds. Default 600.
@@ -469,5 +492,35 @@ mod tests {
         let a: UpgradeJunosArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.timeout, 1800);
         assert_eq!(a.reboot_wait_secs, 720);
+    }
+
+    #[test]
+    fn fetch_file_args_defaults() {
+        let v = serde_json::json!({"router_name":"r1","remote_path":"foo.tgz"});
+        let a: FetchFileArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.remote_path, "foo.tgz");
+        assert!(a.local_name.is_none());
+        assert!(!a.force);
+        assert!(a.verify);
+        assert_eq!(a.timeout, 600);
+    }
+
+    #[test]
+    fn fetch_file_args_rejects_missing_remote_path() {
+        let v = serde_json::json!({"router_name":"r1"});
+        let r: Result<FetchFileArgs, _> = serde_json::from_value(v);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn fetch_file_args_accepts_local_name_override() {
+        let v = serde_json::json!({
+            "router_name":"r1",
+            "remote_path":"foo.tgz",
+            "local_name":"foo.local.tgz"
+        });
+        let a: FetchFileArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.local_name.as_deref(), Some("foo.local.tgz"));
     }
 }
