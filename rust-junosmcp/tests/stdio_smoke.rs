@@ -19,6 +19,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "add_device",
     "reload_devices",
     "transfer_file",
+    "fetch_file",
     "list_staged_files",
     "upgrade_junos",
 ];
@@ -37,7 +38,7 @@ fn binary_path() -> std::path::PathBuf {
 }
 
 #[test]
-fn lists_fourteen_tools() {
+fn lists_fifteen_tools() {
     // Build first so the binary exists.
     let status = Command::new("cargo")
         .args(["build", "-p", "rust-junosmcp"])
