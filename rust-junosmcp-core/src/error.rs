@@ -63,6 +63,14 @@ pub enum JmcpError {
     )]
     ConnectTimeout(String),
 
+    #[error(
+        "host key verification failed [code=host_key_mismatch]: router '{router}' was rejected; review or refresh the entry in {known_hosts_file}"
+    )]
+    HostKeyMismatch {
+        router: String,
+        known_hosts_file: PathBuf,
+    },
+
     #[error("device probe failed [code=device_probe_failed] (phase={phase}): {message}")]
     DeviceProbeFailed { phase: String, message: String },
 
@@ -468,6 +476,18 @@ mod tests {
         let s = JmcpError::ConnectTimeout("vSRX-test10".into()).to_string();
         assert!(s.contains("code=connect_timeout"));
         assert!(s.contains("vSRX-test10"));
+    }
+
+    #[test]
+    fn host_key_mismatch_display_includes_code_router_and_known_hosts() {
+        let s = JmcpError::HostKeyMismatch {
+            router: "vSRX-test10".into(),
+            known_hosts_file: std::path::PathBuf::from("/etc/jmcp/known_hosts"),
+        }
+        .to_string();
+        assert!(s.contains("[code=host_key_mismatch]"), "got {s}");
+        assert!(s.contains("vSRX-test10"), "got {s}");
+        assert!(s.contains("/etc/jmcp/known_hosts"), "got {s}");
     }
 
     #[test]
