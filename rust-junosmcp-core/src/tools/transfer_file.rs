@@ -591,6 +591,67 @@ pub fn build_scp_argv(job: &ScpJob) -> Vec<String> {
     ]
 }
 
+/// Inputs for one SCP download invocation. Mirror image of [`ScpJob`].
+/// The remote_path is the FULL path on the device (e.g. `/var/tmp/foo.tgz`),
+/// not a directory — `scp` downloads exactly one file.
+#[derive(Clone, Debug)]
+pub struct ScpFetchJob {
+    pub private_key_path: PathBuf,
+    pub known_hosts_file: PathBuf,
+    pub username: String,
+    pub host: String,
+    pub port: u16,
+    /// Full remote path, e.g. `/var/tmp/foo.tgz`.
+    pub remote_path: String,
+    /// Full local destination path under the staging directory.
+    pub local_path: PathBuf,
+    /// When `true`, emit `StrictHostKeyChecking=accept-new` (TOFU); when
+    /// `false`, emit `StrictHostKeyChecking=yes` (strict — refuses unknown
+    /// host keys). Default for the server is `false` as of v0.5.2; opt in
+    /// via `--ssh-accept-new-host-keys` for lab provisioning.
+    pub accept_new_host_keys: bool,
+}
+
+/// Build the argv vector that downloads `remote_path` from the device to
+/// `local_path`. Mirror image of [`build_scp_argv`]: the only structural
+/// difference is that the source (user@host:path) comes before the local
+/// destination, instead of after the local source.
+pub fn build_scp_fetch_argv(job: &ScpFetchJob) -> Vec<String> {
+    let source = format!("{}@{}:{}", job.username, job.host, job.remote_path);
+    let host_key_policy = if job.accept_new_host_keys {
+        "StrictHostKeyChecking=accept-new"
+    } else {
+        "StrictHostKeyChecking=yes"
+    };
+    vec![
+        "-O".into(),
+        "-i".into(),
+        job.private_key_path.display().to_string(),
+        "-o".into(),
+        host_key_policy.into(),
+        "-o".into(),
+        format!("UserKnownHostsFile={}", job.known_hosts_file.display()),
+        "-o".into(),
+        "ConnectTimeout=15".into(),
+        "-o".into(),
+        "ServerAliveInterval=10".into(),
+        "-o".into(),
+        "ServerAliveCountMax=3".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "PasswordAuthentication=no".into(),
+        "-o".into(),
+        "PreferredAuthentications=publickey".into(),
+        "-o".into(),
+        "IdentitiesOnly=yes".into(),
+        "-P".into(),
+        job.port.to_string(),
+        source,
+        job.local_path.display().to_string(),
+    ]
+}
+
 #[cfg(test)]
 mod argv_tests {
     use super::*;
@@ -695,6 +756,57 @@ mod argv_tests {
             .unwrap();
         let dest = v.iter().position(|s| s.starts_with("root@")).unwrap();
         assert!(local < dest);
+    }
+
+    fn fetch_job() -> ScpFetchJob {
+        ScpFetchJob {
+            private_key_path: "/etc/jmcp/keys/id".into(),
+            known_hosts_file: "/etc/jmcp/known_hosts".into(),
+            username: "root".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            remote_path: "/var/tmp/foo.tgz".into(),
+            local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
+            accept_new_host_keys: false,
+        }
+    }
+
+    #[test]
+    fn fetch_argv_uses_dash_capital_o_for_legacy_protocol() {
+        let v = build_scp_fetch_argv(&fetch_job());
+        assert_eq!(v[0], "-O");
+    }
+
+    #[test]
+    fn fetch_argv_default_uses_strict_host_key_checking_yes() {
+        let v = build_scp_fetch_argv(&fetch_job());
+        let joined = v.join(" ");
+        assert!(joined.contains("StrictHostKeyChecking=yes"), "{joined}");
+        assert!(!joined.contains("accept-new"), "{joined}");
+    }
+
+    #[test]
+    fn fetch_argv_source_is_user_host_colon_remote_path() {
+        let v = build_scp_fetch_argv(&fetch_job());
+        let src = v
+            .iter()
+            .position(|s| s == "root@10.0.0.1:/var/tmp/foo.tgz")
+            .expect("source present");
+        let dst = v
+            .iter()
+            .position(|s| s == "/var/lib/jmcp/staging/foo.tgz")
+            .expect("dest present");
+        assert!(src < dst, "expected source before dest, got argv: {v:?}");
+    }
+
+    #[test]
+    fn fetch_argv_includes_hardening_flags() {
+        let v = build_scp_fetch_argv(&fetch_job());
+        let joined = v.join(" ");
+        assert!(joined.contains("BatchMode=yes"));
+        assert!(joined.contains("PasswordAuthentication=no"));
+        assert!(joined.contains("PreferredAuthentications=publickey"));
+        assert!(joined.contains("IdentitiesOnly=yes"));
     }
 }
 
