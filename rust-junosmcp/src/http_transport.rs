@@ -8,7 +8,6 @@
 //! on the axum request extensions) is reachable from `#[tool]` handlers via
 //! `parts.extensions.get::<CallerCtx>()` (see `server::caller_ctx`).
 
-use crate::auth_layer::{auth_layer, AuthState};
 use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
@@ -16,6 +15,7 @@ use axum::Router;
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
+use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
 use std::net::SocketAddr;
 use std::sync::Arc;

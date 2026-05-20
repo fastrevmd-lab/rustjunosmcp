@@ -37,9 +37,11 @@ use std::sync::Arc;
 /// - **streamable-http:** rmcp inserted `Parts`; auth middleware put `CallerCtx`
 ///   into `req.extensions` which became `parts.extensions` → returns `Some(&ctx)`.
 fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
-    extensions
-        .get::<http::request::Parts>()
-        .and_then(|parts| parts.extensions.get::<rust_junosmcp_auth::caller::CallerCtx>())
+    extensions.get::<http::request::Parts>().and_then(|parts| {
+        parts
+            .extensions
+            .get::<rust_junosmcp_auth::caller::CallerCtx>()
+    })
 }
 
 /// Outcome of an `upgrade_junos` call, as observed by `UpgradeAuditGuard`.

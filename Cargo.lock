@@ -2611,8 +2611,10 @@ name = "rust-junosmcp-auth"
 version = "0.6.2"
 dependencies = [
  "arc-swap",
+ "axum",
  "base64ct",
  "chrono",
+ "http",
  "libc",
  "rand 0.8.6",
  "serde",
@@ -2621,6 +2623,7 @@ dependencies = [
  "subtle",
  "tempfile",
  "thiserror 2.0.18",
+ "tower",
  "tracing",
 ]
 

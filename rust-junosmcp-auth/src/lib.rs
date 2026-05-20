@@ -6,6 +6,7 @@ pub mod caller;
 pub mod file;
 pub mod store;
 pub mod token;
+pub mod tower;
 
 pub use file::{TokenStoreError, TokenStoreFile};
 pub use store::{ScopeSet, TokenEntry, TokenStore};
