@@ -4,6 +4,29 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-05-20
+
+### Fixed
+
+- **#59 — `HostKeyMismatch` classifier was inert against real Junos
+  devices.** v0.6.1's `classify_scp_failure` required `exit_code == 255`
+  before checking for host-key stderr substrings, but Junos requires
+  `scp -O` (legacy SCP protocol), and `scp -O` surfaces SSH-layer
+  failures via its wrapper-shell as `exit=1`. Real host-key tamper on
+  vSRX-test10 produced `[code=scp_failed] (exit=1)` instead of the
+  intended `[code=host_key_mismatch]`. The classifier now matches the
+  host-key arm on stderr substring alone (`Host key verification
+  failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED`); the substrings
+  are themselves diagnostic. The `ConnectTimeout` arm still requires
+  `exit_code == 255` because its stderr substrings (`Connection timed
+  out` / `No route to host`) are less specific.
+
+### Notes
+
+- No MCP tool surface change; tool count stays at 15.
+- No public API change. The fix is a single-function refinement to
+  `classify_scp_failure` plus one regression test.
+
 ## [0.6.1] — 2026-05-20
 
 ### Fixed

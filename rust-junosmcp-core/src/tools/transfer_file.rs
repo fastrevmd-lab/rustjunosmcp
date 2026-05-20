@@ -829,22 +829,25 @@ pub(crate) fn classify_scp_failure(
     known_hosts_file: &std::path::Path,
 ) -> crate::error::JmcpError {
     use crate::error::JmcpError;
-    if outcome.exit_code == 255 {
-        if outcome.stderr.contains("Connection timed out")
-            || outcome.stderr.contains("No route to host")
-        {
-            return JmcpError::ConnectTimeout(router_name.to_string());
-        }
-        if outcome.stderr.contains("Host key verification failed")
-            || outcome
-                .stderr
-                .contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
-        {
-            return JmcpError::HostKeyMismatch {
-                router: router_name.to_string(),
-                known_hosts_file: known_hosts_file.to_path_buf(),
-            };
-        }
+    // Host-key failures: match on stderr substring regardless of exit code.
+    // `scp -O` (Junos legacy SCP protocol) surfaces host-key failures as
+    // exit=1 via the SCP wrapper-shell, while stock SFTP-mode scp uses
+    // exit=255. The substrings below are themselves diagnostic. (#59)
+    if outcome.stderr.contains("Host key verification failed")
+        || outcome
+            .stderr
+            .contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    {
+        return JmcpError::HostKeyMismatch {
+            router: router_name.to_string(),
+            known_hosts_file: known_hosts_file.to_path_buf(),
+        };
+    }
+    if outcome.exit_code == 255
+        && (outcome.stderr.contains("Connection timed out")
+            || outcome.stderr.contains("No route to host"))
+    {
+        return JmcpError::ConnectTimeout(router_name.to_string());
     }
     JmcpError::ScpFailed {
         exit_code: outcome.exit_code,
@@ -2272,6 +2275,37 @@ mod scp_unit_tests {
             std::path::Path::new("/etc/jmcp/known_hosts"),
         );
         assert!(matches!(e, JmcpError::HostKeyMismatch { .. }), "got {e:?}");
+    }
+
+    /// Regression for #59: `scp -O` (Junos legacy SCP protocol) returns
+    /// exit 1 — not 255 — on host-key failure. The classifier must still
+    /// route the failure to `HostKeyMismatch` based on the stderr
+    /// substring alone; the exit code is informational only.
+    #[test]
+    fn classify_scp_failure_maps_host_key_failure_with_exit_one() {
+        let outcome = ScpOutcome {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nHost key verification failed.\nlost connection".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "vSRX-test10",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match e {
+            JmcpError::HostKeyMismatch {
+                router,
+                known_hosts_file,
+            } => {
+                assert_eq!(router, "vSRX-test10");
+                assert_eq!(
+                    known_hosts_file,
+                    std::path::PathBuf::from("/etc/jmcp/known_hosts")
+                );
+            }
+            other => panic!("expected HostKeyMismatch for exit=1 + host-key stderr, got {other:?}"),
+        }
     }
 
     #[test]
