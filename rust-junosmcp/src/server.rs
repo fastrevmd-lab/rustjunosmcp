@@ -911,6 +911,39 @@ mod scope_tests {
     }
 
     #[test]
+    fn fetch_file_tool_scope_denies_when_not_listed() {
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+        };
+        assert!(matches!(
+            handler.check_tool_scope(Some(&ctx), "fetch_file"),
+            Err(ScopeError::ToolNotInScope { .. })
+        ));
+    }
+
+    #[test]
+    fn fetch_file_router_scope_denies_when_not_listed() {
+        // Token has tool scope for fetch_file but only `other` is in router scope;
+        // a request for `vsrx-test10` must surface RouterNotInScope.
+        let handler = make_handler();
+        let ctx = CallerCtx {
+            token_name: "alice".into(),
+            routers: ScopeSet::Allowlist(vec!["other".into()]),
+            tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
+        };
+        assert!(handler
+            .check_tool_scope(Some(&ctx), "fetch_file")
+            .is_ok());
+        assert!(matches!(
+            handler.check_router_scope(Some(&ctx), "fetch_file", "vsrx-test10"),
+            Err(ScopeError::RouterNotInScope { .. })
+        ));
+    }
+
+    #[test]
     fn batch_router_scope_first_failure_short_circuits() {
         // Conceptually models the per-router loop: the adapter fails on the
         // first router not in scope.
