@@ -20,6 +20,9 @@ Tool surface grows from 14 → 15 tools.
   `router_name`, `remote_path` (basename under `/var/tmp/`). Optional:
   `local_name` (basename override under staging dir), `force` (overwrite
   divergent local file), `verify` (default `true`), `timeout` (default 600s).
+  Downloads land at `<basename>.partial` first, then `std::fs::rename` to
+  the canonical name only after the sha256 verify passes — a crashed or
+  cancelled fetch never leaves a torn file at the staging name.
 - **`ScpRunner::fetch()`** trait method with `OpenSshScpRunner` and
   `MockScpRunner` implementations.
 - **`ScpFetchJob`** + **`build_scp_fetch_argv`** in
@@ -39,8 +42,10 @@ Tool surface grows from 14 → 15 tools.
 ### Verification
 
 - Workspace unit + integration tests all pass; new coverage for the
-  fetch_file argv builder, runner mock, scope denial, and the three new
-  error variants.
+  fetch_file argv builder, runner mock, scope denial, the three new
+  error variants, and four `handle()` validation paths (bad remote
+  basename, bad `local_name` override, strict-mode `KnownHostsMissing`,
+  password-auth `UnsupportedAuth`).
 - `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
 ## [0.5.9] — 2026-05-19
