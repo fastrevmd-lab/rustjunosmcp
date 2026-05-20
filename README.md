@@ -91,6 +91,16 @@ parallel with a configurable concurrency cap.
 - **Packaging** — `install.sh` provisions the new on-disk surface owned by `jmcp:jmcp`. See the File transfers section below for details.
 - Tool count: 11 → 13.
 
+### v0.5 (released)
+
+- **`upgrade_junos`** — two-call (stage then confirm) Junos software upgrade. Uploads the package via `transfer_file` semantics, runs `request system software add`, and reboots. Standalone-only; rejected if a session pool entry exists for the target router.
+- Tool count: 13 → 14.
+
+### v0.6 (released)
+
+- **`fetch_file`** — downloads a file from `<device>:/var/tmp/<basename>` to the host staging dir. SHA-256-verified, idempotent skip if the local copy already matches, per-router serialization. Mirror of `transfer_file`.
+- Tool count: 14 → 15.
+
 ## Blocklist guardrails (v0.2)
 
 `devices.json` may carry an optional `_blocklist_defaults` block plus an
@@ -142,13 +152,19 @@ Response:
 To confirm (prevent rollback), send another `load_and_commit_config` with
 the same config (or any valid config) without `confirm_timeout_mins`.
 
-## File transfers (`transfer_file` / `list_staged_files`)
+## File transfers (`transfer_file` / `fetch_file` / `list_staged_files`)
 
 `transfer_file` pushes a host-staged file to `/var/tmp/<basename>` on a Junos
 device using legacy SCP (`scp -O`, since Junos disables the OpenSSH SFTP
 subsystem). It is **idempotent on SHA-256**: if the remote file already exists
 with a matching digest the call returns `status: "skipped"`. Pass `force: true`
 to overwrite when digests differ.
+
+`fetch_file` is the mirror operation: it downloads `/var/tmp/<basename>` from a
+Junos device to the host staging dir using the same legacy SCP path. It is
+**idempotent on SHA-256** — if the local file already exists with a matching
+digest the call returns `status: "skipped"`. Per-router serialization and
+post-transfer SHA-256 re-verification apply identically to `transfer_file`.
 
 **Auth:** SSH key only. Devices with `auth.type = "password"` are rejected with
 `[code=unsupported_auth]`. Add an SSH key to the device and reference its path
