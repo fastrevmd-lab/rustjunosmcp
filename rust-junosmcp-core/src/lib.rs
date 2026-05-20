@@ -3,6 +3,7 @@
 //!
 //! The binary crate `rust-junosmcp` wires this into the rmcp transport.
 
+pub mod bootstrap;
 pub mod cancel;
 pub mod device_manager;
 pub mod error;
