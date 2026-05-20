@@ -11,6 +11,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "execute_junos_command",
     "execute_junos_command_batch",
     "execute_junos_pfe_command",
+    "fetch_file",
     "gather_device_facts",
     "get_junos_config",
     "get_router_list",

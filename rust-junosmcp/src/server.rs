@@ -11,11 +11,11 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        add_device, batch, config_diff, execute_command, facts, get_config, list_staged_files,
-        load_commit, pfe, reload_devices, router_list, template, transfer_file, upgrade_junos,
-        AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs,
-        GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs,
-        TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
+        add_device, batch, config_diff, execute_command, facts, fetch_file, get_config,
+        list_staged_files, load_commit, pfe, reload_devices, router_list, template, transfer_file,
+        upgrade_junos, AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs,
+        ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs,
+        LoadCommitArgs, ReloadDevicesArgs, TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
     },
     DeviceManager, Policy,
 };
@@ -229,6 +229,7 @@ const SERVER_TOOLS: &[&str] = &[
     "add_device",
     "reload_devices",
     "transfer_file",
+    "fetch_file",
     "upgrade_junos",
     "list_staged_files",
 ];
@@ -242,8 +243,8 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_14() {
-        assert_eq!(SERVER_TOOLS.len(), 14);
+    fn server_tools_len_is_15() {
+        assert_eq!(SERVER_TOOLS.len(), 15);
     }
 
     #[test]
@@ -540,6 +541,51 @@ impl JmcpHandler {
             ),
             Err(e) => tracing::info!(
                 tool = "transfer_file",
+                token = token,
+                router = %router,
+                basename = %basename,
+                outcome = "error",
+                error = %e,
+                "audit"
+            ),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "fetch_file",
+        description = "Download a file from a Junos device's /var/tmp/<basename> to the host staging directory, with sha256 verification. Mirror of transfer_file."
+    )]
+    async fn fetch_file(
+        &self,
+        Parameters(args): Parameters<FetchFileArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "fetch_file") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "fetch_file", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
+        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
+        let router = args.router_name.clone();
+        let basename = args.remote_path.clone();
+        let result =
+            fetch_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
+        match &result {
+            Ok(v) => tracing::info!(
+                tool = "fetch_file",
+                token = token,
+                router = %router,
+                basename = %basename,
+                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
+                sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or(""),
+                "audit"
+            ),
+            Err(e) => tracing::info!(
+                tool = "fetch_file",
                 token = token,
                 router = %router,
                 basename = %basename,
