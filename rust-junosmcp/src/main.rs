@@ -1,5 +1,4 @@
 mod auth_layer;
-mod caller;
 mod cli;
 mod cli_validate;
 mod http_transport;

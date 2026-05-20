@@ -36,10 +36,10 @@ use std::sync::Arc;
 ///   scope checks become a no-op (preserves original behavior).
 /// - **streamable-http:** rmcp inserted `Parts`; auth middleware put `CallerCtx`
 ///   into `req.extensions` which became `parts.extensions` → returns `Some(&ctx)`.
-fn caller_ctx(extensions: &Extensions) -> Option<&crate::caller::CallerCtx> {
+fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
     extensions
         .get::<http::request::Parts>()
-        .and_then(|parts| parts.extensions.get::<crate::caller::CallerCtx>())
+        .and_then(|parts| parts.extensions.get::<rust_junosmcp_auth::caller::CallerCtx>())
 }
 
 /// Outcome of an `upgrade_junos` call, as observed by `UpgradeAuditGuard`.
@@ -172,7 +172,7 @@ impl JmcpHandler {
     /// or if no caller context is present (stdio path).
     fn check_tool_scope(
         &self,
-        ctx: Option<&crate::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
         if let Some(ctx) = ctx {
@@ -190,7 +190,7 @@ impl JmcpHandler {
     /// or if no caller context is present (stdio path).
     fn check_router_scope(
         &self,
-        ctx: Option<&crate::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
         router: &str,
     ) -> Result<(), ScopeError> {
@@ -752,7 +752,7 @@ impl ServerHandler for JmcpHandler {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use crate::caller::CallerCtx;
+    use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
 
     fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {

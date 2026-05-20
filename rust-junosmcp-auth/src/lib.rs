@@ -2,6 +2,7 @@
 //!
 //! Pure data + I/O glue, no async, no HTTP.
 
+pub mod caller;
 pub mod file;
 pub mod store;
 pub mod token;

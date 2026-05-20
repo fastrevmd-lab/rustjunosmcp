@@ -2,7 +2,7 @@
 //! the current `Arc<TokenStore>`, and stuff a `CallerCtx` into request
 //! extensions. Reject otherwise with HTTP 401.
 
-use crate::caller::CallerCtx;
+use rust_junosmcp_auth::caller::CallerCtx;
 use arc_swap::ArcSwap;
 use axum::{
     body::Body,
