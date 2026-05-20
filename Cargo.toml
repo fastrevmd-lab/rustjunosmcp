@@ -1,13 +1,13 @@
 [workspace]
-members = ["rust-junosmcp-core", "rust-junosmcp", "rust-junosmcp-auth"]
+members          = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth"]
+default-members  = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth"]
 resolver = "2"
 
 [workspace.package]
-version      = "0.6.2"
-edition      = "2021"
-license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/fastrevmd-lab/RustJunosMCP"
-authors      = ["fastrevmd-lab"]
+edition    = "2021"
+license    = "MIT OR Apache-2.0"
+repository = "https://github.com/fastrevmd-lab/RustJunosMCP"
+authors    = ["fastrevmd-lab"]
 
 [workspace.dependencies]
 tokio        = { version = "1", features = ["full"] }
