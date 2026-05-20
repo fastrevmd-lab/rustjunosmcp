@@ -11,19 +11,13 @@ use clap::Parser;
 use cli::{Cli, Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_auth::file::TokenStoreFile;
-use rust_junosmcp_core::{DeviceManager, Inventory, OpenSshScpRunner, Policy, TransferConfig};
+use rust_junosmcp_core::{DeviceManager, OpenSshScpRunner, Policy, TransferConfig};
 use server::JmcpHandler;
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    rust_junosmcp_core::bootstrap::init_tracing();
 
     let args = Cli::parse();
 
@@ -33,13 +27,13 @@ async fn main() -> Result<()> {
 
     cli_validate::validate(&args).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let inventory = Arc::new(
-        Inventory::load(&args.device_mapping)
-            .with_context(|| format!("loading {}", args.device_mapping.display()))?,
-    );
+    let inv_path = args.device_mapping.clone();
+    let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("loading {}", inv_path.display()))?;
     tracing::info!(
         devices = inventory.names().len(),
-        path = %args.device_mapping.display(),
+        path = %inv_path.display(),
         "loaded inventory"
     );
 
@@ -52,20 +46,15 @@ async fn main() -> Result<()> {
         total_devices = inventory.names().len(),
         "blocklist policy loaded"
     );
-
-    let inv_path = args.device_mapping.clone();
-    let inv_hash = rust_junosmcp_core::inventory::hash_file(&inv_path)
-        .with_context(|| format!("hashing {}", inv_path.display()))?;
     // Mirror the scp host-key posture for NETCONF SSH:
     //   default → strict KnownHosts lookup against --known-hosts-file
     //   --ssh-accept-new-host-keys → lab/TOFU mode (AcceptAll)
     // Without this opt-in the rustez/rustnetconf 0.11+ default is RejectAll
     // (fail-closed) and every op command would error `Unknown server key`.
-    let host_key_policy = if args.ssh_accept_new_host_keys {
-        rust_junosmcp_core::HostKeyVerification::AcceptAll
-    } else {
-        rust_junosmcp_core::HostKeyVerification::KnownHosts(args.known_hosts_file.clone())
-    };
+    let host_key_policy = rust_junosmcp_core::bootstrap::build_host_key_policy(
+        args.ssh_accept_new_host_keys,
+        args.known_hosts_file.clone(),
+    );
     let dev_manager = Arc::new(
         DeviceManager::with_path(
             inventory.clone(),
