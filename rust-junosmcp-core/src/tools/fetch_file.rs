@@ -91,6 +91,17 @@ pub async fn handle(
         let remote_basename = args.remote_path.clone();
         let remote_path = format!("/var/tmp/{}", remote_basename);
         let local_path = cfg.staging_dir.join(&local_basename);
+        let partial_path = {
+            let mut p = local_path.clone();
+            let fname = p
+                .file_name()
+                .expect("local_path has a file name")
+                .to_os_string();
+            let mut s = fname;
+            s.push(".partial");
+            p.set_file_name(s);
+            p
+        };
 
         // Open pooled NETCONF session for the remote checksum probe.
         let mut dev = select_cancel(&ct, dm.open(&args.router_name)).await?;
@@ -142,7 +153,10 @@ pub async fn handle(
             }
         }
 
-        // SCP the file down.
+        // Best-effort pre-clean of any stale .partial from a previous crashed fetch.
+        let _ = std::fs::remove_file(&partial_path);
+
+        // SCP the file down to the .partial sibling.
         let job = ScpFetchJob {
             private_key_path,
             known_hosts_file: cfg.known_hosts_file.clone(),
@@ -150,18 +164,18 @@ pub async fn handle(
             host,
             port,
             remote_path: remote_path.clone(),
-            local_path: local_path.clone(),
+            local_path: partial_path.clone(),
             accept_new_host_keys: cfg.accept_new_host_keys,
         };
-        let outcome = cfg
-            .scp_runner
-            .fetch(&job, &ct)
-            .await
-            .map_err(|e| match e.kind() {
+        let outcome = cfg.scp_runner.fetch(&job, &ct).await.map_err(|e| {
+            let _ = std::fs::remove_file(&partial_path);
+            match e.kind() {
                 std::io::ErrorKind::Interrupted => JmcpError::Cancelled,
                 _ => JmcpError::Io(e),
-            })?;
+            }
+        })?;
         if outcome.exit_code != 0 {
+            let _ = std::fs::remove_file(&partial_path);
             if outcome.exit_code == 255
                 && (outcome.stderr.contains("Connection timed out")
                     || outcome.stderr.contains("No route to host"))
@@ -174,18 +188,21 @@ pub async fn handle(
             });
         }
 
-        // Post-fetch local hash + verify.
-        let (post_sha, post_size) = sha256_file_cancellable(&local_path, &ct).await?;
+        // Post-fetch local hash + verify (reads from partial_path).
+        let (post_sha, post_size) = sha256_file_cancellable(&partial_path, &ct).await?;
         let verified = post_sha == remote_sha;
         if args.verify && !verified {
-            // Best-effort cleanup of the corrupted local file.
-            let _ = std::fs::remove_file(&local_path);
+            // Best-effort cleanup of the corrupted partial file.
+            let _ = std::fs::remove_file(&partial_path);
             return Err(JmcpError::FetchVerifyMismatch {
                 dest: local_path.display().to_string(),
                 local_sha: hex32(&post_sha),
                 remote_sha: hex32(&remote_sha),
             });
         }
+
+        // Atomically promote to the canonical name.
+        std::fs::rename(&partial_path, &local_path).map_err(JmcpError::Io)?;
 
         Ok(json!({
             "status": "fetched",
