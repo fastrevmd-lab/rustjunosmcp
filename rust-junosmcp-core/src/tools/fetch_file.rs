@@ -71,8 +71,7 @@ pub async fn handle(
         // Per-router serialization (shared with transfer_file). Acquired AFTER
         // basename validation so an obviously-bogus path never queues behind a
         // live transfer.
-        let _permit =
-            select_cancel_raw(&ct, cfg.transfer_locks.acquire(&args.router_name)).await?;
+        let _permit = select_cancel_raw(&ct, cfg.transfer_locks.acquire(&args.router_name)).await?;
 
         // Resolve device + check auth type. Snapshot the fields we need before
         // dropping the borrow so we can hand `dm` to `dm.open(...)` below.
@@ -123,8 +122,7 @@ pub async fn handle(
                 )));
             }
             if meta.is_file() {
-                let (local_sha, local_size) =
-                    sha256_file_cancellable(&local_path, &ct).await?;
+                let (local_sha, local_size) = sha256_file_cancellable(&local_path, &ct).await?;
                 if local_sha == remote_sha {
                     return Ok(skipped_response(
                         &local_path,

@@ -828,11 +828,8 @@ pub trait ScpRunner: Send + Sync {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome>;
 
     /// Run the SCP download job. Same cancellation contract as `run()`.
-    async fn fetch(
-        &self,
-        job: &ScpFetchJob,
-        ct: &CancellationToken,
-    ) -> std::io::Result<ScpOutcome>;
+    async fn fetch(&self, job: &ScpFetchJob, ct: &CancellationToken)
+        -> std::io::Result<ScpOutcome>;
 }
 
 /// Production runner — shells out to `scp` from system openssh-client.
@@ -983,7 +980,10 @@ impl ScpRunner for MockScpRunner {
         job: &ScpFetchJob,
         ct: &CancellationToken,
     ) -> std::io::Result<ScpOutcome> {
-        self.fetch_calls.lock().await.push(build_scp_fetch_argv(job));
+        self.fetch_calls
+            .lock()
+            .await
+            .push(build_scp_fetch_argv(job));
         if let Some(d) = self.delay {
             tokio::select! {
                 biased;
