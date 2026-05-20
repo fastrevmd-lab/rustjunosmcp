@@ -75,6 +75,23 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
+    #[error("[code=local_dest_exists_differs] local destination '{dest}' exists with sha256 '{local_sha}'; remote sha256 is '{remote_sha}'; set force=true to overwrite")]
+    LocalDestExistsDiffers {
+        dest: String,
+        local_sha: String,
+        remote_sha: String,
+    },
+
+    #[error("[code=remote_file_missing] router '{router}' has no file at '{remote_path}'")]
+    RemoteFileMissing { router: String, remote_path: String },
+
+    #[error("[code=fetch_verify_mismatch] fetched file '{dest}' local sha256 '{local_sha}' does not match remote sha256 '{remote_sha}'")]
+    FetchVerifyMismatch {
+        dest: String,
+        local_sha: String,
+        remote_sha: String,
+    },
+
     #[error(
         "transfer outer timeout [code=outer_timeout] after {0:?}; raise the `timeout` arg or split the file"
     )]
@@ -569,5 +586,40 @@ mod tests {
         let s = JmcpError::Cancelled.to_string();
         assert!(s.contains("[code=cancelled]"), "got {s}");
         assert!(s.contains("cancelled by client"), "got {s}");
+    }
+
+    #[test]
+    fn local_dest_exists_differs_display_has_code() {
+        let s = JmcpError::LocalDestExistsDiffers {
+            dest: "/var/lib/jmcp/staging/foo.tgz".into(),
+            local_sha: "aaaa".into(),
+            remote_sha: "bbbb".into(),
+        }
+        .to_string();
+        assert!(s.contains("[code=local_dest_exists_differs]"), "{s}");
+        assert!(s.contains("aaaa"), "{s}");
+        assert!(s.contains("bbbb"), "{s}");
+    }
+
+    #[test]
+    fn remote_file_missing_display_has_code() {
+        let s = JmcpError::RemoteFileMissing {
+            router: "vsrx-test10".into(),
+            remote_path: "/var/tmp/missing.txt".into(),
+        }
+        .to_string();
+        assert!(s.contains("[code=remote_file_missing]"), "{s}");
+        assert!(s.contains("vsrx-test10"), "{s}");
+    }
+
+    #[test]
+    fn fetch_verify_mismatch_display_has_code() {
+        let s = JmcpError::FetchVerifyMismatch {
+            dest: "/var/lib/jmcp/staging/foo.tgz".into(),
+            local_sha: "aaaa".into(),
+            remote_sha: "bbbb".into(),
+        }
+        .to_string();
+        assert!(s.contains("[code=fetch_verify_mismatch]"), "{s}");
     }
 }
