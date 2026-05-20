@@ -934,9 +934,7 @@ mod scope_tests {
             routers: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
         };
-        assert!(handler
-            .check_tool_scope(Some(&ctx), "fetch_file")
-            .is_ok());
+        assert!(handler.check_tool_scope(Some(&ctx), "fetch_file").is_ok());
         assert!(matches!(
             handler.check_router_scope(Some(&ctx), "fetch_file", "vsrx-test10"),
             Err(ScopeError::RouterNotInScope { .. })
