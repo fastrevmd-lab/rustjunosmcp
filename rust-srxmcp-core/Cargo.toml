@@ -1,0 +1,12 @@
+[package]
+name        = "rust-srxmcp-core"
+version     = "0.0.1"
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+description = "Core logic for rust-srxmcp (SRX-specific MCP workflows). Phase 1A placeholder."
+
+[dependencies]
+# Phase 1B (srxmcp-v0.1.0) will add real deps. For 0.0.1 the lib is
+# intentionally empty so the crate exists in the workspace.
