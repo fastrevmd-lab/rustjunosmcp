@@ -874,6 +874,66 @@ pub trait ScpRunner: Send + Sync {
         -> std::io::Result<ScpOutcome>;
 }
 
+/// Drive an already-spawned `scp` child to completion, racing against
+/// cancellation and draining both stdout and stderr concurrently with the
+/// `wait()` call.
+///
+/// Concurrent draining matters: OpenSSH `scp` can emit a verbose stderr
+/// banner (and ssh -v output, if it were ever enabled) larger than the
+/// kernel pipe-buffer (~64 KiB on Linux). Awaiting `wait()` first and only
+/// then `read_to_end()` will deadlock the child on `write(2)`. Driving
+/// `wait`, `read_to_end(stdout)`, and `read_to_end(stderr)` together via
+/// `tokio::try_join!` keeps the pipes draining. See #56.
+///
+/// `log_phase` is the `tracing` phase string used by the cancellation arm
+/// (`"transfer_file.scp_diag"` for uploads, `"fetch_file.scp_diag"` for
+/// downloads). The diagnostic format is preserved verbatim from the
+/// pre-refactor implementation.
+async fn drive_scp_child(
+    mut child: tokio::process::Child,
+    ct: &tokio_util::sync::CancellationToken,
+    log_phase: &'static str,
+) -> std::io::Result<ScpOutcome> {
+    use tokio::io::AsyncReadExt;
+    let mut stdout_pipe = child.stdout.take().expect("piped");
+    let mut stderr_pipe = child.stderr.take().expect("piped");
+    let mut so: Vec<u8> = Vec::new();
+    let mut se: Vec<u8> = Vec::new();
+
+    // Buffers live in this scope so we can read them after `select!`
+    // resolves. The drain branch borrows them mutably for the lifetime
+    // of its future; that borrow ends when try_join! completes.
+    let status = tokio::select! {
+        biased;
+        _ = ct.cancelled() => {
+            tracing::info!(pid = ?child.id(), "{log_phase} phase=\"cancelled\": killing scp child");
+            let _ = child.start_kill();
+            // Reap so we don't leak a zombie in the process table.
+            let _ = child.wait().await;
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+        }
+        result = async {
+            // Drive wait + both reads concurrently. If wait() resolves first,
+            // try_join! still awaits the two reads so we don't lose buffered
+            // output; if a read errors mid-flight (rare — closed pipe), the
+            // error propagates and the child is killed by `kill_on_drop` when
+            // this future is dropped.
+            tokio::try_join!(
+                child.wait(),
+                stdout_pipe.read_to_end(&mut so),
+                stderr_pipe.read_to_end(&mut se),
+            )
+            .map(|(status, _, _)| status)
+        } => result?,
+    };
+
+    Ok(ScpOutcome {
+        exit_code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&so).into_owned(),
+        stderr: String::from_utf8_lossy(&se).into_owned(),
+    })
+}
+
 /// Production runner — shells out to `scp` from system openssh-client.
 pub struct OpenSshScpRunner;
 
@@ -2340,5 +2400,71 @@ mod scp_unit_tests {
             }
             other => panic!("expected ScpFailed, got {other:?}"),
         }
+    }
+
+    /// Regression for #56: prior to v0.6.1, drive_scp_child awaited
+    /// `child.wait()` before draining stdout/stderr. A child that writes
+    /// more than the kernel pipe-buffer capacity (~64 KiB on Linux) to
+    /// stderr before exit will block on `write(2)` and `wait()` will hang.
+    /// The concurrent-drain helper must complete promptly even for a
+    /// large stderr payload.
+    #[tokio::test]
+    async fn drive_scp_child_does_not_deadlock_on_large_stderr() {
+        // 128 KiB > typical Linux pipe-buffer (~64 KiB).
+        // `head -c` + base64 keeps the fixture portable.
+        // We write to stderr (>&2) then exit non-zero.
+        let child = tokio::process::Command::new("sh")
+            .args(["-c", "head -c 131072 /dev/urandom | base64 1>&2; exit 7"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+
+        let ct = tokio_util::sync::CancellationToken::new();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            drive_scp_child(child, &ct, "test.scp_diag"),
+        )
+        .await
+        .expect("drive_scp_child must complete within 5s — pipe-fill deadlock regression (#56)")
+        .expect("drive_scp_child must return Ok with the captured outcome");
+
+        assert_eq!(outcome.exit_code, 7);
+        assert!(
+            outcome.stderr.len() >= 131_072,
+            "expected ≥128 KiB of stderr, got {} bytes",
+            outcome.stderr.len()
+        );
+    }
+
+    /// Cancellation arm must still kill the child and report Interrupted —
+    /// behaviour the existing OpenSshScpRunner has today; drive_scp_child
+    /// must preserve it.
+    #[tokio::test]
+    async fn drive_scp_child_honors_cancellation() {
+        let child = tokio::process::Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sleep");
+
+        let ct = tokio_util::sync::CancellationToken::new();
+        let ct_for_cancel = ct.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            ct_for_cancel.cancel();
+        });
+
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            drive_scp_child(child, &ct, "test.scp_diag"),
+        )
+        .await
+        .expect("cancellation should return promptly")
+        .expect_err("cancellation must surface as an Err");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+        assert!(err.to_string().contains("cancelled"));
     }
 }
