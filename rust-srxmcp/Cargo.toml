@@ -25,7 +25,7 @@ serde_json         = { workspace = true }
 tracing            = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 rmcp = { version = "0.8", features = [
     "server",
     "macros",
