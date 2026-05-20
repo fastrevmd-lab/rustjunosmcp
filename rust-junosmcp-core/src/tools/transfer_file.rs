@@ -810,6 +810,48 @@ mod argv_tests {
     }
 }
 
+/// Map a non-zero `ScpOutcome` to the appropriate `JmcpError`.
+///
+/// Branch order:
+/// 1. Exit 255 + "Connection timed out" / "No route to host"  → `ConnectTimeout`
+///    (network unreachable; retry-able).
+/// 2. Exit 255 + "Host key verification failed" /
+///    "REMOTE HOST IDENTIFICATION HAS CHANGED"                → `HostKeyMismatch`
+///    (operator-action required; refresh `known_hosts`).
+/// 3. Anything else                                           → `ScpFailed`
+///    with the stderr scrubbed via `scrub_scp_stderr`.
+///
+/// Used by both `transfer_file::handle` (upload) and `fetch_file::handle`
+/// (download) so the branch order can't drift between the two paths.
+pub(crate) fn classify_scp_failure(
+    outcome: &ScpOutcome,
+    router_name: &str,
+    known_hosts_file: &std::path::Path,
+) -> crate::error::JmcpError {
+    use crate::error::JmcpError;
+    if outcome.exit_code == 255 {
+        if outcome.stderr.contains("Connection timed out")
+            || outcome.stderr.contains("No route to host")
+        {
+            return JmcpError::ConnectTimeout(router_name.to_string());
+        }
+        if outcome.stderr.contains("Host key verification failed")
+            || outcome
+                .stderr
+                .contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+        {
+            return JmcpError::HostKeyMismatch {
+                router: router_name.to_string(),
+                known_hosts_file: known_hosts_file.to_path_buf(),
+            };
+        }
+    }
+    JmcpError::ScpFailed {
+        exit_code: outcome.exit_code,
+        stderr: scrub_scp_stderr(&outcome.stderr),
+    }
+}
+
 /// Outcome of a single SCP invocation.
 #[derive(Clone, Debug)]
 pub struct ScpOutcome {
@@ -2148,5 +2190,126 @@ mod scp_unit_tests {
         // actual Display tag is `[code=outer_timeout]` (error.rs line 76)
         assert!(s.contains("[code=outer_timeout]"), "got {}", s);
         assert!(s.contains("600s"), "got {}", s);
+    }
+
+    #[test]
+    fn classify_scp_failure_maps_connect_timeout() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "ssh: connect to host 192.0.2.1 port 22: Connection timed out".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "r1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        assert!(
+            matches!(e, JmcpError::ConnectTimeout(ref r) if r == "r1"),
+            "got {e:?}"
+        );
+    }
+
+    #[test]
+    fn classify_scp_failure_maps_no_route_to_host() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "ssh: connect to host 192.0.2.1 port 22: No route to host".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "r1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        assert!(
+            matches!(e, JmcpError::ConnectTimeout(ref r) if r == "r1"),
+            "got {e:?}"
+        );
+    }
+
+    #[test]
+    fn classify_scp_failure_maps_host_key_verification_failed() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "Host key verification failed.\r\nlost connection".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "vSRX-test10",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match e {
+            JmcpError::HostKeyMismatch {
+                router,
+                known_hosts_file,
+            } => {
+                assert_eq!(router, "vSRX-test10");
+                assert_eq!(
+                    known_hosts_file,
+                    std::path::PathBuf::from("/etc/jmcp/known_hosts")
+                );
+            }
+            other => panic!("expected HostKeyMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_scp_failure_maps_remote_host_identification_changed() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nWARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "r1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        assert!(matches!(e, JmcpError::HostKeyMismatch { .. }), "got {e:?}");
+    }
+
+    #[test]
+    fn classify_scp_failure_falls_through_to_scp_failed_for_other_stderr() {
+        let outcome = ScpOutcome {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "scp: /var/tmp/foo: Permission denied".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "r1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        assert!(
+            matches!(e, JmcpError::ScpFailed { exit_code: 1, .. }),
+            "got {e:?}"
+        );
+    }
+
+    #[test]
+    fn classify_scp_failure_scrubs_paths_in_scp_failed_stderr() {
+        // Regression: existing scrubbing behaviour at the call site must survive
+        // the move into the classifier (issue #26, L1).
+        let outcome = ScpOutcome {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "Load key \"/root/.ssh/id_ed25519\": invalid format".into(),
+        };
+        let e = classify_scp_failure(
+            &outcome,
+            "r1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match e {
+            JmcpError::ScpFailed { stderr, .. } => {
+                assert!(
+                    !stderr.contains("/root/.ssh/id_ed25519"),
+                    "stderr was not scrubbed: {stderr}"
+                );
+            }
+            other => panic!("expected ScpFailed, got {other:?}"),
+        }
     }
 }
