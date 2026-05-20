@@ -1,0 +1,39 @@
+[Unit]
+Description=Rust SRX MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jmcp
+Group=jmcp
+Environment=JMCP_SRX_HTTP_PORT=30032
+Environment=JMCP_TOKENS_PATH=/etc/jmcp/tokens.json
+Environment=JMCP_DEVICES_PATH=/etc/jmcp/devices.json
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/rust-srxmcp --tokens-file /etc/jmcp/tokens.json --device-mapping /etc/jmcp/devices.json
+Restart=on-failure
+RestartSec=5
+
+# Hardening (mirrors rust-junosmcp.service)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jmcp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Independent of rust-junosmcp.service. The two binaries share
+# /etc/jmcp/tokens.json and /etc/jmcp/devices.json but otherwise run
+# under separate unit lifecycles.
+
+[Install]
+WantedBy=multi-user.target
