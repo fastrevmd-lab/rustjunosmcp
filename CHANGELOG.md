@@ -4,6 +4,45 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-05-20
+
+New `fetch_file` MCP tool — mirror image of `transfer_file`. Downloads a
+file from a Junos device's `/var/tmp/<basename>` to the host's staging
+directory, with sha256 verification, idempotent skip, per-router
+serialization, and the same SSH hardening (StrictHostKeyChecking,
+BatchMode, IdentitiesOnly, scrubbed scp stderr) as `transfer_file`.
+
+Tool surface grows from 14 → 15 tools.
+
+### Added
+
+- **`fetch_file` MCP tool** at `tools::fetch_file::handle`. Required args:
+  `router_name`, `remote_path` (basename under `/var/tmp/`). Optional:
+  `local_name` (basename override under staging dir), `force` (overwrite
+  divergent local file), `verify` (default `true`), `timeout` (default 600s).
+- **`ScpRunner::fetch()`** trait method with `OpenSshScpRunner` and
+  `MockScpRunner` implementations.
+- **`ScpFetchJob`** + **`build_scp_fetch_argv`** in
+  `rust_junosmcp_core::tools::transfer_file`. Mirror of the upload variants;
+  same flag posture, source/dest swapped.
+- **New error variants:**
+  - `JmcpError::LocalDestExistsDiffers` — local file present with different sha256;
+    set `force=true` to overwrite.
+  - `JmcpError::RemoteFileMissing` — device has no file at the requested path.
+  - `JmcpError::FetchVerifyMismatch` — post-fetch local sha256 disagrees with
+    pre-fetch remote sha256; the corrupted local file is removed.
+
+### Changed
+
+- `SERVER_TOOLS` tripwire test `server_tools_len_is_14` → `server_tools_len_is_15`.
+
+### Verification
+
+- Workspace unit + integration tests all pass; new coverage for the
+  fetch_file argv builder, runner mock, scope denial, and the three new
+  error variants.
+- `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
 ## [0.5.9] — 2026-05-19
 
 Cooperative cancellation for long-running destructive tools (issue #44
