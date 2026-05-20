@@ -27,3 +27,11 @@ dist/
 
 # Local worktrees
 .worktrees/
+
+# Captured device configs (contain encrypted-password hashes / SSH keys
+# marked ## SECRET-DATA — never commit)
+config-snapshots/
+
+# Local untracked notes — review before sharing
+SECURITY_CODE_REVIEW_REPORT.md
+SRX_RUSTJUNOSMCP_CAPABILITY_GAPS.md
