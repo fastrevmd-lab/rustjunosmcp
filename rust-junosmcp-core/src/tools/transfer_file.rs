@@ -941,35 +941,13 @@ pub struct OpenSshScpRunner;
 impl ScpRunner for OpenSshScpRunner {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
         let argv = build_scp_argv(job);
-        use tokio::io::AsyncReadExt;
-        let mut child = tokio::process::Command::new("scp")
+        let child = tokio::process::Command::new("scp")
             .args(&argv)
             .kill_on_drop(true)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
-        let mut stdout_pipe = child.stdout.take().expect("piped");
-        let mut stderr_pipe = child.stderr.take().expect("piped");
-        let status = tokio::select! {
-            biased;
-            _ = ct.cancelled() => {
-                tracing::info!(pid = ?child.id(), "transfer_file.scp_diag phase=\"cancelled\": killing scp child");
-                let _ = child.start_kill();
-                // Reap so we don't leak a zombie in the process table.
-                let _ = child.wait().await;
-                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
-            }
-            s = child.wait() => s?,
-        };
-        let mut so = Vec::new();
-        let mut se = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut so).await;
-        let _ = stderr_pipe.read_to_end(&mut se).await;
-        Ok(ScpOutcome {
-            exit_code: status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&so).into_owned(),
-            stderr: String::from_utf8_lossy(&se).into_owned(),
-        })
+        drive_scp_child(child, ct, "transfer_file.scp_diag").await
     }
 
     async fn fetch(
@@ -978,35 +956,13 @@ impl ScpRunner for OpenSshScpRunner {
         ct: &CancellationToken,
     ) -> std::io::Result<ScpOutcome> {
         let argv = build_scp_fetch_argv(job);
-        use tokio::io::AsyncReadExt;
-        let mut child = tokio::process::Command::new("scp")
+        let child = tokio::process::Command::new("scp")
             .args(&argv)
             .kill_on_drop(true)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
-        let mut stdout_pipe = child.stdout.take().expect("piped");
-        let mut stderr_pipe = child.stderr.take().expect("piped");
-        let status = tokio::select! {
-            biased;
-            _ = ct.cancelled() => {
-                tracing::info!(pid = ?child.id(), "fetch_file.scp_diag phase=\"cancelled\": killing scp child");
-                let _ = child.start_kill();
-                // Reap so we don't leak a zombie in the process table.
-                let _ = child.wait().await;
-                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
-            }
-            s = child.wait() => s?,
-        };
-        let mut so = Vec::new();
-        let mut se = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut so).await;
-        let _ = stderr_pipe.read_to_end(&mut se).await;
-        Ok(ScpOutcome {
-            exit_code: status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&so).into_owned(),
-            stderr: String::from_utf8_lossy(&se).into_owned(),
-        })
+        drive_scp_child(child, ct, "fetch_file.scp_diag").await
     }
 }
 
