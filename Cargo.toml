@@ -1,5 +1,5 @@
 [workspace]
-members          = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth"]
+members          = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth", "rust-srxmcp-core"]
 default-members  = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth"]
 resolver = "2"
 
