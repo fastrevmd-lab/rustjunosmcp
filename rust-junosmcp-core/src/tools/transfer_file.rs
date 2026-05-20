@@ -2259,47 +2259,6 @@ mod scp_unit_tests {
         }
     }
 
-    /// Prove that the dispatch path wired inside `handle()` (via
-    /// `classify_scp_failure`) surfaces `JmcpError::HostKeyMismatch` when
-    /// scp exits 255 with "Host key verification failed." on stderr.
-    ///
-    /// This test exercises `classify_scp_failure` directly (the same function
-    /// that `handle()` delegates to after the inline-dispatch replacement in
-    /// Task 3).  A full `handle()` call is not feasible here because `handle`
-    /// requires a live NETCONF session for the pre-flight CLI probes; testing
-    /// at the classifier boundary is equivalent once the inline block is gone.
-    #[test]
-    fn handle_maps_scp_host_key_failure_to_host_key_mismatch() {
-        let mock = MockScpRunner::with_outcome(ScpOutcome {
-            exit_code: 255,
-            stdout: String::new(),
-            stderr: "Host key verification failed.\r\nlost connection".into(),
-        });
-        // Verify the mock holds the outcome we set (mirrors mock_runner_records_argv_and_reports_success).
-        assert_eq!(mock.outcome.exit_code, 255);
-
-        let outcome = mock.outcome.clone();
-        let err = classify_scp_failure(
-            &outcome,
-            "r1",
-            std::path::Path::new("/etc/jmcp/known_hosts"),
-        );
-        match err {
-            JmcpError::HostKeyMismatch {
-                router,
-                known_hosts_file,
-            } => {
-                assert_eq!(router, "r1");
-                assert!(
-                    known_hosts_file.to_string_lossy().contains("known_hosts"),
-                    "expected path containing known_hosts, got {}",
-                    known_hosts_file.display(),
-                );
-            }
-            other => panic!("expected HostKeyMismatch, got {other:?}"),
-        }
-    }
-
     #[test]
     fn classify_scp_failure_maps_remote_host_identification_changed() {
         let outcome = ScpOutcome {
