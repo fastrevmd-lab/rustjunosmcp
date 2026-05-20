@@ -4,6 +4,38 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-05-20
+
+### Fixed
+
+- **#56 — scp stderr pipe-fill deadlock.** `OpenSshScpRunner::run` and
+  `::fetch` previously awaited `child.wait()` before draining the
+  stdout/stderr pipes. If `scp` emitted more than the kernel pipe-buffer
+  capacity (~64 KiB on Linux) to stderr before exit, the child blocked on
+  `write(2)` and `wait()` hung until the MCP `timeout` cancelled the
+  request. Extracted a shared `drive_scp_child` helper that drives `wait`
+  and both pipe reads concurrently via `tokio::try_join!`, eliminating
+  the deadlock on both `transfer_file` and `fetch_file`. Inherited from
+  v0.4.0; not a new regression.
+- **#57 — host-key verification failures bucketed into generic
+  `ScpFailed`.** When `scp` exited 255 with `Host key verification
+  failed.` (or `REMOTE HOST IDENTIFICATION HAS CHANGED`), the error
+  surfaced as `[code=scp_failed]` with the raw stderr — indistinguishable
+  from a permission error. Now surfaces as a new
+  `[code=host_key_mismatch]` variant that names both the router and the
+  `known_hosts` file the operator needs to review or refresh. The
+  network-timeout heuristic (`[code=connect_timeout]`) is unchanged; the
+  three-branch classifier lives in a new shared `classify_scp_failure`
+  helper so the upload and download paths can't drift.
+
+### Notes
+
+- No MCP tool surface change; tool count stays at 15.
+- Existing callers pattern-matching on `JmcpError::ScpFailed`'s stderr
+  for the substring `Host key verification failed` should switch to the
+  new `JmcpError::HostKeyMismatch` arm. No such callers exist in this
+  repository as of v0.6.0.
+
 ## [0.6.0] — 2026-05-20
 
 New `fetch_file` MCP tool — mirror image of `transfer_file`. Downloads a
