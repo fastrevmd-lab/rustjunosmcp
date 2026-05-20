@@ -38,6 +38,7 @@ pub async fn auth_layer(
         None => {
             return reject(
                 StatusCode::UNAUTHORIZED,
+                "invalid_request",
                 "missing Authorization header",
                 CHALLENGE_NO_CREDENTIALS,
             )
@@ -48,6 +49,7 @@ pub async fn auth_layer(
         None => {
             return reject(
                 StatusCode::UNAUTHORIZED,
+                "invalid_request",
                 "Authorization header must use Bearer scheme",
                 CHALLENGE_NO_CREDENTIALS,
             )
@@ -67,6 +69,7 @@ pub async fn auth_layer(
             );
             reject(
                 StatusCode::UNAUTHORIZED,
+                "invalid_token",
                 "invalid bearer token",
                 CHALLENGE_INVALID_TOKEN,
             )
@@ -93,13 +96,30 @@ fn parse_bearer(v: &HeaderValue) -> Option<&str> {
 /// Per RFC 6750 §3, every 401 from a bearer-protected resource MUST carry a
 /// `WWW-Authenticate: Bearer ...` challenge. `challenge` is the full header
 /// value (e.g. `Bearer realm="jmcp"` or `Bearer realm="jmcp", error="invalid_token"`).
-fn reject(code: StatusCode, msg: &str, challenge: &'static str) -> Response<Body> {
+///
+/// The response body is the RFC 6749 §5.2 JSON error object
+/// (`{"error": "...", "error_description": "..."}`) so MCP clients that parse
+/// the body as OAuth-formatted JSON (e.g. the Claude Code SDK) do not choke on
+/// a plain-text reason phrase.
+fn reject(
+    code: StatusCode,
+    error_code: &'static str,
+    msg: &str,
+    challenge: &'static str,
+) -> Response<Body> {
+    let body = serde_json::json!({
+        "error": error_code,
+        "error_description": msg,
+    })
+    .to_string();
     Response::builder()
         .status(code)
         .header(header::WWW_AUTHENTICATE, challenge)
-        .body(Body::from(msg.to_string()))
-        // OK: builder only fails on invalid header values; both `code` and the
-        // static challenge constants are valid by construction.
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        // OK: builder only fails on invalid header values; `code`, the static
+        // challenge constants, and the literal content-type are all valid by
+        // construction.
         .unwrap()
 }
 

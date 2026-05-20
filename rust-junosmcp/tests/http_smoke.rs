@@ -241,6 +241,19 @@ fn missing_authorization_returns_401() {
         challenge.to_ascii_lowercase().starts_with("bearer"),
         "challenge must use Bearer scheme: {challenge:?}"
     );
+    // Body must be the RFC 6749 §5.2 JSON error object so OAuth-aware MCP
+    // clients (e.g. Claude Code SDK) don't choke on a plain-text reason
+    // phrase.
+    assert_eq!(
+        r.body["error"], "invalid_request",
+        "missing-auth 401 body must be {{error:\"invalid_request\",...}}: {:?}",
+        r.body
+    );
+    assert!(
+        r.body["error_description"].is_string(),
+        "401 body must include error_description string: {:?}",
+        r.body
+    );
 }
 
 #[test]
@@ -271,6 +284,18 @@ fn wrong_bearer_returns_401() {
     assert!(
         challenge.contains(r#"error="invalid_token""#),
         "wrong-bearer challenge must include error=\"invalid_token\" per RFC 6750 §3.1: {challenge:?}"
+    );
+    // Body must be the RFC 6749 §5.2 JSON error object with the matching
+    // OAuth error code so SDK clients can parse the response.
+    assert_eq!(
+        r.body["error"], "invalid_token",
+        "wrong-bearer 401 body must be {{error:\"invalid_token\",...}}: {:?}",
+        r.body
+    );
+    assert!(
+        r.body["error_description"].is_string(),
+        "401 body must include error_description string: {:?}",
+        r.body
     );
 }
 
