@@ -18,3 +18,7 @@ pub use workflows::cluster_status::{
 pub use workflows::license::{
     LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
 };
+pub use workflows::services_status::{
+    AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,
+    ServicesStatusData, SubServiceStatus, UtmAvInfo,
+};

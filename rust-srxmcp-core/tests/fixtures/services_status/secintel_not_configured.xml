@@ -1,0 +1,9 @@
+<nc:rpc-error xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-secintel-feed-summary</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>

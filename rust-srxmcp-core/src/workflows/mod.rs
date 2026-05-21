@@ -3,7 +3,7 @@
 
 pub mod cluster_status;
 pub mod license;
+pub mod services_status;
 
 // Wired in subsequent tasks:
-// pub mod services_status;
 // pub mod vpn_report;

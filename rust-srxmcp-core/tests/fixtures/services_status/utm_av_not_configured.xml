@@ -1,0 +1,5 @@
+<anti-virus xmlns="http://xml.juniper.net/junos/24.4R0/junos-utmd" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" junos:style="status">
+<anti-virus-status>
+<anti-virus-scan-engine-type>no-config</anti-virus-scan-engine-type>
+</anti-virus-status>
+</anti-virus>
