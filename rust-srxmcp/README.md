@@ -5,17 +5,21 @@ MCP server for Juniper **SRX-specific** operational workflows. Sibling to
 and SSH/NETCONF plumbing, but runs as an independent binary on a separate
 port so the generic Junos MCP service is unaffected.
 
-## Phase 1A status (v0.0.1)
+## Status (v0.1.0)
 
-This release is **scaffolding only**. It exists to prove that the second
-binary builds, deploys, and serves MCP over streamable-HTTP with the same
-bearer-token auth and SIGHUP hot-reload behaviour as `rust-junosmcp`.
+Phase 1B — read-only SRX status tools. Tool surface is 5: one diagnostic
+plus four typed read-only workflows backed by NETCONF RPCs and parsed
+into `state=active` / `state=not_configured` `SrxToolResponse<T>` envelopes.
 
-Tool surface: exactly one diagnostic tool — `srxmcp_status` — which returns
-the binary version, uptime, and the caller's authenticated scope.
+## Tools
 
-Real SRX workflows (security policy, NAT, IDP, chassis cluster, etc.) land
-in Phase 1B as `srxmcp-v0.1.0`.
+| Tool | Purpose |
+|---|---|
+| `srxmcp_status` | Diagnostic — server version, endpoint, uptime |
+| `get_chassis_cluster_status` | Chassis-cluster topology + RG health (returns `not_configured` for standalone SRX) |
+| `check_srx_feature_license` | Closed-enum feature → license-record mapping (IDP, AppID, UTM-AV, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) |
+| `get_srx_security_services_status` | IDP / AppID / UTM-AV / SecIntel / ATP-Cloud per-node health snapshot |
+| `vpn_lifecycle_report` | Correlated IKE Phase-1 + IPsec Phase-2 view with optional `peer` / `tunnel` substring filters |
 
 ## Build
 
@@ -65,9 +69,9 @@ in-flight requests are dropped.
 
 | | `rust-junosmcp` | `rust-srxmcp` |
 |---|---|---|
-| Crate version | `0.6.x` | `0.0.x` |
+| Crate version | `0.6.x` | `0.1.x` |
 | Default port | 30031 | 30032 |
-| Tool surface | 15 generic Junos tools | 1 status tool (Phase 1A) |
+| Tool surface | 15 generic Junos tools | 5 SRX-specific tools |
 | Auth | shared `rust-junosmcp-auth` crate | shared `rust-junosmcp-auth` crate |
 | Inventory | shared `devices.json` | shared `devices.json` |
 

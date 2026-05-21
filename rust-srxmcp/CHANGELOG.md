@@ -6,6 +6,26 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.0] — 2026-05-21
+
+Phase 1B — read-only SRX status tools.
+
+### Added
+- `get_chassis_cluster_status` — chassis-cluster topology + RG health.
+- `check_srx_feature_license` — closed-enum feature → license-record mapping.
+- `get_srx_security_services_status` — IDP/AppID/UTM-AV/SecIntel/ATP-Cloud per node.
+- `vpn_lifecycle_report` — correlated IKE + IPsec view with optional `peer`/`tunnel` filters.
+- `rust-srxmcp-core` populated with shared `SrxError`, `SrxToolResponse<T>`, `multi_re_split`, `sanitize_rustez_xml`, and one workflow module per tool.
+- Fixture-driven unit tests covering `state=active`, `state=not_configured`, partial-cluster, and per-sub-service absence cases.
+- `tests/live_smoke.rs` — `#[ignore]`d smoke test per tool against LXC 601.
+
+### Changed
+- Tool surface 1 → 5 (`srxmcp_status` + four new tools).
+- `JmcpSrxHandler` now holds an `Arc<DeviceManager>` so workflows can acquire pooled NETCONF sessions.
+
+### Notes
+- `rust-junosmcp` and `rust-srxmcp` continue to ship independent versions. `rust-junosmcp` remains at its current `0.6.x` line.
+
 ## [0.0.1] — 2026-05-20
 
 Phase 1A scaffolding release. Establishes the second MCP binary in the

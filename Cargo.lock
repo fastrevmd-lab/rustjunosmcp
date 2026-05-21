@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "rust-srxmcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2702,11 +2702,12 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "ureq",
 ]
 
 [[package]]
 name = "rust-srxmcp-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "pretty_assertions",
  "quick-xml 0.36.2",
