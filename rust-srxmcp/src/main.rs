@@ -85,6 +85,12 @@ async fn main() -> Result<()> {
     // diagnostic). The inventory file is re-read on each HUP so the token
     // scope validation sees the current router set.
     #[cfg(unix)]
+    if token_store.is_some() && args.device_mapping.is_none() {
+        tracing::warn!(
+            "--device-mapping not set: SIGHUP reload disabled (token store will not refresh on signal)"
+        );
+    }
+    #[cfg(unix)]
     if let (Some(store_arc), Some(token_path), Some(dev_path)) = (
         token_store.clone(),
         args.tokens_file.clone(),

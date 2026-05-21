@@ -37,7 +37,7 @@ rust-srxmcp \
     --device-mapping /etc/jmcp/devices.json
 ```
 
-Default HTTP port: **30032** (overridable with `--http-port` /
+Default HTTP port: **30032** (overridable with `--port` /
 `JMCP_SRX_HTTP_PORT`). The companion `rust-junosmcp` listens on 30031.
 
 The two binaries share `/etc/jmcp/tokens.json` and `/etc/jmcp/devices.json`
