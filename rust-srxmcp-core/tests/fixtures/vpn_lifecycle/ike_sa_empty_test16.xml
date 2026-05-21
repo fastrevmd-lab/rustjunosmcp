@@ -1,2 +1,2 @@
-<ike-security-associations-information xmlns="http://xml.juniper.net/netconf/junos/1.0" junos:style="detail" xmlns:junos="http://xml.juniper.net/junos/25.4R1.12/junos">
+<ike-security-associations-information junos:style="detail">
 </ike-security-associations-information>

@@ -1,6 +1,5 @@
-<!-- Hand-crafted: IKE SA is UP but IPsec SA negotiation failed (sa-block-state=down).
-     This represents a Phase-1-only state where IKE has established but Phase-2 is not yet up. -->
-<ipsec-security-associations-information xmlns="http://xml.juniper.net/netconf/junos/1.0" junos:style="brief" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos">
+<!-- Hand-crafted: IKE SA is UP but IPsec SA negotiation failed (sa-block-state=down). -->
+<ipsec-security-associations-information junos:style="brief">
 <total-active-tunnels>
 0
 </total-active-tunnels>

@@ -189,6 +189,14 @@ pub fn parse_combined(
     peer_filter: Option<&str>,
     tunnel_filter: Option<&str>,
 ) -> Result<SrxToolResponse<VpnLifecycleData>, SrxError> {
+    // Strip undeclared junos: namespace attributes before any XML parsing.
+    // rustez strips the <nc:rpc-reply> wrapper (which declared xmlns:junos),
+    // leaving orphaned junos:style="…" attributes that roxmltree rejects.
+    let ike_clean = strip_junos_ns_attrs(ike_xml);
+    let ipsec_clean = strip_junos_ns_attrs(ipsec_xml);
+    let ike_xml = ike_clean.as_ref();
+    let ipsec_xml = ipsec_clean.as_ref();
+
     let ike_not_configured = is_not_configured_xml(ike_xml)?;
     let ipsec_not_configured = is_not_configured_xml(ipsec_xml)?;
 
@@ -246,7 +254,8 @@ pub fn parse_ike(xml: &str) -> Result<Vec<IkeSa>, SrxError> {
         return Ok(Vec::new());
     }
 
-    let doc = roxmltree::Document::parse(xml)
+    let cleaned = strip_junos_ns_attrs(xml);
+    let doc = roxmltree::Document::parse(&cleaned)
         .map_err(|e| SrxError::Parse(format!("IKE xml parse: {e}")))?;
 
     let mut sas: Vec<IkeSa> = Vec::new();
@@ -316,7 +325,8 @@ pub fn parse_ipsec(xml: &str) -> Result<Vec<IpsecSa>, SrxError> {
         return Ok(Vec::new());
     }
 
-    let doc = roxmltree::Document::parse(xml)
+    let cleaned = strip_junos_ns_attrs(xml);
+    let doc = roxmltree::Document::parse(&cleaned)
         .map_err(|e| SrxError::Parse(format!("IPsec xml parse: {e}")))?;
 
     let mut sas: Vec<IpsecSa> = Vec::new();
@@ -400,6 +410,238 @@ fn correlate(ike_sas: &[IkeSa], ipsec_sas: &[IpsecSa]) -> Vec<VpnCorrelation> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Sanitize a raw XML string returned by `rustez` so that `roxmltree` can parse it.
+///
+/// Two problems are fixed:
+///
+/// 1. **Undeclared namespace attributes** (`junos:style="brief"`):
+///    `rustez` strips the `<nc:rpc-reply>` wrapper where `xmlns:junos` was declared,
+///    leaving orphaned `junos:*` attributes that roxmltree rejects. These are removed.
+///
+/// 2. **Unescaped `<` / `>` in text content**:
+///    `rustnetconf::extract_rpc_reply_inner_content` calls `text.unescape()` when
+///    reconstructing the inner XML, so `&lt;` / `&gt;` in element text (e.g.
+///    `<sa-direction>`) become raw `<` / `>`. roxmltree rejects these. They are
+///    re-escaped via a two-pass substitution that preserves XML markup.
+///
+/// This function is pure text manipulation — no XML parser is invoked.
+fn strip_junos_ns_attrs(xml: &str) -> std::borrow::Cow<'_, str> {
+    // Fast path: if neither problem is present, return the input unchanged.
+    let needs_ns_strip = xml.contains("junos:");
+    // Detect unescaped `<` or `>` in text content: rustnetconf's inner-content
+    // extractor decodes `&lt;` / `&gt;` entity references (calls text.unescape()),
+    // so `<sa-direction>&lt;</sa-direction>` becomes `<sa-direction><</sa-direction>`
+    // in the returned string. We detect this by looking for bare angle brackets
+    // that are NOT part of an XML tag (i.e. not preceded by `<` for a start tag
+    // or `</` for an end tag, and not followed by `/` or a letter).
+    let needs_text_escape =
+        xml.bytes().any(|b| b == b'<' || b == b'>') && has_bare_angle_brackets_in_text(xml);
+    if !needs_ns_strip && !needs_text_escape {
+        return std::borrow::Cow::Borrowed(xml);
+    }
+
+    // Apply fixes with pure text manipulation (no XML parser invoked here).
+    // Step 1: strip junos: attributes.
+    let after_ns = if needs_ns_strip {
+        simple_strip_junos(xml)
+    } else {
+        xml.to_string()
+    };
+
+    // Step 2: escape bare `<` and `>` in text content.
+    let result = if needs_text_escape {
+        escape_text_angle_brackets(&after_ns)
+    } else {
+        after_ns
+    };
+
+    std::borrow::Cow::Owned(result)
+}
+
+/// Return true if the string contains `<` or `>` characters that appear in
+/// text content (between element boundaries) rather than as part of XML markup.
+///
+/// Heuristic: scan the string byte-by-byte. Track whether we're inside a tag
+/// (`in_tag`). A `<` byte outside a tag is a bare angle bracket in text content,
+/// UNLESS it is immediately followed by `/`, `?`, `!`, or an ASCII letter/digit
+/// (which would make it a legitimate start tag or CDATA section opener).
+///
+/// A `>` byte outside a tag is also a bare angle bracket in text content.
+fn has_bare_angle_brackets_in_text(xml: &str) -> bool {
+    let bytes = xml.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    let mut in_tag = false;
+
+    while i < len {
+        let b = bytes[i];
+        if in_tag {
+            if b == b'>' {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+        // Not in a tag.
+        match b {
+            b'<' => {
+                // Check if this is a legitimate XML tag open.
+                let next = if i + 1 < len { bytes[i + 1] } else { 0 };
+                let is_tag = next == b'/'
+                    || next == b'?'
+                    || next == b'!'
+                    || next.is_ascii_alphanumeric()
+                    || next == b'_';
+                if is_tag {
+                    in_tag = true;
+                } else {
+                    return true; // bare `<` in text content
+                }
+            }
+            b'>' => {
+                // A `>` outside a tag is bare (it only makes sense inside a tag normally).
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Escape bare `<` and `>` characters that appear in text content of an XML string.
+///
+/// Scans the string for XML tag boundaries. Text segments (between `>` and `<`)
+/// have bare `<` replaced with `&lt;` and bare `>` replaced with `&gt;`. Markup
+/// (everything inside `<...>`) is passed through unchanged.
+fn escape_text_angle_brackets(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len() + 32);
+    let mut rest = xml;
+
+    // We alternate between "inside a tag" and "in text content".
+    // Start state: if the string begins with `<`, we're about to enter a tag.
+    let mut in_text = !xml.starts_with('<');
+
+    while !rest.is_empty() {
+        if in_text {
+            // Find the next `<` that starts a legitimate XML tag.
+            // Everything before it is text content; escape bare `<` and `>`.
+            if let Some(tag_start) = find_next_tag_start(rest) {
+                let text_segment = &rest[..tag_start];
+                // Escape bare angle brackets in this text segment.
+                // Note: text content should not contain `&lt;` already (rustnetconf
+                // decoded it), but we avoid double-escaping by checking.
+                for ch in text_segment.chars() {
+                    match ch {
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        other => out.push(other),
+                    }
+                }
+                rest = &rest[tag_start..];
+                in_text = false;
+            } else {
+                // Rest is all text content.
+                for ch in rest.chars() {
+                    match ch {
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        other => out.push(other),
+                    }
+                }
+                break;
+            }
+        } else {
+            // Inside a tag — find the closing `>` and pass through verbatim.
+            if let Some(tag_end) = rest.find('>') {
+                out.push_str(&rest[..=tag_end]);
+                rest = &rest[tag_end + 1..];
+                in_text = true;
+            } else {
+                // Unterminated tag — pass through rest verbatim.
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Find the byte offset of the next `<` that opens a legitimate XML tag.
+/// Returns `None` if no such `<` exists in `s`.
+fn find_next_tag_start(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'<' {
+            let next = if i + 1 < len { bytes[i + 1] } else { 0 };
+            if next == b'/'
+                || next == b'?'
+                || next == b'!'
+                || next.is_ascii_alphanumeric()
+                || next == b'_'
+            {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Fallback: simple text-only stripping of `junos:attr="value"` patterns
+/// when the quick_xml round-trip fails.
+fn simple_strip_junos(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(pos) = rest.find("junos:") {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        let attr_end = find_attr_end(rest);
+        rest = &rest[attr_end..];
+        rest = rest.trim_start_matches(' ');
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Find the end position of an XML attribute starting at `s` (e.g. `junos:style="detail"`).
+/// Returns the byte index of the first character after the attribute value closing quote.
+fn find_attr_end(s: &str) -> usize {
+    // s starts with e.g. `junos:style="detail" ` or `junos:style='detail'>`
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    // Skip past the attribute name (up to '=').
+    while i < len && bytes[i] != b'=' {
+        i += 1;
+    }
+    if i >= len {
+        return len;
+    }
+    i += 1; // skip '='
+    if i >= len {
+        return len;
+    }
+    let quote = bytes[i];
+    if quote != b'"' && quote != b'\'' {
+        // No quote — skip to next whitespace.
+        while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+            i += 1;
+        }
+        return i;
+    }
+    i += 1; // skip opening quote
+    while i < len && bytes[i] != quote {
+        i += 1;
+    }
+    if i < len {
+        i += 1; // skip closing quote
+    }
+    i
+}
+
 /// Return the trimmed text of the first direct child element matching `name`.
 fn child_text(node: &roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
     node.children()
@@ -436,8 +678,9 @@ fn is_not_configured_xml(xml: &str) -> Result<bool, SrxError> {
         return Ok(false);
     }
 
-    let doc =
-        roxmltree::Document::parse(xml).map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+    let cleaned = strip_junos_ns_attrs(xml);
+    let doc = roxmltree::Document::parse(&cleaned)
+        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
 
     let root = doc.root_element();
     let root_is_error = is_error_element(&root);
