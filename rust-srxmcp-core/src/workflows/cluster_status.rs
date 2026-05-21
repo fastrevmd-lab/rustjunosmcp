@@ -48,7 +48,7 @@ pub struct ClusterStatusArgs {
 
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ClusterStatusData {
-    pub cluster_id: u16,
+    pub cluster_id: Option<u16>,
     pub nodes: Vec<ClusterNode>,
     pub redundancy_groups: Vec<RedundancyGroup>,
 }
@@ -110,12 +110,15 @@ pub async fn run(
 /// This is the pure unit-testable entry point; `run()` calls it after
 /// obtaining the raw XML from the device.
 pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxError> {
-    // Detect standalone "not enabled" before trying multi-RE split.
-    if is_not_configured(reply_xml) {
+    // Detect standalone "not enabled" by inspecting error elements only (not raw substring).
+    // This avoids false positives when "not configured" appears in <monitor-failures>
+    // or any other data field within a healthy clustered reply.
+    if is_not_configured_xml(reply_xml)? {
         return Ok(SrxToolResponse::not_configured("chassis cluster disabled"));
     }
 
-    // Use multi_re_split to handle both standalone and clustered (wrapped) replies.
+    // multi_re_split handles clustered (multi-RE wrapped) replies; standalone is handled
+    // by the early-return above.
     let re_nodes = crate::xml::multi_re_split(reply_xml)?;
 
     // Collect chassis-cluster-status data from each RE node that has it.
@@ -156,21 +159,43 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
             .children()
             .filter(|n| n.is_element() && n.tag_name().name() == "redundancy-group")
         {
+            // <redundancy-group-id> is required; missing or non-u16 is a schema error.
             let group_id: u16 = rg_node
                 .children()
                 .find(|n| n.is_element() && n.tag_name().name() == "redundancy-group-id")
                 .and_then(|n| n.text())
-                .and_then(|t| t.trim().parse().ok())
-                .unwrap_or(0);
+                .ok_or_else(|| {
+                    SrxError::schema_mismatch(
+                        "get-chassis-cluster-status-information",
+                        "redundancy-group-id",
+                    )
+                })
+                .and_then(|t| {
+                    t.trim().parse::<u16>().map_err(|_| {
+                        SrxError::schema_mismatch(
+                            "get-chassis-cluster-status-information",
+                            "redundancy-group-id",
+                        )
+                    })
+                })?;
 
-            let failover_count: u32 = rg_node
+            // <redundancy-group-failover-count> is optional (absent → 0); present but
+            // non-u32 is a schema error.
+            let failover_count: u32 = match rg_node
                 .children()
                 .find(|n| {
                     n.is_element() && n.tag_name().name() == "redundancy-group-failover-count"
                 })
                 .and_then(|n| n.text())
-                .and_then(|t| t.trim().parse().ok())
-                .unwrap_or(0);
+            {
+                None => 0,
+                Some(t) => t.trim().parse::<u32>().map_err(|_| {
+                    SrxError::schema_mismatch(
+                        "get-chassis-cluster-status-information",
+                        "redundancy-group-failover-count",
+                    )
+                })?,
+            };
 
             let members = parse_device_stats(&rg_node);
 
@@ -198,13 +223,11 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
         return Ok(SrxToolResponse::not_configured("chassis cluster disabled"));
     }
 
-    let cluster_id = cluster_id_opt.unwrap_or(0);
-
     // Derive ClusterNode list from members of RG 0 (management group).
-    let nodes = derive_cluster_nodes(cluster_id, &all_rgs);
+    let nodes = derive_cluster_nodes(&all_rgs);
 
     Ok(SrxToolResponse::active(ClusterStatusData {
-        cluster_id,
+        cluster_id: cluster_id_opt,
         nodes,
         redundancy_groups: all_rgs,
     }))
@@ -215,21 +238,91 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
 /// Check whether the reply XML represents a "chassis cluster not enabled"
 /// error from a standalone device.
 ///
-/// Junos 24.x returns `<xnm:error>` (not `<rpc-error>`) with a message
-/// containing "not enabled". We also accept the plan's `not-configured`
-/// tag and `data-missing` for older Junos versions.
-fn is_not_configured(xml: &str) -> bool {
-    // xnm:error with "not enabled" message (observed on Junos 24.x vSRX).
-    if xml.contains("not enabled") || xml.contains("not configured") {
-        return true;
+/// Inspects only error elements via `roxmltree` — never raw substring search —
+/// to avoid false positives when "not configured" appears in data fields such as
+/// `<monitor-failures>` inside an otherwise healthy clustered reply.
+///
+/// Conditions that indicate not-configured:
+/// 1. A top-level `<xnm:error>` or `<error>` whose `<message>` contains
+///    "not enabled" or "not configured" (case-insensitive).
+/// 2. A top-level `<rpc-error>` / `<xnm:error>` with `<error-tag>` equal to
+///    `not-configured` or `data-missing`.
+/// 3. No `<chassis-cluster-status>` element AND at least one error element.
+fn is_not_configured_xml(xml: &str) -> Result<bool, SrxError> {
+    let doc =
+        roxmltree::Document::parse(xml).map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+
+    let root = doc.root_element();
+
+    // Check if the root element itself is an error (xnm:error / error / rpc-error).
+    let root_is_error = is_error_element(&root);
+
+    // Check all top-level children for error elements.
+    let any_error = root_is_error
+        || root
+            .children()
+            .any(|n| n.is_element() && is_error_element(&n));
+
+    // Check for chassis-cluster-status presence.
+    let has_cluster_status = doc
+        .descendants()
+        .any(|n| n.is_element() && n.tag_name().name() == "chassis-cluster-status");
+
+    if has_cluster_status {
+        // Healthy clustered reply — never treat as not-configured regardless of
+        // what other text the document contains.
+        return Ok(false);
     }
-    // Standard rpc-error with not-configured or data-missing tag.
-    if xml.contains("<error-tag>not-configured</error-tag>")
-        || xml.contains("<error-tag>data-missing</error-tag>")
-    {
-        return true;
+
+    if !any_error {
+        return Ok(false);
     }
-    false
+
+    // We have an error element and no chassis-cluster-status.
+    // Check for condition 1: message text contains "not enabled" or "not configured".
+    let error_nodes: Vec<_> = if root_is_error {
+        vec![root]
+    } else {
+        root.children()
+            .filter(|n| n.is_element() && is_error_element(n))
+            .collect()
+    };
+
+    for err in &error_nodes {
+        // Condition 2: error-tag element.
+        for child in err.descendants().filter(|n| n.is_element()) {
+            if child.tag_name().name() == "error-tag" {
+                if let Some(t) = child.text() {
+                    let t = t.trim();
+                    if t == "not-configured" || t == "data-missing" {
+                        return Ok(true);
+                    }
+                }
+            }
+            // Condition 1: message element.
+            if child.tag_name().name() == "message" {
+                if let Some(t) = child.text() {
+                    let lower = t.to_ascii_lowercase();
+                    if lower.contains("not enabled") || lower.contains("not configured") {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+
+    // Condition 3: no cluster-status + error present but message didn't match —
+    // treat as not-configured conservatively.
+    Ok(true)
+}
+
+/// Return true if `node` is an error element.
+///
+/// roxmltree strips namespace prefixes and reports local names + namespace URIs.
+/// `<xnm:error>` arrives as `name="error"` + `namespace=".../xnm/..."`.
+/// `<rpc-error>` / `<nc:rpc-error>` arrive as `name="rpc-error"`.
+fn is_error_element(node: &roxmltree::Node<'_, '_>) -> bool {
+    matches!(node.tag_name().name(), "error" | "rpc-error")
 }
 
 /// Return true if the XML fragment contains an `<rpc-error>` element
@@ -252,17 +345,8 @@ fn parse_device_stats(rg_node: &roxmltree::Node<'_, '_>) -> Vec<RgMember> {
         None => return Vec::new(),
     };
 
-    // Walk siblings, starting a new record on each <device-name>.
-    struct Record {
-        name: String,
-        priority: u16,
-        status: String,
-        preempt: bool,
-        manual: bool,
-        monitor_failures: Vec<String>,
-    }
-
-    let mut records: Vec<Record> = Vec::new();
+    // Walk siblings, starting a new RgMember on each <device-name>.
+    let mut members: Vec<RgMember> = Vec::new();
 
     for child in stats_node.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
@@ -270,8 +354,8 @@ fn parse_device_stats(rg_node: &roxmltree::Node<'_, '_>) -> Vec<RgMember> {
 
         match tag {
             "device-name" => {
-                records.push(Record {
-                    name: text,
+                members.push(RgMember {
+                    node: text,
                     priority: 0,
                     status: String::new(),
                     preempt: false,
@@ -280,24 +364,24 @@ fn parse_device_stats(rg_node: &roxmltree::Node<'_, '_>) -> Vec<RgMember> {
                 });
             }
             _ => {
-                // Apply to the most-recently opened record.
-                if let Some(rec) = records.last_mut() {
+                // Apply to the most-recently opened member.
+                if let Some(member) = members.last_mut() {
                     match tag {
                         "device-priority" => {
-                            rec.priority = text.parse().unwrap_or(0);
+                            member.priority = text.parse().unwrap_or(0);
                         }
                         "redundancy-group-status" => {
-                            rec.status = text;
+                            member.status = text;
                         }
                         "preempt" => {
-                            rec.preempt = text.eq_ignore_ascii_case("yes");
+                            member.preempt = text.eq_ignore_ascii_case("yes");
                         }
                         "failover-mode" => {
                             // failover-mode "yes" == manual-failover armed.
-                            rec.manual = text.eq_ignore_ascii_case("yes");
+                            member.manual = text.eq_ignore_ascii_case("yes");
                         }
                         "monitor-failures" => {
-                            rec.monitor_failures = parse_failures(&text);
+                            member.monitor_failures = parse_failures(&text);
                         }
                         _ => {}
                     }
@@ -306,17 +390,7 @@ fn parse_device_stats(rg_node: &roxmltree::Node<'_, '_>) -> Vec<RgMember> {
         }
     }
 
-    records
-        .into_iter()
-        .map(|r| RgMember {
-            node: r.name,
-            priority: r.priority,
-            status: r.status,
-            preempt: r.preempt,
-            manual: r.manual,
-            monitor_failures: r.monitor_failures,
-        })
-        .collect()
+    members
 }
 
 /// Derive a `ClusterNode` vec from the members of RG 0.
@@ -325,7 +399,7 @@ fn parse_device_stats(rg_node: &roxmltree::Node<'_, '_>) -> Vec<RgMember> {
 /// identity is inferred from the `<device-stats>` inside each
 /// `<redundancy-group>`. RG 0 is the management group and reliably contains
 /// an entry for every live node.
-fn derive_cluster_nodes(_cluster_id: u16, rgs: &[RedundancyGroup]) -> Vec<ClusterNode> {
+fn derive_cluster_nodes(rgs: &[RedundancyGroup]) -> Vec<ClusterNode> {
     let rg0 = match rgs.iter().find(|r| r.group_id == 0) {
         Some(r) => r,
         None => return Vec::new(),
@@ -361,6 +435,7 @@ fn parse_failures(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::SrxState;
+    use pretty_assertions::assert_eq;
 
     fn fixture(name: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -397,7 +472,7 @@ mod tests {
         assert_eq!(resp.state, SrxState::Active, "state mismatch");
 
         let data = resp.data.expect("data must be present");
-        assert_eq!(data.cluster_id, 1, "cluster_id");
+        assert_eq!(data.cluster_id, Some(1), "cluster_id");
         assert_eq!(data.nodes.len(), 2, "expected 2 nodes");
 
         let node0 = data
@@ -460,6 +535,24 @@ mod tests {
         assert_eq!(data.nodes.len(), 1, "expected 1 live node");
         assert_eq!(data.nodes[0].name, "node0", "should be node0");
         assert_eq!(data.nodes[0].status, "primary", "node0 should be primary");
+    }
+
+    // ── Test 4: "not configured" in data field must not trigger NotConfigured ──
+
+    #[test]
+    fn not_configured_in_description_does_not_false_positive() {
+        // This fixture contains "not configured" inside a <monitor-failures> element
+        // within a healthy clustered reply.  The parser must return Active, not NotConfigured.
+        let xml = fixture("clustered_with_not_configured_in_desc.xml");
+        let resp = parse(&xml).expect("parse should not error");
+        assert_eq!(
+            resp.state,
+            SrxState::Active,
+            "healthy clustered reply with 'not configured' in data field must be Active"
+        );
+        let data = resp.data.expect("data must be present");
+        assert_eq!(data.cluster_id, Some(2), "cluster_id");
+        assert_eq!(data.nodes.len(), 2, "expected 2 nodes");
     }
 
     // ── Unit: parse_failures ──────────────────────────────────────────────────
