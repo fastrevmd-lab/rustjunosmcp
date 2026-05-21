@@ -11,7 +11,7 @@ pub enum SrxState {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct SrxToolResponse<T: JsonSchema + Serialize> {
+pub struct SrxToolResponse<T> {
     pub state: SrxState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
@@ -40,8 +40,8 @@ impl<T: JsonSchema + Serialize> SrxToolResponse<T> {
         }
     }
 
-    pub fn with_raw(mut self, raw: String) -> Self {
-        self.raw_xml = Some(raw);
+    pub fn with_raw(mut self, raw: impl Into<String>) -> Self {
+        self.raw_xml = Some(raw.into());
         self
     }
 }
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn with_raw_attaches_xml() {
-        let r = SrxToolResponse::<Body>::active(Body { ok: true }).with_raw("<x/>".into());
+        let r = SrxToolResponse::<Body>::active(Body { ok: true }).with_raw("<x/>");
         let j = serde_json::to_value(&r).unwrap();
         assert_eq!(j["raw_xml"], "<x/>");
     }
