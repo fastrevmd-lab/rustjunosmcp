@@ -1,14 +1,14 @@
-//! `rust-srxmcp` — Phase 1A scaffolding entry point.
+//! `rust-srxmcp` — Phase 1B entry point.
 //!
 //! Boots an opt-in second MCP endpoint on `:30032` (override
 //! `JMCP_SRX_HTTP_PORT`). Wires bearer auth against the shared
-//! `/etc/jmcp/tokens.json` store and registers exactly one tool:
-//! `srxmcp_status`.
+//! `/etc/jmcp/tokens.json` store and registers Phase 1B tools.
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use clap::Parser;
 use rust_junosmcp_auth::file::TokenStoreFile;
+use rust_junosmcp_core::DeviceManager;
 use rust_srxmcp::{http_transport, server::JmcpSrxHandler};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use tokio::time::Instant;
 #[command(
     name = "rust-srxmcp",
     version,
-    about = "Juniper SRX-specific MCP server (Phase 1A scaffolding)."
+    about = "Juniper SRX-specific MCP server."
 )]
 struct Cli {
     /// HTTP bind host.
@@ -34,13 +34,25 @@ struct Cli {
     #[arg(long, env = "JMCP_TOKENS_PATH")]
     tokens_file: Option<PathBuf>,
 
-    /// Devices file — read for token-scope validation; not used by `srxmcp_status` itself.
+    /// Devices file — required for NETCONF tools; also used for token-scope validation.
     #[arg(long, env = "JMCP_DEVICES_PATH")]
     device_mapping: Option<PathBuf>,
 
     /// Allow unauthenticated requests (lab only).
     #[arg(long, default_value_t = false)]
     allow_no_auth: bool,
+
+    /// Accept unknown SSH host keys on first contact (TOFU; lab only).
+    #[arg(long, default_value_t = false)]
+    ssh_accept_new_host_keys: bool,
+
+    /// Path to the SSH known_hosts file for NETCONF strict host-key checking.
+    #[arg(
+        long,
+        default_value = "/etc/jmcp/known_hosts",
+        env = "JMCP_KNOWN_HOSTS"
+    )]
+    known_hosts_file: PathBuf,
 }
 
 #[tokio::main]
@@ -49,41 +61,72 @@ async fn main() -> Result<()> {
 
     let args = Cli::parse();
 
-    let token_store = match (&args.tokens_file, args.allow_no_auth, &args.device_mapping) {
-        (Some(path), _, devices) => {
-            let names: Vec<String> = match devices {
-                Some(dpath) => {
-                    let (inv, _) = rust_junosmcp_core::bootstrap::load_inventory(dpath)
-                        .map_err(anyhow::Error::from)
-                        .with_context(|| format!("loading {}", dpath.display()))?;
-                    inv.names()
-                }
-                None => Vec::new(),
-            };
+    // ── Inventory + DeviceManager ────────────────────────────────────────────
+
+    let inv_path = match &args.device_mapping {
+        Some(p) => p.clone(),
+        None => {
+            // Without a device mapping, tools that open devices will fail at
+            // call-time. We construct an empty inventory so the binary still
+            // starts and srxmcp_status works.
+            tracing::warn!("--device-mapping not set: NETCONF tools will fail at call-time");
+            PathBuf::from("/etc/jmcp/devices.json")
+        }
+    };
+
+    let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("loading {}", inv_path.display()))?;
+    tracing::info!(
+        devices = inventory.names().len(),
+        path = %inv_path.display(),
+        "loaded inventory"
+    );
+
+    let host_key_policy = rust_junosmcp_core::bootstrap::build_host_key_policy(
+        args.ssh_accept_new_host_keys,
+        args.known_hosts_file.clone(),
+    );
+
+    let dev_manager = Arc::new(
+        DeviceManager::with_path(
+            inventory.clone(),
+            inv_path.clone(),
+            inv_hash,
+            true,  // inventory_readonly — srxmcp never mutates the device list
+            false, // allow_password_auth_add — not needed
+        )
+        .with_host_key_policy(host_key_policy),
+    );
+
+    // ── Token store ──────────────────────────────────────────────────────────
+
+    let token_store = match (&args.tokens_file, args.allow_no_auth) {
+        (Some(path), _) => {
+            let names: Vec<String> = inventory.names();
             let known: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
             let store = TokenStoreFile::load(path, &known)
                 .with_context(|| format!("loading {}", path.display()))?;
             tracing::info!(tokens = store.len(), "token store loaded");
             Some(Arc::new(ArcSwap::from_pointee(store)))
         }
-        (None, true, _) => {
+        (None, true) => {
             tracing::warn!("--allow-no-auth: streamable-http will accept unauthenticated requests");
             None
         }
-        (None, false, _) => {
+        (None, false) => {
             anyhow::bail!(
                 "--tokens-file required for streamable-http (or pass --allow-no-auth for lab use)"
             );
         }
     };
 
-    let started = Arc::new(Instant::now());
-    let handler = JmcpSrxHandler::new(started);
+    // ── Handler ──────────────────────────────────────────────────────────────
 
-    // SIGHUP: mirrors rust-junosmcp's shape. 0.0.1 only reloads the token
-    // store (no policy/inventory state to reload here — the only tool is
-    // diagnostic). The inventory file is re-read on each HUP so the token
-    // scope validation sees the current router set.
+    let started = Arc::new(Instant::now());
+    let handler = JmcpSrxHandler::new(started, dev_manager.clone());
+
+    // ── SIGHUP: reload token store ───────────────────────────────────────────
     #[cfg(unix)]
     if token_store.is_some() && args.device_mapping.is_none() {
         tracing::warn!(
@@ -128,6 +171,8 @@ async fn main() -> Result<()> {
             }
         });
     }
+
+    // ── Bind and serve ───────────────────────────────────────────────────────
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()

@@ -12,3 +12,6 @@ pub mod xml;
 
 pub use absence::{SrxState, SrxToolResponse};
 pub use error::SrxError;
+pub use workflows::cluster_status::{
+    ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
+};

@@ -1,11 +1,11 @@
 //! `JmcpSrxHandler` — rmcp `#[tool]` registry root for `rust-srxmcp`.
-//! Phase 1A ships exactly one tool: `srxmcp_status`.
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, Content, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
+use rust_junosmcp_core::DeviceManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -13,11 +13,15 @@ use tokio::time::Instant;
 #[derive(Clone)]
 pub struct JmcpSrxHandler {
     started: Arc<Instant>,
+    device_manager: Arc<DeviceManager>,
 }
 
 impl JmcpSrxHandler {
-    pub fn new(started: Arc<Instant>) -> Self {
-        Self { started }
+    pub fn new(started: Arc<Instant>, device_manager: Arc<DeviceManager>) -> Self {
+        Self {
+            started,
+            device_manager,
+        }
     }
 
     /// Pure tool body — used by the rmcp adapter below and by integration
@@ -57,6 +61,29 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "get_chassis_cluster_status",
+        description = "Chassis-cluster topology + health snapshot. Returns \
+                       state=not_configured for standalone SRX devices."
+    )]
+    async fn get_chassis_cluster_status(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::ClusterStatusArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::cluster_status::run(&mut device, args)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing ClusterStatusData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -70,8 +97,8 @@ impl ServerHandler for JmcpSrxHandler {
                 ..Default::default()
             },
             instructions: Some(
-                "Juniper SRX-specific MCP server (Phase 1A scaffolding). \
-                 Only `srxmcp_status` is wired in 0.0.1."
+                "Juniper SRX-specific MCP server. Phase 1B tools: \
+                 srxmcp_status, get_chassis_cluster_status."
                     .into(),
             ),
             ..Default::default()
