@@ -8,5 +8,18 @@ authors.workspace     = true
 description = "Core logic for rust-srxmcp (SRX-specific MCP workflows). Phase 1A placeholder."
 
 [dependencies]
-# Phase 1B (srxmcp-v0.1.0) will add real deps. For 0.0.1 the lib is
-# intentionally empty so the crate exists in the workspace.
+rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+rustez             = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+schemars           = { workspace = true }
+quick-xml          = "0.36"
+roxmltree          = "0.20"
+time               = { version = "0.3", features = ["serde", "parsing", "formatting", "macros"] }
+tokio              = { workspace = true, features = ["macros", "rt", "time"] }
+
+[dev-dependencies]
+pretty_assertions  = "1"
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

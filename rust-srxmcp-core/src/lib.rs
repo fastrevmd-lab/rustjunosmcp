@@ -1,5 +1,14 @@
-//! Placeholder for SRX-specific core logic. Phase 1B (`srxmcp-v0.1.0`) adds
-//! workflows, parsers, and polling abstractions. For Phase 1A the lib is
-//! deliberately empty so the crate exists in the workspace.
+//! Core workflows + shared types for `rust-srxmcp`.
+//!
+//! This crate is consumed by the `rust-srxmcp` binary. It owns the typed
+//! tool response envelope (`SrxToolResponse<T>`), absence semantics
+//! (`SrxState`), the multi-RE XML helper, the `SrxError` taxonomy, and
+//! one `workflows::<tool>` module per Phase 1B tool.
 
-#![deny(rust_2018_idioms)]
+pub mod absence;
+pub mod error;
+pub mod workflows;
+pub mod xml;
+
+pub use absence::{SrxState, SrxToolResponse};
+pub use error::SrxError;
