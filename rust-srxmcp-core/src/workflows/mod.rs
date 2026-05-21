@@ -4,6 +4,4 @@
 pub mod cluster_status;
 pub mod license;
 pub mod services_status;
-
-// Wired in subsequent tasks:
-// pub mod vpn_report;
+pub mod vpn_lifecycle;

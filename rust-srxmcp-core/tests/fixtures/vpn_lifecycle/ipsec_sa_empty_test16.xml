@@ -1,0 +1,8 @@
+<ipsec-security-associations-information xmlns="http://xml.juniper.net/netconf/junos/1.0" junos:style="brief" xmlns:junos="http://xml.juniper.net/junos/25.4R1.12/junos">
+<total-active-tunnels>
+0
+</total-active-tunnels>
+<total-ipsec-sas>
+0
+</total-ipsec-sas>
+</ipsec-security-associations-information>

@@ -150,6 +150,38 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "vpn_lifecycle_report",
+        description = "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for \
+                       VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, \
+                       and correlations when VPN is configured (even if no SAs are currently up). \
+                       Returns state=not_configured only when both IKE and IPsec RPCs report that \
+                       the security stanza is absent. Optionally filter by peer IP (substring) \
+                       or tunnel name."
+    )]
+    async fn vpn_lifecycle_report(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::VpnLifecycleArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::vpn_lifecycle::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing VpnLifecycleData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -165,7 +197,7 @@ impl ServerHandler for JmcpSrxHandler {
             instructions: Some(
                 "Juniper SRX-specific MCP server. Phase 1B tools: \
                  srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
-                 get_srx_security_services_status."
+                 get_srx_security_services_status, vpn_lifecycle_report."
                     .into(),
             ),
             ..Default::default()

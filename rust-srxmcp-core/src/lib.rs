@@ -22,3 +22,6 @@ pub use workflows::services_status::{
     AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,
     ServicesStatusData, SubServiceStatus, UtmAvInfo,
 };
+pub use workflows::vpn_lifecycle::{
+    IkeSa, IpsecSa, NodeVpnReport, VpnCorrelation, VpnLifecycleArgs, VpnLifecycleData,
+};
