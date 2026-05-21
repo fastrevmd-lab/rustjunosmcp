@@ -29,7 +29,7 @@ pub enum SrxError {
 
 impl SrxError {
     /// Convenience builder used by per-tool parsers.
-    pub fn schema(rpc: &'static str, element: &'static str) -> Self {
+    pub fn schema_mismatch(rpc: &'static str, element: &'static str) -> Self {
         Self::SchemaMismatch { rpc, element }
     }
 }
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn schema_mismatch_displays_rpc_and_element() {
-        let e = SrxError::schema("get-chassis-cluster-status-information", "cluster-id");
+        let e = SrxError::schema_mismatch("get-chassis-cluster-status-information", "cluster-id");
         let s = e.to_string();
         assert!(s.contains("get-chassis-cluster-status-information"), "{s}");
         assert!(s.contains("cluster-id"), "{s}");

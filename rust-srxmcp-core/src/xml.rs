@@ -1,6 +1,10 @@
 //! XML helpers shared across SRX workflows. Uses roxmltree for a clean DOM
 //! API that keeps every tool out of the multi-RE envelope business.
 
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::Writer;
+use std::io::Cursor;
+
 /// One node's payload after stripping the multi-RE envelope.
 ///
 /// `re_name` is `""` for standalone devices, `"node0"` / `"node1"` for
@@ -13,32 +17,46 @@ pub struct ReNode {
     pub inner_xml: String,
 }
 
-/// Serialize a roxmltree node and all its children back to an XML string.
+/// Serialize a roxmltree node and all its children back to an XML string,
+/// correctly escaping text content and attribute values via quick_xml.
 fn node_to_xml(node: roxmltree::Node<'_, '_>) -> String {
-    if node.is_text() {
-        return node.text().unwrap_or("").to_string();
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    write_node(&mut writer, node);
+    String::from_utf8(writer.into_inner().into_inner()).unwrap_or_default()
+}
+
+fn write_node<W: std::io::Write>(writer: &mut Writer<W>, node: roxmltree::Node<'_, '_>) {
+    if node.is_element() {
+        let name = node.tag_name().name();
+        let mut start = BytesStart::new(name);
+        for attr in node.attributes() {
+            // push_attribute escapes attribute values automatically.
+            start.push_attribute((attr.name(), attr.value()));
+        }
+        if node.has_children() {
+            let _ = writer.write_event(Event::Start(start));
+            for child in node.children() {
+                write_node(writer, child);
+            }
+            let _ = writer.write_event(Event::End(BytesEnd::new(name)));
+        } else {
+            let _ = writer.write_event(Event::Empty(start));
+        }
+    } else if node.is_text() {
+        if let Some(text) = node.text() {
+            // BytesText::new escapes text content automatically.
+            let _ = writer.write_event(Event::Text(BytesText::new(text)));
+        }
     }
-    if !node.is_element() {
-        return String::new();
-    }
-    let tag = node.tag_name().name();
-    let mut out = format!("<{tag}");
-    for attr in node.attributes() {
-        out.push_str(&format!(" {}=\"{}\"", attr.name(), attr.value()));
-    }
-    let children: String = node.children().map(node_to_xml).collect();
-    if children.is_empty() {
-        out.push_str("/>");
-    } else {
-        out.push('>');
-        out.push_str(&children);
-        out.push_str(&format!("</{tag}>"));
-    }
-    out
 }
 
 /// Split an `<rpc-reply>` body into per-RE chunks. Returns a single-element
 /// vec with `re_name == ""` for standalone devices.
+///
+/// Contract: if the `<multi-routing-engine-results>` envelope is present but
+/// contains zero `<multi-routing-engine-item>` children, this function returns
+/// an empty `Vec` (not an error). Callers must treat an empty result as
+/// "no nodes responded."
 pub fn multi_re_split(reply_xml: &str) -> Result<Vec<ReNode>, crate::SrxError> {
     let doc =
         roxmltree::Document::parse(reply_xml).map_err(|e| crate::SrxError::Parse(e.to_string()))?;
@@ -84,8 +102,27 @@ pub fn multi_re_split(reply_xml: &str) -> Result<Vec<ReNode>, crate::SrxError> {
 
 /// Find the first child element matching `name` and return its inner text,
 /// trimmed. Returns `None` if absent.
+///
+/// Accepts both well-formed XML documents and XML fragments (multiple sibling
+/// top-level elements, as produced by `multi_re_split`). Fragments are wrapped
+/// in a synthetic root before parsing.
+///
+/// TODO(post-1B): Only the first text node of a leaf element is returned.
+/// Most Junos leaf elements are entity-free single-text-node leaves, so this
+/// is sufficient for now. Revisit if a workflow needs concatenated mixed
+/// content.
 pub fn text_of(xml: &str, name: &str) -> Option<String> {
-    let doc = roxmltree::Document::parse(xml).ok()?;
+    // Try parsing as-is first (valid XML doc or single-root fragment).
+    // If that fails, wrap in a synthetic root to handle multi-sibling fragments
+    // such as those produced by multi_re_split.
+    let owned;
+    let input = if roxmltree::Document::parse(xml).is_ok() {
+        xml
+    } else {
+        owned = format!("<_>{xml}</_>");
+        owned.as_str()
+    };
+    let doc = roxmltree::Document::parse(input).ok()?;
     doc.descendants()
         .find(|n| n.is_element() && n.tag_name().name() == name)
         .and_then(|n| n.text())
@@ -135,5 +172,40 @@ mod tests {
         let xml = "<a><b>hello</b><b>world</b></a>";
         assert_eq!(text_of(xml, "b").as_deref(), Some("hello"));
         assert!(text_of(xml, "missing").is_none());
+    }
+
+    #[test]
+    fn multi_re_split_preserves_special_chars_in_text_and_attrs() {
+        // Junos descriptions and URLs commonly contain & < > " — round-trip
+        // through multi_re_split + text_of must not corrupt them.
+        let xml = r#"
+<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <description>a &amp; b &lt; c</description>
+      <url attr="x &amp; y">http://example.com?a=1&amp;b=2</url>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        let v = multi_re_split(xml).unwrap();
+        assert_eq!(v.len(), 1);
+        let inner = &v[0].inner_xml;
+        // text_of must still decode correctly on the round-tripped inner_xml
+        assert_eq!(text_of(inner, "description").as_deref(), Some("a & b < c"));
+        assert_eq!(
+            text_of(inner, "url").as_deref(),
+            Some("http://example.com?a=1&b=2")
+        );
+    }
+
+    #[test]
+    fn multi_re_envelope_with_no_items_yields_empty_vec() {
+        // Document the contract: envelope present but with zero items
+        // is intentionally an empty result vec, not an error. Callers must
+        // treat empty as "no nodes responded."
+        let xml = r#"<rpc-reply><multi-routing-engine-results></multi-routing-engine-results></rpc-reply>"#;
+        let v = multi_re_split(xml).unwrap();
+        assert!(v.is_empty());
     }
 }
