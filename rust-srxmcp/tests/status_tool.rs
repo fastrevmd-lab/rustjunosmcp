@@ -2,14 +2,21 @@
 //! `JmcpSrxHandler` with a known start instant, invokes the test-only
 //! body, and asserts the response shape.
 
+use rust_junosmcp_core::{DeviceManager, Inventory};
 use rust_srxmcp::server::{JmcpSrxHandler, SrxmcpStatusArgs};
+use std::io::Write;
 use std::sync::Arc;
 use tokio::time::Instant;
 
 #[tokio::test]
 async fn srxmcp_status_returns_version_endpoint_and_uptime() {
+    let mut f = tempfile::NamedTempFile::new().unwrap();
+    f.write_all(b"{}").unwrap();
+    let inv = Arc::new(Inventory::load(f.path()).unwrap());
+    let dev_manager = Arc::new(DeviceManager::new(inv));
+
     let started = Arc::new(Instant::now());
-    let handler = JmcpSrxHandler::new(started.clone());
+    let handler = JmcpSrxHandler::new(started.clone(), dev_manager);
 
     // Small delay so uptime > 0 ms (still 0 seconds, fine).
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
