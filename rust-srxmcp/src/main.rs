@@ -39,19 +39,15 @@ struct Cli {
     device_mapping: Option<PathBuf>,
 
     /// Allow unauthenticated requests (lab only).
-    #[arg(long, default_value_t = false)]
+    #[arg(long)]
     allow_no_auth: bool,
 
     /// Accept unknown SSH host keys on first contact (TOFU; lab only).
-    #[arg(long, default_value_t = false)]
+    #[arg(long)]
     ssh_accept_new_host_keys: bool,
 
     /// Path to the SSH known_hosts file for NETCONF strict host-key checking.
-    #[arg(
-        long,
-        default_value = "/etc/jmcp/known_hosts",
-        env = "JMCP_KNOWN_HOSTS"
-    )]
+    #[arg(long, default_value = "/etc/jmcp/known_hosts")]
     known_hosts_file: PathBuf,
 }
 

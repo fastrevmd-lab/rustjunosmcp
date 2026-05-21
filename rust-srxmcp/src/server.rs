@@ -78,7 +78,12 @@ impl JmcpSrxHandler {
             })?;
         let resp = rust_srxmcp_core::workflows::cluster_status::run(&mut device, args)
             .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ClusterStatusData: {e}"), None)
         })?;

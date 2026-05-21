@@ -1,0 +1,22 @@
+<chassis-cluster-status xmlns="http://xml.juniper.net/netconf/junos/1.0" format="xml">
+<cluster-id>2</cluster-id>
+<redundancy-group>
+<cluster-id>2</cluster-id>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-failover-count>0</redundancy-group-failover-count>
+<device-stats>
+<device-name>node0</device-name>
+<device-priority>200</device-priority>
+<redundancy-group-status>primary</redundancy-group-status>
+<preempt>no</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>None</monitor-failures>
+<device-name>node1</device-name>
+<device-priority>100</device-priority>
+<redundancy-group-status>secondary</redundancy-group-status>
+<preempt>no</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>not configured</monitor-failures>
+</device-stats>
+</redundancy-group>
+</chassis-cluster-status>
