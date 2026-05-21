@@ -1,0 +1,26 @@
+<license-summary-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-license">
+  <feature-summary>
+    <name>Virtual Appliance</name>
+    <description>Virtual Appliance</description>
+    <licensed-feature-count>1</licensed-feature-count>
+    <licensed-feature-used-count>1</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>1</licenses-used>
+    <licenses-installed>1</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>time-based</license-type>
+    <end-date junos:seconds="1782860850">2026-06-30 23:07:30 UTC</end-date>
+  </feature-summary>
+  <feature-summary>
+    <name>VCPU Scale</name>
+    <description>Virtual CPU scale</description>
+    <licensed-feature-count>2</licensed-feature-count>
+    <licensed-feature-used-count>2</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>2</licenses-used>
+    <licenses-installed>2</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type junos:style="datebased-feature">time-based</license-type>
+    <end-date junos:seconds="1782860850">2026-06-30 23:07:30 UTC</end-date>
+  </feature-summary>
+</license-summary-information>

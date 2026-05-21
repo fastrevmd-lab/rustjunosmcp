@@ -23,11 +23,26 @@
 //! The await points still keep the executor responsive; the bottleneck is the
 //! NETCONF channel serialisation on the device side anyway.
 
-use crate::xml::multi_re_split;
+use crate::xml::{multi_re_split, ReNode};
 use crate::{SrxError, SrxToolResponse};
 use rust_junosmcp_core::device_manager::PooledDevice;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// Per-sub-RPC capture. Either the multi-RE-split payload or a single reason
+/// string that will be applied uniformly to every node for that sub-service.
+///
+/// This lets a single failing sub-RPC (e.g. secintel returning syntax
+/// `rpc-error` on vSRX 24.4) degrade only its own slot instead of aborting
+/// the entire workflow.
+struct SubCall {
+    /// Raw XML reply (empty string if the RPC itself errored — there is no
+    /// reply body to include in `raw`).
+    raw: String,
+    /// `Ok(nodes)` carries the multi-RE-split nodes; `Err(reason)` records
+    /// the rpc / parse error that the per-node parsers should surface.
+    result: Result<Vec<ReNode>, String>,
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -136,52 +151,34 @@ pub async fn run(
         .rpc()
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
-    let idp_xml = exec
-        .call("get-idp-security-package-information", &[])
-        .await
-        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
-    let appid_xml = exec
-        .call("get-appid-package-version", &[])
-        .await
-        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
-    let utm_xml = exec
-        .call("get-anti-virus-status", &[])
-        .await
-        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
-    let secintel_xml = exec
-        .call("get-secintel-feed-summary", &[])
-        .await
-        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
-    let atp_xml = exec
-        .call("get-aamw-status", &[])
-        .await
-        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    // Each sub-RPC is captured into a `SubCall` so a per-RPC failure becomes a
+    // per-sub-service NotConfigured slot rather than aborting the whole tool
+    // (bug #70 — vSRX 24.4 returns syntax rpc-error for some sub-RPCs).
+    let idp = capture(&mut exec, "get-idp-security-package-information").await;
+    let appid = capture(&mut exec, "get-appid-package-version").await;
+    let utm = capture(&mut exec, "get-anti-virus-status").await;
+    let secintel = capture(&mut exec, "get-secintel-feed-summary").await;
+    let atp = capture(&mut exec, "get-aamw-status").await;
 
-    // Split each reply by RE node (standalone → single node with re_name "").
-    let idp_nodes = multi_re_split(&idp_xml)?;
-    let appid_nodes = multi_re_split(&appid_xml)?;
-    let utm_nodes = multi_re_split(&utm_xml)?;
-    let secintel_nodes = multi_re_split(&secintel_xml)?;
-    let atp_nodes = multi_re_split(&atp_xml)?;
-
-    // Derive the node list from the IDP reply (most likely to have multi-RE).
-    let node_names: Vec<String> = idp_nodes.iter().map(|n| n.re_name.clone()).collect();
+    // Derive the node list from the first sub-RPC that produced parseable
+    // multi-RE output. Fall back to a single standalone node so every Err
+    // slot still gets surfaced in the response.
+    let node_names: Vec<String> = [&idp, &appid, &utm, &secintel, &atp]
+        .iter()
+        .find_map(|sub| sub.result.as_ref().ok())
+        .map(|nodes| nodes.iter().map(|n| n.re_name.clone()).collect())
+        .unwrap_or_else(|| vec![String::new()]);
 
     let nodes: Vec<NodeServicesStatus> = node_names
         .into_iter()
         .enumerate()
-        .map(|(i, re_name)| {
-            fn pick(v: &[crate::xml::ReNode], i: usize) -> &str {
-                v.get(i).map(|n| n.inner_xml.as_str()).unwrap_or("")
-            }
-            NodeServicesStatus {
-                re_name,
-                idp: parse_idp(pick(&idp_nodes, i)),
-                appid: parse_appid(pick(&appid_nodes, i)),
-                utm_av: parse_utm_av(pick(&utm_nodes, i)),
-                secintel: parse_secintel(pick(&secintel_nodes, i)),
-                atp_cloud: parse_atp(pick(&atp_nodes, i)),
-            }
+        .map(|(i, re_name)| NodeServicesStatus {
+            re_name,
+            idp: per_node(&idp, i, parse_idp),
+            appid: per_node(&appid, i, parse_appid),
+            utm_av: per_node(&utm, i, parse_utm_av),
+            secintel: per_node(&secintel, i, parse_secintel),
+            atp_cloud: per_node(&atp, i, parse_atp),
         })
         .collect();
 
@@ -203,11 +200,50 @@ pub async fn run(
 
     if args.include_raw {
         resp = resp.with_raw(format!(
-            "<!-- idp -->\n{idp_xml}\n<!-- appid -->\n{appid_xml}\n<!-- utm -->\n{utm_xml}\n<!-- secintel -->\n{secintel_xml}\n<!-- atp -->\n{atp_xml}"
+            "<!-- idp -->\n{}\n<!-- appid -->\n{}\n<!-- utm -->\n{}\n<!-- secintel -->\n{}\n<!-- atp -->\n{}",
+            idp.raw, appid.raw, utm.raw, secintel.raw, atp.raw,
         ));
     }
 
     Ok(resp)
+}
+
+/// Run a single sub-RPC and capture either the multi-RE-split nodes or a
+/// reason string. Never returns `Err` — the entire workflow tolerates
+/// per-sub-service failure.
+async fn capture(exec: &mut rustez::rpc::RpcExecutor<'_>, rpc: &str) -> SubCall {
+    match exec.call(rpc, &[]).await {
+        Ok(xml) => {
+            let result = multi_re_split(&xml).map_err(|e| format!("xml split error: {e}"));
+            SubCall { raw: xml, result }
+        }
+        Err(e) => SubCall {
+            raw: String::new(),
+            result: Err(format!("rpc error: {e}")),
+        },
+    }
+}
+
+/// Materialise a `SubServiceStatus<T>` for one RE node from a captured sub-RPC.
+///
+/// * If the sub-RPC itself failed, every node gets the same `not_configured`
+///   reason.
+/// * If the sub-RPC succeeded but produced no payload for this index
+///   (mismatched RE counts across sub-RPCs), surface that as `not_configured`
+///   rather than panicking.
+/// * Otherwise hand the per-node XML to the supplied parser.
+fn per_node<T: JsonSchema + Serialize + PartialEq + Eq>(
+    sub: &SubCall,
+    index: usize,
+    parse: impl Fn(&str) -> SubServiceStatus<T>,
+) -> SubServiceStatus<T> {
+    match &sub.result {
+        Err(reason) => SubServiceStatus::not_configured(reason.clone()),
+        Ok(nodes) => match nodes.get(index) {
+            Some(node) => parse(&node.inner_xml),
+            None => SubServiceStatus::not_configured("no payload for this RE node"),
+        },
+    }
 }
 
 // ── Per-sub-RPC parsers ───────────────────────────────────────────────────────
@@ -576,6 +612,47 @@ mod tests {
             r.data.unwrap().connection_url.as_deref(),
             Some("https://atp.example.com")
         );
+    }
+
+    // ── per_node / SubCall degradation (bug #70) ─────────────────────────────
+
+    #[test]
+    fn per_node_err_yields_not_configured_with_reason() {
+        let sub = SubCall {
+            raw: String::new(),
+            result: Err("rpc error: syntax error".into()),
+        };
+        let r = per_node(&sub, 0, parse_idp);
+        assert_eq!(r.state, SrxState::NotConfigured);
+        assert_eq!(r.reason.as_deref(), Some("rpc error: syntax error"));
+        assert!(r.data.is_none());
+    }
+
+    #[test]
+    fn per_node_ok_but_missing_index_yields_not_configured() {
+        let sub = SubCall {
+            raw: "<x/>".into(),
+            result: Ok(vec![]),
+        };
+        let r = per_node(&sub, 0, parse_idp);
+        assert_eq!(r.state, SrxState::NotConfigured);
+        assert_eq!(r.reason.as_deref(), Some("no payload for this RE node"));
+    }
+
+    #[test]
+    fn per_node_ok_with_payload_delegates_to_parser() {
+        let xml = "<idp-security-package-information><security-package-version>3714(4.1)</security-package-version><detector-version>12.6.180200620_v6</detector-version></idp-security-package-information>";
+        let sub = SubCall {
+            raw: xml.into(),
+            result: Ok(vec![ReNode {
+                re_name: String::new(),
+                inner_xml: xml.into(),
+            }]),
+        };
+        let r = per_node(&sub, 0, parse_idp);
+        assert_eq!(r.state, SrxState::Active);
+        let data = r.data.expect("data present");
+        assert_eq!(data.package_version, "3714(4.1)");
     }
 
     #[test]
