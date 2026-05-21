@@ -1,0 +1,5 @@
+<!-- Hand-crafted fixture representing a device with no licenses installed at all.
+     This is what Junos returns for get-license-summary-information when the device
+     has no license keys: an empty license-summary-information element. -->
+<license-summary-information xmlns="http://xml.juniper.net/netconf/junos/1.0" format="xml">
+</license-summary-information>

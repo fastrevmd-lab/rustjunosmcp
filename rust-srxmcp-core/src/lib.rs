@@ -15,3 +15,6 @@ pub use error::SrxError;
 pub use workflows::cluster_status::{
     ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
 };
+pub use workflows::license::{
+    LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
+};

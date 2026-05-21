@@ -89,6 +89,37 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "check_srx_feature_license",
+        description = "Check whether a named SRX security feature (IDP, AppID, UTM Antivirus, \
+                       Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid \
+                       license installed on the device. Returns state=not_configured when no \
+                       matching license record is present (including the expected lab case where \
+                       only eval/trial licenses are installed)."
+    )]
+    async fn check_srx_feature_license(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::LicenseArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::license::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing LicenseData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -103,7 +134,7 @@ impl ServerHandler for JmcpSrxHandler {
             },
             instructions: Some(
                 "Juniper SRX-specific MCP server. Phase 1B tools: \
-                 srxmcp_status, get_chassis_cluster_status."
+                 srxmcp_status, get_chassis_cluster_status, check_srx_feature_license."
                     .into(),
             ),
             ..Default::default()

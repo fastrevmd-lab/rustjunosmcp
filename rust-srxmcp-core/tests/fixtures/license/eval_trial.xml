@@ -1,0 +1,52 @@
+<!-- Captured from vSRX-test10 via `show system license | display xml` on 2026-05-21.
+     Lab eval/trial licenses for Virtual Appliance + VCPU Scale + Remote Access only.
+     No IDP/AppID/UTM/etc. feature licenses present — all SrxLicensedFeature variants
+     should return state=not_configured against this fixture. -->
+<license-summary-information xmlns="http://xml.juniper.net/netconf/junos/1.0" format="xml">
+  <feature-summary>
+    <name>Virtual Appliance</name>
+    <description>Virtual Appliance</description>
+    <licensed-feature-count>1</licensed-feature-count>
+    <licensed-feature-used-count>1</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>1</licenses-used>
+    <licenses-installed>1</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>time-based</license-type>
+    <end-date>2026-06-30 23:07:30 UTC</end-date>
+  </feature-summary>
+  <feature-summary>
+    <name>Remote Access IPSec VPN Client</name>
+    <description>Remote Access IPSec VPN Client</description>
+    <licensed-feature-count>2</licensed-feature-count>
+    <licensed-feature-used-count>0</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>0</licenses-used>
+    <licenses-installed>2</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>permanent</license-type>
+  </feature-summary>
+  <feature-summary>
+    <name>Remote Access Standard</name>
+    <description>Remote Access Standard</description>
+    <licensed-feature-count>2</licensed-feature-count>
+    <licensed-feature-used-count>0</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>0</licenses-used>
+    <licenses-installed>2</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>permanent</license-type>
+  </feature-summary>
+  <feature-summary>
+    <name>VCPU Scale</name>
+    <description>Virtual CPU scale</description>
+    <licensed-feature-count>2</licensed-feature-count>
+    <licensed-feature-used-count>2</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>2</licenses-used>
+    <licenses-installed>2</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>time-based</license-type>
+    <end-date>2026-06-30 23:07:30 UTC</end-date>
+  </feature-summary>
+</license-summary-information>
