@@ -180,7 +180,11 @@ pub fn parse(
     feature: SrxLicensedFeature,
     summary_xml: &str,
 ) -> Result<SrxToolResponse<LicenseData>, SrxError> {
-    let doc = roxmltree::Document::parse(summary_xml)
+    // Strip `junos:`-prefixed attributes (no xmlns:junos binding survives the
+    // rustnetconf `extract_rpc_reply_inner_content` step), which would otherwise
+    // make roxmltree reject the document with "unknown namespace prefix".
+    let sanitized = crate::xml::sanitize_rustez_xml(summary_xml);
+    let doc = roxmltree::Document::parse(&sanitized)
         .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
 
     let patterns = feature.record_patterns();
@@ -428,5 +432,20 @@ mod tests {
     fn junos_date_rejects_malformed_input() {
         assert!(junos_date_to_offset("not a date").is_err());
         assert!(junos_date_to_offset("2026/06/30").is_err());
+    }
+
+    // ── Regression test for #69 ──────────────────────────────────────────────
+    //
+    // rustnetconf's `extract_rpc_reply_inner_content` strips the outer xmlns
+    // declarations but preserves `junos:`-prefixed attributes inside the
+    // payload. Without sanitization, roxmltree refuses to parse with
+    // "unknown namespace prefix 'junos'". `parse()` must invoke
+    // `sanitize_rustez_xml` before handing the XML to roxmltree.
+    #[test]
+    fn parses_live_reply_with_junos_prefixed_attributes() {
+        let xml = fixture("live_eval_with_junos_attrs.xml");
+        let resp = parse(SrxLicensedFeature::Idp, &xml)
+            .expect("parse must succeed on live-shape XML with junos: attrs");
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
     }
 }

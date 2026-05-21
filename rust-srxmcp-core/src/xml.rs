@@ -398,6 +398,32 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_handles_live_license_reply_with_junos_attrs() {
+        // Regression for #69: live `get-license-summary-information` reply
+        // carries `junos:seconds="..."` and `junos:style="..."` attributes
+        // after rustnetconf strips the wrapper that declared `xmlns:junos`.
+        let xml = r#"<license-summary-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-license">
+<feature-summary>
+<name>Virtual Appliance</name>
+<end-date junos:seconds="1782860850">2026-06-30</end-date>
+</feature-summary>
+<license>
+<feature junos:style="datebased-feature">
+<name>VCPU Scale</name>
+<validity-information>
+<start-date junos:seconds="1777676850">2026-05-01</start-date>
+<end-date junos:seconds="1782860850">2026-06-30</end-date>
+</validity-information>
+</feature>
+</license>
+</license-summary-information>"#;
+        let cleaned = sanitize_rustez_xml(xml);
+        roxmltree::Document::parse(&cleaned).unwrap_or_else(|e| {
+            panic!("parse failed after sanitize: {e}\ncleaned:\n{cleaned}");
+        });
+    }
+
+    #[test]
     fn multi_re_envelope_with_no_items_yields_empty_vec() {
         // Document the contract: envelope present but with zero items
         // is intentionally an empty result vec, not an error. Callers must

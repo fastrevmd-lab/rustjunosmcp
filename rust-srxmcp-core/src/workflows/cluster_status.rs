@@ -1,8 +1,8 @@
 //! `get_chassis_cluster_status` — chassis-cluster topology + health snapshot.
 //!
-//! The RPC used is `get-chassis-cluster-status-information` (rustez converts
+//! The RPC used is `get-chassis-cluster-status` (rustez converts
 //! underscores to hyphens, so the call is
-//! `exec.call("get-chassis-cluster-status-information", &[])`).
+//! `exec.call("get-chassis-cluster-status", &[])`).
 //!
 //! # Junos XML schema (vSRX 24.x — actual)
 //!
@@ -80,7 +80,7 @@ pub struct RgMember {
 
 // ── `run()` — async entry point ───────────────────────────────────────────────
 
-/// Run `get-chassis-cluster-status-information` against a pooled device.
+/// Run `get-chassis-cluster-status` against a pooled device.
 pub async fn run(
     device: &mut PooledDevice,
     args: ClusterStatusArgs,
@@ -92,7 +92,7 @@ pub async fn run(
         .rpc()
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
     let reply = exec
-        .call("get-chassis-cluster-status-information", &[])
+        .call("get-chassis-cluster-status", &[])
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
     let mut parsed = parse(&reply)?;
@@ -165,15 +165,12 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
                 .find(|n| n.is_element() && n.tag_name().name() == "redundancy-group-id")
                 .and_then(|n| n.text())
                 .ok_or_else(|| {
-                    SrxError::schema_mismatch(
-                        "get-chassis-cluster-status-information",
-                        "redundancy-group-id",
-                    )
+                    SrxError::schema_mismatch("get-chassis-cluster-status", "redundancy-group-id")
                 })
                 .and_then(|t| {
                     t.trim().parse::<u16>().map_err(|_| {
                         SrxError::schema_mismatch(
-                            "get-chassis-cluster-status-information",
+                            "get-chassis-cluster-status",
                             "redundancy-group-id",
                         )
                     })
@@ -191,7 +188,7 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
                 None => 0,
                 Some(t) => t.trim().parse::<u32>().map_err(|_| {
                     SrxError::schema_mismatch(
-                        "get-chassis-cluster-status-information",
+                        "get-chassis-cluster-status",
                         "redundancy-group-failover-count",
                     )
                 })?,

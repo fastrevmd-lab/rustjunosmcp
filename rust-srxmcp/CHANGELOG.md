@@ -6,6 +6,38 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-05-21
+
+Live-smoke follow-up to v0.1.0. Fixes the three runtime bugs discovered
+on LXC 601 immediately after the v0.1.0 deploy (issues #68/#69/#70).
+
+### Fixed
+- `get_chassis_cluster_status` (#68): switch RPC name from
+  `get-chassis-cluster-status-information` to `get-chassis-cluster-status`.
+  The previous name produced `[OperationFailed] syntax error` on vSRX 24.4;
+  verified via Junos's own `| display xml rpc` introspection on
+  `show chassis cluster status`.
+- `check_srx_feature_license` (#69): `license::parse()` now sanitises the
+  reply through `xml::sanitize_rustez_xml` before handing it to roxmltree.
+  Live replies carry `junos:seconds` / `junos:style` attributes whose
+  `xmlns:junos` declaration is stripped by rustnetconf's
+  `extract_rpc_reply_inner_content`; without sanitisation roxmltree refused
+  the document with `unknown namespace prefix 'junos'`.
+- `get_srx_security_services_status` (#70): refactor `run()` so a failing
+  sub-RPC degrades only its own slot to `state=not_configured` instead of
+  aborting the entire tool with `?`. vSRX 24.4 returns syntax `rpc-error`
+  for `get-secintel-feed-summary`; the previous fail-fast design surfaced
+  that as a top-level transport error and lost the IDP/AppID/UTM/ATP
+  results that were already available.
+
+### Added
+- `live_eval_with_junos_attrs.xml` fixture mirroring the actual rustnetconf
+  output (post `extract_rpc_reply_inner_content`) so future regressions of
+  #69 are caught by `cargo test`.
+- `per_node()` helper + `SubCall` capture in `services_status` plus three
+  unit tests covering the new degradation paths (Err → not_configured,
+  Ok-but-missing-index → not_configured, Ok-with-payload → parser).
+
 ## [0.1.0] — 2026-05-21
 
 Phase 1B — read-only SRX status tools.
