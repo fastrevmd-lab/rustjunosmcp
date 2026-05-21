@@ -57,7 +57,14 @@ fn write_node<W: std::io::Write>(writer: &mut Writer<W>, node: roxmltree::Node<'
 /// contains zero `<multi-routing-engine-item>` children, this function returns
 /// an empty `Vec` (not an error). Callers must treat an empty result as
 /// "no nodes responded."
+///
+/// Input is run through [`sanitize_rustez_xml`] first so that orphan
+/// `junos:` namespace attributes and unescaped `&lt;`/`&gt;` in text content
+/// (both produced by rustnetconf when it strips the `<nc:rpc-reply>`
+/// wrapper) do not abort the parse.
 pub fn multi_re_split(reply_xml: &str) -> Result<Vec<ReNode>, crate::SrxError> {
+    let cleaned = sanitize_rustez_xml(reply_xml);
+    let reply_xml = cleaned.as_ref();
     let doc =
         roxmltree::Document::parse(reply_xml).map_err(|e| crate::SrxError::Parse(e.to_string()))?;
 
@@ -127,6 +134,197 @@ pub fn text_of(xml: &str, name: &str) -> Option<String> {
         .find(|n| n.is_element() && n.tag_name().name() == name)
         .and_then(|n| n.text())
         .map(|s| s.trim().to_string())
+}
+
+/// Sanitize a raw XML string returned by `rustez`/`rustnetconf` so that
+/// `roxmltree` can parse it. Two problems are fixed:
+///
+/// 1. **Undeclared namespace attributes** (`junos:style="brief"`):
+///    rustnetconf strips the `<nc:rpc-reply>` wrapper where `xmlns:junos`
+///    was declared, leaving orphan `junos:*` attributes that roxmltree
+///    rejects with an unknown-prefix error. These are removed.
+/// 2. **Unescaped `<` / `>` in text content**:
+///    `rustnetconf::extract_rpc_reply_inner_content` decodes `&lt;`/`&gt;`
+///    entity references, so element text like `<sa-direction>&lt;</sa-direction>`
+///    becomes `<sa-direction><</sa-direction>` in the returned string.
+///    They are re-escaped via a two-pass substitution that preserves XML markup.
+///
+/// Pure text manipulation — no XML parser is invoked. Returns a `Cow::Borrowed`
+/// fast path when neither problem is present.
+pub fn sanitize_rustez_xml(xml: &str) -> std::borrow::Cow<'_, str> {
+    let needs_ns_strip = xml.contains("junos:");
+    let needs_text_escape =
+        xml.bytes().any(|b| b == b'<' || b == b'>') && has_bare_angle_brackets_in_text(xml);
+    if !needs_ns_strip && !needs_text_escape {
+        return std::borrow::Cow::Borrowed(xml);
+    }
+
+    let after_ns = if needs_ns_strip {
+        simple_strip_junos(xml)
+    } else {
+        xml.to_string()
+    };
+
+    let result = if needs_text_escape {
+        escape_text_angle_brackets(&after_ns)
+    } else {
+        after_ns
+    };
+
+    std::borrow::Cow::Owned(result)
+}
+
+/// Heuristic: does this string contain `<` or `>` bytes that are not part of
+/// legitimate XML markup? Scoped to Junos/rustnetconf output only (does not
+/// handle CDATA sections — those do not appear in Junos replies).
+fn has_bare_angle_brackets_in_text(xml: &str) -> bool {
+    let bytes = xml.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    let mut in_tag = false;
+
+    while i < len {
+        let b = bytes[i];
+        if in_tag {
+            if b == b'>' {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'<' => {
+                let next = if i + 1 < len { bytes[i + 1] } else { 0 };
+                let is_tag = next == b'/'
+                    || next == b'?'
+                    || next == b'!'
+                    || next.is_ascii_alphanumeric()
+                    || next == b'_';
+                if is_tag {
+                    in_tag = true;
+                } else {
+                    return true;
+                }
+            }
+            b'>' => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Re-escape bare `<` / `>` characters that appear in text content of an XML
+/// string. Text segments (between `>` and `<`) get `<`/`>` escaped; markup
+/// (everything inside `<...>`) is passed through verbatim.
+fn escape_text_angle_brackets(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len() + 32);
+    let mut rest = xml;
+
+    let mut in_text = !xml.starts_with('<');
+
+    while !rest.is_empty() {
+        if in_text {
+            if let Some(tag_start) = find_next_tag_start(rest) {
+                let text_segment = &rest[..tag_start];
+                for ch in text_segment.chars() {
+                    match ch {
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        other => out.push(other),
+                    }
+                }
+                rest = &rest[tag_start..];
+                in_text = false;
+            } else {
+                for ch in rest.chars() {
+                    match ch {
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        other => out.push(other),
+                    }
+                }
+                break;
+            }
+        } else if let Some(tag_end) = rest.find('>') {
+            out.push_str(&rest[..=tag_end]);
+            rest = &rest[tag_end + 1..];
+            in_text = true;
+        } else {
+            out.push_str(rest);
+            break;
+        }
+    }
+    out
+}
+
+/// Find the byte offset of the next `<` that opens a legitimate XML tag.
+fn find_next_tag_start(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'<' {
+            let next = if i + 1 < len { bytes[i + 1] } else { 0 };
+            if next == b'/'
+                || next == b'?'
+                || next == b'!'
+                || next.is_ascii_alphanumeric()
+                || next == b'_'
+            {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Strip every `junos:attr="value"` occurrence with leading whitespace.
+fn simple_strip_junos(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(pos) = rest.find("junos:") {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        let attr_end = find_attr_end(rest);
+        rest = &rest[attr_end..];
+        rest = rest.trim_start_matches(' ');
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Find the end position of an XML attribute starting at `s`.
+fn find_attr_end(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len && bytes[i] != b'=' {
+        i += 1;
+    }
+    if i >= len {
+        return len;
+    }
+    i += 1;
+    if i >= len {
+        return len;
+    }
+    let quote = bytes[i];
+    if quote != b'"' && quote != b'\'' {
+        while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+            i += 1;
+        }
+        return i;
+    }
+    i += 1;
+    while i < len && bytes[i] != quote {
+        i += 1;
+    }
+    if i < len {
+        i += 1;
+    }
+    i
 }
 
 #[cfg(test)]

@@ -1,0 +1,30 @@
+<!-- Hand-crafted fixture representing a device with a permanent IDP license installed.
+     Schema derived from Junos 21.x/22.x license-summary-information XML output (same
+     element names as the eval_trial.xml fixture captured from vSRX-test10 on 2026-05-21,
+     with license-type set to "permanent" and no end-date element).
+     Source reference: Juniper KB16748 "Understanding Junos Software License Keys" and
+     J-Web license display confirmed by field engineers. -->
+<license-summary-information xmlns="http://xml.juniper.net/netconf/junos/1.0" format="xml">
+  <feature-summary>
+    <name>IDP Signature</name>
+    <description>IDP Signature</description>
+    <licensed-feature-count>1</licensed-feature-count>
+    <licensed-feature-used-count>1</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>1</licenses-used>
+    <licenses-installed>1</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>permanent</license-type>
+  </feature-summary>
+  <feature-summary>
+    <name>Virtual Appliance</name>
+    <description>Virtual Appliance</description>
+    <licensed-feature-count>1</licensed-feature-count>
+    <licensed-feature-used-count>1</licensed-feature-used-count>
+    <licensed-feature-needed-count>0</licensed-feature-needed-count>
+    <licenses-used>1</licenses-used>
+    <licenses-installed>1</licenses-installed>
+    <licenses-needed>0</licenses-needed>
+    <license-type>permanent</license-type>
+  </feature-summary>
+</license-summary-information>

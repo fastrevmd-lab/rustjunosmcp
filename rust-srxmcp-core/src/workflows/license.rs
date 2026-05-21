@@ -1,0 +1,432 @@
+//! `check_srx_feature_license` — map a security-service intent to the
+//! matching license record(s) on the device.
+//!
+//! # Junos XML schema
+//!
+//! `<get-license-summary-information/>` returns:
+//!
+//! ```xml
+//! <license-summary-information>
+//!   <feature-summary>
+//!     <name>IDP Signature</name>
+//!     <description>…</description>
+//!     <licenses-used>1</licenses-used>
+//!     <licenses-installed>1</licenses-installed>
+//!     <licenses-needed>0</licenses-needed>
+//!     <license-type>permanent</license-type>
+//!     <!-- <end-date> present only for time-based licenses -->
+//!     <end-date>2026-06-30 23:07:30 UTC</end-date>
+//!   </feature-summary>
+//!   …
+//! </license-summary-information>
+//! ```
+//!
+//! `<get-license-key-information/>` returns a `<license-key-information>` block
+//! listing raw key blobs — not used for feature matching but included in
+//! `raw_xml` when `include_raw=true`.
+//!
+//! # Absence rule
+//!
+//! If no `<feature-summary>` whose `<name>` matches any of the feature's
+//! `record_patterns()` (case-insensitive substring) is found →
+//! `state=not_configured`, `reason="<feature> not present in installed licenses"`.
+
+use crate::{SrxError, SrxToolResponse};
+use rust_junosmcp_core::device_manager::PooledDevice;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/// The set of SRX security features that require a Junos license.
+///
+/// Each variant has a hard-coded list of case-insensitive substring patterns
+/// matched against the `<name>` field of `<feature-summary>` elements returned
+/// by `<get-license-summary-information/>`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum SrxLicensedFeature {
+    Idp,
+    AppId,
+    UtmAntivirus,
+    WebFiltering,
+    AntiSpam,
+    SecIntel,
+    AtpCloud,
+    SslProxy,
+}
+
+impl SrxLicensedFeature {
+    /// Case-insensitive substring patterns matched against the Junos
+    /// `<name>` field (the "Feature" column in `show system license`).
+    pub fn record_patterns(&self) -> &'static [&'static str] {
+        match self {
+            Self::Idp => &["idp", "intrusion"],
+            Self::AppId => &["application identification", "appid", "app-id"],
+            Self::UtmAntivirus => &["antivirus", "av-key", "av_key", "anti-virus"],
+            Self::WebFiltering => &["web filtering", "url filtering", "web-filtering"],
+            Self::AntiSpam => &["anti-spam", "antispam"],
+            Self::SecIntel => &["secintel", "security intelligence", "sec-intel"],
+            Self::AtpCloud => &["atp cloud", "sky atp", "advanced threat"],
+            Self::SslProxy => &["ssl proxy", "ssl forward proxy", "ssl-proxy"],
+        }
+    }
+
+    /// Human-readable name for use in `reason` strings.
+    fn display_name(&self) -> &'static str {
+        match self {
+            Self::Idp => "idp",
+            Self::AppId => "app_id",
+            Self::UtmAntivirus => "utm_antivirus",
+            Self::WebFiltering => "web_filtering",
+            Self::AntiSpam => "anti_spam",
+            Self::SecIntel => "sec_intel",
+            Self::AtpCloud => "atp_cloud",
+            Self::SslProxy => "ssl_proxy",
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LicenseArgs {
+    pub router: String,
+    pub feature: SrxLicensedFeature,
+    #[serde(default)]
+    pub include_raw: bool,
+}
+
+/// Per-record data extracted from a `<feature-summary>` block.
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct LicenseRecord {
+    /// The `<name>` text from the feature-summary block.
+    pub feature_name: String,
+    /// `"permanent"`, `"time-based"`, `"trial"`, etc.
+    pub license_type: String,
+    /// End-date when the license expires; `None` for permanent.
+    /// Wire shape is RFC 3339 (e.g. `"2026-06-30T23:07:30Z"`).
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schemars(with = "Option<String>")]
+    pub end_date: Option<OffsetDateTime>,
+}
+
+/// Aggregated counts across all matching records.
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct LicenseCounts {
+    pub used: u32,
+    pub installed: u32,
+    pub needed: u32,
+}
+
+/// The `data` payload returned in `SrxToolResponse<LicenseData>` when one
+/// or more matching license records are found.
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct LicenseData {
+    pub feature: SrxLicensedFeature,
+    pub license_records: Vec<LicenseRecord>,
+    pub counts: LicenseCounts,
+    /// Earliest expiry among time-based records (`None` when all permanent).
+    /// Wire shape is RFC 3339.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schemars(with = "Option<String>")]
+    pub earliest_expiry: Option<OffsetDateTime>,
+    /// `true` iff every matching record has `license_type == "permanent"`
+    /// (i.e. `end_date.is_none()` for all records).
+    pub all_permanent: bool,
+}
+
+// ── `run()` — async entry point ───────────────────────────────────────────────
+
+/// Run `get-license-summary-information` (and optionally `get-license-key-information`)
+/// against a pooled device and return a typed `SrxToolResponse<LicenseData>`.
+pub async fn run(
+    device: &mut PooledDevice,
+    args: LicenseArgs,
+) -> Result<SrxToolResponse<LicenseData>, SrxError> {
+    if args.router.trim().is_empty() {
+        return Err(SrxError::InvalidInput("router must not be empty".into()));
+    }
+    let mut exec = device
+        .rpc()
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let summary = exec
+        .call("get-license-summary-information", &[])
+        .await
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let keys = exec
+        .call("get-license-key-information", &[])
+        .await
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let mut parsed = parse(args.feature, &summary)?;
+    if args.include_raw {
+        parsed = parsed.with_raw(format!(
+            "<!-- summary -->\n{summary}\n<!-- keys -->\n{keys}"
+        ));
+    }
+    Ok(parsed)
+}
+
+// ── Parser ────────────────────────────────────────────────────────────────────
+
+/// Parse the `<license-summary-information>` XML body (as returned by
+/// `rustez::RpcExecutor::call`) and return a typed `SrxToolResponse`.
+///
+/// This is the pure unit-testable entry point; `run()` calls it after
+/// obtaining the raw XML from the device.
+///
+/// `key_xml` is accepted for forward-compatibility but not parsed for
+/// feature matching — matching is done against `summary_xml` only.
+pub fn parse(
+    feature: SrxLicensedFeature,
+    summary_xml: &str,
+) -> Result<SrxToolResponse<LicenseData>, SrxError> {
+    let doc = roxmltree::Document::parse(summary_xml)
+        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+
+    let patterns = feature.record_patterns();
+
+    let mut records: Vec<LicenseRecord> = Vec::new();
+    let mut total_used: u32 = 0;
+    let mut total_installed: u32 = 0;
+    let mut total_needed: u32 = 0;
+
+    // Walk every <feature-summary> child.
+    for fs in doc
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "feature-summary")
+    {
+        let name = child_text(&fs, "name").unwrap_or_default();
+        let name_lc = name.to_ascii_lowercase();
+
+        // Case-insensitive substring match against any pattern for this feature.
+        if !patterns.iter().any(|p| name_lc.contains(p)) {
+            continue;
+        }
+
+        let license_type = child_text(&fs, "license-type").unwrap_or_default();
+        // Junos date format: "2026-06-30 23:07:30 UTC" — parse to OffsetDateTime.
+        let end_date = child_text(&fs, "end-date")
+            .map(|s| junos_date_to_offset(&s))
+            .transpose()
+            .map_err(|e| SrxError::Parse(format!("end-date parse error: {e}")))?;
+
+        let used: u32 = child_text(&fs, "licenses-used")
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0);
+        let installed: u32 = child_text(&fs, "licenses-installed")
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0);
+        let needed: u32 = child_text(&fs, "licenses-needed")
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0);
+
+        total_used = total_used.saturating_add(used);
+        total_installed = total_installed.saturating_add(installed);
+        total_needed = total_needed.saturating_add(needed);
+
+        records.push(LicenseRecord {
+            feature_name: name,
+            license_type,
+            end_date,
+        });
+    }
+
+    if records.is_empty() {
+        return Ok(SrxToolResponse::not_configured(format!(
+            "{} not present in installed licenses",
+            feature.display_name()
+        )));
+    }
+
+    // Collect all expiry dates, find the earliest.
+    let mut expiry_dates: Vec<OffsetDateTime> = records.iter().filter_map(|r| r.end_date).collect();
+    expiry_dates.sort();
+    let earliest_expiry = expiry_dates.into_iter().next();
+
+    let all_permanent = records.iter().all(|r| r.end_date.is_none());
+
+    Ok(SrxToolResponse::active(LicenseData {
+        feature,
+        license_records: records,
+        counts: LicenseCounts {
+            used: total_used,
+            installed: total_installed,
+            needed: total_needed,
+        },
+        earliest_expiry,
+        all_permanent,
+    }))
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Get the trimmed text content of the first child element with `tag_name`.
+fn child_text(node: &roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
+    node.children()
+        .find(|n| n.is_element() && n.tag_name().name() == tag_name)
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+/// Parse a Junos date string (`"2026-06-30 23:07:30 UTC"`) into an
+/// `OffsetDateTime`.
+///
+/// Junos uses a non-standard format with a space separator and trailing " UTC".
+/// We normalise it to RFC 3339 and then parse via `time`'s well-known format.
+fn junos_date_to_offset(s: &str) -> Result<OffsetDateTime, String> {
+    use time::format_description::well_known::Rfc3339;
+
+    let s = s.trim();
+    // Strip trailing timezone label (always UTC for Junos).
+    let s = s.strip_suffix(" UTC").unwrap_or(s).trim();
+
+    let rfc = if s.len() == 19 && s.as_bytes()[10] == b' ' {
+        // "2026-06-30 23:07:30" → "2026-06-30T23:07:30+00:00"
+        format!("{}T{}+00:00", &s[..10], &s[11..])
+    } else if s.contains('T') {
+        // Already ISO 8601-ish.
+        s.to_string()
+    } else {
+        return Err(format!("unrecognised Junos date format: {s:?}"));
+    };
+
+    OffsetDateTime::parse(&rfc, &Rfc3339).map_err(|e| format!("rfc3339 parse {rfc:?}: {e}"))
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SrxState;
+    use pretty_assertions::assert_eq;
+
+    fn fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/license")
+            .join(name);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    }
+
+    // ── Test 1: eval/trial — no IDP records → not_configured ─────────────────
+
+    #[test]
+    fn eval_trial_idp_returns_not_configured() {
+        // Lab eval/trial licenses (Virtual Appliance + VCPU Scale) don't include
+        // any IDP record — expect not_configured with "not present" in the reason.
+        let xml = fixture("eval_trial.xml");
+        let resp = parse(SrxLicensedFeature::Idp, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
+        assert!(
+            resp.reason
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("not present"),
+            "reason should contain 'not present', got: {:?}",
+            resp.reason
+        );
+        assert!(
+            resp.data.is_none(),
+            "data should be absent for not_configured"
+        );
+    }
+
+    // ── Test 2: eval/trial — non-IDP variants also return not_configured ──────
+
+    #[test]
+    fn eval_trial_appid_returns_not_configured() {
+        let xml = fixture("eval_trial.xml");
+        let resp = parse(SrxLicensedFeature::AppId, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
+    }
+
+    #[test]
+    fn eval_trial_utm_returns_not_configured() {
+        let xml = fixture("eval_trial.xml");
+        let resp = parse(SrxLicensedFeature::UtmAntivirus, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
+    }
+
+    // ── Test 3: permanent IDP license → active, all_permanent=true ───────────
+
+    #[test]
+    fn permanent_idp_marks_all_permanent_true() {
+        // Hand-crafted fixture with a permanent IDP Signature license.
+        let xml = fixture("permanent.xml");
+        let resp = parse(SrxLicensedFeature::Idp, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::Active, "state");
+
+        let data = resp.data.expect("data must be present for Active");
+        assert!(data.all_permanent, "all_permanent should be true");
+        assert!(
+            data.earliest_expiry.is_none(),
+            "earliest_expiry should be None for permanent"
+        );
+        assert!(
+            !data.license_records.is_empty(),
+            "license_records non-empty"
+        );
+        assert_eq!(
+            data.license_records[0].feature_name, "IDP Signature",
+            "feature_name"
+        );
+        assert_eq!(
+            data.license_records[0].license_type, "permanent",
+            "license_type"
+        );
+        assert_eq!(data.counts.installed, 1, "counts.installed");
+    }
+
+    // ── Test 4: permanent fixture — non-IDP variant returns not_configured ────
+
+    #[test]
+    fn permanent_appid_returns_not_configured_when_only_idp_present() {
+        let xml = fixture("permanent.xml");
+        let resp = parse(SrxLicensedFeature::AppId, &xml).expect("parse should not error");
+        // The permanent.xml fixture only has IDP — AppId should not match.
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
+    }
+
+    // ── Test 5: no licenses installed → not_configured ────────────────────────
+
+    #[test]
+    fn none_installed_returns_not_configured() {
+        let xml = fixture("none_installed.xml");
+        let resp = parse(SrxLicensedFeature::Idp, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::NotConfigured, "state");
+        assert!(
+            resp.reason
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("not present"),
+            "reason should contain 'not present', got: {:?}",
+            resp.reason
+        );
+        assert!(resp.data.is_none(), "data should be absent");
+    }
+
+    // ── Test 6: date conversion helper ───────────────────────────────────────
+
+    #[test]
+    fn junos_date_converts_to_offset() {
+        let result = junos_date_to_offset("2026-06-30 23:07:30 UTC").unwrap();
+        assert_eq!(result.unix_timestamp(), 1782860850);
+        assert_eq!(result.offset(), time::UtcOffset::UTC);
+    }
+
+    #[test]
+    fn junos_date_without_utc_suffix_still_converts() {
+        let result = junos_date_to_offset("2026-06-30 23:07:30").unwrap();
+        assert_eq!(result.unix_timestamp(), 1782860850);
+    }
+
+    #[test]
+    fn junos_date_rejects_malformed_input() {
+        assert!(junos_date_to_offset("not a date").is_err());
+        assert!(junos_date_to_offset("2026/06/30").is_err());
+    }
+}

@@ -89,6 +89,101 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "get_srx_security_services_status",
+        description = "Reports the health and version of up to five SRX security services \
+                       (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. \
+                       Each sub-service is independently classified as active or not_configured. \
+                       The overall state is not_configured only when all five sub-services are absent."
+    )]
+    async fn get_srx_security_services_status(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::ServicesStatusArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::services_status::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing ServicesStatusData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+
+    #[tool(
+        name = "check_srx_feature_license",
+        description = "Check whether a named SRX security feature (IDP, AppID, UTM Antivirus, \
+                       Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid \
+                       license installed on the device. Returns state=not_configured when no \
+                       matching license record is present (including the expected lab case where \
+                       only eval/trial licenses are installed)."
+    )]
+    async fn check_srx_feature_license(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::LicenseArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::license::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing LicenseData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+
+    #[tool(
+        name = "vpn_lifecycle_report",
+        description = "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for \
+                       VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, \
+                       and correlations when VPN is configured (even if no SAs are currently up). \
+                       Returns state=not_configured only when both IKE and IPsec RPCs report that \
+                       the security stanza is absent. Optionally filter by `peer` (substring \
+                       match against both IKE remote address and IPsec gateway) and/or `tunnel` \
+                       (substring match against IPsec remote gateway — the brief-style IPsec \
+                       RPC does not surface the st0 interface name)."
+    )]
+    async fn vpn_lifecycle_report(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::VpnLifecycleArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::vpn_lifecycle::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing VpnLifecycleData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -103,7 +198,8 @@ impl ServerHandler for JmcpSrxHandler {
             },
             instructions: Some(
                 "Juniper SRX-specific MCP server. Phase 1B tools: \
-                 srxmcp_status, get_chassis_cluster_status."
+                 srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
+                 get_srx_security_services_status, vpn_lifecycle_report."
                     .into(),
             ),
             ..Default::default()

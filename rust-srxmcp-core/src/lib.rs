@@ -15,3 +15,13 @@ pub use error::SrxError;
 pub use workflows::cluster_status::{
     ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
 };
+pub use workflows::license::{
+    LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
+};
+pub use workflows::services_status::{
+    AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,
+    ServicesStatusData, SubServiceStatus, UtmAvInfo,
+};
+pub use workflows::vpn_lifecycle::{
+    IkeSa, IpsecSa, NodeVpnReport, VpnCorrelation, VpnLifecycleArgs, VpnLifecycleData,
+};

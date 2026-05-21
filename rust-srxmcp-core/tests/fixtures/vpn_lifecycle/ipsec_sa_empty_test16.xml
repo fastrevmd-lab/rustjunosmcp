@@ -1,0 +1,8 @@
+<ipsec-security-associations-information junos:style="brief">
+<total-active-tunnels>
+0
+</total-active-tunnels>
+<total-ipsec-sas>
+0
+</total-ipsec-sas>
+</ipsec-security-associations-information>

@@ -1,0 +1,5 @@
+<xnm:error xmlns="http://xml.juniper.net/netconf/junos/1.0" format="xml" xmlns:xnm="http://xml.juniper.net/xnm/1.1/xnm">
+<parse/>
+<source-daemon>kmd</source-daemon>
+<message>error: IPSec is not configured</message>
+</xnm:error>
