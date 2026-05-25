@@ -1,8 +1,11 @@
 # srxmcp Phase 2 — IDP + AppID signature-package lifecycle
 
-**Status:** design, awaiting written review
-**Target release:** `srxmcp-v0.2.0`
-**Builds on:** `srxmcp-v0.1.1` (read-only tools), `rust-junosmcp` v0.5.4+ (audit logging), `upgrade_junos` (two-call confirm reference implementation)
+**Status:** design, eng-reviewed 2026-05-25
+**Release split:**
+- `srxmcp-v0.2.0` — IDP (`manage_idp_security_package`) only
+- `srxmcp-v0.2.1` — AppID (`manage_appid_signature_package`) reusing the shared `signature_package/` submodule landed in v0.2.0
+
+**Builds on:** `srxmcp-v0.1.1` (read-only tools), `rust-junosmcp` v0.5.4+ (`tracing::info!(target = "audit", ...)` pattern), `upgrade_junos` (two-call confirm reference implementation)
 **Strategy doc:** [`2026-05-20-srx-mcp-strategy-design.md`](2026-05-20-srx-mcp-strategy-design.md) — Phase 2 row
 
 ## Why
@@ -192,10 +195,11 @@ Each blocker is a hard refusal — call 1 fails with the specific
 
 ### Call 2 — same args + `confirm: true`
 
-Pre-flight re-runs (TOCTOU guard — license could have lapsed, latest version
-on Juniper's side could have advanced, cluster could have desynced between
-call 1 and call 2). Per-router lock acquired before any destructive RPC fires.
-Destructive workflow proceeds linearly.
+Per-router lock acquired FIRST (before pre-flight re-runs), so pre-flight
+result is fresh at the moment the destructive RPC fires. Pre-flight then
+re-runs under the lock as the TOCTOU guard — license could have lapsed,
+latest version on Juniper's side could have advanced, cluster could have
+desynced between call 1 and call 2. Destructive workflow proceeds linearly.
 
 ### Per-router lock
 
@@ -204,16 +208,23 @@ Same `TransferLocks` machinery `upgrade_junos` and `transfer_file` share
 `rust-junosmcp-core/src/tools/transfer_file.rs`, the
 `OwnedSemaphorePermit` released on drop). Keyed on router name. Prevents
 two concurrent destructive ops on the same device (whether IDP, AppID,
-or junos image upgrade). Acquired after call 2 pre-flight passes,
-released on drop after post-install verification.
+or junos image upgrade).
+
+**Ordering:** acquired BEFORE call 2 pre-flight re-runs, released on drop
+after post-install verification. Matches `upgrade_junos` (see
+`rust-junosmcp-core/src/tools/upgrade_junos.rs:577`). Lock-first closes
+the TOCTOU window where two operators could both pass pre-flight against
+the same router and then queue for the destructive RPC with stale
+pre-flight results — under lock-first the second operator's pre-flight
+runs after the first releases, so it sees current state.
 
 ## Workflow phases (destructive path, `confirm: true`)
 
 ### IDP `download_and_install`
 
-1. **Pre-flight (re-execute call 1 pre-flight)** — reject before touching state if anything changed.
-2. **Acquire per-router lock.**
-3. **Open NETCONF session** via existing `DeviceManager::open` (pooled).
+1. **Acquire per-router lock** (`TransferLocks::acquire(router)` — see D4).
+2. **Open NETCONF session** via existing `DeviceManager::open` (pooled).
+3. **Pre-flight (re-execute call 1 pre-flight under the lock)** — reject before touching state if anything changed.
 4. **Audit:** write `phase=preflight_passed`.
 5. **Download** — fire `request-idp-security-package-download` (RPC name; XML CLI equivalent). Get async job-id back.
 6. **Poll** — call `get-idp-security-package-download-status` every 5s up to `timeout - elapsed`. Terminate on `done` / `error` / poll-timeout.
@@ -226,7 +237,7 @@ released on drop after post-install verification.
 
 ### IDP `rollback`
 
-1-4. Same as above (pre-flight, lock, session, audit `preflight_passed`).
+1-4. Same as above (lock, session, pre-flight, audit `preflight_passed`).
 5. **Rollback** — fire `request-idp-security-package-rollback`. Synchronous on Junos's side; no poll needed.
 6. **Audit:** write `phase=install_complete` (overloaded — semantics are "active-version change committed").
 7. **Verify** — read `get-idp-security-package-information`; assert installed version matches the rollback target.
@@ -408,22 +419,28 @@ request extensions — same machinery `upgrade_junos` uses).
 
 ### Smoke test surface (added to `rust-srxmcp/tests/live_smoke.rs`)
 
-Ten new `#[ignore]`d tests, run with
+Tests are `#[ignore]`d and run with
 `cargo test --test live_smoke -p rust-srxmcp -- --ignored --test-threads=1`.
 Same `JMCP_SRX_LIVE_URL` / `JMCP_SRX_LIVE_TOKEN` env mechanism the existing
 4 smoke tests use.
 
-IDP set (5 tests):
+#### v0.2.0 release (IDP — 7 tests)
 
 | Test | Verb / args | Target | Asserts |
 |---|---|---|---|
 | `idp_check_server_returns_latest_version` | `check_server` | `vSRX-test10` | response has `latest_version` field with non-empty value |
 | `idp_download_and_install_call1_returns_plan` | `download_and_install` (no confirm) | `vSRX-test10` | response is `confirmation_required` with populated `target_package_version` and zero `preflight_blockers` |
 | `idp_download_and_install_call2_succeeds` | `download_and_install` (confirm=true) | `vSRX-test10` | success; post-install `get-idp-security-package-information` reports installed version matches the target |
-| `idp_rollback_after_install_restores_previous` | `rollback` (confirm=true) | `vSRX-test10` | success; post-rollback version matches the version that was current before the previous test |
+| `idp_already_at_target_short_circuits` | `download_and_install` (confirm=false, no `version`) immediately after the previous test | `vSRX-test10` | response is success with `status: "already_at_target"`, no `confirmation_required` emitted |
+| `idp_version_pin_accepts_explicit` | `download_and_install` (confirm=false, `version` arg = known older version) | `vSRX-test10` | response is `confirmation_required` with `target_source: "pinned"` and the explicit version echoed |
+| `idp_rollback_after_install_restores_previous` | `rollback` (confirm=true) | `vSRX-test10` | success; post-rollback version matches the version that was current before the install test |
 | `idp_cluster_install_syncs_both_nodes` | `download_and_install` (confirm=true) | `vSRX-test19-20` | success; both `node0` and `node1` report the installed version |
 
-AppID set (5 tests):
+(The two new tests — `idp_already_at_target_short_circuits` and
+`idp_version_pin_accepts_explicit` — close gaps T1 and T2 raised in the
+eng review.)
+
+#### v0.2.1 release (AppID — 5 tests, added when AppID lands)
 
 | Test | Verb / args | Target | Asserts |
 |---|---|---|---|
@@ -459,12 +476,19 @@ parser regression test in `signature_package/preflight.rs`.
 
 ### Release gate
 
-`srxmcp-v0.2.0` tag is cut only after all 10 live smoke tests pass green
-against LXC 601:30032 with the licensed vSRX devices. Same release-gate
-rule v0.1.0 and v0.1.1 used.
+- `srxmcp-v0.2.0` tag is cut only after all 7 IDP live smoke tests pass
+  green against LXC 601:30032 with the licensed vSRX devices.
+- `srxmcp-v0.2.1` tag is cut only after all 5 AppID live smoke tests
+  pass green on top of the IDP suite (12 smokes total once AppID lands).
+
+Same release-gate rule v0.1.0 and v0.1.1 used.
 
 ## Out of scope (deferred)
 
+- **AppID tool (`manage_appid_signature_package`).** Deferred to
+  `srxmcp-v0.2.1`. v0.2.0 ships only IDP. AppID reuses the
+  `signature_package/` submodule unchanged; only the workflow module and
+  the inline `#[tool]` registration are added in v0.2.1.
 - **Offline package install path.** No `offline_package` arg, no staging-dir
   integration. Operators who need this can chain `transfer_file` + a manual
   Junos CLI command for now; a `manage_idp_security_package_offline`
