@@ -191,7 +191,14 @@ Each blocker is a hard refusal — call 1 fails with the specific
 | `signatures.juniper.net` unreachable | `SignaturePackageServerUnreachable` | `check_server`, `download_and_install` |
 | No rollback target available | `SignaturePackageNoRollbackTarget` | `rollback` only |
 | Cluster topology not synchronized | `SignaturePackageClusterDesynced` | destructive actions on clusters |
-| Active commit-confirmed window | `SignaturePackageCommitConfirmedActive` | destructive actions |
+
+An active commit-confirmed window is **not** a blocker. Sig-package install is
+an operational RPC (`request security idp security-package install`) — it
+writes binaries to `/var/db/idpd/` without transiting the candidate-config /
+commit pipeline. Unlike `upgrade_junos`, there is no interaction between the
+two codepaths in `mgd`. When detected, pre-flight emits
+`tracing::warn!(target = "audit", event = "sigpkg_commit_confirmed_window_active", ...)`
+so the audit trail captures the unusual condition, then proceeds.
 
 ### Call 2 — same args + `confirm: true`
 
@@ -264,7 +271,7 @@ rust-srxmcp-core/src/
 │   ├── appid_package.rs              # manage_appid_signature_package — verb dispatch + per-verb run()
 │   └── signature_package/            # shared primitives (new submodule)
 │       ├── mod.rs                    # re-exports + the public SignaturePackagePlan type
-│       ├── preflight.rs              # license check, cluster topology, internet reachability, commit-confirmed check
+│       ├── preflight.rs              # license check, cluster topology, internet reachability, commit-confirmed audit warn
 │       ├── poll.rs                   # async poll-with-timeout for download/install status RPCs
 │       └── plan.rs                   # confirmation-plan JSON shape + already_at_target detection
 ```
@@ -292,7 +299,7 @@ Roughly 60% of the workflow logic between IDP and AppID is shared:
 | License pre-flight | `signature_package/preflight.rs::license_active(router, feature)` | Reuses `workflows::license::run` internally via Rust call (not via re-entrant MCP call) |
 | Cluster topology read | `signature_package/preflight.rs::cluster_topology(router)` | Reuses `workflows::cluster_status` similarly |
 | Internet reachability | `signature_package/preflight.rs::signatures_server_reachable(exec)` | Runs the service-specific `check-server` RPC and classifies the result |
-| Commit-confirmed check | `signature_package/preflight.rs::commit_confirmed_active(exec)` | Mirrors `upgrade_junos`'s `detect_active_commit_confirmed` |
+| Commit-confirmed audit warn | `signature_package/preflight.rs::detect_commit_confirmed(exec)` | Non-blocking — emits `tracing::warn!(target = "audit", ...)` if a window is open, then returns Ok. Reuses parser from `upgrade_junos`'s `detect_active_commit_confirmed`. |
 | Poll loop | `signature_package/poll.rs::poll_until_done<F, T>` | Generic async loop calling caller-supplied status closure every 5s; terminates on closure-returned terminal state or outer timeout |
 | Plan envelope | `signature_package/plan.rs::ConfirmationPlan` | Serialize impl produces the JSON shape from the Section 2 examples; constructors per verb |
 
@@ -327,7 +334,6 @@ calls.
 | `SignaturePackageServerUnreachable { router, detail }` | `signatures_server_unreachable` | Pre-flight: `check-server` RPC failed |
 | `SignaturePackageNoRollbackTarget { router }` | `no_rollback_target` | `rollback` requested but device has no preserved previous package |
 | `SignaturePackageClusterDesynced { router, state }` | `cluster_desynced` | Cluster topology not `synchronized` |
-| `SignaturePackageCommitConfirmedActive { router, rollback_secs }` | `commit_confirmed_active` | Active rollback window |
 | `SignaturePackageDownloadFailed { router, detail }` | `download_failed` | Async download poll terminated in failure state |
 | `SignaturePackageInstallFailed { router, detail }` | `install_failed` | Async install poll terminated in failure state |
 | `SignaturePackageVerificationFailed { router, expected, got }` | `post_install_version_mismatch` | Post-install version read doesn't match target |
@@ -467,7 +473,6 @@ Unit-tested with fixtures, not live-tested:
 
 - `license_inactive` — synthetic fixture; revoking a license to test it would be hostile to lab uptime
 - `signatures_server_unreachable` — synthetic fixture; firewall-blocking the SRX to test it requires homelab network changes
-- `commit_confirmed_active` — synthetic fixture; parser regression covered
 - `cluster_desynced` — synthetic fixture; parser regression covered
 - `no_rollback_target` — synthetic fixture; would require destroying a device's rollback state to live-test
 
