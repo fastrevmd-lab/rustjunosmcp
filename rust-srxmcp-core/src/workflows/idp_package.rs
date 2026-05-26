@@ -14,17 +14,29 @@
 //!
 //! # Live-captured RPC contract (see design Appendix A)
 //!
-//! * `get-idp-security-package-information` →
+//! Live-verified against vSRX-test1 (Junos 24.4R1) via `| display xml rpc`
+//! on 2026-05-26. Three of the seven RPCs are **composite** (parent +
+//! child element), not flat hyphenated names as originally guessed.
+//!
+//! * `<get-idp-security-package-information/>` (flat) →
 //!   `<idp-security-package-information>` (standalone) or
 //!   `<multi-routing-engine-results>` wrapping one per node.
 //!   `<security-package-version>` carries the full text (e.g.
 //!   `"3910(Minor, Thu May 21 …)"`) or `"N/A(N/A)"` on fresh devices.
-//! * `request-idp-security-package-check-server` →
-//!   `<secpack-download-status>` with free-text
+//! * `<request-idp-security-package-download><check-server/></...>`
+//!   (composite) → `<secpack-download-status>` with free-text
 //!   `<secpack-download-status-detail>`. The version is regex-extracted
 //!   from `Version info:NNNN(...)`. If the configured signature URL
 //!   is unreachable, the reply is `<xnm:error>` with message
 //!   `"Fetching signed manifest.xml failed, error: Server not reachable"`.
+//! * `<request-idp-security-package-download/>` (flat) → async ack;
+//!   real progress lives behind the composite status probe.
+//! * `<request-idp-security-package-download><status/></...>` (composite,
+//!   *not* `get-*-status`) → poll-style status reply.
+//! * `<request-idp-security-package-install/>` (flat) → async ack.
+//! * `<request-idp-security-package-install><status/></...>` (composite,
+//!   *not* `get-*-status`) → poll-style status reply.
+//! * `<request-idp-security-package-rollback/>` (flat).
 
 use crate::workflows::signature_package::Service;
 use crate::SrxError;
@@ -34,17 +46,28 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-// ── RPC names (live-verified, see design Appendix A) ──────────────────────────
+// ── RPC names + payloads (live-verified, see design Appendix A) ──────────────
 //
-// Module constants so a future Junos rename only edits one place per RPC.
+// `RPC_*` are human-readable labels used in errors, audits, and tests. The
+// composite RPCs (`/`-separated) ship as `XML_*` payloads to `call_xml`;
+// flat RPCs go through `call(name, &[])`. Splitting the two lets a future
+// Junos rename only touch one of the two lines.
 
 const RPC_PACKAGE_INFORMATION: &str = "get-idp-security-package-information";
-const RPC_CHECK_SERVER: &str = "request-idp-security-package-download-check-server";
+const RPC_CHECK_SERVER: &str = "request-idp-security-package-download/check-server";
 const RPC_DOWNLOAD: &str = "request-idp-security-package-download";
-const RPC_DOWNLOAD_STATUS: &str = "get-idp-security-package-download-status";
 const RPC_INSTALL: &str = "request-idp-security-package-install";
-const RPC_INSTALL_STATUS: &str = "get-idp-security-package-install-status";
 const RPC_ROLLBACK: &str = "request-idp-security-package-rollback";
+
+// Composite-RPC payloads for `rustez::RpcExecutor::call_xml`. Their human
+// label is the parent+child path, e.g.
+// `request-idp-security-package-download/status`.
+const XML_CHECK_SERVER: &str =
+    "<request-idp-security-package-download><check-server/></request-idp-security-package-download>";
+const XML_DOWNLOAD_STATUS: &str =
+    "<request-idp-security-package-download><status/></request-idp-security-package-download>";
+const XML_INSTALL_STATUS: &str =
+    "<request-idp-security-package-install><status/></request-idp-security-package-install>";
 
 // Defaults for the destructive workflow. Per design §"Workflow phases":
 // poll every 5s; outer budget 600s default, capped at 1800s.
@@ -148,7 +171,7 @@ pub async fn check_server(
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
     let check_xml = exec
-        .call(RPC_CHECK_SERVER, &[])
+        .call_xml(XML_CHECK_SERVER)
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
@@ -885,7 +908,7 @@ async fn download_and_poll(
     poll_status(
         device,
         &args.router,
-        RPC_DOWNLOAD_STATUS,
+        XML_DOWNLOAD_STATUS,
         "secpack-download-status-detail",
         "download",
         deadline,
@@ -918,7 +941,7 @@ async fn install_and_poll(
     poll_status(
         device,
         &args.router,
-        RPC_INSTALL_STATUS,
+        XML_INSTALL_STATUS,
         "secpack-status-detail",
         "install",
         deadline,
@@ -936,7 +959,7 @@ async fn install_and_poll(
 async fn poll_status(
     device: &mut PooledDevice,
     _router: &str,
-    rpc: &str,
+    rpc_body: &str,
     detail_element: &str,
     _action: &str,
     deadline: tokio::time::Instant,
@@ -956,7 +979,7 @@ async fn poll_status(
                     rust_junosmcp_core::JmcpError::from(e),
                 )))
             })?;
-            exec.call(rpc, &[]).await.map_err(|e| {
+            exec.call_xml(rpc_body).await.map_err(|e| {
                 PollFailure::Transport(Box::new(SrxError::Transport(
                     rust_junosmcp_core::JmcpError::from(e),
                 )))

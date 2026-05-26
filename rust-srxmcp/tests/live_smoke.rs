@@ -74,6 +74,192 @@ fn vpn_report_against_test10_after_appendix_a() {
     );
 }
 
+// ── IDP signature-package smokes (Phase 2 / v0.2.0) ────────────────────────
+//
+// All target `vSRX-twin` (Demolab demo, IDP-SIG + APPID Signature active
+// through 2027-05-21 per LXC 601's /etc/jmcp/devices.json). Destructive
+// tests modify the live device — `#[ignore]`d, run only with explicit
+// operator authorization.
+//
+// Run order matters: `idp_download_and_install_call2_succeeds` must run
+// before `idp_already_at_target_short_circuits` and
+// `idp_rollback_after_install_restores_previous`. Constrain with
+// `--test-threads=1 idp_`.
+
+const IDP_PRIMARY: &str = "vSRX-test3";
+/// Cluster target. No IDP-licensed clustered device exists in the current
+/// lab inventory (vSRX-test19-20 is the cluster but trial-only as of
+/// 2026-05-26); this test will fail until a licensed pair is provisioned.
+const IDP_CLUSTER: &str = "vSRX-test19-20";
+
+#[test]
+#[ignore]
+fn idp_check_server_returns_latest_version() {
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({"router": IDP_PRIMARY, "action": "check_server"}),
+    );
+    let inner = parse_tool_text(&resp);
+    assert_eq!(inner["router"], IDP_PRIMARY, "resp: {inner}");
+    let latest = inner["latest_version"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no latest_version str in {inner}"));
+    assert!(
+        latest.chars().all(|c| c.is_ascii_digit()) && !latest.is_empty(),
+        "latest_version not numeric: {latest:?}"
+    );
+    let nodes = inner["nodes"].as_array().expect("nodes array");
+    assert!(!nodes.is_empty(), "expected at least one node row: {inner}");
+}
+
+#[test]
+#[ignore]
+fn idp_download_and_install_call1_returns_plan() {
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    // No confirm=true → expect JSON-RPC error with the
+    // [code=confirmation_required] bracketed token + embedded plan JSON.
+    let err = c.tool_error_call(
+        "manage_idp_security_package",
+        json!({"router": IDP_PRIMARY, "action": "download_and_install"}),
+    );
+    let msg = err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no /error/message in {err}"));
+    assert!(
+        msg.contains("[code=confirmation_required]"),
+        "expected confirmation_required token, got: {msg}"
+    );
+    assert!(msg.contains("plan:"), "expected plan: section in {msg}");
+}
+
+#[test]
+#[ignore]
+fn idp_download_and_install_call2_succeeds() {
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    // Real download (~300MB pulled from signatures.juniper.net) + install.
+    // Allow 20 min server-side budget; ureq has no default read timeout so
+    // it'll block until rmcp responds.
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({
+            "router": IDP_PRIMARY,
+            "action": "download_and_install",
+            "confirm": true,
+            "timeout": 1200_u64,
+        }),
+    );
+    let inner = parse_tool_text(&resp);
+    // Either Completed (full install ran) or AlreadyAtTarget (idempotent rerun).
+    let status = inner["status"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no status in {inner}"));
+    assert!(
+        status == "completed" || status == "already_at_target",
+        "unexpected status: {status} body: {inner}"
+    );
+}
+
+#[test]
+#[ignore]
+fn idp_already_at_target_short_circuits() {
+    // Assumes idp_download_and_install_call2_succeeds ran first.
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({
+            "router": IDP_PRIMARY,
+            "action": "download_and_install",
+            "confirm": true,
+        }),
+    );
+    let inner = parse_tool_text(&resp);
+    assert_eq!(
+        inner["status"], "already_at_target",
+        "expected short-circuit: {inner}"
+    );
+}
+
+#[test]
+#[ignore]
+fn idp_version_pin_accepts_explicit() {
+    // Discover the latest via check_server, then pin and reinstall.
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    let cs = c.tool_call(
+        "manage_idp_security_package",
+        json!({"router": IDP_PRIMARY, "action": "check_server"}),
+    );
+    let latest = parse_tool_text(&cs)["latest_version"]
+        .as_str()
+        .expect("latest_version")
+        .to_string();
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({
+            "router": IDP_PRIMARY,
+            "action": "download_and_install",
+            "version": latest,
+            "confirm": true,
+            "timeout": 1200_u64,
+        }),
+    );
+    let inner = parse_tool_text(&resp);
+    let status = inner["status"].as_str().expect("status");
+    assert!(
+        status == "completed" || status == "already_at_target",
+        "unexpected status: {status} body: {inner}"
+    );
+}
+
+#[test]
+#[ignore]
+fn idp_rollback_after_install_restores_previous() {
+    // Requires a prior successful install so the device carries a
+    // <security-package-rollback-version>.
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({
+            "router": IDP_PRIMARY,
+            "action": "rollback",
+            "confirm": true,
+            "timeout": 600_u64,
+        }),
+    );
+    let inner = parse_tool_text(&resp);
+    assert_eq!(inner["status"], "completed", "rollback failed: {inner}");
+}
+
+#[test]
+#[ignore]
+fn idp_cluster_install_syncs_both_nodes() {
+    // Cluster target; will fail until a clustered+IDP-licensed device exists.
+    let (url, token) = endpoint();
+    let mut c = Client::connect(&url, &token);
+    let resp = c.tool_call(
+        "manage_idp_security_package",
+        json!({
+            "router": IDP_CLUSTER,
+            "action": "download_and_install",
+            "confirm": true,
+            "timeout": 1500_u64,
+        }),
+    );
+    let inner = parse_tool_text(&resp);
+    let status = inner["status"].as_str().expect("status");
+    assert!(
+        status == "completed" || status == "already_at_target",
+        "unexpected status: {status} body: {inner}"
+    );
+}
+
 // ── Minimal MCP streamable-HTTP client ─────────────────────────────────────
 
 struct Client {
@@ -124,6 +310,32 @@ impl Client {
         let sid = self.session_id.clone();
         let r = self.post_raw(Some(&sid), body);
         assert_eq!(r.code, 200, "{name} failed: {} body={:?}", r.code, r.body);
+        r.body
+    }
+
+    /// Like `tool_call` but expects a JSON-RPC error in the body (HTTP 200,
+    /// `/error/{code,message}` populated). Used for the call-1
+    /// `confirmation_required` path of the IDP signature-package tool.
+    fn tool_error_call(&mut self, name: &str, arguments: Value) -> Value {
+        self.next_id += 1;
+        let body = json!({
+            "jsonrpc":"2.0","id":self.next_id,"method":"tools/call","params":{
+                "name": name,
+                "arguments": arguments,
+            }
+        });
+        let sid = self.session_id.clone();
+        let r = self.post_raw(Some(&sid), body);
+        assert_eq!(
+            r.code, 200,
+            "expected 200 with body-level error, got {}: {:?}",
+            r.code, r.body
+        );
+        assert!(
+            r.body.pointer("/error/message").is_some(),
+            "expected /error/message in body, got: {}",
+            r.body
+        );
         r.body
     }
 

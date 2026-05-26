@@ -233,11 +233,11 @@ runs after the first releases, so it sees current state.
 2. **Open NETCONF session** via existing `DeviceManager::open` (pooled).
 3. **Pre-flight (re-execute call 1 pre-flight under the lock)** — reject before touching state if anything changed.
 4. **Audit:** write `phase=preflight_passed`.
-5. **Download** — fire `request-idp-security-package-download` (RPC name; XML CLI equivalent). Get async job-id back.
-6. **Poll** — call `get-idp-security-package-download-status` every 5s up to `timeout - elapsed`. Terminate on `done` / `error` / poll-timeout.
+5. **Download** — fire `<request-idp-security-package-download/>`. Get async job-id back.
+6. **Poll** — fire `<request-idp-security-package-download><status/></...>` every 5s up to `timeout - elapsed`. Terminate on `done` / `error` / poll-timeout.
 7. **Audit:** write `phase=download_complete`.
-8. **Install** — fire `request-idp-security-package-install`. Get async job-id back.
-9. **Poll** — call `get-idp-security-package-install-status` every 5s up to remaining budget.
+8. **Install** — fire `<request-idp-security-package-install/>`. Get async job-id back.
+9. **Poll** — fire `<request-idp-security-package-install><status/></...>` every 5s up to remaining budget.
 10. **Audit:** write `phase=install_complete`.
 11. **Verify** — read `get-idp-security-package-information` per node; assert installed version matches the target. Mismatch → `SignaturePackageVerificationFailed`.
 12. **Audit:** write `phase=verified` (terminal success) or `phase=failed` with error detail.
@@ -307,7 +307,7 @@ Roughly 60% of the workflow logic between IDP and AppID is shared:
 
 The RPC dispatch tables are hard-coded per workflow module:
 
-- `idp_package.rs` knows the IDP RPC names (`get-idp-security-package-information`, `request-idp-security-package-check-server`, `request-idp-security-package-download`, `get-idp-security-package-download-status`, `request-idp-security-package-install`, `get-idp-security-package-install-status`, `request-idp-security-package-rollback`)
+- `idp_package.rs` knows the IDP RPC shapes (audit 2026-05-26 against vSRX 24.4R1 via `| display xml rpc`): four flat — `<get-idp-security-package-information/>`, `<request-idp-security-package-download/>`, `<request-idp-security-package-install/>`, `<request-idp-security-package-rollback/>` — and three **composite** (parent + empty child, dispatched via `rustez::call_xml`): `<request-idp-security-package-download><check-server/></...>`, `<request-idp-security-package-download><status/></...>`, `<request-idp-security-package-install><status/></...>`. The two status probes are emphatically *not* `get-*-status` siblings — they're polling children of the same `request-*` parent as the originating action.
 - `appid_package.rs` knows the AppID equivalents (`get-appid-package-version`, `request-services-application-identification-download`, `request-services-application-identification-status`, `request-services-application-identification-install`, `request-services-application-identification-uninstall`)
 
 Generalizing the RPC table would force a trait or enum that adds indirection

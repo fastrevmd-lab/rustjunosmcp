@@ -1,0 +1,30 @@
+<license-summary-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-license">
+<license-usage-summary>
+<features-used/>
+<feature-summary>
+<name>IDP-SIG</name>
+<description>IDP Signature</description>
+<licensed>1</licensed>
+<used-licensed>0</used-licensed>
+<needed>0</needed>
+<end-date junos:seconds="1810944000">2027-05-22</end-date>
+</feature-summary>
+<feature-summary>
+<name>APPID Signature</name>
+<description>APPID Signature</description>
+<licensed>1</licensed>
+<used-licensed>0</used-licensed>
+<needed>0</needed>
+<end-date junos:seconds="1810944000">2027-05-22</end-date>
+</feature-summary>
+<feature-summary>
+<name>Remote Access IPSec VPN Client</name>
+<description>Remote Access IPSec VPN Client</description>
+<licensed>2</licensed>
+<used-licensed>0</used-licensed>
+<used-given>0</used-given>
+<needed>0</needed>
+<validity-type>permanent</validity-type>
+</feature-summary>
+</license-usage-summary>
+</license-summary-information>

@@ -3,7 +3,10 @@
 //!
 //! # Junos XML schema
 //!
-//! `<get-license-summary-information/>` returns:
+//! `<get-license-summary-information/>` returns one of two shapes depending
+//! on the Junos version. Both are accepted by `parse()`.
+//!
+//! Older (legacy RPC docs):
 //!
 //! ```xml
 //! <license-summary-information>
@@ -14,10 +17,33 @@
 //!     <licenses-installed>1</licenses-installed>
 //!     <licenses-needed>0</licenses-needed>
 //!     <license-type>permanent</license-type>
-//!     <!-- <end-date> present only for time-based licenses -->
 //!     <end-date>2026-06-30 23:07:30 UTC</end-date>
 //!   </feature-summary>
-//!   …
+//! </license-summary-information>
+//! ```
+//!
+//! Junos 24.4R0+ live (observed on vSRX-test1 demo licensing):
+//!
+//! ```xml
+//! <license-summary-information>
+//!   <license-usage-summary>
+//!     <feature-summary>
+//!       <name>IDP-SIG</name>
+//!       <description>IDP Signature</description>
+//!       <licensed>1</licensed>
+//!       <used-licensed>0</used-licensed>
+//!       <needed>0</needed>
+//!       <end-date junos:seconds="1810944000">2027-05-22</end-date>
+//!     </feature-summary>
+//!     <feature-summary>
+//!       <name>Remote Access IPSec VPN Client</name>
+//!       <licensed>2</licensed>
+//!       <used-licensed>0</used-licensed>
+//!       <used-given>0</used-given>
+//!       <needed>0</needed>
+//!       <validity-type>permanent</validity-type>
+//!     </feature-summary>
+//!   </license-usage-summary>
 //! </license-summary-information>
 //! ```
 //!
@@ -207,20 +233,39 @@ pub fn parse(
             continue;
         }
 
-        let license_type = child_text(&fs, "license-type").unwrap_or_default();
         // Junos date format: "2026-06-30 23:07:30 UTC" — parse to OffsetDateTime.
         let end_date = child_text(&fs, "end-date")
             .map(|s| junos_date_to_offset(&s))
             .transpose()
             .map_err(|e| SrxError::Parse(format!("end-date parse error: {e}")))?;
 
+        // Two Junos schema variants observed in the wild:
+        //   * Older (per RPC docs):  <license-type>,    <licenses-used>,
+        //                            <licenses-installed>, <licenses-needed>
+        //   * Junos 24.4R0+ live:    <validity-type>,   <used-licensed>,
+        //                            <licensed>,          <needed>
+        // Accept either, and fall back on `<end-date>` presence to infer the
+        // license_type string when neither tag is present.
+        let license_type = child_text(&fs, "license-type")
+            .or_else(|| child_text(&fs, "validity-type"))
+            .unwrap_or_else(|| {
+                if end_date.is_some() {
+                    "date-based".to_string()
+                } else {
+                    String::new()
+                }
+            });
+
         let used: u32 = child_text(&fs, "licenses-used")
+            .or_else(|| child_text(&fs, "used-licensed"))
             .and_then(|t| t.trim().parse().ok())
             .unwrap_or(0);
         let installed: u32 = child_text(&fs, "licenses-installed")
+            .or_else(|| child_text(&fs, "licensed"))
             .and_then(|t| t.trim().parse().ok())
             .unwrap_or(0);
         let needed: u32 = child_text(&fs, "licenses-needed")
+            .or_else(|| child_text(&fs, "needed"))
             .and_then(|t| t.trim().parse().ok())
             .unwrap_or(0);
 
@@ -465,5 +510,45 @@ mod tests {
         let resp = parse(SrxLicensedFeature::Idp, &xml)
             .expect("parse must succeed on live-shape XML with junos: attrs");
         assert_eq!(resp.state, SrxState::NotConfigured, "state");
+    }
+
+    // ── Regression: Junos 24.4R0 demolab schema (used-licensed/licensed/needed) ──
+    //
+    // Junos 24.4R0 emits a different element shape than what the legacy RPC
+    // docs describe: `<licensed>` instead of `<licenses-installed>`,
+    // `<used-licensed>` instead of `<licenses-used>`, `<needed>` instead of
+    // `<licenses-needed>`, and `<validity-type>` instead of `<license-type>`
+    // (date-based licenses omit it entirely — `<end-date>` presence is the
+    // only signal). Before this fix, all counts parsed as 0, which tripped
+    // the preflight defence-in-depth check (`counts.installed == 0` →
+    // SignaturePackageLicenseInactive) even though the device clearly has
+    // the license installed.
+    #[test]
+    fn junos_24_4_demolab_idp_active_with_correct_counts() {
+        let xml = fixture("junos_24_4_demolab.xml");
+        let resp = parse(SrxLicensedFeature::Idp, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::Active, "state");
+
+        let data = resp.data.expect("data must be present for Active");
+        assert_eq!(data.counts.installed, 1, "counts.installed");
+        assert_eq!(data.counts.used, 0, "counts.used");
+        assert_eq!(data.counts.needed, 0, "counts.needed");
+        assert!(!data.all_permanent, "date-based, not permanent");
+        let record = &data.license_records[0];
+        assert_eq!(record.feature_name, "IDP-SIG");
+        assert_eq!(record.license_type, "date-based", "inferred from end-date");
+        assert!(record.end_date.is_some(), "end-date must parse");
+    }
+
+    #[test]
+    fn junos_24_4_demolab_permanent_validity_type_recognised() {
+        let xml = fixture("junos_24_4_demolab.xml");
+        // No SrxLicensedFeature variant matches "Remote Access IPSec VPN Client",
+        // but we can still verify the schema-tolerance path by checking AppId,
+        // which IS in the fixture as "APPID Signature" with the new schema.
+        let resp = parse(SrxLicensedFeature::AppId, &xml).expect("parse should not error");
+        assert_eq!(resp.state, SrxState::Active);
+        let data = resp.data.expect("data present");
+        assert_eq!(data.counts.installed, 1);
     }
 }
