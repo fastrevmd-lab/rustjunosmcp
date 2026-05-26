@@ -4,4 +4,5 @@
 pub mod cluster_status;
 pub mod license;
 pub mod services_status;
+pub mod signature_package;
 pub mod vpn_lifecycle;

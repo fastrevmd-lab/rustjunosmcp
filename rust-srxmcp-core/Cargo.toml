@@ -22,4 +22,4 @@ tokio              = { workspace = true, features = ["macros", "rt", "time"] }
 
 [dev-dependencies]
 pretty_assertions  = "1"
-tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
