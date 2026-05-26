@@ -12,6 +12,9 @@ pub mod xml;
 
 pub use absence::{SrxState, SrxToolResponse};
 pub use error::SrxError;
+pub use workflows::appid_package::{
+    AppidAction, AppidCheckServerData, AppidCheckServerNode, AppidPackageArgs, AppidPackageResponse,
+};
 pub use workflows::cluster_status::{
     ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
 };

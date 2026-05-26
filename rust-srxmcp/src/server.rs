@@ -273,6 +273,57 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "manage_appid_signature_package",
+        description = "DESTRUCTIVE on the `download_and_install` and `uninstall` actions: \
+                       updates or removes the AppID application signature package on an SRX \
+                       device. Three actions: `check_server` (read-only — returns installed \
+                       + latest version from signatures.juniper.net), `download_and_install` \
+                       (downloads and installs the latest or a pinned `version`), and \
+                       `uninstall` (removes the currently-installed application package and \
+                       protocol bundle). Destructive verbs use a two-call confirmation \
+                       protocol: call 1 with `confirm=false` returns \
+                       `[code=confirmation_required]` carrying a `plan` describing the \
+                       intended change; call 2 with `confirm=true` executes. \
+                       `download_and_install` short-circuits with `status=already_at_target` \
+                       when every node already runs the requested version."
+    )]
+    async fn manage_appid_signature_package(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::AppidPackageArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let caller = ctx.map(|c| c.token_name.as_str());
+        let request_id = mint_request_id();
+
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::appid_package::run(
+            &mut device,
+            &self.transfer_locks,
+            &args,
+            caller,
+            &request_id,
+        )
+        .await
+        .map_err(|e| match e {
+            rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rmcp::ErrorData::invalid_params(e.to_string(), None)
+            }
+            rust_srxmcp_core::SrxError::SignaturePackageConfirmationRequired { .. } => {
+                rmcp::ErrorData::invalid_request(e.to_string(), None)
+            }
+            _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+        })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -289,7 +340,8 @@ impl ServerHandler for JmcpSrxHandler {
                 "Juniper SRX-specific MCP server. Phase 1B tools: \
                  srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
                  get_srx_security_services_status, vpn_lifecycle_report. \
-                 Phase 2 destructive tools: manage_idp_security_package."
+                 Phase 2 destructive tools: manage_idp_security_package, \
+                 manage_appid_signature_package."
                     .into(),
             ),
             ..Default::default()

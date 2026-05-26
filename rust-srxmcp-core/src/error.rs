@@ -52,6 +52,11 @@ pub enum SrxError {
     SignaturePackageNoRollbackTarget { router: String },
 
     #[error(
+        "[code=no_uninstall_target] router={router}: no AppID application package is currently installed; nothing to uninstall"
+    )]
+    SignaturePackageNoUninstallTarget { router: String },
+
+    #[error(
         "[code=cluster_desynced] router={router}: cluster state '{state}' (expected synchronized)"
     )]
     SignaturePackageClusterDesynced { router: String, state: String },
@@ -173,6 +178,16 @@ mod tests {
         .to_string();
         assert!(s.contains("[code=no_rollback_target]"), "got {s}");
         assert!(s.contains("vsrx-test10"), "got {s}");
+    }
+
+    #[test]
+    fn no_uninstall_target_display() {
+        let s = SrxError::SignaturePackageNoUninstallTarget {
+            router: "vsrx-test3".into(),
+        }
+        .to_string();
+        assert!(s.contains("[code=no_uninstall_target]"), "got {s}");
+        assert!(s.contains("vsrx-test3"), "got {s}");
     }
 
     #[test]

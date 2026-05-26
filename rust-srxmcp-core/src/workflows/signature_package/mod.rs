@@ -18,7 +18,7 @@ pub mod preflight;
 pub use plan::{
     AlreadyAtTargetResponse, ConfirmationPlan, ConfirmationRequiredTag, DownloadAndInstallAction,
     DownloadAndInstallPlan, NodeVersionInfo, RollbackAction, RollbackPlan, Service, TargetSource,
-    Topology, UninstallPlan,
+    Topology, UninstallAction, UninstallPlan,
 };
 pub use poll::{poll_until_done, PollError, PollOutcome};
 pub use preflight::detect_commit_confirmed;

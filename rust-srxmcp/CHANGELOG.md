@@ -6,6 +6,71 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-05-26
+
+Phase 2 continuation — AppID signature-package lifecycle. Adds the sibling
+of `manage_idp_security_package` for the Application Identification engine.
+Tool surface 7 → 8.
+
+### Added
+- `manage_appid_signature_package` — three actions: `check_server`
+  (read-only — returns installed + latest version from
+  signatures.juniper.net), `download_and_install` (downloads + installs
+  the latest or a pinned `version`), and `uninstall` (removes the
+  currently-installed application package and protocol bundle). Both
+  destructive actions use the same two-call confirmation protocol IDP
+  introduced in v0.2.0.
+- New error variant `SignaturePackageNoUninstallTarget` for the case where
+  `uninstall` is called against a device that has no AppID package
+  currently installed.
+- 14 new XML fixtures captured live from vSRX-test3 (Junos 24.4R1) and
+  22 fixture-driven unit tests covering the new parsers, plan builders,
+  and async-status detection logic.
+- Five new `#[ignore]`d live smokes against LXC 601:30032 in
+  `tests/live_smoke.rs` — `appid_check_server_returns_latest_version`,
+  `appid_download_and_install_call1_returns_plan`,
+  `appid_uninstall_call1_returns_plan`, `appid_uninstall_call2_succeeds`,
+  and `appid_cluster_install_syncs_both_nodes` (cluster smoke shipped
+  `#[ignore]` per task scope; gracefully accepts a lab-gap error today).
+
+### RPC contract (live capture 2026-05-26 against vSRX-test3, Junos 24.4R1)
+- All AppID RPCs are **flat single-element** (no composite parent+child
+  like IDP's `<request-idp-security-package-download><check-server/></...>`).
+- Names use the `request-appid-application-package-*` prefix, not
+  `request-services-application-identification-*` (which was the original
+  design-doc guess — that CLI namespace does not exist as an RPC).
+- The check-server envelope is `<apppack-server-status>` with a free-text
+  `<apppack-server-status-detail>`, distinct from the
+  `<apppack-download-status>` envelope used by the download workflow.
+- Async-status responses use plain-English token vocabulary
+  (`Downloaded`/`Installed`/`Uninstalled` for terminal-success; substring
+  "failed" for terminal-failure), not IDP's `Done;`/`Failed;` markers.
+- `get-appid-package-version` reports `<version-detail>` as `"0"`
+  post-uninstall on Junos 24.4R1 — `normalize_version_text` treats `"0"`,
+  `""`, and `"N/A"` as equivalent absence markers.
+
+### Lab gaps (documented, not blocking)
+- `vSRX-test3` cannot reach `signatures.juniper.net` from the homelab;
+  `check_server` and the destructive download path emit
+  `signatures_server_unreachable` until egress is fixed. Smokes
+  graceful-degrade to accept that error.
+- The cluster smoke (`vSRX-test19-20`) requires a clustered+AppID-licensed
+  pair the lab does not currently have; the smoke accepts a `license_inactive`
+  or transport error in the interim.
+
+### Changed
+- Tool surface 7 → 8.
+- Server `instructions` string lists `manage_appid_signature_package`
+  alongside `manage_idp_security_package`.
+
+### Notes
+- The two-call confirmation protocol, per-router transfer locks, license
+  preflight, cluster topology detection, commit-confirmed audit warn, and
+  `[code=...]`-bracketed error vocabulary all reuse the
+  `workflows::signature_package` primitives shipped in v0.2.0.
+- Verified live against LXC 601:30032 (5/5 AppID smokes pass; uninstall
+  call2 successfully removed the package from vSRX-test3 on first run).
+
 ## [0.1.2] — 2026-05-26
 
 Bugfix release. License XML parser now accepts the date-only `<end-date>`

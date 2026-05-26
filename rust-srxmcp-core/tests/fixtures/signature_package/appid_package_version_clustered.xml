@@ -1,0 +1,16 @@
+<multi-routing-engine-results>
+<multi-routing-engine-item>
+<re-name>node0</re-name>
+<appid-package-version>
+<version-detail>3910 (Minor)</version-detail>
+<release-date>Thu May 21 13:50:42 2026 UTC</release-date>
+</appid-package-version>
+</multi-routing-engine-item>
+<multi-routing-engine-item>
+<re-name>node1</re-name>
+<appid-package-version>
+<version-detail>3910 (Minor)</version-detail>
+<release-date>Thu May 21 13:50:42 2026 UTC</release-date>
+</appid-package-version>
+</multi-routing-engine-item>
+</multi-routing-engine-results>

@@ -7,9 +7,12 @@ port so the generic Junos MCP service is unaffected.
 
 ## Status (v0.1.0)
 
-Phase 1B — read-only SRX status tools. Tool surface is 5: one diagnostic
-plus four typed read-only workflows backed by NETCONF RPCs and parsed
-into `state=active` / `state=not_configured` `SrxToolResponse<T>` envelopes.
+Phase 1B + Phase 2 — read-only SRX status tools plus destructive
+signature-package lifecycle tools. Tool surface is 8: one diagnostic, four
+typed read-only workflows backed by NETCONF RPCs (`SrxToolResponse<T>`
+envelopes with `state=active` / `state=not_configured`), and two
+destructive lifecycle tools that use a two-call confirmation protocol
+with per-router transfer locks.
 
 ## Tools
 
@@ -20,6 +23,8 @@ into `state=active` / `state=not_configured` `SrxToolResponse<T>` envelopes.
 | `check_srx_feature_license` | Closed-enum feature → license-record mapping (IDP, AppID, UTM-AV, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) |
 | `get_srx_security_services_status` | IDP / AppID / UTM-AV / SecIntel / ATP-Cloud per-node health snapshot |
 | `vpn_lifecycle_report` | Correlated IKE Phase-1 + IPsec Phase-2 view with optional `peer` / `tunnel` substring filters |
+| `manage_idp_security_package` | **DESTRUCTIVE** — IDP signature-package lifecycle. Actions: `check_server`, `download_and_install`, `rollback`. Two-call confirmation. |
+| `manage_appid_signature_package` | **DESTRUCTIVE** — AppID application signature-package lifecycle. Actions: `check_server`, `download_and_install`, `uninstall`. Two-call confirmation. |
 
 ## Build
 

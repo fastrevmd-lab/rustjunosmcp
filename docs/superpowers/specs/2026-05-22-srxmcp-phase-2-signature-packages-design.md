@@ -252,10 +252,47 @@ runs after the first releases, so it sees current state.
 
 ### AppID workflows
 
-Same shape as IDP, substituting the AppID RPC names. `uninstall` uses
-`request-services-application-identification-uninstall` and verifies by
-reading `get-appid-package-version` and asserting the package field is empty
-or `"0"`.
+Same shape as IDP, substituting the AppID RPC names. **The AppID RPC schema
+is materially different from IDP** — confirmed via live `| display xml rpc`
+capture against vSRX-test3 (Junos 24.4R1) on 2026-05-26:
+
+- All AppID RPCs are **flat single-element** (no composite parent+child like
+  IDP's `<request-idp-security-package-download><check-server/></...>`).
+- All names use the `request-appid-application-package-*` prefix, not
+  `request-services-application-identification-*` (which was the original
+  guess and is wrong — that CLI namespace does not exist as an RPC).
+- Async-status responses use **plain-English token vocabulary**
+  (`Downloaded`/`Installed`/`Uninstalled` for success; substring "failed"
+  for failure) rather than IDP's `Done;` / `Failed;` / `Will be processed
+  in async mode` tokens.
+- `<version-detail>` carries human text like `"3910 (Minor)"` with a SPACE
+  before the paren (IDP uses `"3910(Minor, Detector=...)"` with no space).
+
+The eight RPC names actually in use are:
+
+| Purpose | RPC |
+|---|---|
+| Current installed version | `get-appid-package-version` |
+| Check upstream for latest | `request-appid-application-package-download-check-server` |
+| Trigger download | `request-appid-application-package-download` |
+| Poll download status | `request-appid-application-package-download-status` |
+| Trigger install | `request-appid-application-package-install` |
+| Poll install status | `request-appid-application-package-install-status` |
+| Trigger uninstall | `request-appid-application-package-uninstall` |
+| Poll uninstall status | `request-appid-application-package-uninstall-status` |
+
+`uninstall` uses `request-appid-application-package-uninstall` and verifies
+by reading `get-appid-package-version` and asserting `<version-detail>` is
+empty, `"N/A"`, or `"0"`.
+
+**Lab gap (documented 2026-05-26):** vSRX-test3 cannot reach the upstream
+AppID signature server — `request-appid-application-package-download-check-server`
+HANGS over NETCONF rather than returning an error envelope. The workflow
+still emits `SignaturePackageServerUnreachable` correctly when the detail
+text contains "not reachable" or "verification failed" (verified via
+unit-test fixture). The `check_server` live smoke is therefore shipped as
+`#[ignore]`; the `uninstall` path remains locally exercisable because
+vSRX-test3 already has package 3910 installed from a prior session.
 
 ## Architecture & modules
 
@@ -308,7 +345,7 @@ Roughly 60% of the workflow logic between IDP and AppID is shared:
 The RPC dispatch tables are hard-coded per workflow module:
 
 - `idp_package.rs` knows the IDP RPC shapes (audit 2026-05-26 against vSRX 24.4R1 via `| display xml rpc`): four flat — `<get-idp-security-package-information/>`, `<request-idp-security-package-download/>`, `<request-idp-security-package-install/>`, `<request-idp-security-package-rollback/>` — and three **composite** (parent + empty child, dispatched via `rustez::call_xml`): `<request-idp-security-package-download><check-server/></...>`, `<request-idp-security-package-download><status/></...>`, `<request-idp-security-package-install><status/></...>`. The two status probes are emphatically *not* `get-*-status` siblings — they're polling children of the same `request-*` parent as the originating action.
-- `appid_package.rs` knows the AppID equivalents (`get-appid-package-version`, `request-services-application-identification-download`, `request-services-application-identification-status`, `request-services-application-identification-install`, `request-services-application-identification-uninstall`)
+- `appid_package.rs` knows the AppID equivalents — all **flat single-element** RPCs (no composite XML; audit 2026-05-26 against vSRX-test3 24.4R1 via `| display xml rpc`): `<get-appid-package-version/>`, `<request-appid-application-package-download-check-server/>`, `<request-appid-application-package-download/>`, `<request-appid-application-package-download-status/>`, `<request-appid-application-package-install/>`, `<request-appid-application-package-install-status/>`, `<request-appid-application-package-uninstall/>`, `<request-appid-application-package-uninstall-status/>`. Async-status response uses plain-English tokens (`Downloaded`/`Installed`/`Uninstalled` for terminal-success; substring "failed" for terminal-failure) rather than IDP's `Done;` / `Failed;`.
 
 Generalizing the RPC table would force a trait or enum that adds indirection
 without clarifying anything — when an RPC name changes (Junos 25.x deprecation,
@@ -446,15 +483,20 @@ Same `JMCP_SRX_LIVE_URL` / `JMCP_SRX_LIVE_TOKEN` env mechanism the existing
 `idp_version_pin_accepts_explicit` — close gaps T1 and T2 raised in the
 eng review.)
 
-#### v0.2.1 release (AppID — 5 tests, added when AppID lands)
+#### v0.2.1 release (AppID — 5 tests, 4 active + 1 cluster)
+
+Target device is **vSRX-test3** (already has AppID package 3910 installed
+from a prior session — supplies a viable path for `already_at_target` +
+`uninstall` even though upstream is unreachable). All tests `#[ignore]`d
+per the existing convention.
 
 | Test | Verb / args | Target | Asserts |
 |---|---|---|---|
-| `appid_check_server_returns_latest_version` | `check_server` | `vSRX-test10` | response has `latest_version` field |
-| `appid_download_and_install_call1_returns_plan` | `download_and_install` (no confirm) | `vSRX-test10` | confirmation_required emitted |
-| `appid_download_and_install_call2_succeeds` | `download_and_install` (confirm=true) | `vSRX-test10` | success; post-install `get-appid-package-version` reports target version |
-| `appid_uninstall_clears_package` | `uninstall` (confirm=true) | `vSRX-test10` | success; post-uninstall `get-appid-package-version` reports empty or `"0"` |
-| `appid_cluster_install_syncs_both_nodes` | `download_and_install` (confirm=true) | `vSRX-test19-20` | success; both nodes report installed version |
+| `appid_check_server_returns_latest_version` | `check_server` | `vSRX-test3` | **`#[ignore]`** — lab cannot reach upstream; RPC hangs over NETCONF (documented gap). Test exists for future runs once lab egress is fixed. |
+| `appid_download_and_install_call1_returns_plan` | `download_and_install` (no confirm) | `vSRX-test3` | response is `already_at_target` short-circuit (device already on 3910) OR `confirmation_required` with populated target. Either outcome is acceptable. |
+| `appid_uninstall_call1_returns_plan` | `uninstall` (no confirm) | `vSRX-test3` | response is `confirmation_required` with populated `target_to_remove_version` and zero `preflight_blockers` |
+| `appid_uninstall_call2_succeeds` | `uninstall` (confirm=true) | `vSRX-test3` | success; post-uninstall `get-appid-package-version` reports `<version-detail>` empty / `"N/A"` / `"0"` |
+| `appid_cluster_install_syncs_both_nodes` | `download_and_install` (confirm=true) | `vSRX-test19-20` | **`#[ignore]`** per user direction — requires upstream reachability + a fresh cluster pair |
 
 ### Test ordering
 
