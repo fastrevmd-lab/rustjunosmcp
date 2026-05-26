@@ -288,6 +288,10 @@ fn junos_date_to_offset(s: &str) -> Result<OffsetDateTime, String> {
     let rfc = if s.len() == 19 && s.as_bytes()[10] == b' ' {
         // "2026-06-30 23:07:30" → "2026-06-30T23:07:30+00:00"
         format!("{}T{}+00:00", &s[..10], &s[11..])
+    } else if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+        // "2027-05-22" (date-only) → end-of-day UTC. Conservative for an
+        // expiry: don't extend a license past its actual final day.
+        format!("{s}T23:59:59+00:00")
     } else if s.contains('T') {
         // Already ISO 8601-ish.
         s.to_string()
@@ -426,6 +430,20 @@ mod tests {
     fn junos_date_without_utc_suffix_still_converts() {
         let result = junos_date_to_offset("2026-06-30 23:07:30").unwrap();
         assert_eq!(result.unix_timestamp(), 1782860850);
+    }
+
+    #[test]
+    fn junos_date_date_only_resolves_to_end_of_day_utc() {
+        // Some Junos demolab/commercial bundles emit <end-date>2027-05-22</end-date>
+        // (date-only). Treat as 23:59:59 UTC so we don't underreport remaining time.
+        let result = junos_date_to_offset("2027-05-22").unwrap();
+        assert_eq!(result.offset(), time::UtcOffset::UTC);
+        assert_eq!(result.year(), 2027);
+        assert_eq!(result.month(), time::Month::May);
+        assert_eq!(result.day(), 22);
+        assert_eq!(result.hour(), 23);
+        assert_eq!(result.minute(), 59);
+        assert_eq!(result.second(), 59);
     }
 
     #[test]

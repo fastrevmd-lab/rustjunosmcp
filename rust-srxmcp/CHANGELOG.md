@@ -6,6 +6,30 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] — 2026-05-26
+
+Bugfix release. License XML parser now accepts the date-only `<end-date>`
+shape that several Junos demolab + commercial bundles emit on the wire
+(`<end-date>2027-05-22</end-date>`). Pre-fix, every IDP-licensed lab box
+returned `xml parse: end-date parse error: unrecognised Junos date format`
+from `check_srx_feature_license`, masking real licenses as parse failures
+and blocking Phase 2 signature-package smoke work.
+
+### Fixed
+- `license::junos_date_to_offset` accepts the 10-char `YYYY-MM-DD` shape
+  in addition to the long-form `YYYY-MM-DD HH:MM:SS UTC`. Date-only inputs
+  resolve to 23:59:59 UTC of the named day (conservative for an expiry —
+  midnight UTC could underreport remaining time by a day in eastern
+  timezones). Verified live against vSRX-twin, vSRX-test1/2/3/4, vSRX-mm-B,
+  vSRX-Production via `/etc/jmcp/devices.json` on LXC 601:30032.
+
+### Operational note
+- Confirms a separate latent gap (not fixed in this release): `rust-srxmcp`
+  reads `/etc/jmcp/devices.json` once at startup; SIGHUP only reloads the
+  token store. Editing the inventory therefore requires a full service
+  restart until a `reload_devices` analogue is added (tracked separately
+  as a Phase 1 polish item).
+
 ## [0.1.1] — 2026-05-21
 
 Live-smoke follow-up to v0.1.0. Fixes the three runtime bugs discovered
