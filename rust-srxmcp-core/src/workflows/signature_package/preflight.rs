@@ -1,11 +1,20 @@
-//! Pure XML helpers shared by signature-package pre-flight code.
+//! Pre-flight helpers shared by signature-package workflows.
 //!
-//! Device-touching wrappers — `license_active(device, feature)`,
-//! `cluster_topology(device)`, `signatures_server_reachable(exec)` —
-//! land alongside their first consumer (Tasks 4+). Today this module
-//! ships only the offline parsers that have stable Junos schemas.
+//! Two kinds of code live here:
+//! * **Offline parsers** — pure functions over Junos XML replies
+//!   (`detect_commit_confirmed`).
+//! * **Device-touching wrappers** — async functions that fire a Junos RPC
+//!   via a [`PooledDevice`] and convert the reply into a pre-flight
+//!   verdict (`license_active`, `cluster_topology`).
+//!
+//! Per design §"Internal helpers are NOT re-entrant MCP calls", the
+//! device-touching wrappers re-use the existing workflow parsers
+//! (`workflows::license::parse`, `workflows::cluster_status::parse`)
+//! directly rather than going through the MCP layer.
 
+use crate::workflows::signature_package::Topology;
 use crate::SrxError;
+use rust_junosmcp_core::device_manager::PooledDevice;
 
 /// True if the device has an open commit-confirmed rollback window.
 ///
@@ -30,6 +39,101 @@ pub fn detect_commit_confirmed(commit_info_xml: &str) -> Result<bool, SrxError> 
     Ok(doc
         .descendants()
         .any(|n| n.is_element() && n.tag_name().name() == "commit-confirmed"))
+}
+
+// ── Device-touching wrappers ──────────────────────────────────────────────────
+
+/// Pre-flight: assert that a Junos license for `feature` is active on the
+/// device. Returns `Ok(())` when at least one matching `<feature-summary>`
+/// record is installed; otherwise `Err(SignaturePackageLicenseInactive)`.
+///
+/// Implementation: fires `<get-license-summary-information/>` and runs
+/// [`crate::workflows::license::parse`] directly — no re-entrant MCP call.
+pub async fn license_active(
+    device: &mut PooledDevice,
+    router: &str,
+    feature: crate::workflows::license::SrxLicensedFeature,
+) -> Result<(), SrxError> {
+    let mut exec = device
+        .rpc()
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let summary_xml = exec
+        .call("get-license-summary-information", &[])
+        .await
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let parsed = crate::workflows::license::parse(feature, &summary_xml)?;
+    let active = matches!(parsed.state, crate::SrxState::Active);
+    if !active {
+        return Err(SrxError::SignaturePackageLicenseInactive {
+            router: router.to_string(),
+            feature: match feature {
+                crate::workflows::license::SrxLicensedFeature::Idp => "idp".into(),
+                crate::workflows::license::SrxLicensedFeature::AppId => "app_id".into(),
+                other => format!("{other:?}").to_lowercase(),
+            },
+        });
+    }
+    // Defence-in-depth: license parsed Active but installed count is 0 →
+    // matching record(s) exist but no entitlement. Treat as inactive.
+    if let Some(data) = parsed.data {
+        if data.counts.installed == 0 {
+            return Err(SrxError::SignaturePackageLicenseInactive {
+                router: router.to_string(),
+                feature: match feature {
+                    crate::workflows::license::SrxLicensedFeature::Idp => "idp".into(),
+                    crate::workflows::license::SrxLicensedFeature::AppId => "app_id".into(),
+                    other => format!("{other:?}").to_lowercase(),
+                },
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Pre-flight: classify the device topology and verify the cluster (if any)
+/// is in a synchronized state.
+///
+/// Returns:
+/// * `Ok(Topology::Standalone)` when `<get-chassis-cluster-status/>` returns
+///   an `<xnm:error>` of the "not enabled" shape (parser maps to
+///   `state: NotConfigured`).
+/// * `Ok(Topology::ChassisCluster)` when both nodes report a healthy
+///   primary/secondary pairing on every redundancy group.
+/// * `Err(SignaturePackageClusterDesynced)` when any redundancy-group member
+///   reports a status other than `primary` / `secondary` (e.g.
+///   `secondary-hold`, `ineligible`, `disabled`).
+pub async fn cluster_topology(
+    device: &mut PooledDevice,
+    router: &str,
+) -> Result<Topology, SrxError> {
+    let mut exec = device
+        .rpc()
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let reply = exec
+        .call("get-chassis-cluster-status", &[])
+        .await
+        .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
+    let parsed = crate::workflows::cluster_status::parse(&reply)?;
+    match parsed.state {
+        crate::SrxState::NotConfigured => Ok(Topology::Standalone),
+        crate::SrxState::Active => {
+            if let Some(data) = parsed.data {
+                for rg in &data.redundancy_groups {
+                    for m in &rg.members {
+                        let s = m.status.to_ascii_lowercase();
+                        let healthy = matches!(s.as_str(), "primary" | "secondary");
+                        if !healthy {
+                            return Err(SrxError::SignaturePackageClusterDesynced {
+                                router: router.to_string(),
+                                state: m.status.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(Topology::ChassisCluster)
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
