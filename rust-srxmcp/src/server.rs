@@ -324,6 +324,90 @@ impl JmcpSrxHandler {
         })?;
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
+
+    #[tool(
+        name = "validate_chassis_cluster_health",
+        description = "Runs 8 chassis-cluster diagnostic RPCs (cluster status, interfaces, \
+                       information, data-plane / control-plane statistics, per-RE software, \
+                       alarms, uptime) and emits an ordered findings list with a rolled-up \
+                       verdict (pass / warn / fail). Standalone SRX devices short-circuit to \
+                       state=not_configured. Each Finding has check_id (red_led, \
+                       disabled_secondary, control_link_failure, major_alarm, minor_alarm, \
+                       recent_reboot, version_skew), severity, message, and optional \
+                       structured detail. Verdict precedence: fail > warn > pass. \
+                       Pass-through cluster_status snapshot is included when the cluster \
+                       RPC succeeded. include_raw=true appends concatenated raw RPC XML."
+    )]
+    async fn validate_chassis_cluster_health(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::ClusterHealthArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::cluster_health::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing ClusterHealthData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+
+    #[tool(
+        name = "collect_jtac_support_bundle",
+        description = "Collects a JTAC-ready diagnostic bundle for the named router. \
+                       problem_type accepts a closed enum value (chassis_cluster, vpn, \
+                       traffic_loss, idp_appid, routing, generic) OR an array of values \
+                       for multi-symptom cases. The 'generic' value short-circuits and \
+                       runs `request support information | save /var/tmp/srxmcp-<rid>.tgz` \
+                       on the device — fetch via the rust-junosmcp `fetch_file` tool. \
+                       Per-type values capture the universal baseline (get-configuration, \
+                       get-software-information, get-system-uptime-information, \
+                       get-system-alarm-information) plus type-specific RPCs, and assemble \
+                       the tarball on LXC 601 under JMCP_SRX_STAGING_DIR (default \
+                       /var/lib/rust-srxmcp/staging/bundles/<router>/srxmcp-<rid>.tgz). \
+                       The response's bundle.location field is 'device' or 'lxc_staging'. \
+                       Caller-supplied request_id propagates to the on-device filename and \
+                       all audit log lines; if absent, a srxmcp-<uuid> is minted. \
+                       Concurrent calls against the same router serialize on an in-process \
+                       per-router semaphore and surface contention as \
+                       [code=bundle_per_router_contention]. v0.3.0 gap: log archival in the \
+                       per-type path is deferred to v0.3.1 — log entries are emitted in the \
+                       manifest with an explicit error noting the gap."
+    )]
+    async fn collect_jtac_support_bundle(
+        &self,
+        Parameters(args): Parameters<rust_srxmcp_core::SupportBundleArgs>,
+        _extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut device =
+            self.device_manager.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                rust_srxmcp_core::SrxError::BundlePerRouterContention { .. } => {
+                    rmcp::ErrorData::invalid_request(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
 }
 
 #[tool_handler(router = Self::tool_router())]
@@ -341,7 +425,9 @@ impl ServerHandler for JmcpSrxHandler {
                  srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
                  get_srx_security_services_status, vpn_lifecycle_report. \
                  Phase 2 destructive tools: manage_idp_security_package, \
-                 manage_appid_signature_package."
+                 manage_appid_signature_package. \
+                 Phase 3 diagnostics tools: validate_chassis_cluster_health, \
+                 collect_jtac_support_bundle."
                     .into(),
             ),
             ..Default::default()

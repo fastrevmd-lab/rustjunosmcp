@@ -15,6 +15,9 @@ pub use error::SrxError;
 pub use workflows::appid_package::{
     AppidAction, AppidCheckServerData, AppidCheckServerNode, AppidPackageArgs, AppidPackageResponse,
 };
+pub use workflows::cluster_health::{
+    ClusterHealthArgs, ClusterHealthData, Finding, Severity, Verdict, CHECK_IDS,
+};
 pub use workflows::cluster_status::{
     ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
 };
@@ -29,6 +32,11 @@ pub use workflows::license::{
 pub use workflows::services_status::{
     AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,
     ServicesStatusData, SubServiceStatus, UtmAvInfo,
+};
+pub use workflows::support_bundle::{
+    ArtefactSource, BundleInfo, BundleLocation, CapturedArtefact, ProblemType, ProblemTypeArg,
+    SupportBundleArgs, SupportBundleData, BASELINE_LOGS, BASELINE_RPCS, DEFAULT_STAGING_DIR,
+    DEFAULT_STAGING_MAX_BYTES,
 };
 pub use workflows::vpn_lifecycle::{
     IkeSa, IpsecSa, NodeVpnReport, VpnCorrelation, VpnLifecycleArgs, VpnLifecycleData,
