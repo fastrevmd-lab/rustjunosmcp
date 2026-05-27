@@ -2,9 +2,11 @@
 //! `async fn run(&PooledDevice, args) -> Result<SrxToolResponse<T>, SrxError>`.
 
 pub mod appid_package;
+pub mod cluster_health;
 pub mod cluster_status;
 pub mod idp_package;
 pub mod license;
 pub mod services_status;
 pub mod signature_package;
+pub mod support_bundle;
 pub mod vpn_lifecycle;
