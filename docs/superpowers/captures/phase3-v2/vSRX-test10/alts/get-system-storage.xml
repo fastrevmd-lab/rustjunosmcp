@@ -1,0 +1,84 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="7">
+<system-storage-information junos:style="brief">
+<filesystem>
+<filesystem-name>
+/dev/gpt/junos
+</filesystem-name>
+<total-blocks junos:format="13G">
+27172408
+</total-blocks>
+<used-blocks junos:format="2.1G">
+4482780
+</used-blocks>
+<available-blocks junos:format="9.8G">
+20515836
+</available-blocks>
+<used-percent>
+ 18
+</used-percent>
+<mounted-on>
+/.mount
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+tmpfs
+</filesystem-name>
+<total-blocks junos:format="727M">
+1488712
+</total-blocks>
+<used-blocks junos:format="24K">
+48
+</used-blocks>
+<available-blocks junos:format="727M">
+1488664
+</available-blocks>
+<used-percent>
+  0
+</used-percent>
+<mounted-on>
+/.mount/tmp
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+/var/jails/rest-api
+</filesystem-name>
+<total-blocks junos:format="13G">
+27172408
+</total-blocks>
+<used-blocks junos:format="2.1G">
+4482780
+</used-blocks>
+<available-blocks junos:format="9.8G">
+20515836
+</available-blocks>
+<used-percent>
+ 18
+</used-percent>
+<mounted-on>
+/.mount/packages/mnt/junos-runtime/web-api/var
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+tmpfs
+</filesystem-name>
+<total-blocks junos:format="673M">
+1377440
+</total-blocks>
+<used-blocks junos:format="1.1M">
+2288
+</used-blocks>
+<available-blocks junos:format="671M">
+1375152
+</available-blocks>
+<used-percent>
+  0
+</used-percent>
+<mounted-on>
+/.mount/mfs
+</mounted-on>
+</filesystem>
+</system-storage-information>
+</nc:rpc-reply>

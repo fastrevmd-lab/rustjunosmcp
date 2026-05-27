@@ -1,0 +1,45 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<system-uptime-information xmlns="http://xml.juniper.net/junos/24.4R0/junos">
+<current-time>
+<date-time junos:seconds="1779843047">2026-05-27 00:50:47 UTC</date-time>
+</current-time>
+<time-source>
+ LOCAL CLOCK 
+</time-source>
+<system-booted-time>
+<date-time junos:seconds="1779727872">2026-05-25 16:51:12 UTC</date-time>
+<time-length junos:seconds="115175">1d 07:59</time-length>
+</system-booted-time>
+<protocols-started-time>
+<date-time junos:seconds="1779727990">2026-05-25 16:53:10 UTC</date-time>
+<time-length junos:seconds="115057">1d 07:57</time-length>
+</protocols-started-time>
+<last-configured-time>
+<date-time junos:seconds="1779380803">2026-05-21 16:26:43 UTC</date-time>
+<time-length junos:seconds="462244">5d 08:24</time-length>
+<user>netconf</user>
+</last-configured-time>
+<uptime-information>
+<date-time junos:seconds="1779843047">
+12:50AM
+</date-time>
+<up-time junos:seconds="115200">
+1 day, 8 hrs
+</up-time>
+<active-user-count junos:format="0 users">
+0
+</active-user-count>
+<load-average-1>
+1.74
+</load-average-1>
+<load-average-5>
+2.41
+</load-average-5>
+<load-average-15>
+2.58
+</load-average-15>
+<user-table>
+</user-table>
+</uptime-information>
+</system-uptime-information>
+</nc:rpc-reply>

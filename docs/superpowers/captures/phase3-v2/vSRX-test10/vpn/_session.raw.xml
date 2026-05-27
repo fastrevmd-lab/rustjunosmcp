@@ -1,0 +1,229 @@
+<!-- No zombies were killed during the creation of this user interface -->
+<!-- user netconf, class j-super-user -->
+<nc:hello xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+   <nc:capabilities>
+    <nc:capability>urn:ietf:params:netconf:base:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:base:1.0?module=ietf-netconf&amp;revision=2011-06-01</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-inet-types?module=ietf-inet-types&amp;revision=2013-07-15</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-yang-metadata?module=ietf-yang-metadata&amp;revision=2016-08-05</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring</nc:capability>
+    <nc:capability>http://xml.juniper.net/netconf/junos/1.0</nc:capability>
+    <nc:capability>http://xml.juniper.net/dmi/system/1.0</nc:capability>
+    <nc:capability>http://yang.juniper.net/junos/jcmd?module=junos-configuration-metadata&amp;revision=2021-09-01</nc:capability>
+  </nc:capabilities>
+  <nc:session-id>92471</nc:session-id>
+</nc:hello>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<ike-security-associations-information junos:style="brief">
+<ike-security-associations>
+<ike-sa-remote-address>
+192.168.1.161
+</ike-sa-remote-address>
+<ike-sa-index>
+431053
+</ike-sa-index>
+<ike-sa-state>
+UP
+</ike-sa-state>
+<ike-sa-initiator-cookie>
+9328a36431323306
+</ike-sa-initiator-cookie>
+<ike-sa-responder-cookie>
+f6087cb15c3199fd
+</ike-sa-responder-cookie>
+<ike-sa-exchange-type>
+IKEv2
+</ike-sa-exchange-type>
+</ike-security-associations>
+</ike-security-associations-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-ike-active-peer</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="3">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-ipsec-security-associations-information</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="4">
+<usp-ipsec-total-statistics-information>
+<esp-statistics>
+<esp-encrypted-bytes>
+0
+</esp-encrypted-bytes>
+<esp-decrypted-bytes>
+0
+</esp-decrypted-bytes>
+<esp-encrypted-packets>
+0
+</esp-encrypted-packets>
+<esp-decrypted-packets>
+0
+</esp-decrypted-packets>
+</esp-statistics>
+<ah-statistics>
+<ah-input-bytes>
+0
+</ah-input-bytes>
+<ah-output-bytes>
+0
+</ah-output-bytes>
+<ah-input-packets>
+0
+</ah-input-packets>
+<ah-output-packets>
+0
+</ah-output-packets>
+</ah-statistics>
+<error-statistics>
+<ah-authentication-failures>
+0
+</ah-authentication-failures>
+<replay-errors>
+0
+</replay-errors>
+<esp-authentication-failures>
+0
+</esp-authentication-failures>
+<esp-decryption-failures>
+0
+</esp-decryption-failures>
+<bad-headers>
+0
+</bad-headers>
+<bad-trailers>
+0
+</bad-trailers>
+</error-statistics>
+</usp-ipsec-total-statistics-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="5">
+<ipsec-security-associations-information junos:style="brief">
+<total-active-tunnels>
+1
+</total-active-tunnels>
+<total-ipsec-sas>
+1
+</total-ipsec-sas>
+<ipsec-security-associations-block>
+<sa-block-state>
+up
+</sa-block-state>
+<ipsec-security-associations>
+<sa-direction>
+&lt;
+</sa-direction>
+<sa-tunnel-index>
+131073
+</sa-tunnel-index>
+<sa-spi>
+9b27bae
+</sa-spi>
+<sa-aux-spi>
+0
+</sa-aux-spi>
+<sa-remote-gateway>
+192.168.1.161
+</sa-remote-gateway>
+<sa-port>
+500
+</sa-port>
+<sa-vpn-monitoring-state>
+-
+</sa-vpn-monitoring-state>
+<sa-protocol>
+ESP
+</sa-protocol>
+<sa-esp-encryption-algorithm>
+aes-gcm-256
+</sa-esp-encryption-algorithm>
+<sa-hmac-algorithm>
+None
+</sa-hmac-algorithm>
+<sa-hard-lifetime>
+747
+</sa-hard-lifetime>
+<sa-lifesize-remaining>
+unlim
+</sa-lifesize-remaining>
+<sa-virtual-system>
+root
+</sa-virtual-system>
+</ipsec-security-associations>
+<ipsec-security-associations>
+<sa-direction>
+&gt;
+</sa-direction>
+<sa-tunnel-index>
+131073
+</sa-tunnel-index>
+<sa-spi>
+70973f3d
+</sa-spi>
+<sa-aux-spi>
+0
+</sa-aux-spi>
+<sa-remote-gateway>
+192.168.1.161
+</sa-remote-gateway>
+<sa-port>
+500
+</sa-port>
+<sa-vpn-monitoring-state>
+-
+</sa-vpn-monitoring-state>
+<sa-protocol>
+ESP
+</sa-protocol>
+<sa-esp-encryption-algorithm>
+aes-gcm-256
+</sa-esp-encryption-algorithm>
+<sa-hmac-algorithm>
+None
+</sa-hmac-algorithm>
+<sa-hard-lifetime>
+747
+</sa-hard-lifetime>
+<sa-lifesize-remaining>
+unlim
+</sa-lifesize-remaining>
+<sa-virtual-system>
+root
+</sa-virtual-system>
+</ipsec-security-associations>
+</ipsec-security-associations-block>
+</ipsec-security-associations-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="z">
+<nc:ok/>
+</nc:rpc-reply>
+]]>]]>
+<!-- session end at 2026-05-27 00:50:50 UTC -->

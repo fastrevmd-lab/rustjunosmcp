@@ -1,0 +1,214 @@
+<!-- No zombies were killed during the creation of this user interface -->
+<!-- user netconf, class j-super-user -->
+<nc:hello xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+   <nc:capabilities>
+    <nc:capability>urn:ietf:params:netconf:base:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:base:1.0?module=ietf-netconf&amp;revision=2011-06-01</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-inet-types?module=ietf-inet-types&amp;revision=2013-07-15</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-yang-metadata?module=ietf-yang-metadata&amp;revision=2016-08-05</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring</nc:capability>
+    <nc:capability>http://xml.juniper.net/netconf/junos/1.0</nc:capability>
+    <nc:capability>http://xml.juniper.net/dmi/system/1.0</nc:capability>
+    <nc:capability>http://yang.juniper.net/junos/jcmd?module=junos-configuration-metadata&amp;revision=2021-09-01</nc:capability>
+  </nc:capabilities>
+  <nc:session-id>92731</nc:session-id>
+</nc:hello>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-ike-active-peer-information</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-ike-peer-information</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="3">
+<security-flow-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<flow-session-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<flow-session-summary-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<active-unicast-sessions>
+3
+</active-unicast-sessions>
+<active-multicast-sessions>
+0
+</active-multicast-sessions>
+<active-services-offload-sessions>
+0
+</active-services-offload-sessions>
+<failed-sessions>
+0
+</failed-sessions>
+<active-drop-sessions>
+0
+</active-drop-sessions>
+<active-sessions>
+14
+</active-sessions>
+<active-session-valid>
+3
+</active-session-valid>
+<active-session-pending>
+0
+</active-session-pending>
+<active-session-invalidated>
+11
+</active-session-invalidated>
+<active-session-other>
+0
+</active-session-other>
+<max-sessions>
+524288
+</max-sessions>
+</flow-session-summary-information>
+</flow-session-information>
+</security-flow-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="4">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info>
+<nc:bad-element>get-session-summary-information</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="5">
+<firewall-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-filter">
+<filter-information>
+<filter-name>
+__default_bpdu_filter__
+</filter-name>
+</filter-information>
+</firewall-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="6">
+<nc:rpc-error>
+<nc:error-type>application</nc:error-type>
+<nc:error-tag>missing-element</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>missing mandatory argument: countername</nc:error-message>
+<nc:error-info>
+<nc:bad-element>countername</nc:bad-element>
+</nc:error-info>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="7">
+<system-storage-information junos:style="brief">
+<filesystem>
+<filesystem-name>
+/dev/gpt/junos
+</filesystem-name>
+<total-blocks junos:format="13G">
+27172408
+</total-blocks>
+<used-blocks junos:format="2.1G">
+4482780
+</used-blocks>
+<available-blocks junos:format="9.8G">
+20515836
+</available-blocks>
+<used-percent>
+ 18
+</used-percent>
+<mounted-on>
+/.mount
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+tmpfs
+</filesystem-name>
+<total-blocks junos:format="727M">
+1488712
+</total-blocks>
+<used-blocks junos:format="24K">
+48
+</used-blocks>
+<available-blocks junos:format="727M">
+1488664
+</available-blocks>
+<used-percent>
+  0
+</used-percent>
+<mounted-on>
+/.mount/tmp
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+/var/jails/rest-api
+</filesystem-name>
+<total-blocks junos:format="13G">
+27172408
+</total-blocks>
+<used-blocks junos:format="2.1G">
+4482780
+</used-blocks>
+<available-blocks junos:format="9.8G">
+20515836
+</available-blocks>
+<used-percent>
+ 18
+</used-percent>
+<mounted-on>
+/.mount/packages/mnt/junos-runtime/web-api/var
+</mounted-on>
+</filesystem>
+<filesystem>
+<filesystem-name>
+tmpfs
+</filesystem-name>
+<total-blocks junos:format="673M">
+1377440
+</total-blocks>
+<used-blocks junos:format="1.1M">
+2288
+</used-blocks>
+<available-blocks junos:format="671M">
+1375152
+</available-blocks>
+<used-percent>
+  0
+</used-percent>
+<mounted-on>
+/.mount/mfs
+</mounted-on>
+</filesystem>
+</system-storage-information>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="z">
+<nc:ok/>
+</nc:rpc-reply>
+]]>]]>
+<!-- session end at 2026-05-27 00:51:43 UTC -->

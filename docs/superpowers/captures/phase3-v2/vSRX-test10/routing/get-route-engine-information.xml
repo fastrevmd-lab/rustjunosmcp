@@ -1,0 +1,28 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="4">
+<route-engine-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-chassis">
+<route-engine>
+<status>Testing</status>
+<memory-system-total>4035</memory-system-total>
+<memory-system-total-used>2744</memory-system-total-used>
+<memory-system-total-util>68</memory-system-total-util>
+<memory-control-plane>1731</memory-control-plane>
+<memory-control-plane-used>1056</memory-control-plane-used>
+<memory-control-plane-util>61</memory-control-plane-util>
+<memory-data-plane>2304</memory-data-plane>
+<memory-data-plane-used>1682</memory-data-plane-used>
+<memory-data-plane-util>73</memory-data-plane-util>
+<cpu-user>4</cpu-user>
+<cpu-background>0</cpu-background>
+<cpu-system>33</cpu-system>
+<cpu-interrupt>0</cpu-interrupt>
+<cpu-idle>62</cpu-idle>
+<model>VSRX RE</model>
+<start-time junos:seconds="1779727872">2026-05-25 16:51:12 UTC</start-time>
+<up-time junos:seconds="115180">1 day, 7 hours, 59 minutes, 40 seconds</up-time>
+<last-reboot-reason>Router rebooted after a normal shutdown.</last-reboot-reason>
+<load-average-one>1.76</load-average-one>
+<load-average-five>2.40</load-average-five>
+<load-average-fifteen>2.57</load-average-fifteen>
+</route-engine>
+</route-engine-information>
+</nc:rpc-reply>
