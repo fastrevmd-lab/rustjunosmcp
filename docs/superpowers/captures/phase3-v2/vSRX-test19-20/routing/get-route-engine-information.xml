@@ -1,0 +1,69 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="4">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<route-engine-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-chassis">
+<route-engine>
+<status>Testing</status>
+<memory-system-total>4035</memory-system-total>
+<memory-system-total-used>2542</memory-system-total-used>
+<memory-system-total-util>63</memory-system-total-util>
+<memory-control-plane>1731</memory-control-plane>
+<memory-control-plane-used>917</memory-control-plane-used>
+<memory-control-plane-util>53</memory-control-plane-util>
+<memory-data-plane>2304</memory-data-plane>
+<memory-data-plane-used>1636</memory-data-plane-used>
+<memory-data-plane-util>71</memory-data-plane-util>
+<cpu-user>2</cpu-user>
+<cpu-background>0</cpu-background>
+<cpu-system>33</cpu-system>
+<cpu-interrupt>0</cpu-interrupt>
+<cpu-idle>65</cpu-idle>
+<model>VSRX RE</model>
+<start-time junos:seconds="1779636552">2026-05-24 15:29:12 UTC</start-time>
+<up-time junos:seconds="206597">2 days, 9 hours, 23 minutes, 17 seconds</up-time>
+<last-reboot-reason>Router rebooted after a normal shutdown.</last-reboot-reason>
+<load-average-one>2.30</load-average-one>
+<load-average-five>2.79</load-average-five>
+<load-average-fifteen>2.67</load-average-fifteen>
+</route-engine>
+</route-engine-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<route-engine-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-chassis">
+<route-engine>
+<status>Testing</status>
+<memory-system-total>4035</memory-system-total>
+<memory-system-total-used>847</memory-system-total-used>
+<memory-system-total-util>21</memory-system-total-util>
+<memory-control-plane>1731</memory-control-plane>
+<memory-control-plane-used>831</memory-control-plane-used>
+<memory-control-plane-util>48</memory-control-plane-util>
+<memory-data-plane>2304</memory-data-plane>
+<memory-data-plane-used>0</memory-data-plane-used>
+<memory-data-plane-util>0</memory-data-plane-util>
+<cpu-user>1</cpu-user>
+<cpu-background>0</cpu-background>
+<cpu-system>30</cpu-system>
+<cpu-interrupt>0</cpu-interrupt>
+<cpu-idle>69</cpu-idle>
+<model>VSRX RE</model>
+<start-time junos:seconds="1779636556">2026-05-24 15:29:16 UTC</start-time>
+<up-time junos:seconds="206591">2 days, 9 hours, 23 minutes, 11 seconds</up-time>
+<last-reboot-reason>Router rebooted after a normal shutdown.</last-reboot-reason>
+<load-average-one>1.41</load-average-one>
+<load-average-five>1.72</load-average-five>
+<load-average-fifteen>2.02</load-average-fifteen>
+</route-engine>
+</route-engine-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>

@@ -1,0 +1,3 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<output>BGP is not running</output>
+</nc:rpc-reply>

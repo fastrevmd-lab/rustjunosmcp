@@ -1,0 +1,10 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<idp-security-package-information>
+<security-package-version>3910(Minor, Thu May 21 13:50:42 2026 UTC)</security-package-version>
+<detector-version>12.6.180250827</detector-version>
+<policy-template-version>N/A</policy-template-version>
+<security-package-rollback-version>N/A(N/A)</security-package-rollback-version>
+<security-package-rollback-detector-version>N/A
+</security-package-rollback-detector-version>
+</idp-security-package-information>
+</nc:rpc-reply>

@@ -1,0 +1,24 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<ike-security-associations-information junos:style="brief">
+<ike-security-associations>
+<ike-sa-remote-address>
+192.168.1.161
+</ike-sa-remote-address>
+<ike-sa-index>
+431053
+</ike-sa-index>
+<ike-sa-state>
+UP
+</ike-sa-state>
+<ike-sa-initiator-cookie>
+9328a36431323306
+</ike-sa-initiator-cookie>
+<ike-sa-responder-cookie>
+f6087cb15c3199fd
+</ike-sa-responder-cookie>
+<ike-sa-exchange-type>
+IKEv2
+</ike-sa-exchange-type>
+</ike-security-associations>
+</ike-security-associations-information>
+</nc:rpc-reply>

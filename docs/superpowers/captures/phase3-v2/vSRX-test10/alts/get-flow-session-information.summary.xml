@@ -1,0 +1,41 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="3">
+<security-flow-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<flow-session-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<flow-session-summary-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-flow">
+<active-unicast-sessions>
+3
+</active-unicast-sessions>
+<active-multicast-sessions>
+0
+</active-multicast-sessions>
+<active-services-offload-sessions>
+0
+</active-services-offload-sessions>
+<failed-sessions>
+0
+</failed-sessions>
+<active-drop-sessions>
+0
+</active-drop-sessions>
+<active-sessions>
+14
+</active-sessions>
+<active-session-valid>
+3
+</active-session-valid>
+<active-session-pending>
+0
+</active-session-pending>
+<active-session-invalidated>
+11
+</active-session-invalidated>
+<active-session-other>
+0
+</active-session-other>
+<max-sessions>
+524288
+</max-sessions>
+</flow-session-summary-information>
+</flow-session-information>
+</security-flow-information>
+</nc:rpc-reply>

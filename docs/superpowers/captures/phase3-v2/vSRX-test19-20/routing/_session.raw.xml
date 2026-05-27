@@ -1,0 +1,132 @@
+<!-- No zombies were killed during the creation of this user interface -->
+<!-- user netconf, class j-super-user -->
+<nc:hello xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+   <nc:capabilities>
+    <nc:capability>urn:ietf:params:netconf:base:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:base:1.0?module=ietf-netconf&amp;revision=2011-06-01</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-inet-types?module=ietf-inet-types&amp;revision=2013-07-15</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-yang-metadata?module=ietf-yang-metadata&amp;revision=2016-08-05</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring</nc:capability>
+    <nc:capability>http://xml.juniper.net/netconf/junos/1.0</nc:capability>
+    <nc:capability>http://xml.juniper.net/dmi/system/1.0</nc:capability>
+    <nc:capability>http://yang.juniper.net/junos/jcmd?module=junos-configuration-metadata&amp;revision=2021-09-01</nc:capability>
+  </nc:capabilities>
+  <nc:session-id>33395</nc:session-id>
+</nc:hello>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>
+the routing subsystem is not running
+</nc:error-message>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>
+the routing subsystem is not running
+</nc:error-message>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="3">
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>
+the routing subsystem is not running
+</nc:error-message>
+</nc:rpc-error>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="4">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<route-engine-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-chassis">
+<route-engine>
+<status>Testing</status>
+<memory-system-total>4035</memory-system-total>
+<memory-system-total-used>2542</memory-system-total-used>
+<memory-system-total-util>63</memory-system-total-util>
+<memory-control-plane>1731</memory-control-plane>
+<memory-control-plane-used>917</memory-control-plane-used>
+<memory-control-plane-util>53</memory-control-plane-util>
+<memory-data-plane>2304</memory-data-plane>
+<memory-data-plane-used>1636</memory-data-plane-used>
+<memory-data-plane-util>71</memory-data-plane-util>
+<cpu-user>2</cpu-user>
+<cpu-background>0</cpu-background>
+<cpu-system>33</cpu-system>
+<cpu-interrupt>0</cpu-interrupt>
+<cpu-idle>65</cpu-idle>
+<model>VSRX RE</model>
+<start-time junos:seconds="1779636552">2026-05-24 15:29:12 UTC</start-time>
+<up-time junos:seconds="206597">2 days, 9 hours, 23 minutes, 17 seconds</up-time>
+<last-reboot-reason>Router rebooted after a normal shutdown.</last-reboot-reason>
+<load-average-one>2.30</load-average-one>
+<load-average-five>2.79</load-average-five>
+<load-average-fifteen>2.67</load-average-fifteen>
+</route-engine>
+</route-engine-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<route-engine-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-chassis">
+<route-engine>
+<status>Testing</status>
+<memory-system-total>4035</memory-system-total>
+<memory-system-total-used>847</memory-system-total-used>
+<memory-system-total-util>21</memory-system-total-util>
+<memory-control-plane>1731</memory-control-plane>
+<memory-control-plane-used>831</memory-control-plane-used>
+<memory-control-plane-util>48</memory-control-plane-util>
+<memory-data-plane>2304</memory-data-plane>
+<memory-data-plane-used>0</memory-data-plane-used>
+<memory-data-plane-util>0</memory-data-plane-util>
+<cpu-user>1</cpu-user>
+<cpu-background>0</cpu-background>
+<cpu-system>30</cpu-system>
+<cpu-interrupt>0</cpu-interrupt>
+<cpu-idle>69</cpu-idle>
+<model>VSRX RE</model>
+<start-time junos:seconds="1779636556">2026-05-24 15:29:16 UTC</start-time>
+<up-time junos:seconds="206591">2 days, 9 hours, 23 minutes, 11 seconds</up-time>
+<last-reboot-reason>Router rebooted after a normal shutdown.</last-reboot-reason>
+<load-average-one>1.41</load-average-one>
+<load-average-five>1.72</load-average-five>
+<load-average-fifteen>2.02</load-average-fifteen>
+</route-engine>
+</route-engine-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="z">
+<nc:ok/>
+</nc:rpc-reply>
+]]>]]>
+<!-- session end at 2026-05-27 00:52:32 UTC -->

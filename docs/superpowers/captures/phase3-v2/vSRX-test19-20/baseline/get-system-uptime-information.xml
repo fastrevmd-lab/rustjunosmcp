@@ -1,0 +1,69 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="2">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<system-uptime-information xmlns="http://xml.juniper.net/junos/24.4R0/junos">
+<current-time>
+<date-time junos:seconds="1779843151">2026-05-27 00:52:31 UTC</date-time>
+</current-time>
+<time-source> LOCAL CLOCK </time-source>
+<system-booted-time>
+<date-time junos:seconds="1779636552">2026-05-24 15:29:12 UTC</date-time>
+<time-length junos:seconds="206599">2d 09:23</time-length>
+</system-booted-time>
+<protocols-started-time>
+<date-time junos:seconds="1779636689">2026-05-24 15:31:29 UTC</date-time>
+<time-length junos:seconds="206462">2d 09:21</time-length>
+</protocols-started-time>
+<last-configured-time>
+<date-time junos:seconds="1779380857">2026-05-21 16:27:37 UTC</date-time>
+<time-length junos:seconds="462294">5d 08:24</time-length>
+<user>netconf</user>
+</last-configured-time>
+<uptime-information>
+<date-time junos:seconds="1779843151">12:52AM</date-time>
+<up-time junos:seconds="206580">2 days,  9:23</up-time>
+<active-user-count junos:format="0 users">0</active-user-count>
+<load-average-1>2.30</load-average-1>
+<load-average-5>2.79</load-average-5>
+<load-average-15>2.67</load-average-15>
+<user-table></user-table>
+</uptime-information>
+</system-uptime-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<system-uptime-information xmlns="http://xml.juniper.net/junos/24.4R0/junos">
+<current-time>
+<date-time junos:seconds="1779843151">2026-05-27 00:52:31 UTC</date-time>
+</current-time>
+<time-source> LOCAL CLOCK </time-source>
+<system-booted-time>
+<date-time junos:seconds="1779636556">2026-05-24 15:29:16 UTC</date-time>
+<time-length junos:seconds="206595">2d 09:23</time-length>
+</system-booted-time>
+<last-configured-time>
+<date-time junos:seconds="1779380857">2026-05-21 16:27:37 UTC</date-time>
+<time-length junos:seconds="462294">5d 08:24</time-length>
+<user>netconf</user>
+</last-configured-time>
+<uptime-information>
+<date-time junos:seconds="1779843151">12:52AM</date-time>
+<up-time junos:seconds="206580">2 days,  9:23</up-time>
+<active-user-count junos:format="0 users">0</active-user-count>
+<load-average-1>1.41</load-average-1>
+<load-average-5>1.72</load-average-5>
+<load-average-15>2.02</load-average-15>
+<user-table></user-table>
+</uptime-information>
+</system-uptime-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
