@@ -1,0 +1,33 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary><no-active-alarms/>
+</alarm-summary>
+</alarm-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary>
+<active-alarm-count>1</active-alarm-count>
+</alarm-summary>
+<alarm-detail>
+<alarm-time junos:seconds="1779765516">2026-05-26 03:18:36 UTC</alarm-time>
+<alarm-class>Major</alarm-class>
+<alarm-description>FPC 0 Hard errors</alarm-description>
+<alarm-short-description>FPC 0 Hard errors</alarm-short-description>
+<alarm-type>Chassis</alarm-type>
+</alarm-detail>
+</alarm-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>

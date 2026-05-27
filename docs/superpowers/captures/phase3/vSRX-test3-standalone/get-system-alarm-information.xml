@@ -1,0 +1,16 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary>
+<active-alarm-count>1</active-alarm-count>
+</alarm-summary>
+<alarm-detail>
+<alarm-time junos:seconds="1779636618">
+2026-05-24 15:30:18 UTC
+</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>Rescue configuration is not set</alarm-description>
+<alarm-short-description>no-rescue</alarm-short-description>
+<alarm-type>Configuration</alarm-type>
+</alarm-detail>
+</alarm-information>
+</nc:rpc-reply>

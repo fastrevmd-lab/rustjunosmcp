@@ -1,0 +1,16 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<xnm:error xmlns="http://xml.juniper.net/xnm/1.1/xnm" xmlns:xnm="http://xml.juniper.net/xnm/1.1/xnm">
+<parse/>
+<source-daemon>jsrpd</source-daemon>
+<message>error: Chassis cluster is not enabled</message>
+</xnm:error>
+<nc:rpc-error>
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<parse/>
+<nc:error-message>
+error: HA is not enabled
+</nc:error-message>
+</nc:rpc-error>
+</nc:rpc-reply>

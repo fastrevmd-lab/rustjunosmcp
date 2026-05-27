@@ -1,0 +1,456 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<services-synchronized>
+<service-name>
+Translation context
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Incoming NAT
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Resource manager
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv4/6 session RTO ACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG Support Library
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Gate create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPSec VPN
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Firewall user authentication
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MGCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SIP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SCCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RPC ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MAC address learning
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS GTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS SCTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS FRAMEWORK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SUNRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MSRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE delete
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SLB
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+APPID
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MGCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SCCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SIP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CREATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CLOSE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_UPDATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF TCP STACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF IKE ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG RTO FRAG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+</services-synchronized>
+<icd-pkt-stats>
+<service-name>
+ICD Data
+</service-name>
+<pkts-sent>
+0
+</pkts-sent>
+<pkts-received>
+0
+</pkts-received>
+</icd-pkt-stats>
+</nc:rpc-reply>

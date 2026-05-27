@@ -1,0 +1,162 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<chassis-cluster-information>
+<chassis-cluster-redundancy-group-information>
+<redundancy-group-list>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-status>primary</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:20</transition-time>
+<from-state>hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Hold timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:21</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Better priority (200/100)</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+<redundancy-group-list>
+<redundancy-group-id>1</redundancy-group-id>
+<redundancy-group-status>primary</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:20</transition-time>
+<from-state>hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Hold timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:21</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Remote yield (0/0), due to CS CF  failures</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+</chassis-cluster-redundancy-group-information>
+<chassis-cluster-led-information>
+<current-led-color>Red</current-led-color>
+<last-change-reason>Peer node: node1 is disabled</last-change-reason>
+</chassis-cluster-led-information>
+<chassis-cluster-monitoring-failure-information>
+<monitoring-failure-title>Failure Information:</monitoring-failure-title>
+<fabric-link-failure-information>
+<fabric-link-interface-status>
+<fabric-link-interface-index>0</fabric-link-interface-index>
+<fabric-link-child-interface-status>
+<fabric-link-child-interface-name>ge-0/0/3</fabric-link-child-interface-name>
+<fabric-link-child-interface-physical-status>Up</fabric-link-child-interface-physical-status>
+<fabric-link-child-interface-monitored-status>Down</fabric-link-child-interface-monitored-status>
+</fabric-link-child-interface-status>
+</fabric-link-interface-status>
+</fabric-link-failure-information>
+</chassis-cluster-monitoring-failure-information>
+</chassis-cluster-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<chassis-cluster-information>
+<chassis-cluster-redundancy-group-information>
+<redundancy-group-list>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-status>disabled</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:26:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:18</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>primary</to-state>
+<transition-reason>Only node present</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:33:25</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:34:43</transition-time>
+<from-state>secondary</from-state>
+<to-state>ineligible</to-state>
+<transition-reason>Control link failure</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:37:43</transition-time>
+<from-state>ineligible</from-state>
+<to-state>disabled</to-state>
+<transition-reason>Ineligible timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+<redundancy-group-list>
+<redundancy-group-id>1</redundancy-group-id>
+<redundancy-group-status>disabled</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:26:25</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:18</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Only node present</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:26</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:34:43</transition-time>
+<from-state>secondary</from-state>
+<to-state>ineligible</to-state>
+<transition-reason>Control link failure</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:37:43</transition-time>
+<from-state>ineligible</from-state>
+<to-state>disabled</to-state>
+<transition-reason>Ineligible timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+</chassis-cluster-redundancy-group-information>
+<chassis-cluster-led-information>
+<current-led-color>Off</current-led-color>
+<last-change-reason>node1 is disabled</last-change-reason>
+</chassis-cluster-led-information>
+</chassis-cluster-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>

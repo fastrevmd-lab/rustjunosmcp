@@ -1,0 +1,1987 @@
+<!-- No zombies were killed during the creation of this user interface -->
+<!-- user netconf, class j-super-user -->
+<nc:hello xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+   <nc:capabilities>
+    <nc:capability>urn:ietf:params:netconf:base:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:base:1.0?module=ietf-netconf&amp;revision=2011-06-01</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?scheme=http,ftp,file</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-inet-types?module=ietf-inet-types&amp;revision=2013-07-15</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-yang-metadata?module=ietf-yang-metadata&amp;revision=2016-08-05</nc:capability>
+    <nc:capability>urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring</nc:capability>
+    <nc:capability>http://xml.juniper.net/netconf/junos/1.0</nc:capability>
+    <nc:capability>http://xml.juniper.net/dmi/system/1.0</nc:capability>
+    <nc:capability>http://yang.juniper.net/junos/jcmd?module=junos-configuration-metadata&amp;revision=2021-09-01</nc:capability>
+  </nc:capabilities>
+  <nc:session-id>82327</nc:session-id>
+</nc:hello>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<chassis-cluster-status>
+<cluster-id>1</cluster-id>
+<redundancy-group>
+<cluster-id>1</cluster-id>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-failover-count>8</redundancy-group-failover-count>
+<device-stats>
+<device-name>node0</device-name>
+<device-priority>200</device-priority>
+<redundancy-group-status>primary</redundancy-group-status>
+<preempt>no</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>None</monitor-failures>
+<device-name>node1</device-name>
+<device-priority>100</device-priority>
+<redundancy-group-status>disabled</redundancy-group-status>
+<preempt>no</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>None</monitor-failures>
+</device-stats>
+</redundancy-group>
+<redundancy-group>
+<cluster-id>1</cluster-id>
+<redundancy-group-id>1</redundancy-group-id>
+<redundancy-group-failover-count>8</redundancy-group-failover-count>
+<device-stats>
+<device-name>node0</device-name>
+<device-priority>200</device-priority>
+<redundancy-group-status>primary</redundancy-group-status>
+<preempt>yes</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>None</monitor-failures>
+<device-name>node1</device-name>
+<device-priority>100</device-priority>
+<redundancy-group-status>disabled</redundancy-group-status>
+<preempt>yes</preempt>
+<failover-mode>no</failover-mode>
+<monitor-failures>None</monitor-failures>
+</device-stats>
+</redundancy-group>
+</chassis-cluster-status>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<chassis-cluster-interface-statistics>
+<control-interface-status>Up</control-interface-status>
+<control-link-interfaces>
+<control-information>
+<control-link-interface-index>0</control-link-interface-index>
+<control-link-interface-name>em0</control-link-interface-name>
+<control-link-interface-status>Up</control-link-interface-status>
+<control-link-interface-internal-sa-status>Disabled</control-link-interface-internal-sa-status>
+<control-link-interface-security-status>Disabled</control-link-interface-security-status>
+</control-information>
+</control-link-interfaces>
+<dataplane-interface-status>Down</dataplane-interface-status>
+<dataplane-interfaces>
+<fabric-information>
+<fabric-interface-index>0</fabric-interface-index>
+<fabric-child-interface-name>ge-0/0/3</fabric-child-interface-name>
+<fabric-child-interface-status>Up   / Down</fabric-child-interface-status>
+<fabric-link-interface-security-status>Disabled</fabric-link-interface-security-status>
+<fabric-interface-index>0</fabric-interface-index>
+</fabric-information>
+<fabric-information>
+<fabric-interface-index>1</fabric-interface-index>
+<fabric-interface-index>1</fabric-interface-index>
+</fabric-information>
+</dataplane-interfaces>
+<reth>
+<reth-name>reth0</reth-name>
+<reth-status>Up</reth-status>
+<redundancy-group-id-for-reth>1</redundancy-group-id-for-reth>
+<reth-name>reth1</reth-name>
+<reth-status>Up</reth-status>
+<redundancy-group-id-for-reth>1</redundancy-group-id-for-reth>
+</reth>
+<pseudo-if>
+<name>lo0</name>
+<status>Up</status>
+<redundancy-group-id>0</redundancy-group-id>
+</pseudo-if>
+<interface-monitoring>
+</interface-monitoring>
+</chassis-cluster-interface-statistics>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<chassis-cluster-statistics>
+<chassis-cluster-interfaces>
+<chassis-cluster-control>
+<control-interface-index>0</control-interface-index>
+<heartbeat-sent>187816</heartbeat-sent>
+<heartbeat-received>179552</heartbeat-received>
+<heartbeat-errors>345816</heartbeat-errors>
+</chassis-cluster-control>
+<chassis-cluster-fabric>
+<fabric-child>
+<fabric-child-index>0</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+<fabric-child>
+<fabric-child-index>1</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+</chassis-cluster-fabric>
+</chassis-cluster-interfaces>
+</chassis-cluster-statistics>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<services-synchronized>
+<service-name>
+Translation context
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Incoming NAT
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Resource manager
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv4/6 session RTO ACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG Support Library
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Gate create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPSec VPN
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Firewall user authentication
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MGCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SIP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SCCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RPC ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MAC address learning
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS GTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS SCTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS FRAMEWORK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SUNRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MSRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE delete
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SLB
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+APPID
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MGCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SCCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SIP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CREATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CLOSE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_UPDATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF TCP STACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF IKE ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG RTO FRAG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+</services-synchronized>
+<icd-pkt-stats>
+<service-name>
+ICD Data
+</service-name>
+<pkts-sent>
+0
+</pkts-sent>
+<pkts-received>
+0
+</pkts-received>
+</icd-pkt-stats>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<chassis-cluster-information>
+<chassis-cluster-redundancy-group-information>
+<redundancy-group-list>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-status>primary</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:20</transition-time>
+<from-state>hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Hold timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:21</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Better priority (200/100)</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+<redundancy-group-list>
+<redundancy-group-id>1</redundancy-group-id>
+<redundancy-group-status>primary</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:20</transition-time>
+<from-state>hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Hold timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 24 15:31:21</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Remote yield (0/0), due to CS CF  failures</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+</chassis-cluster-redundancy-group-information>
+<chassis-cluster-led-information>
+<current-led-color>Red</current-led-color>
+<last-change-reason>Peer node: node1 is disabled</last-change-reason>
+</chassis-cluster-led-information>
+<chassis-cluster-monitoring-failure-information>
+<monitoring-failure-title>Failure Information:</monitoring-failure-title>
+<fabric-link-failure-information>
+<fabric-link-interface-status>
+<fabric-link-interface-index>0</fabric-link-interface-index>
+<fabric-link-child-interface-status>
+<fabric-link-child-interface-name>ge-0/0/3</fabric-link-child-interface-name>
+<fabric-link-child-interface-physical-status>Up</fabric-link-child-interface-physical-status>
+<fabric-link-child-interface-monitored-status>Down</fabric-link-child-interface-monitored-status>
+</fabric-link-child-interface-status>
+</fabric-link-interface-status>
+</fabric-link-failure-information>
+</chassis-cluster-monitoring-failure-information>
+</chassis-cluster-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<chassis-cluster-information>
+<chassis-cluster-redundancy-group-information>
+<redundancy-group-list>
+<redundancy-group-id>0</redundancy-group-id>
+<redundancy-group-status>disabled</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:26:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:18</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>primary</to-state>
+<transition-reason>Only node present</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:33:25</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:34:43</transition-time>
+<from-state>secondary</from-state>
+<to-state>ineligible</to-state>
+<transition-reason>Control link failure</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:37:43</transition-time>
+<from-state>ineligible</from-state>
+<to-state>disabled</to-state>
+<transition-reason>Ineligible timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+<redundancy-group-list>
+<redundancy-group-id>1</redundancy-group-id>
+<redundancy-group-status>disabled</redundancy-group-status>
+<redundancy-group-weight>255</redundancy-group-weight>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:26:25</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:18</transition-time>
+<from-state>secondary</from-state>
+<to-state>primary</to-state>
+<transition-reason>Only node present</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:24</transition-time>
+<from-state>primary</from-state>
+<to-state>secondary-hold</to-state>
+<transition-reason>Preempt/yield(100/200)</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:28:26</transition-time>
+<from-state>secondary-hold</from-state>
+<to-state>secondary</to-state>
+<transition-reason>Ready to become secondary</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:34:43</transition-time>
+<from-state>secondary</from-state>
+<to-state>ineligible</to-state>
+<transition-reason>Control link failure</transition-reason>
+</redundancy-group-state-transition-record>
+<redundancy-group-state-transition-record>
+<transition-time>May 26 01:37:43</transition-time>
+<from-state>ineligible</from-state>
+<to-state>disabled</to-state>
+<transition-reason>Ineligible timer expired</transition-reason>
+</redundancy-group-state-transition-record>
+</redundancy-group-list>
+</chassis-cluster-redundancy-group-information>
+<chassis-cluster-led-information>
+<current-led-color>Off</current-led-color>
+<last-change-reason>node1 is disabled</last-change-reason>
+</chassis-cluster-led-information>
+</chassis-cluster-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<chassis-cluster-statistics>
+<chassis-cluster-interfaces>
+<chassis-cluster-control>
+<control-interface-index>0</control-interface-index>
+<heartbeat-sent>187817</heartbeat-sent>
+<heartbeat-received>179553</heartbeat-received>
+<heartbeat-errors>345818</heartbeat-errors>
+</chassis-cluster-control>
+<chassis-cluster-fabric>
+<fabric-child>
+<fabric-child-index>0</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+<fabric-child>
+<fabric-child-index>1</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+</chassis-cluster-fabric>
+</chassis-cluster-interfaces>
+</chassis-cluster-statistics>
+<services-synchronized>
+<service-name>
+Translation context
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Incoming NAT
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Resource manager
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv4/6 session RTO ACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session close
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session change
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG Support Library
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Gate create
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh requests
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPv6 session ageout refresh replies
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+IPSec VPN
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+Firewall user authentication
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MGCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SIP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+SCCP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF PPTP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RPC ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+MAC address learning
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS GTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS SCTP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+GPRS FRAMEWORK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RTSP ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SUNRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MSRPC MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+DS-LITE delete
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SLB
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+APPID
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF MGCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF H323 ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF RAS ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SCCP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF SIP MAP
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CREATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_CLOSE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+PST_NAT_UPDATE
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF TCP STACK
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+JSF IKE ALG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+<service-name>
+ALG RTO FRAG
+</service-name>
+<rtos-sent>
+0
+</rtos-sent>
+<rtos-received>
+0
+</rtos-received>
+</services-synchronized>
+<icd-pkt-stats>
+<service-name>
+ICD Data
+</service-name>
+<pkts-sent>
+0
+</pkts-sent>
+<pkts-received>
+0
+</pkts-received>
+</icd-pkt-stats>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<software-information>
+<host-name>vSRX-test19</host-name>
+<product-model>vSRX</product-model>
+<product-name>vsrx</product-name>
+<os-name>junos-es</os-name>
+<junos-version>24.4R1.9</junos-version>
+<package-information>
+<name>junos-hsm</name>
+<package-name>junos-hsm-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-kernel</name>
+<package-name>os-kernel-xen-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS Kernel 64-bit XEN [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-modules</name>
+<package-name>junos-modules-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest-platform</name>
+<package-name>junos-modules-vsrx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-libs</name>
+<package-name>os-libs-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-hsm-aws</name>
+<package-name>junos-hsm-aws-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm aws [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-vmguest</name>
+<package-name>os-vmguest-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS vmguest [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-libs-compat32</name>
+<package-name>os-libs-compat32-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs compat32 [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-runtime</name>
+<package-name>os-runtime-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-compat32</name>
+<package-name>os-compat32-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS 32-bit compatibility [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>jail-runtime</name>
+<package-name>jail-runtime-x86-32-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS jail runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>py-extensions</name>
+<package-name>py-extensions-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py extensions [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>py-base</name>
+<package-name>py-base-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-package</name>
+<package-name>os-package-20241014.220147_builder_main</package-name>
+<comment>JUNOS OS package [20241014.220147_builder_main]</comment>
+</package-information>
+<package-information>
+<name>os-crypto</name>
+<package-name>os-crypto-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS crypto [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-platform</name>
+<package-name>junos-libs-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-boot-junos</name>
+<package-name>os-boot-junos-ve-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS boot-ve files [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>zoneinfo</name>
+<package-name>os-zoneinfo-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS time zone information [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>netstack</name>
+<package-name>junos-net-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS network stack and utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs</name>
+<package-name>junos-libs-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-init</name>
+<package-name>junos-cloud-init-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud init [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons-platform</name>
+<package-name>junos-daemons-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-modules-net</name>
+<package-name>os-modules-net-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS network modules [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32-platform</name>
+<package-name>junos-libs-compat32-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons</name>
+<package-name>junos-daemons-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-net-platform</name>
+<package-name>junos-net-mtx-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS mtx network modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32</name>
+<package-name>junos-libs-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-libs</name>
+<package-name>junos-cloud-libs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest</name>
+<package-name>junos-vmguest-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vmguest  [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-platform</name>
+<package-name>junos-runtime-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime</name>
+<package-name>junos-runtime-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>dsa</name>
+<package-name>dsa-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS dsa [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>ssh-tunneld</name>
+<package-name>ssh-tunneld-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SSH Tunnel Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>na-telemetry</name>
+<package-name>na-telemetry-x86-32-24.4R1.9</package-name>
+<comment>JUNOS na telemetry [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>jweb-srxtvp</name>
+<package-name>jweb-srxtvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Web Management Platform Package [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-sysmond-lite</name>
+<package-name>junos-sysmond-lite-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS lite sysmond [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-support</name>
+<package-name>junos-support-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS support scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-statesync-pub-sub</name>
+<package-name>junos-statesync-pub-sub-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS publish subscribe base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-schedtrace</name>
+<package-name>junos-schedtrace-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>Junos scheduler tracing [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform</name>
+<package-name>junos-platform-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS common platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-scripts</name>
+<package-name>junos-routing-scripts-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS python routing scripts for consistency check in RIB/FIB/PFE [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-mpls-oam-basic</name>
+<package-name>junos-routing-mpls-oam-basic-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing mpls-oam-basic [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-lsys</name>
+<package-name>junos-routing-lsys-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing lsys [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-compat32</name>
+<package-name>junos-routing-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing 32-bit Compatible Version [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-aggregated</name>
+<package-name>junos-routing-aggregated-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing aggregated [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-probe</name>
+<package-name>junos-probe-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS probe utility [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-pppoe</name>
+<package-name>junos-pppoe-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS pppoe [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-openconfig</name>
+<package-name>junos-openconfig-x86-32-24.4R1.9</package-name>
+<comment>JUNOS Openconfig [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>junos-l2-rsi</name>
+<package-name>junos-l2-rsi-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS L2 RSI Scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-km</name>
+<package-name>junos-km-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Key Manager [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-dp-crypto-support-platform</name>
+<package-name>junos-dp-crypto-support-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx Data Plane Crypto Support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jsd-jet-1</name>
+<package-name>jsd-x86-32-20241219.060016_builder_junos_244_r1-jet-1</package-name>
+<comment>JUNOS Extension Toolkit [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-base</name>
+<package-name>jmrt-base-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jinsight</name>
+<package-name>jinsight-x86-32-24.4R1.9</package-name>
+<comment>JUNOS J-Insight [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jdocs</name>
+<package-name>jdocs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Online Documentation [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>fips-mode</name>
+<package-name>fips-mode-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS FIPS mode utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform-platform</name>
+<package-name>junos-platform-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-test</name>
+<package-name>jmrt-test-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) Test [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-casbd</name>
+<package-name>junos-casbd-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX CASB Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-appsecure-tvp</name>
+<package-name>junos-appsecure-tvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX TVP AppQos Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-vsrx</name>
+<package-name>junos-runtime-vsrx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+</software-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<software-information>
+<host-name>vSRX-test19</host-name>
+<product-model>vSRX</product-model>
+<product-name>vsrx</product-name>
+<os-name>junos-es</os-name>
+<junos-version>24.4R1.9</junos-version>
+<package-information>
+<name>junos-hsm</name>
+<package-name>junos-hsm-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-kernel</name>
+<package-name>os-kernel-xen-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS Kernel 64-bit XEN [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-modules</name>
+<package-name>junos-modules-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest-platform</name>
+<package-name>junos-modules-vsrx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-libs</name>
+<package-name>os-libs-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-hsm-aws</name>
+<package-name>junos-hsm-aws-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm aws [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-vmguest</name>
+<package-name>os-vmguest-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS vmguest [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-libs-compat32</name>
+<package-name>os-libs-compat32-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs compat32 [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-runtime</name>
+<package-name>os-runtime-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-compat32</name>
+<package-name>os-compat32-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS 32-bit compatibility [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>jail-runtime</name>
+<package-name>jail-runtime-x86-32-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS jail runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>py-extensions</name>
+<package-name>py-extensions-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py extensions [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>py-base</name>
+<package-name>py-base-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-package</name>
+<package-name>os-package-20241014.220147_builder_main</package-name>
+<comment>JUNOS OS package [20241014.220147_builder_main]</comment>
+</package-information>
+<package-information>
+<name>os-crypto</name>
+<package-name>os-crypto-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS crypto [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-platform</name>
+<package-name>junos-libs-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-boot-junos</name>
+<package-name>os-boot-junos-ve-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS boot-ve files [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>zoneinfo</name>
+<package-name>os-zoneinfo-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS time zone information [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>netstack</name>
+<package-name>junos-net-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS network stack and utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs</name>
+<package-name>junos-libs-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-init</name>
+<package-name>junos-cloud-init-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud init [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons-platform</name>
+<package-name>junos-daemons-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-modules-net</name>
+<package-name>os-modules-net-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS network modules [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32-platform</name>
+<package-name>junos-libs-compat32-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons</name>
+<package-name>junos-daemons-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-net-platform</name>
+<package-name>junos-net-mtx-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS mtx network modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32</name>
+<package-name>junos-libs-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-libs</name>
+<package-name>junos-cloud-libs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest</name>
+<package-name>junos-vmguest-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vmguest  [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-platform</name>
+<package-name>junos-runtime-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime</name>
+<package-name>junos-runtime-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>dsa</name>
+<package-name>dsa-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS dsa [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>ssh-tunneld</name>
+<package-name>ssh-tunneld-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SSH Tunnel Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>na-telemetry</name>
+<package-name>na-telemetry-x86-32-24.4R1.9</package-name>
+<comment>JUNOS na telemetry [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>jweb-srxtvp</name>
+<package-name>jweb-srxtvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Web Management Platform Package [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-sysmond-lite</name>
+<package-name>junos-sysmond-lite-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS lite sysmond [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-support</name>
+<package-name>junos-support-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS support scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-statesync-pub-sub</name>
+<package-name>junos-statesync-pub-sub-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS publish subscribe base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-schedtrace</name>
+<package-name>junos-schedtrace-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>Junos scheduler tracing [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform</name>
+<package-name>junos-platform-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS common platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-scripts</name>
+<package-name>junos-routing-scripts-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS python routing scripts for consistency check in RIB/FIB/PFE [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-mpls-oam-basic</name>
+<package-name>junos-routing-mpls-oam-basic-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing mpls-oam-basic [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-lsys</name>
+<package-name>junos-routing-lsys-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing lsys [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-compat32</name>
+<package-name>junos-routing-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing 32-bit Compatible Version [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-aggregated</name>
+<package-name>junos-routing-aggregated-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing aggregated [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-probe</name>
+<package-name>junos-probe-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS probe utility [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-pppoe</name>
+<package-name>junos-pppoe-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS pppoe [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-openconfig</name>
+<package-name>junos-openconfig-x86-32-24.4R1.9</package-name>
+<comment>JUNOS Openconfig [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>junos-l2-rsi</name>
+<package-name>junos-l2-rsi-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS L2 RSI Scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-km</name>
+<package-name>junos-km-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Key Manager [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-dp-crypto-support-platform</name>
+<package-name>junos-dp-crypto-support-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx Data Plane Crypto Support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jsd-jet-1</name>
+<package-name>jsd-x86-32-20241219.060016_builder_junos_244_r1-jet-1</package-name>
+<comment>JUNOS Extension Toolkit [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-base</name>
+<package-name>jmrt-base-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jinsight</name>
+<package-name>jinsight-x86-32-24.4R1.9</package-name>
+<comment>JUNOS J-Insight [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jdocs</name>
+<package-name>jdocs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Online Documentation [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>fips-mode</name>
+<package-name>fips-mode-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS FIPS mode utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform-platform</name>
+<package-name>junos-platform-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-test</name>
+<package-name>jmrt-test-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) Test [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-casbd</name>
+<package-name>junos-casbd-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX CASB Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-appsecure-tvp</name>
+<package-name>junos-appsecure-tvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX TVP AppQos Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-vsrx</name>
+<package-name>junos-runtime-vsrx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+</software-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary>
+<active-alarm-count>3</active-alarm-count>
+</alarm-summary>
+<alarm-detail>
+<alarm-time junos:seconds="1779829223">2026-05-26 21:00:23 UTC</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>License for feature VCPU Scale(292) is about to expire</alarm-description>
+<alarm-short-description>VCPU Scale</alarm-short-description>
+<alarm-type>System</alarm-type>
+</alarm-detail>
+<alarm-detail>
+<alarm-time junos:seconds="1779829223">2026-05-26 21:00:23 UTC</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>License for feature Virtual Appliance(119) is about to expire</alarm-description>
+<alarm-short-description>Virtual Appliance</alarm-short-description>
+<alarm-type>System</alarm-type>
+</alarm-detail>
+<alarm-detail>
+<alarm-time junos:seconds="1779636694">2026-05-24 15:31:34 UTC</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>Rescue configuration is not set</alarm-description>
+<alarm-short-description>no-rescue</alarm-short-description>
+<alarm-type>Configuration</alarm-type>
+</alarm-detail>
+</alarm-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary>
+<active-alarm-count>3</active-alarm-count>
+</alarm-summary>
+<alarm-detail>
+<alarm-time junos:seconds="1779829198">2026-05-26 20:59:58 UTC</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>License for feature VCPU Scale(292) is about to expire</alarm-description>
+<alarm-short-description>VCPU Scale</alarm-short-description>
+<alarm-type>System</alarm-type>
+</alarm-detail>
+<alarm-detail>
+<alarm-time junos:seconds="1779829198">2026-05-26 20:59:58 UTC</alarm-time>
+<alarm-class>Minor</alarm-class>
+<alarm-description>License for feature Virtual Appliance(119) is about to expire</alarm-description>
+<alarm-short-description>Virtual Appliance</alarm-short-description>
+<alarm-type>System</alarm-type>
+</alarm-detail>
+<alarm-detail>
+<alarm-time junos:seconds="1779765516">2026-05-26 03:18:36 UTC</alarm-time>
+<alarm-class>Major</alarm-class>
+<alarm-description>FPC 0 Hard errors</alarm-description>
+<alarm-short-description>FPC 0 Hard errors</alarm-short-description>
+<alarm-type>Chassis</alarm-type>
+</alarm-detail>
+</alarm-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<multi-routing-engine-results>
+
+<multi-routing-engine-item>
+
+<re-name>node0</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary><no-active-alarms/>
+</alarm-summary>
+</alarm-information>
+</multi-routing-engine-item>
+
+<multi-routing-engine-item>
+
+<re-name>node1</re-name>
+
+<alarm-information xmlns="http://xml.juniper.net/junos/24.4R0/junos-alarm">
+<alarm-summary>
+<active-alarm-count>1</active-alarm-count>
+</alarm-summary>
+<alarm-detail>
+<alarm-time junos:seconds="1779765516">2026-05-26 03:18:36 UTC</alarm-time>
+<alarm-class>Major</alarm-class>
+<alarm-description>FPC 0 Hard errors</alarm-description>
+<alarm-short-description>FPC 0 Hard errors</alarm-short-description>
+<alarm-type>Chassis</alarm-type>
+</alarm-detail>
+</alarm-information>
+</multi-routing-engine-item>
+
+</multi-routing-engine-results>
+</nc:rpc-reply>
+]]>]]>
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="z">
+<nc:ok/>
+</nc:rpc-reply>
+]]>]]>
+<!-- session end at 2026-05-26 21:00:24 UTC -->

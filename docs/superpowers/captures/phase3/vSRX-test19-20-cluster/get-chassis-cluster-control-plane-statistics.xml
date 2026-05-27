@@ -1,0 +1,24 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<chassis-cluster-statistics>
+<chassis-cluster-interfaces>
+<chassis-cluster-control>
+<control-interface-index>0</control-interface-index>
+<heartbeat-sent>187816</heartbeat-sent>
+<heartbeat-received>179552</heartbeat-received>
+<heartbeat-errors>345816</heartbeat-errors>
+</chassis-cluster-control>
+<chassis-cluster-fabric>
+<fabric-child>
+<fabric-child-index>0</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+<fabric-child>
+<fabric-child-index>1</fabric-child-index>
+<fabric-hello-sent>0</fabric-hello-sent>
+<fabric-hello-received>0</fabric-hello-received>
+</fabric-child>
+</chassis-cluster-fabric>
+</chassis-cluster-interfaces>
+</chassis-cluster-statistics>
+</nc:rpc-reply>

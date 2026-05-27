@@ -1,0 +1,314 @@
+<nc:rpc-reply xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" xmlns:junos="http://xml.juniper.net/junos/24.4R1.9/junos" message-id="1">
+<software-information>
+<host-name>vSRX-test3</host-name>
+<product-model>vSRX</product-model>
+<product-name>vsrx</product-name>
+<os-name>junos-es</os-name>
+<junos-version>24.4R1.9</junos-version>
+<package-information>
+<name>junos-hsm</name>
+<package-name>junos-hsm-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-kernel</name>
+<package-name>os-kernel-xen-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS Kernel 64-bit XEN [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-modules</name>
+<package-name>junos-modules-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest-platform</name>
+<package-name>junos-modules-vsrx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-libs</name>
+<package-name>os-libs-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-hsm-aws</name>
+<package-name>junos-hsm-aws-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS hsm aws [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-vmguest</name>
+<package-name>os-vmguest-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS vmguest [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-libs-compat32</name>
+<package-name>os-libs-compat32-15-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS libs compat32 [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-runtime</name>
+<package-name>os-runtime-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>os-compat32</name>
+<package-name>os-compat32-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS 32-bit compatibility [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>jail-runtime</name>
+<package-name>jail-runtime-x86-32-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS jail runtime [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>py-extensions</name>
+<package-name>py-extensions-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py extensions [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>py-base</name>
+<package-name>py-base-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS py base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-package</name>
+<package-name>os-package-20241014.220147_builder_main</package-name>
+<comment>JUNOS OS package [20241014.220147_builder_main]</comment>
+</package-information>
+<package-information>
+<name>os-crypto</name>
+<package-name>os-crypto-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS crypto [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-platform</name>
+<package-name>junos-libs-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-boot-junos</name>
+<package-name>os-boot-junos-ve-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS boot-ve files [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>zoneinfo</name>
+<package-name>os-zoneinfo-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS time zone information [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>netstack</name>
+<package-name>junos-net-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS network stack and utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs</name>
+<package-name>junos-libs-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-init</name>
+<package-name>junos-cloud-init-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud init [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons-platform</name>
+<package-name>junos-daemons-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>os-modules-net</name>
+<package-name>os-modules-net-x86-64-20241104.1ed86e6_builder_bsd15_244</package-name>
+<comment>JUNOS OS network modules [20241104.1ed86e6_builder_bsd15_244]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32-platform</name>
+<package-name>junos-libs-compat32-srx-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-daemons</name>
+<package-name>junos-daemons-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS daemons [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-net-platform</name>
+<package-name>junos-net-mtx-prd-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS mtx network modules [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-libs-compat32</name>
+<package-name>junos-libs-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS libs compat32 [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-cloud-libs</name>
+<package-name>junos-cloud-libs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS cloud libs [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-vmguest</name>
+<package-name>junos-vmguest-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vmguest  [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-platform</name>
+<package-name>junos-runtime-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime</name>
+<package-name>junos-runtime-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>dsa</name>
+<package-name>dsa-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS dsa [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>ssh-tunneld</name>
+<package-name>ssh-tunneld-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SSH Tunnel Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>na-telemetry</name>
+<package-name>na-telemetry-x86-32-24.4R1.9</package-name>
+<comment>JUNOS na telemetry [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>jweb-srxtvp</name>
+<package-name>jweb-srxtvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Web Management Platform Package [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-sysmond-lite</name>
+<package-name>junos-sysmond-lite-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS lite sysmond [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-support</name>
+<package-name>junos-support-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS support scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-statesync-pub-sub</name>
+<package-name>junos-statesync-pub-sub-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS publish subscribe base [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-schedtrace</name>
+<package-name>junos-schedtrace-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>Junos scheduler tracing [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform</name>
+<package-name>junos-platform-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS common platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-scripts</name>
+<package-name>junos-routing-scripts-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS python routing scripts for consistency check in RIB/FIB/PFE [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-mpls-oam-basic</name>
+<package-name>junos-routing-mpls-oam-basic-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing mpls-oam-basic [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-lsys</name>
+<package-name>junos-routing-lsys-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing lsys [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-compat32</name>
+<package-name>junos-routing-compat32-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing 32-bit Compatible Version [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-routing-aggregated</name>
+<package-name>junos-routing-aggregated-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Routing aggregated [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-probe</name>
+<package-name>junos-probe-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS probe utility [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-pppoe</name>
+<package-name>junos-pppoe-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS pppoe [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-openconfig</name>
+<package-name>junos-openconfig-x86-32-24.4R1.9</package-name>
+<comment>JUNOS Openconfig [24.4R1.9]</comment>
+</package-information>
+<package-information>
+<name>junos-l2-rsi</name>
+<package-name>junos-l2-rsi-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS L2 RSI Scripts [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-km</name>
+<package-name>junos-km-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Key Manager [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-dp-crypto-support-platform</name>
+<package-name>junos-dp-crypto-support-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx Data Plane Crypto Support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jsd-jet-1</name>
+<package-name>jsd-x86-32-20241219.060016_builder_junos_244_r1-jet-1</package-name>
+<comment>JUNOS Extension Toolkit [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-base</name>
+<package-name>jmrt-base-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jinsight</name>
+<package-name>jinsight-x86-32-24.4R1.9</package-name>
+<comment>JUNOS J-Insight [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jdocs</name>
+<package-name>jdocs-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Online Documentation [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>fips-mode</name>
+<package-name>fips-mode-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS FIPS mode utilities [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-platform-platform</name>
+<package-name>junos-platform-srx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS srx platform support [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>jmrt-test</name>
+<package-name>jmrt-test-x86-64-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS Juniper Malware Removal Tool (JMRT) Test [1.0.0+20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-casbd</name>
+<package-name>junos-casbd-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX CASB Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-appsecure-tvp</name>
+<package-name>junos-appsecure-tvp-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS SRX TVP AppQos Daemon [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+<package-information>
+<name>junos-runtime-vsrx</name>
+<package-name>junos-runtime-vsrx-x86-32-20241219.060016_builder_junos_244_r1</package-name>
+<comment>JUNOS vsrx runtime [20241219.060016_builder_junos_244_r1]</comment>
+</package-information>
+</software-information>
+</nc:rpc-reply>
