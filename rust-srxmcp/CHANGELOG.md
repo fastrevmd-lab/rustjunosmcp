@@ -6,6 +6,32 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-06-02
+
+Cosmetic patch for the Phase 3 JTAC support-bundle path builders.
+
+### Fixed
+- **#79 — bundle filenames double-prefixed `srxmcp-`.** `mint_request_id`
+  already returns `srxmcp-<uuid>`, but `bundle_tarball_path`,
+  `bundle_manifest_path`, and `device_tarball_path` each prepended a second
+  `srxmcp-`, producing names like
+  `…/vSRX-test10/srxmcp-srxmcp-<uuid>.tgz` (and `/var/tmp/srxmcp-srxmcp-<uuid>.tgz`
+  on-device). A new `request_id_stem` helper strips any single leading
+  `srxmcp-` before the builders prepend one, so the prefix appears exactly
+  once. Robust across server-minted IDs, bare caller IDs, and already-prefixed
+  caller IDs. The `request_id` value reported in responses/manifests is
+  unchanged (`srxmcp-<uuid>`); only the on-disk filename normalizes. The
+  bundle manifest schema string stays `srxmcp-support-bundle-v0.3.0` (no
+  structural change). Adds two regression tests in
+  `support_bundle::staging`.
+
+### Security
+- Bumped transitive `russh` 0.60.2 → 0.60.3 and `russh-cryptovec`
+  0.59.0 → 0.60.3 in `Cargo.lock` to clear RUSTSEC-2026-0154 (unbounded
+  32-bit allocation) and RUSTSEC-2026-0153 (unchecked `CryptoVec`
+  allocation/growth). Pulled in via `rustnetconf` → `rustez`; patch-level
+  bump, no API change.
+
 ## [0.2.1] — 2026-05-26
 
 Phase 2 continuation — AppID signature-package lifecycle. Adds the sibling
