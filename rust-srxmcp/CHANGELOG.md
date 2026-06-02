@@ -6,6 +6,42 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] — 2026-06-02
+
+Implements JTAC support-bundle log archival (the per-type path's last gap).
+
+### Added
+- **#82 — `/var/log/*` archival in the per-type bundle path.** With
+  `include_logs:true` (the default), each baseline + per-problem-type log
+  is now pulled inline via `file show <path>` over the same pooled
+  `command` RPC used for the RPC captures, then staged into
+  `logs/<device-path>` inside the tarball with a real `sha256` +
+  `bytes_in_tarball`. Previously every log artefact was an empty
+  placeholder carrying `error: "log archival not implemented in v0.3.0
+  (tracked for v0.3.1)"`. The `fetch_file` SCP primitive cannot serve the
+  log dir (it only pulls basenames out of `/var/tmp`), and CLI pipe
+  modifiers (`| save`, `| last`) are silently ignored over the NETCONF
+  `command` RPC — verified live — so the inline `file show` capture is the
+  correct mechanism.
+  - `max_log_bytes_per_file` (default 10 MiB) now enforces a real size cap:
+    the inline payload is truncated at a UTF-8 char boundary and the
+    artefact records `error: "truncated to max_log_bytes_per_file=N"`.
+  - `max_log_files` (default 5) now enforces a real count cap: logs beyond
+    the cap are recorded as skip markers
+    (`error: "skipped: max_log_files=N reached"`) so JTAC sees what was
+    omitted.
+  - Per-log failures (`file show` transport error, or a Junos
+    `error: …`-prefixed reply for an absent/unreadable file) degrade to a
+    per-artefact `error` instead of failing the whole bundle.
+  - New `truncate_to_char_boundary` helper + unit test.
+
+### Known limitation
+- `redact_xml` is still a no-op stub (returns input unchanged), so
+  `redact=true` does not yet scrub secrets from any bundle artefact —
+  RPC, generic, or log. Redaction is wired through the log path for parity
+  so logs are scrubbed automatically once the stub is implemented. Tracked
+  separately in #85.
+
 ## [0.3.2] — 2026-06-02
 
 Bugfix for the `generic` JTAC support-bundle path.

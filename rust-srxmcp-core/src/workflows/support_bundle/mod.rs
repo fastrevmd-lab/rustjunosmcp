@@ -28,8 +28,11 @@
 //!   while still returning the payload inline), so the earlier device-side
 //!   variant reported success but produced no file — see issue #81.
 //! * **Per-`problem_type` path**: the captured RPC replies are written as
-//!   XML files; log files are pulled via the existing `rust-junosmcp`
-//!   `fetch_file` primitive into the staging dir before tarball assembly.
+//!   XML files; `/var/log/*` files are pulled inline via `file show <path>`
+//!   over the same pooled `command` RPC (the `fetch_file` SCP primitive
+//!   only serves basenames out of `/var/tmp`, so it cannot reach the log
+//!   dir), size-capped by `max_log_bytes_per_file` and count-capped by
+//!   `max_log_files`, then staged into `logs/<device-path>`.
 //!
 //! Both paths share [`finalize_lxc_bundle`] for manifest write + tarball
 //! assembly + sha256, and both report `bundle.location = "lxc_staging"`.
@@ -460,12 +463,13 @@ async fn collect_per_type(
         });
     }
 
-    // 2) Log file capture is gated behind a follow-up. v0.3.0 ships
-    //    without log archival in the per-type path so the orchestrator
-    //    has a complete RPC-bundle release; log fetching needs the
-    //    rust-junosmcp `fetch_file` plumbing wired across the binary
-    //    boundary and lands in v0.3.1. Document the gap in the
-    //    manifest so JTAC sees it explicitly.
+    // 2) Log file capture. Junos serves `/var/log/*` over the NETCONF
+    //    `command` RPC via `file show <path>`, returning the file content
+    //    INLINE as text (the `| save` redirect is unavailable here — see
+    //    #81 — and the `fetch_file` SCP primitive only pulls basenames out
+    //    of `/var/tmp`, so neither applies). We capture inline, enforce the
+    //    `max_log_bytes_per_file` size cap and the `max_log_files` count
+    //    cap, and stage each log into `logs/<device-path>` in the tarball.
     if args.include_logs {
         let mut all_logs: BTreeSet<&str> = BASELINE_LOGS.iter().copied().collect();
         for pt in problem_types {
@@ -473,17 +477,106 @@ async fn collect_per_type(
                 all_logs.insert(log);
             }
         }
+        let cap_bytes = args.max_log_bytes_per_file as usize;
+        let mut captured: u32 = 0;
         for path in all_logs {
+            let rel = format!("logs/{}", path.trim_start_matches('/'));
+            // Enforce the count cap: record a skip marker so JTAC sees
+            // which logs were intentionally omitted.
+            if captured >= args.max_log_files {
+                artefacts.push(CapturedArtefact {
+                    source: ArtefactSource::LogFile {
+                        device_path: path.to_string(),
+                    },
+                    tarball_path: rel,
+                    sha256: String::new(),
+                    bytes_in_tarball: 0,
+                    redacted: false,
+                    error: Some(format!(
+                        "skipped: max_log_files={} reached",
+                        args.max_log_files
+                    )),
+                });
+                continue;
+            }
+
+            let raw = match exec.cli(&format!("file show {path}"), "text").await {
+                Ok(text) => text,
+                Err(e) => {
+                    artefacts.push(CapturedArtefact {
+                        source: ArtefactSource::LogFile {
+                            device_path: path.to_string(),
+                        },
+                        tarball_path: rel,
+                        sha256: String::new(),
+                        bytes_in_tarball: 0,
+                        redacted: false,
+                        error: Some(format!("file show {path}: {e}")),
+                    });
+                    continue;
+                }
+            };
+            // Junos emits a plain `error: ...` line (not an rpc-error) when
+            // a file is absent or unreadable; treat that as a per-artefact
+            // error rather than archiving the error text as log data.
+            if raw.trim_start().starts_with("error:") {
+                artefacts.push(CapturedArtefact {
+                    source: ArtefactSource::LogFile {
+                        device_path: path.to_string(),
+                    },
+                    tarball_path: rel,
+                    sha256: String::new(),
+                    bytes_in_tarball: 0,
+                    redacted: false,
+                    error: Some(raw.trim().to_string()),
+                });
+                continue;
+            }
+
+            let mut content = raw;
+            let truncated = truncate_to_char_boundary(&mut content, cap_bytes);
+
+            // Redaction is wired here for parity with the RPC loop. NOTE:
+            // `redact_xml` is currently a no-op stub (tracked separately),
+            // so `redacted` stays false until it's implemented; once it is,
+            // logs are redacted automatically with no change here.
+            let (payload, redacted) = if args.redact {
+                let red = redact_xml(&content);
+                let changed = red != content;
+                any_redacted |= changed;
+                (red, changed)
+            } else {
+                (content, false)
+            };
+
+            let abs_path = scratch.join(&rel);
+            if let Some(parent) = abs_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    SrxError::InvalidInput(format!("create log dir {}: {e}", parent.display()))
+                })?;
+            }
+            std::fs::write(&abs_path, payload.as_bytes()).map_err(|e| {
+                SrxError::InvalidInput(format!("write {}: {e}", abs_path.display()))
+            })?;
+
             artefacts.push(CapturedArtefact {
                 source: ArtefactSource::LogFile {
                     device_path: path.to_string(),
                 },
-                tarball_path: format!("logs/{}", path.trim_start_matches('/')),
-                sha256: String::new(),
-                bytes_in_tarball: 0,
-                redacted: false,
-                error: Some("log archival not implemented in v0.3.0 (tracked for v0.3.1)".into()),
+                tarball_path: rel,
+                sha256: sha256_hex(payload.as_bytes()),
+                bytes_in_tarball: payload.len() as u64,
+                redacted,
+                error: if truncated {
+                    Some(format!(
+                        "truncated to max_log_bytes_per_file={}",
+                        args.max_log_bytes_per_file
+                    ))
+                } else {
+                    None
+                },
             });
+            captured += 1;
         }
     }
 
@@ -617,6 +710,21 @@ fn path_to_string(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
 
+/// Truncate `s` in place to at most `cap` bytes, backing up to the nearest
+/// UTF-8 char boundary so the result stays valid UTF-8. Returns `true` if
+/// any bytes were dropped.
+fn truncate_to_char_boundary(s: &mut String, cap: usize) -> bool {
+    if s.len() <= cap {
+        return false;
+    }
+    let mut end = cap;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    true
+}
+
 fn mint_request_id() -> String {
     format!("srxmcp-{}", uuid::Uuid::new_v4())
 }
@@ -670,6 +778,31 @@ mod tests {
             sanitize_rpc_filename("get-flow-session-information", "<summary/>"),
             "get-flow-session-information.summary.xml"
         );
+    }
+
+    #[test]
+    fn truncate_to_char_boundary_respects_utf8_and_cap() {
+        // Under cap: untouched.
+        let mut s = "hello".to_string();
+        assert!(!truncate_to_char_boundary(&mut s, 10));
+        assert_eq!(s, "hello");
+
+        // Exactly at cap: untouched.
+        let mut s = "hello".to_string();
+        assert!(!truncate_to_char_boundary(&mut s, 5));
+        assert_eq!(s, "hello");
+
+        // Over cap on ASCII: trims to cap.
+        let mut s = "hello world".to_string();
+        assert!(truncate_to_char_boundary(&mut s, 5));
+        assert_eq!(s, "hello");
+
+        // Multi-byte: "é" is 2 bytes — a cap of 1 must back up to 0 rather
+        // than split the char (which would otherwise panic).
+        let mut s = "é".to_string();
+        assert!(truncate_to_char_boundary(&mut s, 1));
+        assert_eq!(s, "");
+        assert!(s.is_empty());
     }
 
     #[test]
