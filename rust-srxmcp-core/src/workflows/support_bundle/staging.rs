@@ -48,21 +48,29 @@ pub fn router_staging_dir(router: &str) -> PathBuf {
     staging_dir_from_env().join(router)
 }
 
+/// Strips a leading `srxmcp-` token from `request_id` so the path builders can
+/// prepend exactly one prefix. Server-minted IDs already carry the prefix
+/// (`mint_request_id` → `srxmcp-<uuid>`); a caller-supplied ID may or may not.
+/// Without this, the filename double-prefixes to `srxmcp-srxmcp-<uuid>`.
+fn request_id_stem(request_id: &str) -> &str {
+    request_id.strip_prefix("srxmcp-").unwrap_or(request_id)
+}
+
 /// Canonical on-LXC path for a bundle's tarball, given `request_id`.
 pub fn bundle_tarball_path(router: &str, request_id: &str) -> PathBuf {
-    router_staging_dir(router).join(format!("srxmcp-{request_id}.tgz"))
+    router_staging_dir(router).join(format!("srxmcp-{}.tgz", request_id_stem(request_id)))
 }
 
 /// Canonical on-LXC path for a bundle's sidecar manifest.
 pub fn bundle_manifest_path(router: &str, request_id: &str) -> PathBuf {
-    router_staging_dir(router).join(format!("srxmcp-{request_id}.json"))
+    router_staging_dir(router).join(format!("srxmcp-{}.json", request_id_stem(request_id)))
 }
 
 /// Canonical on-device staging path for the tarball (under `/var/tmp` so it
 /// survives `rmcp` client-disconnect per issue #44 and is re-fetchable via
 /// the documented `fetch_file` chain).
 pub fn device_tarball_path(request_id: &str) -> String {
-    format!("/var/tmp/srxmcp-{request_id}.tgz")
+    format!("/var/tmp/srxmcp-{}.tgz", request_id_stem(request_id))
 }
 
 /// LRU eviction stub. Will scan `staging_dir_from_env()`, compute total
@@ -72,4 +80,27 @@ pub fn enforce_staging_cap(_cap_bytes: u64) -> std::io::Result<()> {
     // TODO(task-13): walk dir, collect (path, mtime, size), sort by mtime
     // ascending, remove until cumulative_remaining <= cap.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression for #79: a server-minted `request_id` already carries the
+    // `srxmcp-` prefix, so the path builders must not double-prefix it.
+    #[test]
+    fn path_builders_do_not_double_prefix_minted_request_id() {
+        let rid = "srxmcp-a783d1a5";
+        assert!(bundle_tarball_path("vSRX-test10", rid).ends_with("srxmcp-a783d1a5.tgz"));
+        assert!(bundle_manifest_path("vSRX-test10", rid).ends_with("srxmcp-a783d1a5.json"));
+        assert_eq!(device_tarball_path(rid), "/var/tmp/srxmcp-a783d1a5.tgz");
+    }
+
+    // A caller-supplied bare ID (no prefix) still gets exactly one prefix.
+    #[test]
+    fn path_builders_add_single_prefix_to_bare_request_id() {
+        let rid = "deadbeef";
+        assert!(bundle_tarball_path("vSRX-test10", rid).ends_with("srxmcp-deadbeef.tgz"));
+        assert_eq!(device_tarball_path(rid), "/var/tmp/srxmcp-deadbeef.tgz");
+    }
 }
