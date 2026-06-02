@@ -28,6 +28,80 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 /// software add ...`) regardless of the MCP-side timeout.
 const POOL_RPC_TIMEOUT: Duration = Duration::from_secs(3600);
 
+/// Max connect attempts on the fresh-connect path before giving up. Covers a
+/// brief reboot/transport flap (issue #83) where the device accepted us a
+/// moment ago but a follow-up `open()` lands mid-blip with "No route to host"
+/// / "connection refused". Long reboot waits are handled separately by
+/// `upgrade_junos::wait_for_netconf`; this only absorbs short transients.
+const CONNECT_MAX_ATTEMPTS: u32 = 3;
+
+/// Fixed backoff between fresh-connect retry attempts.
+const CONNECT_RETRY_BACKOFF: Duration = Duration::from_secs(3);
+
+// ── Transient-error classification ──────────────────────────────────────
+
+/// Classify whether an error string indicates a transient/stale condition
+/// (peer rebooted, transport dropped, keepalive probe failed, connect blip)
+/// such that the operation is worth retrying on a fresh session (issue #83).
+///
+/// Must NOT match genuine command/RPC/auth errors (syntax error, rpc-error,
+/// permission denied, host-key mismatch, unknown router) — those are real and
+/// must propagate without retry. This is the single canonical classifier;
+/// `upgrade_junos::error_indicates_stale_session` delegates here.
+pub(crate) fn error_is_transient(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    [
+        "session expired",
+        "keepalive probe failed",
+        "connection closed",
+        "connection reset",
+        "connection refused",
+        "connection failed",
+        "broken pipe",
+        "unexpected eof",
+        "early eof",
+        "channel closed",
+        "session closed",
+        "no route to host",
+        "transport error",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// Retry an async operation on transient errors with bounded attempts and a
+/// fixed backoff. The op closure receives the 1-based attempt number. Returns
+/// the first `Ok`, or the last `Err`. Non-transient errors short-circuit
+/// immediately (no retry), so genuine failures (auth, unknown router, RPC
+/// errors) still fail fast.
+async fn retry_transient<F, Fut, T>(
+    max_attempts: u32,
+    backoff: Duration,
+    mut op: F,
+) -> Result<T, JmcpError>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<T, JmcpError>>,
+{
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match op(attempt).await {
+            Ok(value) => return Ok(value),
+            Err(err) if attempt < max_attempts && error_is_transient(&err.to_string()) => {
+                tracing::warn!(
+                    attempt,
+                    max_attempts,
+                    error = %err,
+                    "transient error; retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 // ── Session pool ────────────────────────────────────────────────────────
 
 struct PoolEntry {
@@ -300,50 +374,99 @@ impl DeviceManager {
         self.connect_fresh(router_name).await
     }
 
+    /// Open a session and run an operational CLI command, transparently
+    /// reconnecting on a guaranteed-fresh session and retrying once if the
+    /// first attempt fails with a transient/stale-session error (issue #83).
+    ///
+    /// The pooled [`Self::open`] may hand back a session that was alive at
+    /// checkout but whose peer rebooted between checkout and the first RPC; the
+    /// keepalive probe then fails with "session expired" / "keepalive probe
+    /// failed". Rather than surface that as a hard error to the caller, the
+    /// dead session is dropped, a fresh one is opened (which itself retries
+    /// connect-time transients via [`Self::connect_fresh`]), and the command is
+    /// run again. Genuine command/RPC errors are non-transient and propagate
+    /// without a retry.
+    pub async fn run_cli(&self, router_name: &str, command: &str) -> Result<String, JmcpError> {
+        let mut dev = self.open(router_name).await?;
+        match dev.cli(command).await {
+            Ok(output) => Ok(output),
+            Err(err) if error_is_transient(&err.to_string()) => {
+                tracing::warn!(
+                    router = %router_name,
+                    error = %err,
+                    "pooled session stale on cli; reconnecting fresh and retrying once"
+                );
+                drop(dev);
+                let mut fresh = self.open_fresh(router_name).await?;
+                Ok(fresh.cli(command).await?)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
     /// Establish a brand-new NETCONF connection for `router_name` (no pool
     /// checkout). Shared by [`Self::open`]'s cache-miss path and
     /// [`Self::open_fresh`].
     async fn connect_fresh(&self, router_name: &str) -> Result<PooledDevice, JmcpError> {
-        let inventory = self.inventory.load();
-        let entry = inventory.get(router_name)?;
-
-        let mut builder = Device::connect(&entry.ip)
-            .port(entry.port)
-            .username(&entry.username)
-            .keepalive_interval(KEEPALIVE_INTERVAL)
-            .rpc_timeout(POOL_RPC_TIMEOUT)
-            .host_key_verification(self.host_key_policy.clone());
-
-        if let Some(ssh_config_path) = &entry.ssh_config {
-            let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
-                JmcpError::SshConfigInvalid {
-                    router: router_name.to_string(),
-                    source,
-                }
-            })?;
-            let resolved = cfg.resolve(&entry.ip);
-            if !resolved.jump_hosts.is_empty() {
-                builder = builder.jump_hosts(resolved.jump_hosts);
-            }
-            if let Some(command) = resolved.proxy_command {
-                builder = builder.proxy_command(&command);
-            }
-        }
-
-        builder = match &entry.auth {
-            AuthConfig::Password { password } => builder.password(password),
-            AuthConfig::SshKey { private_key_path } => {
-                let path_str = private_key_path.to_str().ok_or_else(|| {
-                    JmcpError::InventoryInvalid(format!(
-                        "private_key_path is not valid UTF-8: {}",
-                        private_key_path.display()
-                    ))
-                })?;
-                builder.key_file(path_str)
-            }
+        // Snapshot the inventory entry up front so the retry closure owns its
+        // connection parameters (the ArcSwap guard must not be held across the
+        // retry/backoff awaits).
+        let entry = {
+            let inventory = self.inventory.load();
+            inventory.get(router_name)?.clone()
         };
+        let policy = self.host_key_policy.clone();
 
-        let dev = builder.open().await?;
+        // Retry the fresh connect on transient transport errors (issue #83):
+        // a reboot/transport flap can make an `open()` land mid-blip with
+        // "No route to host" / "connection refused" even though the device is
+        // coming back. Genuine errors (auth, ssh_config, host-key) are
+        // non-transient and fail fast on the first attempt.
+        let dev = retry_transient(CONNECT_MAX_ATTEMPTS, CONNECT_RETRY_BACKOFF, |_attempt| {
+            let entry = entry.clone();
+            let policy = policy.clone();
+            async move {
+                let mut builder = Device::connect(&entry.ip)
+                    .port(entry.port)
+                    .username(&entry.username)
+                    .keepalive_interval(KEEPALIVE_INTERVAL)
+                    .rpc_timeout(POOL_RPC_TIMEOUT)
+                    .host_key_verification(policy);
+
+                if let Some(ssh_config_path) = &entry.ssh_config {
+                    let cfg = SshConfigFile::load(ssh_config_path).map_err(|source| {
+                        JmcpError::SshConfigInvalid {
+                            router: router_name.to_string(),
+                            source,
+                        }
+                    })?;
+                    let resolved = cfg.resolve(&entry.ip);
+                    if !resolved.jump_hosts.is_empty() {
+                        builder = builder.jump_hosts(resolved.jump_hosts);
+                    }
+                    if let Some(command) = resolved.proxy_command {
+                        builder = builder.proxy_command(&command);
+                    }
+                }
+
+                builder = match &entry.auth {
+                    AuthConfig::Password { password } => builder.password(password),
+                    AuthConfig::SshKey { private_key_path } => {
+                        let path_str = private_key_path.to_str().ok_or_else(|| {
+                            JmcpError::InventoryInvalid(format!(
+                                "private_key_path is not valid UTF-8: {}",
+                                private_key_path.display()
+                            ))
+                        })?;
+                        builder.key_file(path_str)
+                    }
+                };
+
+                Ok(builder.open().await?)
+            }
+        })
+        .await?;
+
         Ok(PooledDevice {
             dev: Some(dev),
             router_name: router_name.to_string(),
@@ -361,6 +484,90 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(json.as_bytes()).unwrap();
         Arc::new(Inventory::load(f.path()).unwrap())
+    }
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    // ── error_is_transient classifier (issue #83) ───────────────────────
+
+    #[test]
+    fn transient_detects_no_route_to_host() {
+        assert!(error_is_transient(
+            "netconf error: transport error: connection failed: SSH connect to 192.168.1.233:22 failed: No route to host (os error 113)"
+        ));
+    }
+
+    #[test]
+    fn transient_detects_keepalive_probe_failed() {
+        assert!(error_is_transient(
+            "netconf error: protocol error: session expired: keepalive probe failed"
+        ));
+    }
+
+    #[test]
+    fn transient_detects_connection_reset_and_refused() {
+        assert!(error_is_transient("Connection reset by peer"));
+        assert!(error_is_transient("connect: Connection refused"));
+    }
+
+    #[test]
+    fn transient_does_not_match_syntax_or_auth_errors() {
+        assert!(!error_is_transient("error: syntax error, expecting <name>"));
+        assert!(!error_is_transient("rpc-error: package not found"));
+        assert!(!error_is_transient("Permission denied (publickey)"));
+        assert!(!error_is_transient(
+            "router 'r99' not found in device mapping"
+        ));
+        assert!(!error_is_transient(""));
+    }
+
+    // ── retry_transient bounded-backoff helper (issue #83) ───────────────
+
+    #[tokio::test]
+    async fn retry_transient_succeeds_after_two_transient_failures() {
+        let calls = AtomicU32::new(0);
+        let out = retry_transient(5, Duration::ZERO, |_attempt| {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            async move {
+                if n < 3 {
+                    Err(JmcpError::Validation("connection refused".into()))
+                } else {
+                    Ok::<u32, JmcpError>(n)
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(out, 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retry_transient_returns_immediately_on_non_transient() {
+        let calls = AtomicU32::new(0);
+        let res: Result<u32, JmcpError> = retry_transient(5, Duration::ZERO, |_attempt| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async move { Err(JmcpError::UnknownRouter("r1".into())) }
+        })
+        .await;
+        assert!(matches!(res, Err(JmcpError::UnknownRouter(_))));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "must not retry non-transient"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_transient_exhausts_attempts_on_persistent_transient() {
+        let calls = AtomicU32::new(0);
+        let res: Result<u32, JmcpError> = retry_transient(3, Duration::ZERO, |_attempt| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async move { Err(JmcpError::Validation("no route to host".into())) }
+        })
+        .await;
+        assert!(res.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "must stop at max_attempts");
     }
 
     #[test]

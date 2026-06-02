@@ -1432,24 +1432,10 @@ mod response_tests {
 /// hard `DeviceProbeFailed`. It must NOT match genuine command/RPC errors
 /// (syntax error, rpc-error) — those are real and must propagate.
 pub fn error_indicates_stale_session(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    [
-        "session expired",
-        "keepalive probe failed",
-        "connection closed",
-        "connection reset",
-        "connection refused",
-        "connection failed",
-        "broken pipe",
-        "unexpected eof",
-        "early eof",
-        "channel closed",
-        "session closed",
-        "no route to host",
-        "transport error",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    // Delegate to the single canonical classifier in `device_manager` so the
+    // upgrade reconnect path and the global `open()`/`run_cli` paths can never
+    // drift apart (issue #83).
+    crate::device_manager::error_is_transient(err)
 }
 
 #[cfg(test)]
