@@ -6,6 +6,29 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-06-02
+
+Bugfix for the `generic` JTAC support-bundle path.
+
+### Fixed
+- **#81 — `collect_jtac_support_bundle` generic path reported success but
+  produced no file.** The generic path issued
+  `request support information | save /var/tmp/srxmcp-<rid>.tgz` over the
+  NETCONF `command` RPC and reported `state=active` with `bytes=0`,
+  `sha256=""`, and an empty artefact list. The `| save <path>` redirection
+  is **not honoured** over the `command` RPC — the full tech-support text
+  is returned INLINE and nothing is written on-device, so the advertised
+  `fetch_file` next-step always failed (`No such file or directory`). The
+  generic path now runs `request support information` (no `| save`),
+  captures the inline payload, applies redaction when `redact=true`, writes
+  it into the per-router LXC staging scratch dir, and assembles a real
+  tarball — identical to the per-type path. The response now reports
+  `location=lxc_staging` with a non-zero `bytes`, a real `sha256`, and one
+  `request support information` artefact. A new shared `finalize_lxc_bundle`
+  helper backs both the generic and per-type tails (manifest write + tar +
+  digest). Adds one regression test asserting the generic finalize yields a
+  non-empty, hashed `lxc_staging` bundle.
+
 ## [0.3.1] — 2026-06-02
 
 Cosmetic patch for the Phase 3 JTAC support-bundle path builders.

@@ -12,29 +12,29 @@
 //! * [`staging`] — LXC-side staging dir + env-var resolution +
 //!   on-device tarball path helpers + LRU eviction stub.
 //!
-//! ## v0.3.0 implementation note (deviation from design doc)
+//! ## Implementation note (deviation from design doc)
 //!
 //! The design specifies an **on-device** tarball assembled via
 //! `request support information | save /var/tmp/srxmcp-<rid>.tgz` for the
 //! `generic` problem_type and a device-side `file-archive` chain for the
-//! per-type paths. v0.3.0 implements:
+//! per-type paths. Both paths instead assemble the tarball **on the LXC**
+//! side under `JMCP_SRX_STAGING_DIR/<router>/srxmcp-<rid>.tgz`:
 //!
-//! * **`generic` path**: still on-device — issued via the NETCONF `command`
-//!   RPC running the CLI string. Tarball lands at the device path and the
-//!   response carries `device_path`. The `fetch_file` next-step chain is
-//!   unchanged from the design.
-//! * **Per-`problem_type` path**: tarball is assembled **on the LXC** side
-//!   (under `JMCP_SRX_STAGING_DIR/<router>/srxmcp-<rid>.tgz`). The
-//!   captured RPC replies are written as XML files; log files are pulled
-//!   via the existing `rust-junosmcp` `fetch_file` primitive into the
-//!   staging dir before tarball assembly. The response carries
-//!   `staging_path` (LXC-side) instead of `device_path` and the LLM is
-//!   instructed to read it directly off LXC 601 (no `fetch_file` chain).
+//! * **`generic` path**: `request support information` is issued (without
+//!   the `| save` pipe) via the NETCONF `command` RPC; the full
+//!   tech-support text comes back INLINE and is written into the staging
+//!   scratch dir, then tarred. The `| save <path>` redirection is NOT
+//!   honoured over the NETCONF `command` RPC (it writes nothing on-device
+//!   while still returning the payload inline), so the earlier device-side
+//!   variant reported success but produced no file — see issue #81.
+//! * **Per-`problem_type` path**: the captured RPC replies are written as
+//!   XML files; log files are pulled via the existing `rust-junosmcp`
+//!   `fetch_file` primitive into the staging dir before tarball assembly.
 //!
-//! This deviation is gated behind the `bundle.location` field in the
-//! response (`"device"` for generic, `"lxc_staging"` for per-type) so a
-//! follow-up release can lift the per-type path to true on-device tarball
-//! assembly without breaking caller semantics.
+//! Both paths share [`finalize_lxc_bundle`] for manifest write + tarball
+//! assembly + sha256, and both report `bundle.location = "lxc_staging"`.
+//! The response carries an LXC-side `path` and the LLM is instructed to
+//! read it directly off LXC 601 (no `fetch_file` chain).
 
 pub mod artefacts;
 pub mod problem_type;
@@ -234,7 +234,7 @@ pub async fn run(
     );
 
     // Generic short-circuit: any presence of Generic in the set means we
-    // skip everything else and run `request support information | save`.
+    // skip everything else and run `request support information`.
     let result = if problem_types.contains(&ProblemType::Generic) {
         collect_generic(device, &router, &request_id, &args).await
     } else {
@@ -271,7 +271,7 @@ pub async fn run(
     }
 }
 
-// ── Generic path: device-side tarball via NETCONF command RPC ─────────────────
+// ── Generic path: LXC-side tarball from inline `request support information` ───
 
 async fn collect_generic(
     device: &mut PooledDevice,
@@ -279,22 +279,31 @@ async fn collect_generic(
     request_id: &str,
     args: &SupportBundleArgs,
 ) -> Result<SupportBundleData, SrxError> {
-    let device_path = device_tarball_path(request_id);
-    // The NETCONF `<command>` RPC accepts a free-form CLI string.
-    // `request support information | save <path>` writes a gzipped
-    // tech-support archive to the device file system.
-    let cli_cmd = format!("request support information | save {device_path}");
+    let staging_root = router_staging_dir(router);
+    std::fs::create_dir_all(&staging_root).map_err(|e| {
+        SrxError::InvalidInput(format!(
+            "cannot create staging dir {}: {e}",
+            staging_root.display()
+        ))
+    })?;
+    let scratch = staging_root.join(format!("srxmcp-{request_id}-scratch"));
+    std::fs::create_dir_all(&scratch)
+        .map_err(|e| SrxError::InvalidInput(format!("cannot create scratch dir: {e}")))?;
 
     let mut exec = device
         .rpc()
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
-    // Bound by the caller's timeout. The MCP runtime enforces its own
-    // outer timeout; we add a defensive tokio::time::timeout so a wedged
-    // RPC doesn't sit on the per-router lock forever.
+    // `request support information` over the NETCONF `command` RPC returns
+    // the full tech-support text INLINE — the `| save <path>` pipe is NOT
+    // honoured on the wire (it writes nothing on-device while still
+    // returning the payload), so we capture the payload here and assemble
+    // the tarball on the LXC side, exactly like the per-type path. The
+    // defensive tokio::time::timeout keeps a wedged RPC off the per-router
+    // lock. See issue #81.
     let deadline = Duration::from_secs(args.timeout.min(3600));
-    let call = exec.cli(&cli_cmd, "text");
-    tokio::time::timeout(deadline, call)
+    let call = exec.cli("request support information", "text");
+    let payload = tokio::time::timeout(deadline, call)
         .await
         .map_err(|_| SrxError::ClusterHealthCheckTimeout {
             router: router.to_string(),
@@ -302,26 +311,50 @@ async fn collect_generic(
         })?
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
-    // We don't (yet) have a primitive to stat the file on-device through
-    // NETCONF, so report `bytes = 0` + `sha256 = ""` for now. The
-    // operator can verify via `fetch_file` + local sha256sum after pull.
-    let bundle = BundleInfo {
-        location: BundleLocation::Device,
-        path: device_path.clone(),
-        bytes: 0,
-        sha256: String::new(),
-        problem_types: vec![ProblemType::Generic],
-        artefacts: Vec::new(),
-        redacted: false,
+    if payload.trim().is_empty() {
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(SrxError::BundleConfigCaptureFailed {
+            router: router.to_string(),
+            detail: "`request support information` returned no output".into(),
+        });
+    }
+
+    let (payload, redacted) = if args.redact {
+        let red = redact_xml(&payload);
+        let changed = red != payload;
+        (red, changed)
+    } else {
+        (payload, false)
     };
-    let next_step = format!("fetch_file router={router} source={device_path}");
-    Ok(SupportBundleData {
-        router: router.to_string(),
-        request_id: request_id.to_string(),
-        bundle,
-        next_step,
-        elapsed_secs: 0, // overwritten by caller via outer wrapper
-    })
+
+    let fname = "request-support-information.txt";
+    let abs_path = scratch.join(fname);
+    std::fs::write(&abs_path, payload.as_bytes())
+        .map_err(|e| SrxError::InvalidInput(format!("write {}: {e}", abs_path.display())))?;
+
+    let artefacts = vec![CapturedArtefact {
+        source: ArtefactSource::Rpc {
+            name: "request support information".into(),
+            args: None,
+        },
+        tarball_path: fname.into(),
+        sha256: sha256_hex(payload.as_bytes()),
+        bytes_in_tarball: payload.len() as u64,
+        redacted,
+        error: None,
+    }];
+
+    let mut problem_types = BTreeSet::new();
+    problem_types.insert(ProblemType::Generic);
+    finalize_lxc_bundle(
+        router,
+        request_id,
+        &staging_root,
+        &scratch,
+        artefacts,
+        &problem_types,
+        redacted,
+    )
 }
 
 // ── Per-type path: LXC-side tarball ───────────────────────────────────────────
@@ -466,8 +499,35 @@ async fn collect_per_type(
         });
     }
 
-    // 3) Write manifest.json into the scratch dir so it lands in the
-    //    tarball.
+    // 3) Write the manifest, assemble the tarball, and compute its digest.
+    finalize_lxc_bundle(
+        router,
+        request_id,
+        &staging_root,
+        &scratch,
+        artefacts,
+        problem_types,
+        any_redacted,
+    )
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Write `manifest.json` into the scratch dir, tar the scratch dir into the
+/// per-router LXC staging area, clean up the scratch dir, enforce the
+/// staging cap, and compute the tarball's size + sha256. Shared by the
+/// `generic` and per-type collection paths so both land an identical
+/// `lxc_staging` bundle layout.
+fn finalize_lxc_bundle(
+    router: &str,
+    request_id: &str,
+    staging_root: &Path,
+    scratch: &Path,
+    artefacts: Vec<CapturedArtefact>,
+    problem_types: &BTreeSet<ProblemType>,
+    any_redacted: bool,
+) -> Result<SupportBundleData, SrxError> {
+    // Write manifest.json into the scratch dir so it lands in the tarball.
     let manifest_json = serde_json::json!({
         "request_id": request_id,
         "router": router,
@@ -483,14 +543,14 @@ async fn collect_per_type(
     )
     .map_err(|e| SrxError::InvalidInput(format!("write manifest: {e}")))?;
 
-    // 4) Assemble the tarball with the system `tar` (avoids adding a
-    //    flate2 + tar dep to rust-srxmcp-core for one call site).
+    // Assemble the tarball with the system `tar` (avoids adding a
+    // flate2 + tar dep to rust-srxmcp-core for one call site).
     let tarball_path = bundle_tarball_path(router, request_id);
     let out = std::process::Command::new("tar")
         .arg("-czf")
         .arg(&tarball_path)
         .arg("-C")
-        .arg(&staging_root)
+        .arg(staging_root)
         .arg(scratch.file_name().expect("scratch dir name"))
         .output()
         .map_err(|e| SrxError::InvalidInput(format!("tar invoke failed: {e}")))?;
@@ -502,10 +562,10 @@ async fn collect_per_type(
         )));
     }
 
-    // 5) Clean up the scratch dir; the tarball is the bundle.
-    let _ = std::fs::remove_dir_all(&scratch);
+    // Clean up the scratch dir; the tarball is the bundle.
+    let _ = std::fs::remove_dir_all(scratch);
 
-    // 6) Enforce staging cap (LRU eviction) — stub today.
+    // Enforce staging cap (LRU eviction) — stub today.
     let cap = staging_max_bytes_from_env();
     let _ = enforce_staging_cap(cap);
 
@@ -538,8 +598,6 @@ async fn collect_per_type(
         elapsed_secs: 0,
     })
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn sanitize_rpc_filename(rpc: &str, inner: &str) -> String {
     if inner.is_empty() {
@@ -630,5 +688,64 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &b));
         let c = lock_for("vsrx-test11");
         assert!(!Arc::ptr_eq(&a, &c));
+    }
+
+    // Regression for #81: the generic path used to report success with a
+    // zero-byte/empty-hash bundle because `request support information |
+    // save` wrote nothing on-device. The path now stages the inline payload
+    // and assembles a real tarball — `finalize_lxc_bundle` must produce a
+    // non-empty, hashed `lxc_staging` bundle.
+    #[test]
+    fn finalize_lxc_bundle_produces_nonempty_tarball() {
+        let tmp = std::env::temp_dir().join(format!("srxmcp-test-{}", mint_request_id()));
+        std::fs::create_dir_all(&tmp).expect("tmp dir");
+        // Safe under edition 2021; no other test mutates this var.
+        std::env::set_var("JMCP_SRX_STAGING_DIR", &tmp);
+
+        let router = "vSRX-finalize-unit";
+        let request_id = "srxmcp-unit-0001";
+        let staging_root = router_staging_dir(router);
+        std::fs::create_dir_all(&staging_root).expect("staging root");
+        let scratch = staging_root.join(format!("srxmcp-{request_id}-scratch"));
+        std::fs::create_dir_all(&scratch).expect("scratch");
+        let payload = b"hello tech-support output";
+        std::fs::write(scratch.join("request-support-information.txt"), payload).expect("write");
+
+        let artefacts = vec![CapturedArtefact {
+            source: ArtefactSource::Rpc {
+                name: "request support information".into(),
+                args: None,
+            },
+            tarball_path: "request-support-information.txt".into(),
+            sha256: sha256_hex(payload),
+            bytes_in_tarball: payload.len() as u64,
+            redacted: false,
+            error: None,
+        }];
+        let mut problem_types = BTreeSet::new();
+        problem_types.insert(ProblemType::Generic);
+
+        let data = finalize_lxc_bundle(
+            router,
+            request_id,
+            &staging_root,
+            &scratch,
+            artefacts,
+            &problem_types,
+            false,
+        )
+        .expect("finalize");
+
+        assert_eq!(data.bundle.location, BundleLocation::LxcStaging);
+        assert!(
+            data.bundle.bytes > 0,
+            "tarball must be non-empty (regression for #81)"
+        );
+        assert_eq!(data.bundle.sha256.len(), 64);
+        assert!(Path::new(&data.bundle.path).exists());
+        assert!(!scratch.exists(), "scratch dir should be cleaned up");
+
+        std::env::remove_var("JMCP_SRX_STAGING_DIR");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
