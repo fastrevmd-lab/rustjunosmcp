@@ -4,6 +4,41 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-06-03
+
+### Fixed
+
+- **#83 — `upgrade_junos` reported a successful upgrade as a failure
+  across the reboot boundary.** A real upgrade installed, rebooted, and
+  came up on the target version, yet the `confirm=true` call returned a
+  spurious `No route to host` / `session expired: keepalive probe
+  failed` error — inviting unsafe retries of an already-successful
+  upgrade. Two layered fixes:
+  - **Global transient-error handling in `DeviceManager`.** A canonical
+    `error_is_transient()` classifier plus a `retry_transient()`
+    bounded-backoff helper now back a connect-retry in `connect_fresh()`
+    and a reconnect-on-stale path in the new `run_cli()`. This also
+    fixes `execute_junos_command` failing on a stale pooled session
+    (`SessionPool::try_checkout` gates only on a local `session_alive()`
+    check, so a peer that rebooted or blipped passes checkout and then
+    fails on its first RPC).
+  - **Version-as-source-of-truth reboot wait.** The open-only
+    `wait_for_netconf` could return `Ok` on the brief pre-reboot sshd
+    window, after which the separate post-verify probe hit the genuine
+    multi-minute reboot outage and raw-propagated the connect error. It
+    is replaced by a single budgeted loop (`wait_for_version`) that
+    polls `show version` until the parsed version equals
+    `target_version`, swallowing reboot flap and treating a
+    parseable-but-wrong version as "keep waiting". On budget exhaustion
+    it returns `UpgradePostVerifyMismatch` (came back wrong) or
+    `UpgradeRebootTimeout` (never reachable).
+
+### Notes
+
+- No MCP tool surface change; tool count stays at 15.
+- Validated by a snapshot-protected live upgrade on vSRX-test11
+  (24.4R1.9 → 25.4R1.12) returning a clean synchronous success.
+
 ## [0.6.2] — 2026-05-20
 
 ### Fixed
