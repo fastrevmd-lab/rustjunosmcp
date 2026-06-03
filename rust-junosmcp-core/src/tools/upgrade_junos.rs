@@ -919,44 +919,39 @@ async fn run_destructive(
 
     let _ = install_stdout;
 
-    // Phase 4: wait for NETCONF.
-    wait_for_netconf(
-        &args.router_name,
-        dm.clone(),
-        std::time::Duration::from_secs(args.reboot_wait_secs),
-        ct,
-    )
-    .await?;
+    // Phases 4+5: wait for the device to reboot into `target_version`.
+    // A single budgeted loop opens a session and polls
+    // `show version` until the parsed version equals `target_version`,
+    // tolerating the reboot flap (#83). Making the *version* the source of
+    // truth — rather than treating the first successful `dm.open()` as
+    // "device is back" — avoids the spurious "No route to host" failure
+    // that occurred when a brief pre-reboot sshd window satisfied the old
+    // open-only wait and the subsequent post-verify probe then hit the
+    // genuine reboot outage and raw-propagated the connect error.
+    let post_version_output = {
+        let dm = dm.clone();
+        let router = args.router_name.clone();
+        wait_for_version(
+            &args.router_name,
+            &args.target_version,
+            std::time::Duration::from_secs(args.reboot_wait_secs),
+            std::time::Duration::from_secs(30), // initial_delay — device is rebooting
+            std::time::Duration::from_secs(15), // poll_interval
+            std::time::Duration::from_secs(30), // attempt_deadline per probe
+            ct,
+            move || {
+                let dm = dm.clone();
+                let router = router.clone();
+                async move { dm.run_cli(&router, "show version | match Junos:").await }
+            },
+        )
+        .await?
+    };
+    let _ = &post_version_output;
     let phase4_done = Instant::now();
-
-    // Phase 5: post-verify version. The device just rebooted, so the
-    // session opened by wait_for_netconf may already be dead by the time we
-    // probe; open_validated reconnects fresh and retries once on a stale
-    // session (#83), making the version match the source of truth for
-    // success rather than letting a post-reboot session blip masquerade as
-    // a failed upgrade.
-    let (dev, post_version_output) = open_validated(
-        &args.router_name,
-        dm.clone(),
-        "show version | match Junos:",
-        "postverify_probe",
-        ct,
-    )
-    .await?;
-    let observed =
-        parse_junos_version(&post_version_output).ok_or_else(|| JmcpError::DeviceProbeFailed {
-            phase: "postverify_parse".into(),
-            message: "could not parse post-install Junos version".into(),
-        })?;
-    if observed != args.target_version {
-        return Err(JmcpError::UpgradePostVerifyMismatch {
-            router: args.router_name.clone(),
-            expected: args.target_version.clone(),
-            observed,
-        });
-    }
-    drop(dev); // release the probe session before capture_baseline reopens
-    let phase5_done = Instant::now();
+    // The reboot wait and post-verify are now one budgeted loop; report the
+    // full wait under reboot_wait and leave post-verify at zero.
+    let phase5_done = phase4_done;
 
     // Phase 6: post-baseline.
     let post_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
@@ -1331,42 +1326,207 @@ pub fn build_success_response(a: BuildSuccessArgs) -> serde_json::Value {
     })
 }
 
-/// Wait for NETCONF to reopen. Initial 30 s sleep (device is rebooting),
-/// then retry `dm.open(router)` every 15 s with a 10 s per-attempt
-/// deadline until either success or `budget` exhausted.
-async fn wait_for_netconf(
+/// Wait for the device to reboot into `target_version`, polling
+/// `show version` until it reports the target (issue #83).
+///
+/// This is the post-reboot source of truth: rather than treating a single
+/// successful `dm.open()` as "device is back" (which wrongly trips on the
+/// brief sshd window the device exposes *before* it actually reboots), it
+/// repeatedly opens a session and reads `show version` until the parsed
+/// version equals `target_version`.
+///
+/// Behaviour:
+/// * Transient probe errors (connect refused / no route to host / dropped
+///   session — exactly what a reboot produces) are swallowed and retried
+///   within `budget`.
+/// * A parseable-but-wrong version (e.g. the pre-reboot old version, or a
+///   silent rollback) is remembered but does not end the wait early.
+/// * A non-transient error (auth failure, unknown router) propagates
+///   immediately — those will never self-heal.
+/// * On `budget` exhaustion: `UpgradePostVerifyMismatch` if a version was
+///   ever observed (came back wrong), else `UpgradeRebootTimeout` (never
+///   reachable).
+///
+/// `probe` is injected so the decision logic is unit-testable without a
+/// device; the production caller passes a closure that does
+/// `dm.open()` + `cli("show version | match Junos:")`.
+#[allow(clippy::too_many_arguments)]
+async fn wait_for_version<F, Fut>(
     router: &str,
-    dm: Arc<DeviceManager>,
+    target_version: &str,
     budget: std::time::Duration,
+    initial_delay: std::time::Duration,
+    poll_interval: std::time::Duration,
+    attempt_deadline: std::time::Duration,
     ct: &CancellationToken,
-) -> Result<(), JmcpError> {
+    mut probe: F,
+) -> Result<String, JmcpError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, JmcpError>>,
+{
     let start = std::time::Instant::now();
-    select_cancel_raw(ct, tokio::time::sleep(std::time::Duration::from_secs(30))).await?;
+    select_cancel_raw(ct, tokio::time::sleep(initial_delay)).await?;
+
+    let mut last_observed: Option<String> = None;
     loop {
-        let attempt_deadline = std::time::Duration::from_secs(10);
-        let dm_inner = dm.clone();
-        let router_str = router.to_string();
-        let attempt = select_cancel_raw(
-            ct,
-            tokio::time::timeout(
-                attempt_deadline,
-                async move { dm_inner.open(&router_str).await },
-            ),
-        )
-        .await?;
+        let attempt =
+            select_cancel_raw(ct, tokio::time::timeout(attempt_deadline, probe())).await?;
         match attempt {
-            Ok(Ok(_dev)) => return Ok(()),
-            _ => {
-                if start.elapsed() >= budget {
-                    return Err(JmcpError::UpgradeRebootTimeout {
-                        router: router.to_string(),
-                        waited_secs: budget.as_secs(),
-                    });
+            // Probe succeeded and we parsed a version.
+            Ok(Ok(output)) => {
+                if let Some(observed) = parse_junos_version(&output) {
+                    if observed == target_version {
+                        return Ok(output);
+                    }
+                    // Parseable-but-wrong (pre-reboot old version or silent
+                    // rollback): remember it, but keep waiting within budget.
+                    last_observed = Some(observed);
                 }
-                select_cancel_raw(ct, tokio::time::sleep(std::time::Duration::from_secs(15)))
-                    .await?;
+                // Unparseable output is treated like a transient blip.
             }
+            // Probe returned an error.
+            Ok(Err(err)) => {
+                if !crate::device_manager::error_is_transient(&err.to_string()) {
+                    // Auth failure / unknown router — will never self-heal.
+                    return Err(err);
+                }
+                // Transient (reboot in progress): swallow and retry.
+            }
+            // Per-attempt deadline elapsed — also transient.
+            Err(_elapsed) => {}
         }
+
+        if start.elapsed() >= budget {
+            return match last_observed {
+                Some(observed) => Err(JmcpError::UpgradePostVerifyMismatch {
+                    router: router.to_string(),
+                    expected: target_version.to_string(),
+                    observed,
+                }),
+                None => Err(JmcpError::UpgradeRebootTimeout {
+                    router: router.to_string(),
+                    waited_secs: budget.as_secs(),
+                }),
+            };
+        }
+
+        select_cancel_raw(ct, tokio::time::sleep(poll_interval)).await?;
+    }
+}
+
+#[cfg(test)]
+mod wait_for_version_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Duration;
+
+    const TARGET: &str = "25.4R1.12";
+
+    fn version_output(v: &str) -> String {
+        format!("Hostname: vSRX-test11\nJunos: {v}\n")
+    }
+
+    // Helper: build a probe that returns scripted results by attempt index.
+    // Big budget + zero delays so success cases never time out first.
+    async fn run_with<F, Fut>(budget: Duration, probe: F) -> Result<String, JmcpError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<String, JmcpError>>,
+    {
+        let ct = CancellationToken::new();
+        wait_for_version(
+            "vSRX-test11",
+            TARGET,
+            budget,
+            Duration::ZERO,          // initial_delay
+            Duration::ZERO,          // poll_interval
+            Duration::from_secs(60), // attempt_deadline — never elapses for instant probes
+            &ct,
+            probe,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn returns_when_target_version_observed() {
+        let calls = AtomicU32::new(0);
+        let out = run_with(Duration::from_secs(60), || {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            async move {
+                if n < 3 {
+                    Err(JmcpError::Validation("no route to host".into()))
+                } else {
+                    Ok(version_output(TARGET))
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(out.contains(TARGET));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn keeps_waiting_through_old_version_then_succeeds() {
+        // The premature-sshd window: device answers with the OLD version
+        // before it actually reboots. Must not end the wait early.
+        let calls = AtomicU32::new(0);
+        let out = run_with(Duration::from_secs(60), || {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            async move {
+                if n < 3 {
+                    Ok(version_output("24.4R1.9"))
+                } else {
+                    Ok(version_output(TARGET))
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(out.contains(TARGET));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn budget_exhausted_with_only_old_version_is_mismatch() {
+        let res = run_with(Duration::ZERO, || async { Ok(version_output("24.4R1.9")) }).await;
+        match res {
+            Err(JmcpError::UpgradePostVerifyMismatch {
+                expected, observed, ..
+            }) => {
+                assert_eq!(expected, TARGET);
+                assert_eq!(observed, "24.4R1.9");
+            }
+            other => panic!("expected UpgradePostVerifyMismatch, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn budget_exhausted_never_reachable_is_reboot_timeout() {
+        let res = run_with(Duration::ZERO, || async {
+            Err(JmcpError::Validation(
+                "SSH connect failed: No route to host".into(),
+            ))
+        })
+        .await;
+        assert!(matches!(res, Err(JmcpError::UpgradeRebootTimeout { .. })));
+    }
+
+    #[tokio::test]
+    async fn non_transient_error_propagates_immediately() {
+        let calls = AtomicU32::new(0);
+        let res = run_with(Duration::from_secs(60), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async move { Err(JmcpError::UnknownRouter("vSRX-test11".into())) }
+        })
+        .await;
+        assert!(matches!(res, Err(JmcpError::UnknownRouter(_))));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "must not retry non-transient"
+        );
     }
 }
 
