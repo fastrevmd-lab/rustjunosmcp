@@ -42,13 +42,9 @@ pub async fn handle(
     }
 
     let timeout = Duration::from_secs(args.timeout);
-    let result = tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(&args.router_name).await?;
-        let output = dev.cli(&args.command).await?;
-        Ok::<_, JmcpError>(output)
-    })
-    .await
-    .map_err(|_| JmcpError::Timeout(timeout))??;
+    let result = tokio::time::timeout(timeout, dm.run_cli(&args.router_name, &args.command))
+        .await
+        .map_err(|_| JmcpError::Timeout(timeout))??;
     Ok(json!(result))
 }
 
