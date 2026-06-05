@@ -536,10 +536,10 @@ async fn collect_per_type(
             let mut content = raw;
             let truncated = truncate_to_char_boundary(&mut content, cap_bytes);
 
-            // Redaction is wired here for parity with the RPC loop. NOTE:
-            // `redact_xml` is currently a no-op stub (tracked separately),
-            // so `redacted` stays false until it's implemented; once it is,
-            // logs are redacted automatically with no change here.
+            // Redaction is wired here for parity with the RPC loop. Log files
+            // are plain text, so `redact_xml` fails its well-formedness gate
+            // and returns them unchanged (`redacted` stays false); secrets
+            // embedded in log lines need a separate text-pattern pass (#85).
             let (payload, redacted) = if args.redact {
                 let red = redact_xml(&content);
                 let changed = red != content;
