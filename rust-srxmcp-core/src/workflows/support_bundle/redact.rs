@@ -12,9 +12,15 @@
 //! * `tacplus-server` `secret` — TACACS+ shared-secret
 //! * `hmac-key` — routing-options authentication-key HMAC
 //!
-//! The redaction is XML-element-name based — every matching element has
+//! XML payloads are redacted by element name — every matching element has
 //! its text content replaced with `<REDACTED>` while preserving the XML
-//! structure so JTAC can still see *where* a secret was configured.
+//! structure so JTAC can still see *where* a secret was configured
+//! ([`redact_xml`]).
+//!
+//! Non-XML artefacts (the `/var/log/*` files archived since #82) are redacted
+//! by a conservative line-oriented pass ([`redact_log_text`]) that scrubs the
+//! same key set from config-style log syntax. [`redact_log_artefact`] routes
+//! each artefact to the right pass based on XML well-formedness (#89).
 
 /// Element names whose text content is replaced with `<REDACTED>`.
 /// Matching is exact on the local element name (namespace-stripped).
@@ -101,6 +107,199 @@ pub fn redact_xml(input: &str) -> String {
     String::from_utf8(writer.into_inner()).unwrap_or_else(|_| input.to_string())
 }
 
+/// Format qualifiers that may sit between a sensitive key and its value in
+/// Junos config/log syntax (e.g. `pre-shared-key ascii-text "$9$..."`). When
+/// present they are preserved and the *following* token is redacted.
+const VALUE_QUALIFIERS: &[&str] = &["ascii-text", "hexadecimal", "plain-text", "encrypted"];
+
+/// Route a captured artefact through the appropriate redactor. Well-formed XML
+/// payloads use the element-name redactor ([`redact_xml`]); everything else
+/// (log files archived since #82) is treated as plain text and routed through
+/// the line-oriented redactor ([`redact_log_text`]). Previously non-XML
+/// artefacts failed the XML well-formedness gate and were emitted verbatim,
+/// leaking secrets embedded in log lines (#89).
+pub fn redact_log_artefact(input: &str) -> String {
+    if roxmltree::Document::parse(input).is_ok() {
+        redact_xml(input)
+    } else {
+        redact_log_text(input)
+    }
+}
+
+/// Redact secrets embedded in plain-text log lines. For each name in
+/// [`REDACT_ELEMENT_NAMES`] appearing as a whole word, the value that follows
+/// is replaced with [`REDACTED_MARKER`] when a config-syntax signal is present
+/// (an `=`, surrounding quotes, a format qualifier, a trailing `;`, a Junos
+/// crypt-hash value, or a `set ...` config line). Bare prose mentions of a key
+/// name with no such signal are left untouched to avoid false positives.
+pub fn redact_log_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    // `split_inclusive` keeps the line terminator attached, preserving the
+    // exact newline structure (including any final newline) on rejoin.
+    for line in input.split_inclusive('\n') {
+        out.push_str(&redact_log_line(line));
+    }
+    out
+}
+
+/// Characters that form part of a Junos identifier token. Used for whole-word
+/// matching of key names (so `community` does not match inside `community-name`
+/// and `secret` does not match inside `secretary`).
+fn is_word_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
+/// A bare value is treated as a secret with no further context when it is a
+/// Junos crypt hash (`$1$`, `$5$`, `$6$`, `$8$`, `$9$`, ...): a `$` followed by
+/// a digit. Such tokens never occur in ordinary prose.
+fn is_junos_hash(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    bytes.len() >= 2 && bytes[0] == b'$' && bytes[1].is_ascii_digit()
+}
+
+/// Redact a single log line (which may include a trailing `\n`).
+fn redact_log_line(line: &str) -> String {
+    let set_context = {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("set ") || line.contains("set:")
+    };
+
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        let at_boundary = idx == 0 || !is_word_char(bytes[idx - 1]);
+        let mut matched = false;
+        if at_boundary {
+            for key in REDACT_ELEMENT_NAMES {
+                let klen = key.len();
+                let end = idx + klen;
+                if end <= bytes.len()
+                    && &line[idx..end] == *key
+                    && (end == bytes.len() || !is_word_char(bytes[end]))
+                {
+                    if let Some((value_start, value_end)) = redactable_value(line, end, set_context)
+                    {
+                        out.push_str(&line[idx..value_start]);
+                        out.push_str(REDACTED_MARKER);
+                        idx = value_end;
+                        matched = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if !matched {
+            // Push the current char (respecting UTF-8 boundaries).
+            let ch = line[idx..].chars().next().unwrap();
+            out.push(ch);
+            idx += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Given the byte offset just past a matched key, decide whether the following
+/// value should be redacted and return its `[start, end)` byte range (the slice
+/// to replace with the marker, excluding any trailing `;`). Returns `None` when
+/// there is no config signal, leaving prose mentions untouched.
+fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut pos = after_key;
+
+    // Equals form: optional spaces, `=`, optional spaces, then the value.
+    let mut scan = pos;
+    while scan < bytes.len() && (bytes[scan] == b' ' || bytes[scan] == b'\t') {
+        scan += 1;
+    }
+    if scan < bytes.len() && bytes[scan] == b'=' {
+        scan += 1;
+        while scan < bytes.len() && (bytes[scan] == b' ' || bytes[scan] == b'\t') {
+            scan += 1;
+        }
+        return value_token(line, scan);
+    }
+
+    // Space form: require at least one space after the key.
+    if pos >= bytes.len() || (bytes[pos] != b' ' && bytes[pos] != b'\t') {
+        return None;
+    }
+    while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+        pos += 1;
+    }
+    if pos >= bytes.len() {
+        return None;
+    }
+
+    // Optional format qualifier (e.g. `ascii-text`): preserved, value follows.
+    let mut qualifier_present = false;
+    let (tok_start, tok_end) = token_bounds(line, pos);
+    if VALUE_QUALIFIERS.contains(&&line[tok_start..tok_end]) {
+        qualifier_present = true;
+        pos = tok_end;
+        while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            return None;
+        }
+    }
+
+    let (value_start, value_end) = value_token(line, pos)?;
+    let quoted = bytes[value_start] == b'"' || bytes[value_start] == b'\'';
+    let terminated = value_end < bytes.len() && bytes[value_end] == b';';
+    let hash = is_junos_hash(&line[value_start..value_end]);
+
+    if quoted || qualifier_present || terminated || hash || set_context {
+        Some((value_start, value_end))
+    } else {
+        None
+    }
+}
+
+/// Locate the value token starting at `pos`, returning its `[start, end)` byte
+/// range. A quoted token spans to its matching closing quote; a bare token runs
+/// until whitespace or a `;` terminator. Returns `None` at end-of-line.
+fn value_token(line: &str, pos: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    if pos >= bytes.len() {
+        return None;
+    }
+    let first = bytes[pos];
+    if first == b'"' || first == b'\'' {
+        let mut end = pos + 1;
+        while end < bytes.len() && bytes[end] != first {
+            end += 1;
+        }
+        if end < bytes.len() {
+            end += 1; // include the closing quote
+        }
+        return Some((pos, end));
+    }
+    let (start, end) = token_bounds(line, pos);
+    if start == end {
+        None
+    } else {
+        Some((start, end))
+    }
+}
+
+/// Bare-token bounds starting at `pos`: a run until whitespace, `;`, or EOL.
+fn token_bounds(line: &str, pos: usize) -> (usize, usize) {
+    let bytes = line.as_bytes();
+    let mut end = pos;
+    while end < bytes.len()
+        && bytes[end] != b' '
+        && bytes[end] != b'\t'
+        && bytes[end] != b'\n'
+        && bytes[end] != b'\r'
+        && bytes[end] != b';'
+    {
+        end += 1;
+    }
+    (pos, end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +369,127 @@ mod tests {
     fn returns_input_unchanged_on_parse_failure() {
         let bad = "<unclosed><secret>oops";
         assert_eq!(redact_xml(bad), bad);
+    }
+
+    // ── #89: plain-text log-line redaction ────────────────────────────────
+
+    // A quoted value after a sensitive key, with a Junos format qualifier, is
+    // scrubbed while the key + qualifier are preserved.
+    #[test]
+    fn log_redacts_qualified_quoted_pre_shared_key() {
+        let line = "set security ike policy p pre-shared-key ascii-text \"$9$abcDEF123\"";
+        let out = redact_log_text(line);
+        assert!(!out.contains("$9$abcDEF123"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.contains("pre-shared-key"), "key dropped: {out}");
+        assert!(out.contains("ascii-text"), "qualifier dropped: {out}");
+    }
+
+    // A bare quoted value after a sensitive key is scrubbed.
+    #[test]
+    fn log_redacts_quoted_secret() {
+        let line = "secret \"$9$topSEKRET\"";
+        let out = redact_log_text(line);
+        assert!(!out.contains("$9$topSEKRET"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    // The `key=value` form is scrubbed.
+    #[test]
+    fn log_redacts_equals_form() {
+        let line = "hmac-key=deadbeefcafe1234";
+        let out = redact_log_text(line);
+        assert!(!out.contains("deadbeefcafe1234"), "secret leaked: {out}");
+        assert!(out.contains("hmac-key="), "lhs dropped: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    // A bare value terminated by `;` (config statement) is scrubbed, and the
+    // terminator is preserved.
+    #[test]
+    fn log_redacts_semicolon_terminated_community() {
+        let line = "    community s3cr3tCommunity;";
+        let out = redact_log_text(line);
+        assert!(!out.contains("s3cr3tCommunity"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.trim_end().ends_with(';'), "terminator dropped: {out}");
+    }
+
+    // A bare Junos crypt-hash value with no other signal is still scrubbed.
+    #[test]
+    fn log_redacts_bare_junos_hash() {
+        let line = "encrypted-password $6$saltsalt$hashhashhash";
+        let out = redact_log_text(line);
+        assert!(
+            !out.contains("$6$saltsalt$hashhashhash"),
+            "secret leaked: {out}"
+        );
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    // On a `set ...` config line a bare value is scrubbed even without quotes
+    // or a qualifier.
+    #[test]
+    fn log_redacts_bare_value_on_set_line() {
+        let line = "set snmp community privateRO";
+        let out = redact_log_text(line);
+        assert!(!out.contains("privateRO"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    // Every sensitive key name is covered in a config-style line.
+    #[test]
+    fn log_redacts_every_known_key() {
+        for name in REDACT_ELEMENT_NAMES {
+            let line = format!("set foo {name} \"leak-{name}\"");
+            let out = redact_log_text(&line);
+            assert!(
+                !out.contains(&format!("leak-{name}")),
+                "secret leaked for {name}: {out}"
+            );
+            assert!(out.contains("REDACTED"), "marker missing for {name}: {out}");
+        }
+    }
+
+    // A key name appearing as ordinary prose (no config signal) is untouched.
+    #[test]
+    fn log_leaves_prose_mention_untouched() {
+        let line = "Note: the secret to success is consistent testing.";
+        let out = redact_log_text(line);
+        assert_eq!(out, line, "prose mention was redacted: {out}");
+    }
+
+    // A key name appearing as a substring of a longer token is not matched.
+    #[test]
+    fn log_leaves_substring_key_untouched() {
+        let line = "The secretary updated the community-board listing today";
+        let out = redact_log_text(line);
+        assert_eq!(out, line, "substring match redacted: {out}");
+    }
+
+    // Non-sensitive log lines and overall newline structure are preserved;
+    // only the line with a secret is scrubbed.
+    #[test]
+    fn log_preserves_structure_across_lines() {
+        let input = "ts=1 user=admin action=login\nset security ike policy p pre-shared-key ascii-text \"$9$leakme\"\nts=2 user=admin action=logout\n";
+        let out = redact_log_text(input);
+        assert!(!out.contains("$9$leakme"), "secret leaked: {out}");
+        assert!(out.contains("action=login"), "first line lost: {out}");
+        assert!(out.contains("action=logout"), "last line lost: {out}");
+        assert_eq!(out.lines().count(), 3, "line count changed: {out}");
+        assert!(out.ends_with('\n'), "trailing newline lost: {out}");
+    }
+
+    // The dispatcher routes well-formed XML to the element redactor and
+    // non-XML log text to the line redactor.
+    #[test]
+    fn artefact_dispatcher_routes_by_well_formedness() {
+        let xml = "<ike><pre-shared-key>xmlsecret</pre-shared-key></ike>";
+        let xout = redact_log_artefact(xml);
+        assert!(!xout.contains("xmlsecret"), "xml secret leaked: {xout}");
+
+        let log = "set snmp community logsecret";
+        let lout = redact_log_artefact(log);
+        assert!(!lout.contains("logsecret"), "log secret leaked: {lout}");
     }
 }
