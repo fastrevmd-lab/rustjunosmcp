@@ -47,9 +47,16 @@ pub fn redact_xml(input: &str) -> String {
 
     // Gate on well-formedness first: quick-xml's streaming reader is lenient
     // (it silently tolerates unclosed tags), so use roxmltree as a strict
-    // parse check. On any parse failure return the input unchanged — callers
-    // treat that as non-fatal.
-    if roxmltree::Document::parse(input).is_err() {
+    // parse check. Real `get-configuration` replies carry undeclared `junos:`
+    // attribute prefixes (`junos:changed-seconds`, ...) on the root, which
+    // roxmltree rejects as unbound; accept the input when the namespace-
+    // sanitized form parses (see #91). Redaction below still runs over the
+    // *original* input because quick-xml treats `junos:foo` as an opaque
+    // attribute name. On a genuine parse failure return the input unchanged —
+    // callers treat that as non-fatal.
+    if roxmltree::Document::parse(input).is_err()
+        && roxmltree::Document::parse(&crate::xml::sanitize_rustez_xml(input)).is_err()
+    {
         return input.to_string();
     }
 
@@ -119,7 +126,9 @@ const VALUE_QUALIFIERS: &[&str] = &["ascii-text", "hexadecimal", "plain-text", "
 /// artefacts failed the XML well-formedness gate and were emitted verbatim,
 /// leaking secrets embedded in log lines (#89).
 pub fn redact_log_artefact(input: &str) -> String {
-    if roxmltree::Document::parse(input).is_ok() {
+    let is_xml = roxmltree::Document::parse(input).is_ok()
+        || roxmltree::Document::parse(&crate::xml::sanitize_rustez_xml(input)).is_ok();
+    if is_xml {
         redact_xml(input)
     } else {
         redact_log_text(input)
@@ -159,10 +168,11 @@ fn is_junos_hash(token: &str) -> bool {
 
 /// Redact a single log line (which may include a trailing `\n`).
 fn redact_log_line(line: &str) -> String {
-    let set_context = {
-        let trimmed = line.trim_start();
-        trimmed.starts_with("set ") || line.contains("set:")
-    };
+    // `set:` is the Junos audit marker (`UI_CFG_AUDIT_SET`); when present the
+    // whole line is config context. Otherwise set-context is decided per-key by
+    // [`set_statement_precedes`], which also catches a `set` statement echoed
+    // mid-line (e.g. a `UI_CMDLINE_READ_LINE` syslog) — see #92.
+    let audit_context = line.contains("set:");
 
     let bytes = line.as_bytes();
     let mut out = String::with_capacity(line.len());
@@ -178,6 +188,7 @@ fn redact_log_line(line: &str) -> String {
                     && &line[idx..end] == *key
                     && (end == bytes.len() || !is_word_char(bytes[end]))
                 {
+                    let set_context = audit_context || set_statement_precedes(line, idx);
                     if let Some((value_start, value_end)) = redactable_value(line, end, set_context)
                     {
                         out.push_str(&line[idx..value_start]);
@@ -197,6 +208,48 @@ fn redact_log_line(line: &str) -> String {
         }
     }
     out
+}
+
+/// English determiners/possessives that, when sitting between a `set` token and
+/// a sensitive key, indicate prose ("we set the secret aside") rather than a
+/// Junos `set` config statement. Used to suppress false positives (#92).
+const SET_CONTEXT_STOPWORDS: &[&str] = &[
+    "the", "a", "an", "this", "that", "these", "those", "my", "your", "our", "his", "her", "its",
+    "their",
+];
+
+/// True when `token` looks like a Junos config path element: non-empty and made
+/// up solely of identifier characters (alphanumerics plus `-_/.:`). Tokens with
+/// spaces, quotes, or punctuation are not config identifiers.
+fn is_config_identifier(token: &str) -> bool {
+    !token.is_empty()
+        && token.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || byte == b'-'
+                || byte == b'_'
+                || byte == b'/'
+                || byte == b'.'
+                || byte == b':'
+        })
+}
+
+/// Decide whether a Junos `set` config statement precedes the key at byte offset
+/// `key_start` on this line. Returns true when a whole-word `set` token appears
+/// earlier on the line and every whitespace-separated token between that `set`
+/// and the key is a config identifier (not a stopword). This catches both a
+/// line that starts with `set ...` and a `set ...` statement echoed mid-line
+/// (e.g. a `UI_CMDLINE_READ_LINE` syslog: `... load-configuration set snmp
+/// community VALUE ...`), while leaving prose like "we set the secret aside"
+/// untouched because the intervening "the" is a stopword (#92).
+fn set_statement_precedes(line: &str, key_start: usize) -> bool {
+    let prefix = &line[..key_start];
+    let tokens: Vec<&str> = prefix.split_whitespace().collect();
+    let Some(set_idx) = tokens.iter().rposition(|&token| token == "set") else {
+        return false;
+    };
+    tokens[set_idx + 1..]
+        .iter()
+        .all(|&token| is_config_identifier(token) && !SET_CONTEXT_STOPWORDS.contains(&token))
 }
 
 /// Given the byte offset just past a matched key, decide whether the following
@@ -478,6 +531,73 @@ mod tests {
         assert!(out.contains("action=logout"), "last line lost: {out}");
         assert_eq!(out.lines().count(), 3, "line count changed: {out}");
         assert!(out.ends_with('\n'), "trailing newline lost: {out}");
+    }
+
+    // ── #91: redact_xml must handle real get-configuration replies whose
+    // root carries undeclared `junos:` attribute prefixes ────────────────────
+
+    // A realistic get-configuration reply starts with a `<configuration>` root
+    // bearing `junos:changed-*` attributes whose `junos:` prefix is never
+    // declared (no xmlns:junos). roxmltree rejects the unbound prefix, so the
+    // old gate returned the whole config verbatim — leaking root password
+    // hashes and the SNMP community. redact_xml must still scrub them.
+    #[test]
+    fn redacts_live_get_configuration_with_unbound_junos_prefix() {
+        let xml = concat!(
+            "<configuration xmlns=\"http://xml.juniper.net/xnm/1.1/xnm\" ",
+            "junos:changed-seconds=\"1700000000\" ",
+            "junos:changed-localtime=\"2026-06-05 12:00:00 UTC\">",
+            "<system><root-authentication>",
+            "<encrypted-password>$6$rootsaltA$rootHASHaaaaaaaaaa</encrypted-password>",
+            "</root-authentication>",
+            "<login><user><name>admin</name><authentication>",
+            "<encrypted-password>$6$usersaltB$userHASHbbbbbbbbbb</encrypted-password>",
+            "</authentication></user></login></system>",
+            "<snmp><community><name>commLEAK</name></community></snmp>",
+            "</configuration>",
+        );
+        let out = redact_xml(xml);
+        assert!(
+            !out.contains("$6$rootsaltA$rootHASHaaaaaaaaaa"),
+            "root password hash leaked: {out}"
+        );
+        assert!(
+            !out.contains("$6$usersaltB$userHASHbbbbbbbbbb"),
+            "user password hash leaked: {out}"
+        );
+        assert!(!out.contains("commLEAK"), "snmp community leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        // Structure preserved: the (non-sensitive) admin user name survives.
+        assert!(out.contains("admin"), "non-sensitive text lost: {out}");
+    }
+
+    // ── #92: a `set` config statement echoed mid-line (e.g. in a
+    // UI_CMDLINE_READ_LINE syslog) must still trip the set-context rule ───────
+
+    // syslogd echoes the raw RPC command on a UI_CMDLINE_READ_LINE line:
+    //   ... load-configuration set snmp community SMOKE89LEAK authorization read-only
+    // Here `set snmp community VALUE` is mid-line (not at line start, no `set:`)
+    // and the value is bare (no quote/qualifier/;/$hash), so the old line-level
+    // set_context missed it. The community value must be redacted.
+    #[test]
+    fn log_redacts_midline_set_in_cmdline_echo() {
+        let line = "Jun  5 12:00:00 host mgd[123]: UI_CMDLINE_READ_LINE: User 'admin', \
+                    command 'load-configuration rpc rpc ... set snmp community SMOKE89LEAK \
+                    authorization read-only'";
+        let out = redact_log_text(line);
+        assert!(!out.contains("SMOKE89LEAK"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.contains("community"), "key dropped: {out}");
+    }
+
+    // The mid-line `set` rule must not fire on ordinary prose: "we set the
+    // secret aside" has the stopword "the" between `set` and the key, so no
+    // config context is inferred and the line is left untouched.
+    #[test]
+    fn log_leaves_prose_set_the_secret_untouched() {
+        let line = "Earlier we set the secret aside for review.";
+        let out = redact_log_text(line);
+        assert_eq!(out, line, "prose set-the-secret was redacted: {out}");
     }
 
     // The dispatcher routes well-formed XML to the element redactor and

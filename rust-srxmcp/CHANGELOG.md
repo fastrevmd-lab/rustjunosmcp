@@ -6,6 +6,37 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.6] — 2026-06-05
+
+Security follow-up to [0.3.5]: closes two redaction gaps found by a live
+JTAC-bundle smoke test against a real device.
+
+### Fixed
+- **#91 — `redact_xml` was a no-op on real `get-configuration` captures,
+  leaking root password hashes.** Live Junos `get-configuration` replies open
+  with `<configuration … junos:changed-seconds="…" junos:changed-localtime="…">`
+  whose `junos:` attribute prefix is **undeclared** (no `xmlns:junos`).
+  `roxmltree` rejects the unbound prefix, so the well-formedness gate failed and
+  `redact_xml` returned the **entire config verbatim** — shipping root and local
+  `encrypted-password` `$6$…` hashes and the SNMP `community` in the clear, with
+  the bundle manifest still reporting `redacted:false`. The unit tests passed
+  only because they used cleanly-namespaced fixtures, not live device output.
+  The gate now also accepts the namespace-sanitized form
+  (`crate::xml::sanitize_rustez_xml`, which strips undeclared `junos:` attrs),
+  while redaction still runs over the original input (quick-xml treats
+  `junos:foo` as an opaque attribute name). Genuinely malformed XML is still
+  returned unchanged.
+- **#92 — a `set` config statement echoed mid-line escaped log redaction.**
+  `redact_log_text`'s set-context only fired when a line *started* with `set `
+  or contained the `set:` audit marker. A `UI_CMDLINE_READ_LINE` syslog echoes
+  the raw RPC command mid-line (`… load-configuration set snmp community VALUE
+  authorization read-only`), where the bare community value carried no other
+  config signal and slipped through. Set-context is now decided per key by
+  `set_statement_precedes`, which trips when a whole-word `set` token precedes
+  the key and every token between is a config identifier — catching the mid-line
+  echo while leaving prose like "we set the secret aside" untouched (the
+  intervening stopword "the" suppresses the match).
+
 ## [0.3.5] — 2026-06-05
 
 Security follow-up to [0.3.4]: extends redaction to plain-text log lines.
