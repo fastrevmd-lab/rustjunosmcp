@@ -46,7 +46,9 @@ pub mod staging;
 
 pub use artefacts::{ArtefactSource, CapturedArtefact};
 pub use problem_type::{ProblemType, BASELINE_LOGS, BASELINE_RPCS};
-pub use redact::{redact_xml, REDACTED_MARKER, REDACT_ELEMENT_NAMES};
+pub use redact::{
+    redact_log_artefact, redact_log_text, redact_xml, REDACTED_MARKER, REDACT_ELEMENT_NAMES,
+};
 pub use staging::{
     bundle_manifest_path, bundle_tarball_path, device_tarball_path, enforce_staging_cap,
     router_staging_dir, staging_dir_from_env, staging_max_bytes_from_env, DEFAULT_STAGING_DIR,
@@ -536,12 +538,12 @@ async fn collect_per_type(
             let mut content = raw;
             let truncated = truncate_to_char_boundary(&mut content, cap_bytes);
 
-            // Redaction is wired here for parity with the RPC loop. Log files
-            // are plain text, so `redact_xml` fails its well-formedness gate
-            // and returns them unchanged (`redacted` stays false); secrets
-            // embedded in log lines need a separate text-pattern pass (#85).
+            // Log files are plain text, so `redact_xml`'s well-formedness gate
+            // fails and would emit them verbatim. Route them through
+            // `redact_log_artefact`, which applies the line-oriented secret
+            // scrubber to non-XML payloads (#89).
             let (payload, redacted) = if args.redact {
-                let red = redact_xml(&content);
+                let red = redact_log_artefact(&content);
                 let changed = red != content;
                 any_redacted |= changed;
                 (red, changed)
