@@ -6,6 +6,27 @@ The generic `rust-junosmcp` binary has its own changelog and version line
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.5] — 2026-06-05
+
+Security follow-up to [0.3.4]: extends redaction to plain-text log lines.
+
+### Fixed
+- **#89 — secrets embedded in plain-text log *lines* shipped in the clear.**
+  The [0.3.4] `redact_xml` pass only scrubs XML element text; the `/var/log/*`
+  files archived since #82 are not well-formed XML, so they failed the
+  `roxmltree` gate and were emitted **verbatim** inside JTAC bundles even with
+  `redact=true` (the default). A PSK/password echoed in a config-change log, an
+  SNMP `community` in a trace, or credentials in a debug trace still leaked.
+  Now non-XML artefacts are routed through a new conservative, line-oriented
+  redactor (`redact_log_text`, dispatched by `redact_log_artefact`) that scrubs
+  the same `REDACT_ELEMENT_NAMES` surface in config-style log syntax —
+  `key=value`, `key "value"`, a format qualifier (`ascii-text` /
+  `hexadecimal` / `plain-text` / `encrypted`), `key value;`, a bare Junos crypt
+  hash (`$9$…`), and bare values on `set …` lines — replacing the value with
+  `<REDACTED>` and tripping the per-artefact `redacted` flag. Bare prose
+  mentions of a key name (no config signal) are left untouched to avoid false
+  positives. No new crate dependency.
+
 ## [0.3.4] — 2026-06-05
 
 Security fix for JTAC support-bundle redaction.
