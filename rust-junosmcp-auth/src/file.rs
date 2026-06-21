@@ -131,6 +131,15 @@ impl TokenStoreFile {
             .tempfile_in(parent)?;
         tmp.write_all(&json)?;
         tmp.as_file().sync_all()?;
+
+        // Preserve the existing file's ownership and permission bits across the
+        // atomic replace. Without this, minting/rotating a token as root (while
+        // the server runs as a dedicated user such as `User=jmcp`) rewrites
+        // tokens.json as root:root 0600, and the next reload fails with EACCES.
+        // This is the write-side companion to the friendly read error (#22).
+        #[cfg(unix)]
+        preserve_owner_and_mode(path, tmp.path());
+
         tmp.persist(path)
             .map_err(|e| TokenStoreError::Io(e.error))?;
         Ok(())
@@ -278,6 +287,40 @@ fn eacces_to_friendly(path: &Path, _err: std::io::Error) -> TokenStoreError {
 #[cfg(not(unix))]
 fn eacces_to_friendly(_path: &Path, err: std::io::Error) -> TokenStoreError {
     TokenStoreError::Io(err)
+}
+
+/// Copy the ownership (uid/gid) and permission bits from the existing
+/// `tokens.json` onto the freshly-written tempfile, so the atomic rename that
+/// replaces it does not silently change who can read the store.
+///
+/// Best-effort by design: a brand-new store (no existing file) has nothing to
+/// preserve, and a caller lacking the privilege to `chown` (the rare non-root,
+/// non-owner case) gets a `WARN` rather than a hard failure — the token has
+/// already been minted, so aborting the save would be worse than an ownership
+/// drift the operator can correct with `chown`.
+#[cfg(unix)]
+fn preserve_owner_and_mode(target: &Path, tmp: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    // No existing file → first-time creation; nothing to preserve.
+    let Ok(md) = std::fs::metadata(target) else {
+        return;
+    };
+
+    if let Err(e) =
+        std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(md.mode() & 0o7777))
+    {
+        tracing::warn!(error = %e, path = %tmp.display(),
+            "could not preserve tokens.json permission bits across save");
+    }
+
+    if let Err(e) = std::os::unix::fs::chown(tmp, Some(md.uid()), Some(md.gid())) {
+        tracing::warn!(error = %e, uid = md.uid(), gid = md.gid(),
+            "could not preserve tokens.json ownership across save — if the \
+             server runs as a dedicated user you may need to `chown` the file \
+             manually so the next reload can read it");
+    }
 }
 
 #[cfg(test)]
@@ -460,6 +503,26 @@ mod tests {
             leftovers.is_empty(),
             "tempfile leaked on save failure: {leftovers:?}"
         );
+    }
+
+    /// Write-side companion to the EACCES read fix (#22): a `save()` that
+    /// replaces an existing store must preserve its permission bits, so minting
+    /// or rotating a token does not silently reset tokens.json to the tempfile
+    /// default (0600) and lock out a server running as a dedicated user.
+    #[cfg(unix)]
+    #[test]
+    fn save_preserves_existing_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        // A subsequent save (here via `add`) must keep mode 0640.
+        TokenStoreFile::add(&path, "alice", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "save() must preserve the prior file mode");
     }
 
     #[test]
