@@ -2,7 +2,7 @@
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Extensions, Implementation, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::tools::transfer_file::TransferLocks;
@@ -94,7 +94,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SrxmcpStatusResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -122,7 +122,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ClusterStatusData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -152,7 +152,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ServicesStatusData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -183,7 +183,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing LicenseData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -217,7 +217,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing VpnLifecycleData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -271,7 +271,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -322,7 +322,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -358,7 +358,7 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ClusterHealthData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -406,32 +406,27 @@ impl JmcpSrxHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 }
 
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for JmcpSrxHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "srxmcp-server".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                ..Default::default()
-            },
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(
+                "srxmcp-server",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(
                 "Juniper SRX-specific MCP server. Phase 1B tools: \
                  srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
                  get_srx_security_services_status, vpn_lifecycle_report. \
                  Phase 2 destructive tools: manage_idp_security_package, \
                  manage_appid_signature_package. \
                  Phase 3 diagnostics tools: validate_chassis_cluster_health, \
-                 collect_jtac_support_bundle."
-                    .into(),
-            ),
-            ..Default::default()
-        }
+                 collect_jtac_support_bundle.",
+            )
     }
 }
 

@@ -6,7 +6,7 @@
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Extensions, Implementation, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
@@ -157,18 +157,20 @@ impl JmcpHandler {
         r: Result<Value, rust_junosmcp_core::JmcpError>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(match r {
-            Ok(Value::String(s)) => CallToolResult::success(vec![Content::text(s)]),
-            Ok(other) => CallToolResult::success(vec![Content::text(
+            Ok(Value::String(s)) => CallToolResult::success(vec![ContentBlock::text(s)]),
+            Ok(other) => CallToolResult::success(vec![ContentBlock::text(
                 serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string()),
             )]),
-            Err(e) => CallToolResult::error(vec![Content::text(e.to_string())]),
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
         })
     }
 
     /// Convert `ScopeError` into the same kind of `CallToolResult { isError: true }`
     /// that `JmcpError::Denied` produces. Mirrors `to_call_result`.
     fn scope_to_call_result(e: ScopeError) -> Result<CallToolResult, rmcp::ErrorData> {
-        Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+        Ok(CallToolResult::error(vec![ContentBlock::text(
+            e.to_string(),
+        )]))
     }
 
     /// Check tool scope. Returns `Err(ScopeError)` if denied, `Ok(())` if allowed
@@ -757,20 +759,15 @@ impl JmcpHandler {
 #[tool_handler(router = Self::tool_router())]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "jmcp-server".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                ..Default::default()
-            },
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(
+                "jmcp-server",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(
                 "Junos MCP server (Rust port). Use get_router_list to enumerate \
-                 available routers, then run operational commands or load config."
-                    .into(),
-            ),
-            ..Default::default()
-        }
+                 available routers, then run operational commands or load config.",
+            )
     }
 }
 

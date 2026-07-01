@@ -162,9 +162,19 @@ fn build_tls_agent(cert_pem_path: &Path) -> ureq::Agent {
 }
 
 fn parse_first_sse_data(sse: &str) -> Option<Value> {
+    // rmcp 2.0.0 prepends an empty "priming" SSE event (`data: ` with no
+    // payload) before the real JSON-RPC payload when `sse_retry` is set
+    // (the default), so skip blank/unparseable `data:` lines instead of
+    // returning on the very first one.
     for line in sse.lines() {
         if let Some(payload) = line.strip_prefix("data:") {
-            return serde_json::from_str(payload.trim()).ok();
+            let payload = payload.trim();
+            if payload.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str(payload) {
+                return Some(value);
+            }
         }
     }
     None

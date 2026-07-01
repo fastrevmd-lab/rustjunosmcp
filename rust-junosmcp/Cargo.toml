@@ -27,7 +27,7 @@ tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
 clap = { version = "4", features = ["derive"] }
-rmcp = { version = "0.8", features = [
+rmcp = { version = "2", features = [
     "server",
     "macros",
     "transport-io",
