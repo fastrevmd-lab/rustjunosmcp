@@ -4,6 +4,14 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `commit_check_config` MCP tool (#95): non-destructive `commit check` —
+  loads a candidate, returns `{success, diff, error?}`, then discards it.
+  Never activates config. Own token scope (least-privilege). Tool surface 15 → 16.
+
 ## [0.6.3] — 2026-06-03
 
 ### Fixed

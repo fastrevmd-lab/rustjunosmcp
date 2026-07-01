@@ -101,6 +101,11 @@ parallel with a configurable concurrency cap.
 - **`fetch_file`** — downloads a file from `<device>:/var/tmp/<basename>` to the host staging dir. SHA-256-verified, idempotent skip if the local copy already matches, per-router serialization. Mirror of `transfer_file`.
 - Tool count: 14 → 15.
 
+### v0.7 (unreleased)
+
+- **`commit_check_config`** — validate a candidate config (`commit check`) without committing — loads, diffs, checks, then discards. Never activates config. Own token scope (least-privilege).
+- Tool count: 15 → 16.
+
 ## Blocklist guardrails (v0.2)
 
 `devices.json` may carry an optional `_blocklist_defaults` block plus an
