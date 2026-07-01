@@ -8,6 +8,7 @@ use std::path::Path;
 /// `known_tools_matches_server_tools` integration test enforces this.
 pub const KNOWN_TOOLS: &[&str] = &[
     "add_device",
+    "commit_check_config",
     "execute_junos_command",
     "execute_junos_command_batch",
     "execute_junos_pfe_command",
