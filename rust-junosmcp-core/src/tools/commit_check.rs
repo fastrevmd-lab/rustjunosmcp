@@ -60,18 +60,23 @@ pub async fn handle(
         let mut cfg = dev.config()?;
 
         cfg.lock().await?;
-        if let Err(e) = cfg.load(payload).await {
-            let _ = cfg.unlock().await;
-            return Err(JmcpError::from(e));
+
+        // After a successful lock, cleanup MUST run on every exit path:
+        // discard the candidate (rollback) and release the lock, so a pooled
+        // session is never left loaded-and-locked. Run load/diff/check in an
+        // inner block, then clean up unconditionally regardless of outcome.
+        let outcome: Result<(String, Result<(), rustez::RustEzError>), JmcpError> = async {
+            cfg.load(payload).await?;
+            let diff = cfg.diff().await?.unwrap_or_default();
+            let check = cfg.commit_check().await;
+            Ok((diff, check))
         }
-        let diff = cfg.diff().await?.unwrap_or_default();
+        .await;
 
-        let check_result = cfg.commit_check().await;
-
-        // Always discard the candidate — nothing must persist in the private DB.
         let _ = cfg.rollback(0).await;
         let _ = cfg.unlock().await;
 
+        let (diff, check_result) = outcome?;
         let result = match check_result {
             Ok(_) => json!({ "success": true, "diff": diff, "checked_only": true }),
             Err(e) => json!({ "success": false, "diff": diff, "error": e.to_string() }),

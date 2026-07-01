@@ -396,7 +396,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "commit_check_config",
-        description = "Validate a candidate configuration on a Junos router without committing (commit check). Loads config into a private candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config."
+        description = "Validate a candidate configuration on a Junos router without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config."
     )]
     async fn commit_check_config(
         &self,
