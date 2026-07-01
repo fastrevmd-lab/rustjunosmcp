@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 pub mod add_device;
 pub mod batch;
+pub mod commit_check;
 pub mod config_diff;
 pub mod execute_command;
 pub mod facts;
@@ -107,6 +108,19 @@ pub struct LoadCommitArgs {
     /// The router will automatically revert if not confirmed within this window.
     #[serde(default)]
     pub confirm_timeout_mins: Option<u32>,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CommitCheckArgs {
+    pub router_name: String,
+    /// The configuration text to validate.
+    pub config_text: String,
+    /// Format: set, text, or xml.
+    #[serde(default = "default_set_format")]
+    pub config_format: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -300,6 +314,21 @@ mod tests {
         assert_eq!(a.config_format, "set");
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
         assert_eq!(a.timeout, 360);
+    }
+
+    #[test]
+    fn commit_check_defaults_format_and_timeout() {
+        let v = serde_json::json!({"router_name":"r1","config_text":"set x"});
+        let a: CommitCheckArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.config_format, "set");
+        assert_eq!(a.timeout, 360);
+    }
+
+    #[test]
+    fn commit_check_rejects_missing_config_text() {
+        let v = serde_json::json!({"router_name":"r1"});
+        let r: Result<CommitCheckArgs, _> = serde_json::from_value(v);
+        assert!(r.is_err());
     }
 
     #[test]

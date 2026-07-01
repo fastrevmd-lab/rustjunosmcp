@@ -11,11 +11,12 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        add_device, batch, config_diff, execute_command, facts, fetch_file, get_config,
-        list_staged_files, load_commit, pfe, reload_devices, router_list, template, transfer_file,
-        upgrade_junos, AddDeviceArgs, ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs,
-        ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs,
-        LoadCommitArgs, ReloadDevicesArgs, TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
+        add_device, batch, commit_check, config_diff, execute_command, facts, fetch_file,
+        get_config, list_staged_files, load_commit, pfe, reload_devices, router_list, template,
+        transfer_file, upgrade_junos, AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs,
+        ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs,
+        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, TemplateArgs,
+        TransferFileArgs, UpgradeJunosArgs,
     },
     DeviceManager, Policy,
 };
@@ -225,6 +226,7 @@ const SERVER_TOOLS: &[&str] = &[
     "get_junos_config",
     "junos_config_diff",
     "load_and_commit_config",
+    "commit_check_config",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -245,8 +247,8 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_15() {
-        assert_eq!(SERVER_TOOLS.len(), 15);
+    fn server_tools_len_is_16() {
+        assert_eq!(SERVER_TOOLS.len(), 16);
     }
 
     #[test]
@@ -389,6 +391,27 @@ impl JmcpHandler {
         }
         Self::to_call_result(
             load_commit::handle(args, self.dm.clone(), self.policy.load_full()).await,
+        )
+    }
+
+    #[tool(
+        name = "commit_check_config",
+        description = "Validate a candidate configuration on a Junos router without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config."
+    )]
+    async fn commit_check_config(
+        &self,
+        Parameters(args): Parameters<CommitCheckArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "commit_check_config") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "commit_check_config", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
+        Self::to_call_result(
+            commit_check::handle(args, self.dm.clone(), self.policy.load_full()).await,
         )
     }
 
