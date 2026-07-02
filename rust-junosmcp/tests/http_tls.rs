@@ -4,42 +4,14 @@
 
 #![cfg(feature = "tls")]
 
+mod common;
+use common::{binary_path, ensure_built, parse_first_sse_data, pick_port, Server};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-fn binary_path() -> PathBuf {
-    let mut path_buf = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path_buf.pop();
-    path_buf.push("target");
-    path_buf.push(if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    });
-    path_buf.push("rust-junosmcp");
-    path_buf
-}
-
-fn ensure_built() {
-    let status = Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
-
-fn pick_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
 
 /// Poll until TCP connections to `port` are accepted, or panic after `timeout`.
 fn wait_for_port(port: u16, timeout: Duration) {
@@ -51,19 +23,6 @@ fn wait_for_port(port: u16, timeout: Duration) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("port {port} not accepting connections within {timeout:?}");
-}
-
-/// RAII child guard.
-struct Server {
-    child: Child,
-    port: u16,
-    _stderr_drain: std::thread::JoinHandle<()>,
-}
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 fn write_self_signed(dir: &Path) -> (PathBuf, PathBuf) {
@@ -159,25 +118,6 @@ fn build_tls_agent(cert_pem_path: &Path) -> ureq::Agent {
         .with_root_certificates(roots)
         .with_no_client_auth();
     ureq::AgentBuilder::new().tls_config(Arc::new(cfg)).build()
-}
-
-fn parse_first_sse_data(sse: &str) -> Option<Value> {
-    // rmcp 2.0.0 prepends an empty "priming" SSE event (`data: ` with no
-    // payload) before the real JSON-RPC payload when `sse_retry` is set
-    // (the default), so skip blank/unparseable `data:` lines instead of
-    // returning on the very first one.
-    for line in sse.lines() {
-        if let Some(payload) = line.strip_prefix("data:") {
-            let payload = payload.trim();
-            if payload.is_empty() {
-                continue;
-            }
-            if let Ok(value) = serde_json::from_str(payload) {
-                return Some(value);
-            }
-        }
-    }
-    None
 }
 
 #[test]
