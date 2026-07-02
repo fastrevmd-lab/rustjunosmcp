@@ -76,6 +76,19 @@ pub struct Cli {
     /// `known_hosts` (see scripts/scan-known-hosts.sh). Lab-only.
     #[arg(long)]
     pub ssh_accept_new_host_keys: bool,
+
+    /// Additional Host authorities to accept on the streamable-http endpoint,
+    /// beyond the loopback defaults (localhost, 127.0.0.1, ::1). Repeatable.
+    /// Set this to the host/authority clients actually send (e.g. the LAN IP)
+    /// or off-loopback clients are rejected with HTTP 403 (DNS-rebinding guard).
+    #[arg(long)]
+    pub allowed_host: Vec<String>,
+
+    /// Disable the streamable-http Host allowlist entirely (accept any Host).
+    /// Reintroduces the RUSTSEC-2026-0189 exposure; bearer auth still applies.
+    /// Off by default.
+    #[arg(long)]
+    pub disable_host_check: bool,
 }
 
 #[derive(Debug, Subcommand)]

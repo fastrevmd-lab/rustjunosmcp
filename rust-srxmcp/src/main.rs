@@ -49,6 +49,16 @@ struct Cli {
     /// Path to the SSH known_hosts file for NETCONF strict host-key checking.
     #[arg(long, default_value = "/etc/jmcp/known_hosts")]
     known_hosts_file: PathBuf,
+
+    /// Additional Host authorities to accept on the streamable-http endpoint,
+    /// beyond the loopback defaults (localhost, 127.0.0.1, ::1). Repeatable.
+    #[arg(long)]
+    allowed_host: Vec<String>,
+
+    /// Disable the streamable-http Host allowlist entirely (accept any Host).
+    /// Reintroduces RUSTSEC-2026-0189 exposure; bearer auth still applies.
+    #[arg(long)]
+    disable_host_check: bool,
 }
 
 #[tokio::main]
@@ -178,5 +188,12 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("parsing {}:{}", args.host, args.port))?;
 
-    http_transport::serve(handler, addr, token_store).await
+    http_transport::serve(
+        handler,
+        addr,
+        token_store,
+        args.allowed_host.clone(),
+        args.disable_host_check,
+    )
+    .await
 }

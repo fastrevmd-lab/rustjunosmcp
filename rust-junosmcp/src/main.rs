@@ -200,6 +200,8 @@ async fn main() -> Result<()> {
                 handler,
                 addr,
                 token_store,
+                args.allowed_host.clone(),
+                args.disable_host_check,
                 #[cfg(feature = "tls")]
                 tls_cfg,
             )

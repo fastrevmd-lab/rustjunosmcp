@@ -465,3 +465,135 @@ fn tool_scope_transfer_only_cannot_call_upgrade_junos() {
         "expected tool-scope denial for upgrade_junos, got: {text}"
     );
 }
+
+/// Spawn with extra CLI args appended (e.g. --allowed-host / --disable-host-check).
+fn spawn_with_args(
+    inv_path: &std::path::Path,
+    tokens_path: &std::path::Path,
+    extra: &[&str],
+) -> Server {
+    let port = pick_port();
+    let port_str = port.to_string();
+    let mut argv = vec![
+        "-f",
+        inv_path.to_str().unwrap(),
+        "-t",
+        "streamable-http",
+        "-H",
+        "127.0.0.1",
+        "-p",
+        port_str.as_str(),
+        "--tokens-file",
+        tokens_path.to_str().unwrap(),
+    ];
+    argv.extend_from_slice(extra);
+    let mut child = Command::new(binary_path())
+        .args(&argv)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    // readiness wait + stderr drain, identical to spawn()
+    let stderr = child.stderr.take().unwrap();
+    let mut reader = BufReader::new(stderr);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut ready = false;
+    loop {
+        if Instant::now() > deadline {
+            break;
+        }
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if line.contains("streamable-http listening") {
+                    ready = true;
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if !ready {
+        let _ = child.kill();
+        panic!("server did not start within 15s");
+    }
+    let drain = std::thread::spawn(move || {
+        let mut sink = String::new();
+        loop {
+            sink.clear();
+            match reader.read_line(&mut sink) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    Server {
+        child,
+        port,
+        _stderr_drain: drain,
+    }
+}
+
+/// POST an `initialize` with an explicit Host header; return the HTTP status.
+fn post_init_with_host(port: u16, host: &str) -> u16 {
+    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+        .set("Accept", "application/json, text/event-stream")
+        .set("Host", host);
+    match req.send_json(init_body()) {
+        Ok(resp) => resp.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {e}"),
+    }
+}
+
+#[test]
+fn disallowed_host_is_rejected_403() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
+    // No --allowed-host: only loopback is allowed.
+    let s = spawn(inv.path(), toks.path());
+    let code = post_init_with_host(s.port, "evil.example.com");
+    assert_eq!(
+        code, 403,
+        "a Host outside the allowlist must be rejected (DNS-rebinding guard)"
+    );
+}
+
+#[test]
+fn allowed_host_flag_permits_custom_host() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
+    // Allow a custom authority; then a request with that Host must pass the host gate.
+    // NOTE: value form (host vs host:port) per the rule confirmed in Task 1 Step 3.
+    let s = spawn_with_args(
+        inv.path(),
+        toks.path(),
+        &["--allowed-host", "friendly.example.com"],
+    );
+    let code = post_init_with_host(s.port, "friendly.example.com");
+    // Passes the Host gate → reaches auth, which returns 401 (no bearer). 401, NOT 403, proves the host was allowed.
+    assert_eq!(
+        code, 401,
+        "an allowlisted Host must pass the Host gate (then 401 for missing bearer)"
+    );
+}
+
+#[test]
+fn disable_host_check_allows_any_host() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
+    let s = spawn_with_args(inv.path(), toks.path(), &["--disable-host-check"]);
+    let code = post_init_with_host(s.port, "anything.example");
+    // Host gate disabled → reaches auth → 401 for missing bearer (NOT 403).
+    assert_eq!(code, 401, "--disable-host-check must bypass the Host gate");
+}
