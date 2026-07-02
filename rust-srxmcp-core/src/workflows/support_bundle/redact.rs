@@ -666,14 +666,43 @@ mod tests {
     }
 
     #[test]
+    fn redacts_pure_entity_secret() {
+        // A redacted element whose entire content is an entity streams as a
+        // single GeneralRef (no surrounding Text). It must still be redacted to
+        // one marker and must not leak the entity.
+        let xml = "<config><secret>&amp;</secret></config>";
+        let out = redact_xml(xml);
+        assert!(
+            !out.contains("&amp;"),
+            "entity leaked from redacted element: {out}"
+        );
+        assert_eq!(
+            out.matches("REDACTED").count(),
+            1,
+            "pure-entity redacted value must produce exactly one marker: {out}"
+        );
+        assert!(
+            out.contains("<secret>") && out.contains("</secret>"),
+            "structure lost: {out}"
+        );
+    }
+
+    #[test]
     fn non_redacted_entity_round_trips() {
         // A non-secret element containing an entity must be preserved verbatim
         // (GeneralRef must re-emit &amp; on the passthrough path).
         let xml = "<config><name>edge &amp; core</name></config>";
         let out = redact_xml(xml);
+        // Exactly one single-escaped entity — guards against a double-escape
+        // regression (&amp;amp; would also satisfy a bare `contains("&amp;")`).
+        assert_eq!(
+            out.matches("&amp;").count(),
+            1,
+            "entity must round-trip single-escaped exactly once: {out}"
+        );
         assert!(
-            out.contains("&amp;"),
-            "entity not round-tripped on non-redacted path: {out}"
+            !out.contains("&amp;amp;"),
+            "entity double-escaped on non-redacted path: {out}"
         );
         assert!(
             out.contains("edge") && out.contains("core"),
