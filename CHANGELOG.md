@@ -19,6 +19,11 @@ All notable user-facing changes are recorded here. Format loosely follows
   (default: loopback only). New flags `--allowed-host <HOST>` (repeatable) and
   `--disable-host-check` configure it; off-loopback deployments MUST pass
   `--allowed-host` for their LAN authority or clients receive HTTP 403.
+- Upgrade `quick-xml` 0.36 → 0.41 (+ `rustez` 0.12.1 / `rustnetconf` 0.12.3),
+  closing RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml DoS). JTAC-bundle
+  redaction now suppresses quick-xml 0.41 `GeneralRef` entity events inside
+  redacted elements — a bare version bump would have leaked entity fragments of
+  secrets (entities are no longer folded into `Text` events).
 
 ## [0.6.3] — 2026-06-03
 
