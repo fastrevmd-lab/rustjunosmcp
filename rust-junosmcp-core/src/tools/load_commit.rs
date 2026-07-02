@@ -63,50 +63,65 @@ pub async fn handle(
         let mut cfg = dev.config()?;
 
         cfg.lock().await?;
-        if let Err(e) = cfg.load(payload).await {
-            let _ = cfg.unlock().await;
-            return Err(JmcpError::from(e));
-        }
-        let diff = cfg.diff().await?.unwrap_or_default();
 
-        let commit_result = if let Some(mins) = confirm_timeout_mins {
-            let seconds = mins * 60;
-            // rustez's commit_confirmed API does not accept a log comment;
-            // the comment is noted in the response but not sent to the device.
-            cfg.commit_confirmed(seconds).await
-        } else {
-            cfg.commit_with_comment(&commit_comment).await
-        };
+        // Run load -> diff -> commit in an inner block so cleanup runs on every
+        // exit after a successful lock. Previously a `cfg.diff().await?` (or
+        // `load`) failure propagated out before the unlock/rollback, leaving a
+        // loaded, LOCKED candidate on the pooled session that poisoned the next
+        // request. Now: always unlock, and roll back the candidate on any
+        // pre-commit error (load/diff). A *successful* commit is NOT rolled back.
+        let outcome: Result<Value, JmcpError> = async {
+            cfg.load(payload).await?;
+            let diff = cfg.diff().await?.unwrap_or_default();
 
-        let result = match commit_result {
-            Ok(_) => {
-                let mut obj = json!({ "success": true, "diff": diff });
-                if confirmed {
-                    let mins = confirm_timeout_mins.unwrap();
-                    obj["confirmed"] = json!(true);
-                    obj["rollback_in_minutes"] = json!(mins);
-                    obj["message"] = json!(format!(
-                        "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
-                         Send another commit to confirm.",
-                        mins
-                    ));
-                    if !commit_comment.is_empty() {
-                        obj["note"] = json!(
-                            "commit_comment is not applied during confirmed commits \
-                             (rustez API limitation)"
-                        );
+            let commit_result = if let Some(mins) = confirm_timeout_mins {
+                let seconds = mins * 60;
+                // rustez's commit_confirmed API does not accept a log comment;
+                // the comment is noted in the response but not sent to the device.
+                cfg.commit_confirmed(seconds).await
+            } else {
+                cfg.commit_with_comment(&commit_comment).await
+            };
+
+            match commit_result {
+                Ok(_) => {
+                    let mut obj = json!({ "success": true, "diff": diff });
+                    if confirmed {
+                        let mins = confirm_timeout_mins.unwrap();
+                        obj["confirmed"] = json!(true);
+                        obj["rollback_in_minutes"] = json!(mins);
+                        obj["message"] = json!(format!(
+                            "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
+                             Send another commit to confirm.",
+                            mins
+                        ));
+                        if !commit_comment.is_empty() {
+                            obj["note"] = json!(
+                                "commit_comment is not applied during confirmed commits \
+                                 (rustez API limitation)"
+                            );
+                        }
                     }
+                    Ok(obj)
                 }
-                obj
+                Err(e) => {
+                    // Commit failed: discard the candidate, report the error.
+                    let _ = cfg.rollback(0).await;
+                    Ok(json!({ "success": false, "diff": diff, "error": e.to_string() }))
+                }
             }
-            Err(e) => {
-                let _ = cfg.rollback(0).await;
-                json!({ "success": false, "diff": diff, "error": e.to_string() })
-            }
-        };
+        }
+        .await;
 
+        // Cleanup on every post-lock exit. Roll back only on a pre-commit error
+        // (load/diff) — a committed change is left in place, and the
+        // commit-failure branch above already rolled back.
+        if outcome.is_err() {
+            let _ = cfg.rollback(0).await;
+        }
         let _ = cfg.unlock().await;
-        Ok::<_, JmcpError>(result)
+
+        outcome
     })
     .await
     .map_err(|_| JmcpError::Timeout(timeout_dur))??;
