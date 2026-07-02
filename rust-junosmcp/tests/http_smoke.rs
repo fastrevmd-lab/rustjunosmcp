@@ -466,14 +466,12 @@ fn tool_scope_transfer_only_cannot_call_upgrade_junos() {
     );
 }
 
-/// Spawn with extra CLI args appended (e.g. --allowed-host / --disable-host-check).
-fn spawn_with_args(
-    inv_path: &std::path::Path,
-    tokens_path: &std::path::Path,
-    extra: &[&str],
-) -> Server {
+/// Spawn with `--allow-no-auth` (no auth layer) plus extra CLI args (e.g.
+/// `--allowed-host` / `--disable-host-check`), so rmcp's built-in Host
+/// allowlist is the sole gate in front of `initialize`.
+fn spawn_no_auth(inv_path: &std::path::Path, extra: &[&str]) -> Server {
     let port = pick_port();
-    let port_str = port.to_string();
+    let port_s = port.to_string();
     let mut argv = vec![
         "-f",
         inv_path.to_str().unwrap(),
@@ -482,9 +480,8 @@ fn spawn_with_args(
         "-H",
         "127.0.0.1",
         "-p",
-        port_str.as_str(),
-        "--tokens-file",
-        tokens_path.to_str().unwrap(),
+        &port_s,
+        "--allow-no-auth",
     ];
     argv.extend_from_slice(extra);
     let mut child = Command::new(binary_path())
@@ -493,7 +490,6 @@ fn spawn_with_args(
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn");
-    // readiness wait + stderr drain, identical to spawn()
     let stderr = child.stderr.take().unwrap();
     let mut reader = BufReader::new(stderr);
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -553,13 +549,12 @@ fn disallowed_host_is_rejected_403() {
     let inv = write_inv(
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
-    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
-    // No --allowed-host: only loopback is allowed.
-    let s = spawn(inv.path(), toks.path());
+    // Default loopback allowlist only; no --allowed-host.
+    let s = spawn_no_auth(inv.path(), &[]);
     let code = post_init_with_host(s.port, "evil.example.com");
     assert_eq!(
         code, 403,
-        "a Host outside the allowlist must be rejected (DNS-rebinding guard)"
+        "rmcp's built-in Host allowlist must reject a disallowed Host (DNS-rebinding guard)"
     );
 }
 
@@ -569,19 +564,11 @@ fn allowed_host_flag_permits_custom_host() {
     let inv = write_inv(
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
-    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
-    // Allow a custom authority; then a request with that Host must pass the host gate.
-    // NOTE: value form (host vs host:port) per the rule confirmed in Task 1 Step 3.
-    let s = spawn_with_args(
-        inv.path(),
-        toks.path(),
-        &["--allowed-host", "friendly.example.com"],
-    );
+    let s = spawn_no_auth(inv.path(), &["--allowed-host", "friendly.example.com"]);
     let code = post_init_with_host(s.port, "friendly.example.com");
-    // Passes the Host gate → reaches auth, which returns 401 (no bearer). 401, NOT 403, proves the host was allowed.
     assert_eq!(
-        code, 401,
-        "an allowlisted Host must pass the Host gate (then 401 for missing bearer)"
+        code, 200,
+        "an --allowed-host authority must pass rmcp's Host check and reach initialize"
     );
 }
 
@@ -591,9 +578,10 @@ fn disable_host_check_allows_any_host() {
     let inv = write_inv(
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
-    let toks = write_tokens(r#"{"version":1,"tokens":[]}"#);
-    let s = spawn_with_args(inv.path(), toks.path(), &["--disable-host-check"]);
+    let s = spawn_no_auth(inv.path(), &["--disable-host-check"]);
     let code = post_init_with_host(s.port, "anything.example");
-    // Host gate disabled → reaches auth → 401 for missing bearer (NOT 403).
-    assert_eq!(code, 401, "--disable-host-check must bypass the Host gate");
+    assert_eq!(
+        code, 200,
+        "--disable-host-check must bypass rmcp's Host check"
+    );
 }
