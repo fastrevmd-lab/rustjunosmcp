@@ -70,6 +70,11 @@ pub fn redact_xml(input: &str) -> String {
     // structure is preserved.
     let mut matched_stack: Vec<bool> = Vec::new();
     let mut redact_depth: usize = 0;
+    // True once a REDACTED marker has been emitted for the current contiguous
+    // run of redacted text/entity events. Reset at each element boundary so a
+    // value split across Text/GeneralRef events (quick-xml 0.38+) collapses to
+    // a single marker instead of repeating it.
+    let mut redacted_run = false;
 
     loop {
         match reader.read_event() {
@@ -85,6 +90,7 @@ pub fn redact_xml(input: &str) -> String {
                     redact_depth += 1;
                 }
                 matched_stack.push(matched);
+                redacted_run = false;
             }
             Ok(Event::End(e)) => {
                 if writer.write_event(Event::End(e)).is_err() {
@@ -93,13 +99,24 @@ pub fn redact_xml(input: &str) -> String {
                 if matched_stack.pop().unwrap_or(false) {
                     redact_depth = redact_depth.saturating_sub(1);
                 }
+                redacted_run = false;
             }
-            Ok(Event::Text(_)) | Ok(Event::CData(_)) if redact_depth > 0 => {
-                if writer
-                    .write_event(Event::Text(BytesText::new(REDACTED_MARKER)))
-                    .is_err()
-                {
-                    return input.to_string();
+            // Under redaction, replace text and SUPPRESS entity references
+            // (GeneralRef). Without the GeneralRef arm an entity inside a
+            // redacted secret would fall through to the catch-all and be
+            // written verbatim (partial leak). Collapse the whole run to one
+            // marker via `redacted_run`.
+            Ok(Event::Text(_)) | Ok(Event::CData(_)) | Ok(Event::GeneralRef(_))
+                if redact_depth > 0 =>
+            {
+                if !redacted_run {
+                    if writer
+                        .write_event(Event::Text(BytesText::new(REDACTED_MARKER)))
+                        .is_err()
+                    {
+                        return input.to_string();
+                    }
+                    redacted_run = true;
                 }
             }
             Ok(event) => {
@@ -611,5 +628,60 @@ mod tests {
         let log = "set snmp community logsecret";
         let lout = redact_log_artefact(log);
         assert!(!lout.contains("logsecret"), "log secret leaked: {lout}");
+    }
+
+    // ── #103: quick-xml 0.41 streams entities as separate GeneralRef events ──
+
+    #[test]
+    fn redacts_entity_split_secret_to_single_marker() {
+        // quick-xml 0.41 streams `abc&amp;def` as Text("abc"), GeneralRef("amp"),
+        // Text("def"). Under redaction the entity must NOT leak through, and the
+        // split value must collapse to exactly one marker.
+        //
+        // Note: REDACTED_MARKER ("<REDACTED>") is written via `BytesText::new`,
+        // which correctly XML-escapes its `<`/`>` to `&lt;`/`&gt;` on write —
+        // that's valid serialization (round-trips to the same text on reparse),
+        // not a leak, and predates this fix (#85). So we assert on the
+        // leak-specific signature (`&amp;`, the re-emitted GeneralRef entity)
+        // and the bare "REDACTED" substring (present in both escaped and
+        // unescaped form) rather than raw '&' absence or the literal marker.
+        let xml = "<config><pre-shared-key>abc&amp;def</pre-shared-key></config>";
+        let out = redact_xml(xml);
+        assert!(
+            !out.contains("&amp;"),
+            "entity fragment leaked from redacted element: {out}"
+        );
+        assert!(!out.contains("abc"), "secret fragment leaked: {out}");
+        assert!(!out.contains("def"), "secret fragment leaked: {out}");
+        assert_eq!(
+            out.matches("REDACTED").count(),
+            1,
+            "split redacted value must collapse to a single marker: {out}"
+        );
+        // Structure preserved.
+        assert!(
+            out.contains("<pre-shared-key>") && out.contains("</pre-shared-key>"),
+            "structure lost: {out}"
+        );
+    }
+
+    #[test]
+    fn non_redacted_entity_round_trips() {
+        // A non-secret element containing an entity must be preserved verbatim
+        // (GeneralRef must re-emit &amp; on the passthrough path).
+        let xml = "<config><name>edge &amp; core</name></config>";
+        let out = redact_xml(xml);
+        assert!(
+            out.contains("&amp;"),
+            "entity not round-tripped on non-redacted path: {out}"
+        );
+        assert!(
+            out.contains("edge") && out.contains("core"),
+            "text lost: {out}"
+        );
+        assert!(
+            !out.contains(REDACTED_MARKER),
+            "unexpected redaction: {out}"
+        );
     }
 }
