@@ -208,6 +208,11 @@ pub enum JmcpError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// A `junos_config_diff` failed because the on-box config won't parse for
+    /// the current mode; message carries the raw error + an actionable hint.
+    #[error("{0}")]
+    ConfigParseHint(String),
+
     #[error("inventory is read-only (--inventory-readonly set)")]
     InventoryReadonly,
 

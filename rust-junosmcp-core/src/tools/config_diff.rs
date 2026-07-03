@@ -8,14 +8,38 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Return an enriched, actionable error message when a config-diff failure
+/// looks like an on-box config-parse error (the committed config won't parse
+/// for the device's current mode). Returns `None` for unrelated errors.
+fn parse_error_hint(err_text: &str) -> Option<String> {
+    let lower = err_text.to_ascii_lowercase();
+    if lower.contains("juniper.conf") || lower.contains("parse error") {
+        Some(format!(
+            "{err_text} (the on-box configuration failed to parse for the current mode — \
+             common right after a chassis-cluster enable/disable. Fix or load a valid \
+             config on the device, then retry junos_config_diff.)"
+        ))
+    } else {
+        None
+    }
+}
+
 pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let version = validate_rollback_version(args.version)?;
     let timeout = Duration::from_secs(args.timeout);
     let result = tokio::time::timeout(timeout, async {
         let mut dev = dm.open(&args.router_name).await?;
         let cmd = format!("show configuration | compare rollback {version}");
-        let diff = dev.cli(&cmd).await?;
-        Ok::<_, JmcpError>(diff)
+        match dev.cli(&cmd).await {
+            Ok(diff) => Ok::<_, JmcpError>(diff),
+            Err(e) => {
+                let text = e.to_string();
+                match parse_error_hint(&text) {
+                    Some(hint) => Err(JmcpError::ConfigParseHint(hint)),
+                    None => Err(JmcpError::from(e)),
+                }
+            }
+        }
     })
     .await
     .map_err(|_| JmcpError::Timeout(timeout))??;
@@ -67,5 +91,32 @@ mod tests {
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadRollbackVersion(50))));
+    }
+
+    #[test]
+    fn parse_error_hint_matches_config_parse_failure() {
+        let raw = "netconf error: RPC error: server error: [OperationFailed] \
+                   /config/juniper.conf:256:(12) fpc value outside range 0..3 for '7/0/0' in 'ge-7/0/0'";
+        let hint = parse_error_hint(raw).expect("should produce a hint");
+        assert!(hint.contains(raw), "hint must preserve the raw error");
+        assert!(
+            hint.to_ascii_lowercase().contains("failed to parse"),
+            "hint must explain: {hint}"
+        );
+        assert!(
+            hint.contains("junos_config_diff"),
+            "hint should tell the caller what to retry"
+        );
+    }
+
+    #[test]
+    fn parse_error_hint_matches_parse_error_phrase() {
+        assert!(parse_error_hint("syntax error\nparse error at line 3").is_some());
+    }
+
+    #[test]
+    fn parse_error_hint_ignores_unrelated_errors() {
+        assert!(parse_error_hint("connection refused").is_none());
+        assert!(parse_error_hint("netconf error: timed out").is_none());
     }
 }
