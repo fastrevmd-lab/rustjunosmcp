@@ -11,12 +11,12 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::{
     tools::{
-        add_device, batch, commit_check, config_diff, execute_command, facts, fetch_file,
-        get_config, list_staged_files, load_commit, pfe, reload_devices, router_list, template,
-        transfer_file, upgrade_junos, AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs,
-        ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs,
-        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, TemplateArgs,
-        TransferFileArgs, UpgradeJunosArgs,
+        add_device, batch, commit_check, config_diff, discard_candidate, execute_command, facts,
+        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices, router_list,
+        template, transfer_file, upgrade_junos, AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs,
+        DiscardCandidateArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs,
+        GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs,
+        TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
     },
     DeviceManager, Policy,
 };
@@ -229,6 +229,7 @@ const SERVER_TOOLS: &[&str] = &[
     "junos_config_diff",
     "load_and_commit_config",
     "commit_check_config",
+    "discard_candidate",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -249,8 +250,8 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_16() {
-        assert_eq!(SERVER_TOOLS.len(), 16);
+    fn server_tools_len_is_17() {
+        assert_eq!(SERVER_TOOLS.len(), 17);
     }
 
     #[test]
@@ -415,6 +416,25 @@ impl JmcpHandler {
         Self::to_call_result(
             commit_check::handle(args, self.dm.clone(), self.policy.load_full()).await,
         )
+    }
+
+    #[tool(
+        name = "discard_candidate",
+        description = "Discard uncommitted candidate configuration changes on a Junos router (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified')."
+    )]
+    async fn discard_candidate(
+        &self,
+        Parameters(args): Parameters<DiscardCandidateArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        if let Err(e) = self.check_tool_scope(ctx, "discard_candidate") {
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "discard_candidate", &args.router_name) {
+            return Self::scope_to_call_result(e);
+        }
+        Self::to_call_result(discard_candidate::handle(args, self.dm.clone()).await)
     }
 
     #[tool(

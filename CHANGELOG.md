@@ -11,6 +11,12 @@ All notable user-facing changes are recorded here. Format loosely follows
 - `commit_check_config` MCP tool (#95): non-destructive `commit check` —
   loads a candidate, returns `{success, diff, error?}`, then discards it.
   Never activates config. Own token scope (least-privilege). Tool surface 15 → 16.
+- `discard_candidate` MCP tool (#107): discard uncommitted candidate changes
+  (`rollback 0`) to recover a candidate left dirty ("configuration database
+  modified"). Never changes the running config. Own token scope. Tool surface 16 → 17.
+- `junos_config_diff` (#108): when the on-box config won't parse for the
+  current mode (e.g. after a chassis-cluster change), the raw parse error now
+  carries an actionable hint instead of leaving the caller blind.
 
 ### Security
 

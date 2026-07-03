@@ -9,6 +9,7 @@ use std::path::Path;
 pub const KNOWN_TOOLS: &[&str] = &[
     "add_device",
     "commit_check_config",
+    "discard_candidate",
     "execute_junos_command",
     "execute_junos_command_batch",
     "execute_junos_pfe_command",
