@@ -1,12 +1,16 @@
-//! Shared helpers for stdio smoke tests.
+#![allow(dead_code)]
+//! Shared test harness for rust-junosmcp integration tests.
 //!
-//! Spawns the `rust-junosmcp` binary with `-t stdio`, performs the MCP
-//! handshake, and exposes a small `call_tool` helper that returns the parsed
-//! JSON content of the tool's response (or the full `result` Value on error
-//! so callers can `.to_string()` and inspect the error message).
+//! Two families of helpers live here:
+//! - stdio smoke helpers: spawn the `rust-junosmcp` binary with `-t stdio`,
+//!   perform the MCP handshake, and expose a small `call_tool` helper that
+//!   returns the parsed JSON content of the tool's response.
+//! - streamable-http helpers: spawn the binary on an ephemeral port, POST
+//!   JSON-RPC, parse SSE, assert HTTP behavior (auth, sessions, etc.).
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -197,4 +201,291 @@ pub fn call_tool(child: &mut StdioChild, name: &str, args: Value) -> Value {
         return sc.clone();
     }
     result
+}
+
+// ---------------------------------------------------------------------------
+// streamable-http harness (shared by http_smoke.rs, http_reload.rs, and the
+// non-TLS-specific bits of http_tls.rs). `binary_path`/`ensure_built` above
+// are reused as-is.
+// ---------------------------------------------------------------------------
+
+pub fn pick_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// RAII child guard: kills + waits on drop so panics don't leak processes.
+/// Also keeps a background drain thread on stderr so the child never blocks
+/// or SIGPIPEs on log writes after the readiness line.
+pub struct Server {
+    pub child: Child,
+    pub port: u16,
+    pub _stderr_drain: std::thread::JoinHandle<()>,
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
+    let port = pick_port();
+    let mut child = Command::new(binary_path())
+        .args([
+            "-f",
+            inv_path.to_str().unwrap(),
+            "-t",
+            "streamable-http",
+            "-H",
+            "127.0.0.1",
+            "-p",
+            &port.to_string(),
+            "--tokens-file",
+            tokens_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let stderr = child.stderr.take().unwrap();
+    let mut reader = BufReader::new(stderr);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut ready = false;
+    loop {
+        if Instant::now() > deadline {
+            break;
+        }
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF: process died
+            Ok(_) => {
+                if line.contains("streamable-http listening") {
+                    ready = true;
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if !ready {
+        let _ = child.kill();
+        panic!("server did not start within 15s");
+    }
+    // Spawn a drain thread so the child's stderr pipe never fills and the
+    // BufReader (and underlying ChildStderr) is kept alive for the test's
+    // duration.
+    let drain = std::thread::spawn(move || {
+        let mut sink = String::new();
+        loop {
+            sink.clear();
+            match reader.read_line(&mut sink) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    Server {
+        child,
+        port,
+        _stderr_drain: drain,
+    }
+}
+
+/// Spawn with `--allow-no-auth` (no auth layer) plus extra CLI args (e.g.
+/// `--allowed-host` / `--disable-host-check`), so rmcp's built-in Host
+/// allowlist is the sole gate in front of `initialize`.
+pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
+    let port = pick_port();
+    let port_s = port.to_string();
+    let mut argv = vec![
+        "-f",
+        inv_path.to_str().unwrap(),
+        "-t",
+        "streamable-http",
+        "-H",
+        "127.0.0.1",
+        "-p",
+        &port_s,
+        "--allow-no-auth",
+    ];
+    argv.extend_from_slice(extra);
+    let mut child = Command::new(binary_path())
+        .args(&argv)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let stderr = child.stderr.take().unwrap();
+    let mut reader = BufReader::new(stderr);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut ready = false;
+    loop {
+        if Instant::now() > deadline {
+            break;
+        }
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if line.contains("streamable-http listening") {
+                    ready = true;
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if !ready {
+        let _ = child.kill();
+        panic!("server did not start within 15s");
+    }
+    let drain = std::thread::spawn(move || {
+        let mut sink = String::new();
+        loop {
+            sink.clear();
+            match reader.read_line(&mut sink) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    Server {
+        child,
+        port,
+        _stderr_drain: drain,
+    }
+}
+
+/// Outcome of a streamable-http POST: status, body parsed as JSON-RPC payload
+/// (extracted from SSE if needed), any returned `Mcp-Session-Id`, and the
+/// `WWW-Authenticate` header if present (for RFC 6750 §3 assertions on 401).
+pub struct PostResult {
+    pub code: u16,
+    pub body: Value,
+    pub session_id: Option<String>,
+    pub www_authenticate: Option<String>,
+}
+
+pub fn http_post(
+    port: u16,
+    bearer: Option<&str>,
+    session_id: Option<&str>,
+    body: Value,
+) -> PostResult {
+    let mut req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"));
+    if let Some(b) = bearer {
+        req = req.set("Authorization", &format!("Bearer {b}"));
+    }
+    req = req.set("Accept", "application/json, text/event-stream");
+    if let Some(sid) = session_id {
+        req = req.set("Mcp-Session-Id", sid);
+    }
+    let (code, resp_session, content_type, www_auth, text) = match req.send_json(body) {
+        Ok(resp) => {
+            let code = resp.status();
+            let sid = resp.header("Mcp-Session-Id").map(str::to_string);
+            let ct = resp.header("Content-Type").unwrap_or("").to_string();
+            let wa = resp.header("WWW-Authenticate").map(str::to_string);
+            let text = resp.into_string().unwrap_or_default();
+            (code, sid, ct, wa, text)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let sid = resp.header("Mcp-Session-Id").map(str::to_string);
+            let ct = resp.header("Content-Type").unwrap_or("").to_string();
+            let wa = resp.header("WWW-Authenticate").map(str::to_string);
+            let text = resp.into_string().unwrap_or_default();
+            (code, sid, ct, wa, text)
+        }
+        Err(e) => panic!("transport error: {e}"),
+    };
+    let body_value = if content_type.contains("text/event-stream") {
+        parse_first_sse_data(&text).unwrap_or(json!({}))
+    } else if !text.is_empty() {
+        serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }))
+    } else {
+        json!({})
+    };
+    PostResult {
+        code,
+        body: body_value,
+        session_id: resp_session,
+        www_authenticate: www_auth,
+    }
+}
+
+/// Parse the first `data:` line from an SSE stream as JSON.
+pub fn parse_first_sse_data(sse: &str) -> Option<Value> {
+    // rmcp 2.0.0 prepends an empty "priming" SSE event (`data: ` with no
+    // payload) before the real JSON-RPC payload when `sse_retry` is set
+    // (the default), so skip blank/unparseable `data:` lines instead of
+    // returning on the very first one.
+    for line in sse.lines() {
+        if let Some(payload) = line.strip_prefix("data:") {
+            let payload = payload.trim();
+            if payload.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str(payload) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// Send an `initialize` request followed by the required
+/// `notifications/initialized` notification, return the negotiated
+/// `Mcp-Session-Id`.
+pub fn initialize(port: u16, bearer: &str) -> String {
+    let r = http_post(port, Some(bearer), None, init_body());
+    assert_eq!(r.code, 200, "initialize failed: {:?}", r.body);
+    let sid = r.session_id.expect("server did not return Mcp-Session-Id");
+    // rmcp requires `notifications/initialized` before any further requests.
+    let n = http_post(
+        port,
+        Some(bearer),
+        Some(&sid),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    assert!(
+        n.code == 200 || n.code == 202,
+        "initialized notification rejected: {} {:?}",
+        n.code,
+        n.body
+    );
+    sid
+}
+
+pub fn init_body() -> Value {
+    json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
+        "protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0.1"}
+    }})
+}
+
+/// POST an `initialize` with an explicit Host header; return the HTTP status.
+pub fn post_init_with_host(port: u16, host: &str) -> u16 {
+    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+        .set("Accept", "application/json, text/event-stream")
+        .set("Host", host);
+    match req.send_json(init_body()) {
+        Ok(resp) => resp.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {e}"),
+    }
+}
+
+pub fn write_inv(json: &str) -> tempfile::NamedTempFile {
+    let f = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(f.path(), json).unwrap();
+    f
+}
+
+pub fn write_tokens(json: &str) -> tempfile::NamedTempFile {
+    let f = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(f.path(), json).unwrap();
+    f
 }
