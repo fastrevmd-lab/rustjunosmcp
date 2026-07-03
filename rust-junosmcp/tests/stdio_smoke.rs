@@ -14,6 +14,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "junos_config_diff",
     "load_and_commit_config",
     "commit_check_config",
+    "discard_candidate",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -39,7 +40,7 @@ fn binary_path() -> std::path::PathBuf {
 }
 
 #[test]
-fn lists_sixteen_tools() {
+fn lists_seventeen_tools() {
     // Build first so the binary exists.
     let status = Command::new("cargo")
         .args(["build", "-p", "rust-junosmcp"])

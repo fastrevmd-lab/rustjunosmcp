@@ -8,6 +8,7 @@ pub mod add_device;
 pub mod batch;
 pub mod commit_check;
 pub mod config_diff;
+pub mod discard_candidate;
 pub mod execute_command;
 pub mod facts;
 pub mod fetch_file;
@@ -155,6 +156,16 @@ pub struct CommitCheckArgs {
     /// Format: set, text, or xml.
     #[serde(default = "default_set_format")]
     pub config_format: String,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscardCandidateArgs {
+    /// The target router. Accepts `router` or `router_name`.
+    #[serde(alias = "router")]
+    pub router_name: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -391,6 +402,14 @@ mod tests {
         let v = serde_json::json!({"router_name":"r1"});
         let r: Result<CommitCheckArgs, _> = serde_json::from_value(v);
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn discard_candidate_defaults_timeout_and_router_alias() {
+        let a: DiscardCandidateArgs =
+            serde_json::from_value(serde_json::json!({"router":"r1"})).unwrap();
+        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.timeout, 360);
     }
 
     #[test]
