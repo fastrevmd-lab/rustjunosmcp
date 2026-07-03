@@ -105,7 +105,8 @@ parallel with a configurable concurrency cap.
 ### v0.7 (unreleased)
 
 - **`commit_check_config`** — validate a candidate config (`commit check`) without committing — loads, diffs, checks, then discards. Never activates config. Own token scope (least-privilege).
-- Tool count: 15 → 16.
+- **`discard_candidate`** — discard uncommitted candidate changes (`rollback 0`) to recover a candidate left dirty ("configuration database modified"). Never changes the running config. Own token scope (least-privilege).
+- Tool count: 15 → 17.
 
 ## Blocklist guardrails (v0.2)
 

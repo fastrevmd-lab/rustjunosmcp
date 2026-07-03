@@ -1,5 +1,5 @@
 //! Spawn the `rust-junosmcp` binary, send MCP `initialize` + `tools/list` over
-//! stdin, parse responses on stdout, assert we advertise the 14 tools.
+//! stdin, parse responses on stdout, assert we advertise the 17 tools.
 
 use serde_json::{json, Value};
 use std::io::Write;
