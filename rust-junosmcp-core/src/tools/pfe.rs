@@ -72,9 +72,16 @@ pub async fn handle(
     })
     .await
     .map_err(|_| JmcpError::Timeout(timeout))??;
+    let output = crate::output::process_output(
+        &args.pfe_command,
+        result,
+        args.max_lines,
+        args.max_bytes,
+        args.tail,
+    );
     Ok(json!({
         "fpc_target": fpc_target,
-        "output": result,
+        "output": output,
     }))
 }
 
@@ -103,6 +110,9 @@ mod tests {
                 fpc_target: "fpc0".into(),
                 pfe_command: "show jnh 0 stats".into(),
                 timeout: 5,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,
@@ -127,6 +137,9 @@ mod tests {
                 fpc_target: "fpc0".into(),
                 pfe_command: "set jnh 0 debug".into(),
                 timeout: 1,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,
@@ -160,6 +173,9 @@ mod tests {
                 fpc_target: "fpc0; rm -rf /".into(),
                 pfe_command: "show jnh 0 stats".into(),
                 timeout: 5,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,
@@ -181,6 +197,9 @@ mod tests {
                 fpc_target: "fpc0".into(),
                 pfe_command: r#"show "evil""#.into(),
                 timeout: 5,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,

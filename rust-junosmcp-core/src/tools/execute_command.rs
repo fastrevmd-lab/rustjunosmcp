@@ -45,7 +45,14 @@ pub async fn handle(
     let result = tokio::time::timeout(timeout, dm.run_cli(&args.router_name, &args.command))
         .await
         .map_err(|_| JmcpError::Timeout(timeout))??;
-    Ok(json!(result))
+    let processed = crate::output::process_output(
+        &args.command,
+        result,
+        args.max_lines,
+        args.max_bytes,
+        args.tail,
+    );
+    Ok(json!(processed))
 }
 
 #[cfg(test)]
@@ -73,6 +80,9 @@ mod tests {
                 router_name: "nope".into(),
                 command: "show version".into(),
                 timeout: 5,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,
@@ -99,6 +109,9 @@ mod tests {
                 router_name: "r1".into(),
                 command: "request system reboot".into(),
                 timeout: 1,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             pol,

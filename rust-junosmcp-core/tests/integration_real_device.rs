@@ -86,6 +86,9 @@ async fn execute_show_version() {
             router_name: "lab".into(),
             command: "show version".into(),
             timeout: 30,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         },
         dm,
         pol,
@@ -179,6 +182,9 @@ async fn live_batch_show_version_one_router_one_command() {
         command_timeout: 30,
         batch_timeout: Some(60),
         max_concurrent_routers: 1,
+        max_lines: None,
+        max_bytes: None,
+        tail: false,
     };
     let v = batch::handle(args, dm, pol).await.unwrap();
     let arr = v.as_array().expect("array");
@@ -207,6 +213,9 @@ async fn live_pfe_show_jnh_stats_packet() {
         fpc_target: std::env::var("JMCP_TEST_FPC").unwrap_or_else(|_| "fpc0".into()),
         pfe_command: "show jnh 0 stats packet".into(),
         timeout: 30,
+        max_lines: None,
+        max_bytes: None,
+        tail: false,
     };
     let v = pfe::handle(args, dm, pol).await.unwrap();
     let output = v.get("output").and_then(|x| x.as_str()).unwrap();

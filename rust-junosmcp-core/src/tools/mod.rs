@@ -64,6 +64,15 @@ pub struct ExecuteCommandArgs {
     /// Command timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// Cap output to at most N lines (head; use `tail` for the last N).
+    #[serde(default)]
+    pub max_lines: Option<u32>,
+    /// Hard byte cap on returned output.
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
+    /// With `max_lines`, keep the LAST N lines instead of the first N.
+    #[serde(default)]
+    pub tail: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -137,6 +146,15 @@ pub struct ExecutePfeArgs {
     /// Per-command timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// Cap output to at most N lines (head; use `tail` for the last N).
+    #[serde(default)]
+    pub max_lines: Option<u32>,
+    /// Hard byte cap on returned output.
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
+    /// With `max_lines`, keep the LAST N lines instead of the first N.
+    #[serde(default)]
+    pub tail: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -154,6 +172,15 @@ pub struct ExecuteBatchArgs {
     /// Maximum number of routers in flight concurrently.
     #[serde(default = "default_max_concurrent_routers")]
     pub max_concurrent_routers: u32,
+    /// Cap output to at most N lines (head; use `tail` for the last N).
+    #[serde(default)]
+    pub max_lines: Option<u32>,
+    /// Hard byte cap on returned output.
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
+    /// With `max_lines`, keep the LAST N lines instead of the first N.
+    #[serde(default)]
+    pub tail: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -551,5 +578,37 @@ mod tests {
         });
         let a: FetchFileArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.local_name.as_deref(), Some("foo.local.tgz"));
+    }
+
+    #[test]
+    fn execute_command_output_caps_default_off() {
+        let v = serde_json::json!({"router_name":"r1","command":"show version"});
+        let a: ExecuteCommandArgs = serde_json::from_value(v).unwrap();
+        assert!(a.max_lines.is_none());
+        assert!(a.max_bytes.is_none());
+        assert!(!a.tail);
+    }
+
+    #[test]
+    fn execute_command_accepts_output_caps() {
+        let v = serde_json::json!({"router_name":"r1","command":"show log messages","max_lines":50,"max_bytes":8192,"tail":true});
+        let a: ExecuteCommandArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.max_lines, Some(50));
+        assert_eq!(a.max_bytes, Some(8192));
+        assert!(a.tail);
+    }
+
+    #[test]
+    fn batch_and_pfe_accept_output_caps() {
+        let b: ExecuteBatchArgs = serde_json::from_value(serde_json::json!({
+            "routers":["r1"],"commands":["show version"],"max_lines":10
+        }))
+        .unwrap();
+        assert_eq!(b.max_lines, Some(10));
+        let p: ExecutePfeArgs = serde_json::from_value(serde_json::json!({
+            "router_name":"r1","fpc_target":"fpc0","pfe_command":"show jnh 0 stats","max_bytes":4096
+        }))
+        .unwrap();
+        assert_eq!(p.max_bytes, Some(4096));
     }
 }

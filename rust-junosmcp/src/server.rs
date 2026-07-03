@@ -318,7 +318,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command",
-        description = "Execute a Junos command on the router"
+        description = "Execute a Junos command on the router. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
     )]
     async fn execute_junos_command(
         &self,
@@ -419,7 +419,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_pfe_command",
-        description = "Execute a single PFE-shell command on one router via 'request pfe execute target <fpc> command \"<cmd>\"'."
+        description = "Execute a single PFE-shell command on one router via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
     )]
     async fn execute_junos_pfe_command(
         &self,
@@ -439,7 +439,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command_batch",
-        description = "Run N operational CLI commands across M routers, parallel across routers, sequential per router. Returns a per-router array of {command, ok, value?, error?} entries."
+        description = "Run N operational CLI commands across M routers, parallel across routers, sequential per router. Returns a per-router array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
     )]
     async fn execute_junos_command_batch(
         &self,

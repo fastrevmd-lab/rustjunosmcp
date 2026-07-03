@@ -205,7 +205,7 @@ pub async fn handle_with_runner(
         let _ = collect.await;
     }
 
-    let final_results: Vec<RouterResult> = args
+    let mut final_results: Vec<RouterResult> = args
         .routers
         .iter()
         .enumerate()
@@ -227,6 +227,20 @@ pub async fn handle_with_runner(
         })
         .collect();
 
+    // Apply per-command output post-processing (pipe honoring + caps).
+    for rr in &mut final_results {
+        for co in &mut rr.commands {
+            if let Some(v) = co.value.take() {
+                co.value = Some(crate::output::process_output(
+                    &co.command,
+                    v,
+                    args.max_lines,
+                    args.max_bytes,
+                    args.tail,
+                ));
+            }
+        }
+    }
     Ok(serde_json::to_value(final_results)?)
 }
 
@@ -313,6 +327,9 @@ mod tests {
             command_timeout: 5,
             batch_timeout: None,
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let v = super::handle_with_runner(args, dm, pol, runner)
             .await
@@ -346,6 +363,9 @@ mod tests {
             command_timeout: 1,
             batch_timeout: None,
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         match super::handle(args, dm, pol).await {
             Err(JmcpError::Denied { tool, pattern, .. }) => {
@@ -369,6 +389,9 @@ mod tests {
             command_timeout: 1,
             batch_timeout: None,
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         assert!(super::handle(args, dm.clone(), pol.clone()).await.is_err());
 
@@ -378,6 +401,9 @@ mod tests {
             command_timeout: 1,
             batch_timeout: None,
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         assert!(super::handle(args, dm, pol).await.is_err());
     }
@@ -513,6 +539,9 @@ mod tests {
             command_timeout: 5,
             batch_timeout: None,
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let v = super::handle_with_runner(args, dm, pol, runner)
             .await
@@ -543,6 +572,9 @@ mod tests {
             command_timeout: 5,
             batch_timeout: None,
             max_concurrent_routers: 2,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let _ = super::handle_with_runner(args, dm, pol, runner)
             .await
@@ -564,6 +596,9 @@ mod tests {
             command_timeout: 0,
             batch_timeout: None,
             max_concurrent_routers: 1,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let v = super::handle_with_runner(args, dm, pol, runner)
             .await
@@ -592,6 +627,9 @@ mod tests {
             command_timeout: 30,
             batch_timeout: Some(0),
             max_concurrent_routers: 4,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let v = super::handle_with_runner(args, dm, pol, runner)
             .await
@@ -616,6 +654,9 @@ mod tests {
             command_timeout: 5,
             batch_timeout: None,
             max_concurrent_routers: 1,
+            max_lines: None,
+            max_bytes: None,
+            tail: false,
         };
         let v = super::handle_with_runner(args, dm, pol, runner)
             .await
