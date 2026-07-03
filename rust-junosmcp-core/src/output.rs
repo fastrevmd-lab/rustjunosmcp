@@ -16,17 +16,45 @@ pub fn process_output(
     apply_line_cap(byte_capped, max_lines, tail)
 }
 
-/// Apply the trailing `| count` / `| last N` modifiers rustez drops. Other
-/// modifiers (`match`, `except`, …) were already applied upstream, so they are
-/// skipped here. Modifiers are applied left-to-right.
+/// Apply the trailing `| count` / `| last N` modifiers rustez drops. Splits on
+/// the Junos pipe boundary `" | "` (space-pipe-space) so a `|` inside a
+/// `match`/`except` regex argument (`| match "up|count"`, `| match up|count`)
+/// is NOT mistaken for a modifier. Only the trailing run of recognized
+/// modifiers is honored; anything else (match, except, display, no-more, …) is
+/// left to rustez. Modifiers in the trailing run are applied left-to-right.
 fn apply_pipe_modifiers(command: &str, raw: String) -> String {
-    let mut segments = command.split('|');
-    let _base = segments.next(); // the command itself
+    let segments: Vec<&str> = command.split(" | ").collect();
+    if segments.len() < 2 {
+        return raw; // no pipe modifiers (the command itself is segment 0)
+    }
+    let modifiers = &segments[1..];
+
+    fn is_recognized(seg: &str) -> bool {
+        let lower = seg.trim().to_ascii_lowercase();
+        lower == "count"
+            || lower
+                .strip_prefix("last")
+                .and_then(|r| r.trim().parse::<usize>().ok())
+                .is_some()
+    }
+
+    // Start of the maximal trailing run where every segment is recognized.
+    let mut first_honored = modifiers.len();
+    for i in (0..modifiers.len()).rev() {
+        if is_recognized(modifiers[i]) {
+            first_honored = i;
+        } else {
+            break;
+        }
+    }
+
     let mut out = raw;
-    for seg in segments {
-        let seg = seg.trim();
-        let lower = seg.to_ascii_lowercase();
+    for seg in &modifiers[first_honored..] {
+        let lower = seg.trim().to_ascii_lowercase();
         if lower == "count" {
+            // NOTE: assumes rustez DROPPED `| count` (so `out` is the full
+            // output). If a future rustez honors it, this would re-count a
+            // one-line `Count:` result — revisit if rustez changes (#105).
             let n = out.lines().count();
             out = format!("Count: {n} lines\n");
         } else if let Some(rest) = lower.strip_prefix("last") {
@@ -38,9 +66,7 @@ fn apply_pipe_modifiers(command: &str, raw: String) -> String {
                     out.push('\n');
                 }
             }
-            // unparseable N → leave `out` unchanged
         }
-        // any other modifier: already applied by rustez → skip
     }
     out
 }
@@ -204,5 +230,52 @@ mod tests {
         assert_eq!(body.len(), 5);
         // last 20 of 1..=30 = 11..=30; head 5 = 11,12,13,14,15
         assert_eq!(body, vec!["11", "12", "13", "14", "15"]);
+    }
+
+    #[test]
+    fn quoted_match_alternation_not_mistaken_for_count() {
+        let raw = "l1\nl2\nl3".to_string();
+        assert_eq!(
+            process_output(
+                "show log | match \"err|count|warn\"",
+                raw.clone(),
+                None,
+                None,
+                false
+            ),
+            raw
+        );
+    }
+
+    #[test]
+    fn unquoted_match_alternation_ending_in_count_not_honored() {
+        let raw = "l1\nl2\nl3".to_string();
+        assert_eq!(
+            process_output("show int | match up|count", raw.clone(), None, None, false),
+            raw
+        );
+    }
+
+    #[test]
+    fn interior_last_in_regex_ignored() {
+        let raw = "l1\nl2\nl3\nl4\nl5".to_string();
+        assert_eq!(
+            process_output(
+                "show x | match \"a|last5|b\"",
+                raw.clone(),
+                None,
+                None,
+                false
+            ),
+            raw
+        );
+    }
+
+    #[test]
+    fn trailing_last_after_match_still_honored() {
+        // `| match` applied upstream by rustez; we honor the trailing `| last 2`.
+        let raw = "m1\nm2\nm3\nm4".to_string();
+        let out = process_output("show x | match up | last 2", raw, None, None, false);
+        assert_eq!(out.lines().collect::<Vec<_>>(), vec!["m3", "m4"]);
     }
 }
