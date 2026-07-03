@@ -41,6 +41,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ClusterStatusArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     #[serde(default)]
     pub include_raw: bool,

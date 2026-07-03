@@ -116,6 +116,7 @@ impl SrxLicensedFeature {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LicenseArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub feature: SrxLicensedFeature,
     #[serde(default)]

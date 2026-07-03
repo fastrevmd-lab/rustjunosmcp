@@ -64,6 +64,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct VpnLifecycleArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     /// Filter IKE and IPsec SAs to those whose remote address contains this substring.
     #[serde(default, skip_serializing_if = "Option::is_none")]

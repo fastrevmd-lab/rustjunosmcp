@@ -53,6 +53,7 @@ pub struct NodeVersionInfo {
 pub struct DownloadAndInstallPlan {
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub action: DownloadAndInstallAction,
     pub service: Service,
@@ -83,6 +84,7 @@ pub enum DownloadAndInstallAction {
 pub struct RollbackPlan {
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub action: RollbackAction,
     pub service: Service,
@@ -104,6 +106,7 @@ pub enum RollbackAction {
 pub struct UninstallPlan {
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub action: UninstallAction,
     pub service: Service,
@@ -147,6 +150,7 @@ pub enum ConfirmationPlan {
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct AlreadyAtTargetResponse {
     pub status: AlreadyAtTargetTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub current_package_version: String,

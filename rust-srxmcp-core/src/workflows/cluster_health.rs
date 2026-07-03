@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ClusterHealthArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     #[serde(default)]
     pub include_raw: bool,

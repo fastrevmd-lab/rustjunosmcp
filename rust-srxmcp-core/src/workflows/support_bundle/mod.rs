@@ -113,6 +113,7 @@ impl ProblemTypeArg {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SupportBundleArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub problem_type: ProblemTypeArg,
     #[serde(default)]
@@ -173,6 +174,7 @@ pub struct BundleInfo {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SupportBundleData {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub request_id: String,
     pub bundle: BundleInfo,

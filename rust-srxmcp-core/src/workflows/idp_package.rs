@@ -87,6 +87,7 @@ pub enum IdpAction {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct IdpPackageArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub action: IdpAction,
     /// Pin to a specific package version (e.g. `"3714"`). Only meaningful
@@ -133,6 +134,7 @@ pub struct IdpCheckServerNode {
 
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct IdpCheckServerData {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,
@@ -607,6 +609,7 @@ pub async fn run(
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct DownloadAndInstallCompletedData {
     pub status: CompletedTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,
@@ -1078,6 +1081,7 @@ async fn verify_installed_version(
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct RollbackCompletedData {
     pub status: CompletedTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,

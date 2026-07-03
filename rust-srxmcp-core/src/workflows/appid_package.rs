@@ -85,6 +85,7 @@ pub enum AppidAction {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AppidPackageArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub action: AppidAction,
     /// Pin to a specific package version. Only meaningful for
@@ -124,6 +125,7 @@ pub struct AppidCheckServerNode {
 
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct AppidCheckServerData {
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,
@@ -514,6 +516,7 @@ pub async fn run(
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct DownloadAndInstallCompletedData {
     pub status: CompletedTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,
@@ -984,6 +987,7 @@ async fn verify_installed_version(
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct UninstallCompletedData {
     pub status: CompletedTag,
+    #[serde(alias = "router_name")]
     pub router: String,
     pub service: Service,
     pub topology: crate::workflows::signature_package::Topology,

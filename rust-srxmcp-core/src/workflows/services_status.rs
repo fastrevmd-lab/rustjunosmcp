@@ -48,6 +48,7 @@ struct SubCall {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ServicesStatusArgs {
+    #[serde(alias = "router_name")]
     pub router: String,
     #[serde(default)]
     pub include_raw: bool,
@@ -491,6 +492,19 @@ mod tests {
             .join(name);
         std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    }
+
+    // ── router_name alias ────────────────────────────────────────────────────
+
+    #[test]
+    fn router_name_alias_resolves() {
+        // `router` is primary; `router_name` must also deserialize.
+        let a: ServicesStatusArgs =
+            serde_json::from_value(serde_json::json!({"router":"r1"})).unwrap();
+        assert_eq!(a.router, "r1");
+        let b: ServicesStatusArgs =
+            serde_json::from_value(serde_json::json!({"router_name":"r1"})).unwrap();
+        assert_eq!(b.router, "r1");
     }
 
     // ── IDP ──────────────────────────────────────────────────────────────────
