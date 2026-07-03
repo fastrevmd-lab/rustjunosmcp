@@ -6,6 +6,16 @@ devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](htt
 on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
 instead of PyEZ.
 
+## Beyond Juniper/junos-mcp-server
+
+Drop-in on `devices.json` and the core tools — plus a lot the Python/PyEZ server doesn't have:
+
+- **Safer config** — `commit_check_config` (validate, never commit), confirmed commits with auto-rollback, and `discard_candidate` to unstick a dirty candidate.
+- **Device lifecycle** — staged `upgrade_junos` (image → install → reboot → verify), SCP `transfer_file`/`fetch_file`, PFE commands.
+- **Scale & UX** — parallel session-pooled batch (~1.7× faster), `| last N`/`| count` + `max_lines`/`max_bytes` output caps, `router`/`router_name` aliases, Jinja2 templates.
+- **Transport & auth** — streamable-HTTP with per-token router/tool scopes, TLS, and a `Host` allowlist; upstream is stdio-only.
+- **SRX tools** (`rust-srxmcp`) — IDP & Application-ID **signature-package updates** (check/download/install/rollback), chassis-cluster health, license & security-services status, JTAC bundle with secret redaction.
+
 ## Performance
 
 Benchmarked against [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
