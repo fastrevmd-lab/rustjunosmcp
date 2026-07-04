@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-03
+
 ### Added
 
 - `commit_check_config` MCP tool (#95): non-destructive `commit check` —
