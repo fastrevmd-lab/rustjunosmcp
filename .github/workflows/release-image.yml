@@ -9,9 +9,13 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Existing git tag to build (e.g. v0.7.0)'
+      version:
+        description: 'Version label for the image, e.g. v0.7.0 (-> tags 0.7.0, 0.7, latest)'
         required: true
+      ref:
+        description: 'Git ref/commit to build (default: the branch this workflow runs from, usually main). Use this to backfill a release whose own tagged tree predates a Dockerfile fix.'
+        required: false
+        default: ''
 
 env:
   # GHCR requires a lowercase image path; the repo name is mixed-case.
@@ -27,7 +31,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Build source: an explicit ref if given, else the dispatched branch
+          # (main) on manual runs, or the pushed tag on tag-triggered runs.
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Docker metadata
         id: meta
@@ -35,11 +41,11 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           # v0.7.0 -> tags 0.7.0, 0.7, latest. The `value=` override makes the
-          # manual workflow_dispatch path derive the version from the input tag;
+          # manual workflow_dispatch path derive the version from the input;
           # on a tag push the input is empty and metadata falls back to the ref.
           tags: |
-            type=semver,pattern={{version}},value=${{ github.event.inputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.tag }}
+            type=semver,pattern={{version}},value=${{ github.event.inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.version }}
             type=raw,value=latest
 
       - name: Set up Buildx
