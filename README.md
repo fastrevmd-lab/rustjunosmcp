@@ -31,19 +31,19 @@ Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
 on sequential commands to the same router. The batch tool runs routers in
 parallel with a configurable concurrency cap.
 
-> ## v0.3.0 released
+> ## v0.7.0 released
 >
-> Session pooling, reliability fixes, and commit confirm. NETCONF sessions
-> are now pooled per-router with a `PooledDevice` RAII guard (300s idle
-> timeout, 30s SSH keepalive, background reaper). Five bug fixes: XML
-> wrapper stripping for `get_junos_config` / `junos_config_diff`, correct
-> `show configuration | compare rollback` command, timeout now covers SSH
-> handshake, batch returns partial results for unknown routers. New
-> `confirm_timeout_mins` parameter on `load_and_commit_config` for
-> confirmed commits with auto-rollback. Switched `rustez` dependency from
-> path to crates.io 0.10.1.
+> Two new non-destructive candidate-safety tools and a hardened HTTP
+> transport. `commit_check_config` validates a candidate (`commit check`)
+> and discards it without ever activating config; `discard_candidate`
+> recovers a candidate left dirty via `rollback 0`. `junos_config_diff`
+> now returns an actionable hint when the on-box config won't parse for
+> the current mode. Security: `rmcp` 0.8.5 → 2.0.0 (closes
+> RUSTSEC-2026-0189 DNS-rebinding; adds a `Host` allowlist — off-loopback
+> deployments must pass `--allowed-host`) and `quick-xml` 0.36 → 0.41
+> (closes RUSTSEC-2026-0194/-0195 DoS). Tool surface 15 → 17.
 >
-> See the [v0.3.0 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.3.0).
+> See the [v0.7.0 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.7.0).
 
 ## Feature scope
 
@@ -112,7 +112,7 @@ parallel with a configurable concurrency cap.
 - **`fetch_file`** — downloads a file from `<device>:/var/tmp/<basename>` to the host staging dir. SHA-256-verified, idempotent skip if the local copy already matches, per-router serialization. Mirror of `transfer_file`.
 - Tool count: 14 → 15.
 
-### v0.7 (unreleased)
+### v0.7 (released)
 
 - **`commit_check_config`** — validate a candidate config (`commit check`) without committing — loads, diffs, checks, then discards. Never activates config. Own token scope (least-privilege).
 - **`discard_candidate`** — discard uncommitted candidate changes (`rollback 0`) to recover a candidate left dirty ("configuration database modified"). Never changes the running config. Own token scope (least-privilege).
@@ -297,13 +297,13 @@ $EDITOR devices.json   # set ip / username / auth
 ## Docker
 
 ```bash
-docker build -t rust-junosmcp:0.3 .
+docker build -t rust-junosmcp:0.7 .
 
 # Run.
 docker run --rm -i \
   -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
   -v $PWD/keys:/etc/jmcp/keys:ro \
-  rust-junosmcp:0.3
+  rust-junosmcp:0.7
 ```
 
 ## LXC (Proxmox)
@@ -313,8 +313,8 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC).
-pct push 115 dist/rust-junosmcp_0.3.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.3.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.7.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.7.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json on the LXC, then:
 pct exec 115 -- systemctl enable --now rust-junosmcp
