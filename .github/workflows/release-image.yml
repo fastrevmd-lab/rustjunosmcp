@@ -1,0 +1,63 @@
+name: Release image
+
+# Build and publish the rust-junosmcp container image to GHCR on every
+# junos version tag (v1.2.3). srxmcp-v* tags are intentionally NOT matched —
+# this Dockerfile builds only the rust-junosmcp binary.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing git tag to build (e.g. v0.7.0)'
+        required: true
+
+env:
+  # GHCR requires a lowercase image path; the repo name is mixed-case.
+  IMAGE: ghcr.io/fastrevmd-lab/rust-junosmcp
+
+jobs:
+  build-push:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # v0.7.0 -> tags 0.7.0, 0.7, latest. The `value=` override makes the
+          # manual workflow_dispatch path derive the version from the input tag;
+          # on a tag push the input is empty and metadata falls back to the ref.
+          tags: |
+            type=semver,pattern={{version}},value=${{ github.event.inputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.tag }}
+            type=raw,value=latest
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
