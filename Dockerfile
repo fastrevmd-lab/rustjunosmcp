@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.6
-# bookworm (Debian 12) builder to match the distroless-debian12 runtime glibc.
-FROM rust:1.90-slim-bookworm AS builder
+# bookworm (Debian 12) builder to match the distroless-debian12 runtime glibc;
+# 1.95 cargo is needed to parse recent dependency manifests (e.g. sha1 0.11).
+FROM rust:1.95-slim-bookworm AS builder
 WORKDIR /src
 
 # rustez / rustnetconf are crates.io dependencies now (no sibling checkout),
