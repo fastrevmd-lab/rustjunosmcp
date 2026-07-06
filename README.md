@@ -296,10 +296,30 @@ $EDITOR devices.json   # set ip / username / auth
 
 ## Docker
 
+Prebuilt images are published to GHCR on every version tag. The package is
+public — no `docker login` required.
+
+```bash
+# Pull the prebuilt image (tags: latest, 0.7, 0.7.0).
+docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+
+# Run. $PWD must contain your devices.json and keys/.
+docker run --rm -i \
+  -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
+  -v $PWD/keys:/etc/jmcp/keys:ro \
+  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+```
+
+> **Apple Silicon (M-series):** images are built for `linux/amd64` only, so
+> they run under emulation on Apple Silicon. This works, but if you hit a
+> platform-mismatch warning add `--platform linux/amd64` to both the `pull`
+> and `run` commands.
+
+Prefer to build locally instead:
+
 ```bash
 docker build -t rust-junosmcp:0.7 .
 
-# Run.
 docker run --rm -i \
   -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
   -v $PWD/keys:/etc/jmcp/keys:ro \
