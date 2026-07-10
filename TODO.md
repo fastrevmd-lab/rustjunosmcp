@@ -16,7 +16,7 @@ and should not be duplicated as implementation checklists here.
   Guarantee candidate cleanup and surface cleanup failures (high).
 - [ ] [#127](https://github.com/fastrevmd-lab/RustJunosMCP/issues/127)
   Make the published container support SCP file tools (high).
-- [ ] [#128](https://github.com/fastrevmd-lab/RustJunosMCP/issues/128)
+- [x] [#128](https://github.com/fastrevmd-lab/RustJunosMCP/issues/128)
   Repair and test LXC and systemd packaging (high).
 - [ ] [#129](https://github.com/fastrevmd-lab/RustJunosMCP/issues/129)
   Bind destructive confirmations to server-issued plans (high).

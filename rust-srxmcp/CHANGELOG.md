@@ -9,6 +9,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **#129 stage 1 - destructive signature-package confirmation bypass.**
+  IDP and AppID previews now issue 256-bit, five-minute, one-time confirmation
+  tokens. Execution binds the token to the authenticated caller, inventory
+  endpoint, router, action, target, and normalized plan; re-runs preflight
+  under the process-local device lock; rejects material drift; and carries the
+  preview correlation ID through execution audit phases. Bare `confirm=true`,
+  expired, replayed, tampered, and wrong-caller tokens fail closed. Stage 2
+  will replace the process-local lock with a cross-process device lease.
 - **#125 - support-bundle path traversal through caller-controlled IDs.**
   Caller `request_id` values are now short ASCII correlation labels only;
   filesystem paths use an independent server-minted UUID. Router, request,

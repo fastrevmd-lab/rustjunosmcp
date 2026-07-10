@@ -20,8 +20,8 @@ lifecycle, and JTAC support-bundle collection.
 | `check_srx_feature_license` | Closed-enum feature → license-record mapping (IDP, AppID, UTM-AV, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) |
 | `get_srx_security_services_status` | IDP / AppID / UTM-AV / SecIntel / ATP-Cloud per-node health snapshot |
 | `vpn_lifecycle_report` | Correlated IKE Phase-1 + IPsec Phase-2 view with optional `peer` / `tunnel` substring filters |
-| `manage_idp_security_package` | **DESTRUCTIVE** — IDP signature-package lifecycle. Actions: `check_server`, `download_and_install`, `rollback`. Two-call confirmation. |
-| `manage_appid_signature_package` | **DESTRUCTIVE** — AppID application signature-package lifecycle. Actions: `check_server`, `download_and_install`, `uninstall`. Two-call confirmation. |
+| `manage_idp_security_package` | **DESTRUCTIVE** — IDP signature-package lifecycle. Actions: `check_server`, `download_and_install`, `rollback`. Token-bound two-call confirmation. |
+| `manage_appid_signature_package` | **DESTRUCTIVE** — AppID application signature-package lifecycle. Actions: `check_server`, `download_and_install`, `uninstall`. Token-bound two-call confirmation. |
 | `validate_chassis_cluster_health` | Runs the full chassis-cluster diagnostic set and returns ordered findings with a rolled-up verdict. |
 | `collect_jtac_support_bundle` | Collects and redacts a JTAC-ready diagnostic bundle. |
 
@@ -52,6 +52,19 @@ The secure default bind is **127.0.0.1:30032** (overridable with `--host`,
 
 The two binaries share `/etc/jmcp/tokens.json` and `/etc/jmcp/devices.json`
 but have independent systemd units and independent process lifecycles.
+
+## Destructive confirmations
+
+IDP and AppID package changes require a fresh preview. Call the destructive
+action with `confirm=false`; the `confirmation_required` plan includes a
+short-lived `confirmation_token`, expiry, and correlation ID. Review that
+exact plan, then repeat the same action, router, and target with `confirm=true`
+and `confirmation_token` set to the returned value.
+
+Tokens are one-time and bound to the authenticated token name, inventory
+endpoint, router, action, target, and observed device plan. Missing, expired,
+replayed, wrong-caller, and changed-plan confirmations fail closed. A server
+restart intentionally invalidates every outstanding confirmation.
 
 Packaged support bundles default to
 `/var/lib/jmcp/srx-staging/bundles`, which is owned by the `jmcp` service user

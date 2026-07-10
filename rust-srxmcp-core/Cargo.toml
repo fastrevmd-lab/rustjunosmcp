@@ -21,6 +21,8 @@ time               = { version = "0.3", features = ["serde", "parsing", "formatt
 tokio              = { workspace = true, features = ["macros", "rt", "time"] }
 uuid               = { version = "1", features = ["v4"] }
 sha2               = "0.10"
+rand                = { workspace = true }
+base64ct            = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions  = "1"

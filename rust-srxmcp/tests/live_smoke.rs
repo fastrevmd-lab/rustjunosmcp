@@ -121,21 +121,13 @@ fn idp_check_server_returns_latest_version() {
 fn idp_download_and_install_call1_returns_plan() {
     let (url, token) = endpoint();
     let mut c = Client::connect(&url, &token);
-    // No confirm=true → expect JSON-RPC error with the
-    // [code=confirmation_required] bracketed token + embedded plan JSON.
-    let err = c.tool_error_call(
-        "manage_idp_security_package",
-        json!({"router": IDP_PRIMARY, "action": "download_and_install"}),
-    );
-    let msg = err
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("no /error/message in {err}"));
-    assert!(
-        msg.contains("[code=confirmation_required]"),
-        "expected confirmation_required token, got: {msg}"
-    );
-    assert!(msg.contains("plan:"), "expected plan: section in {msg}");
+    let confirmation = c
+        .preview_confirmation_token(
+            "manage_idp_security_package",
+            json!({"router": IDP_PRIMARY, "action": "download_and_install"}),
+        )
+        .unwrap_or_else(|outcome| panic!("expected confirmation plan, got: {outcome}"));
+    assert!(!confirmation.is_empty());
 }
 
 #[test]
@@ -146,12 +138,23 @@ fn idp_download_and_install_call2_succeeds() {
     // Real download (~300MB pulled from signatures.juniper.net) + install.
     // Allow 20 min server-side budget; ureq has no default read timeout so
     // it'll block until rmcp responds.
+    let preview = json!({"router": IDP_PRIMARY, "action": "download_and_install"});
+    let confirmation_token =
+        match c.preview_confirmation_token("manage_idp_security_package", preview) {
+            Ok(token) => token,
+            Err(resp) => {
+                let inner = parse_tool_text(&resp);
+                assert_eq!(inner["status"], "already_at_target", "preview: {inner}");
+                return;
+            }
+        };
     let resp = c.tool_call(
         "manage_idp_security_package",
         json!({
             "router": IDP_PRIMARY,
             "action": "download_and_install",
             "confirm": true,
+            "confirmation_token": confirmation_token,
             "timeout": 1200_u64,
         }),
     );
@@ -177,7 +180,6 @@ fn idp_already_at_target_short_circuits() {
         json!({
             "router": IDP_PRIMARY,
             "action": "download_and_install",
-            "confirm": true,
         }),
     );
     let inner = parse_tool_text(&resp);
@@ -201,6 +203,20 @@ fn idp_version_pin_accepts_explicit() {
         .as_str()
         .expect("latest_version")
         .to_string();
+    let preview = json!({
+        "router": IDP_PRIMARY,
+        "action": "download_and_install",
+        "version": latest,
+    });
+    let confirmation_token =
+        match c.preview_confirmation_token("manage_idp_security_package", preview) {
+            Ok(token) => token,
+            Err(resp) => {
+                let inner = parse_tool_text(&resp);
+                assert_eq!(inner["status"], "already_at_target", "preview: {inner}");
+                return;
+            }
+        };
     let resp = c.tool_call(
         "manage_idp_security_package",
         json!({
@@ -208,6 +224,7 @@ fn idp_version_pin_accepts_explicit() {
             "action": "download_and_install",
             "version": latest,
             "confirm": true,
+            "confirmation_token": confirmation_token,
             "timeout": 1200_u64,
         }),
     );
@@ -226,12 +243,19 @@ fn idp_rollback_after_install_restores_previous() {
     // <security-package-rollback-version>.
     let (url, token) = endpoint();
     let mut c = Client::connect(&url, &token);
+    let confirmation_token = c
+        .preview_confirmation_token(
+            "manage_idp_security_package",
+            json!({"router": IDP_PRIMARY, "action": "rollback"}),
+        )
+        .unwrap_or_else(|outcome| panic!("expected rollback confirmation, got: {outcome}"));
     let resp = c.tool_call(
         "manage_idp_security_package",
         json!({
             "router": IDP_PRIMARY,
             "action": "rollback",
             "confirm": true,
+            "confirmation_token": confirmation_token,
             "timeout": 600_u64,
         }),
     );
@@ -245,12 +269,19 @@ fn idp_cluster_install_syncs_both_nodes() {
     // Cluster target; will fail until a clustered+IDP-licensed device exists.
     let (url, token) = endpoint();
     let mut c = Client::connect(&url, &token);
+    let confirmation_token = c
+        .preview_confirmation_token(
+            "manage_idp_security_package",
+            json!({"router": IDP_CLUSTER, "action": "download_and_install"}),
+        )
+        .unwrap_or_else(|outcome| panic!("expected cluster confirmation, got: {outcome}"));
     let resp = c.tool_call(
         "manage_idp_security_package",
         json!({
             "router": IDP_CLUSTER,
             "action": "download_and_install",
             "confirm": true,
+            "confirmation_token": confirmation_token,
             "timeout": 1500_u64,
         }),
     );
@@ -332,7 +363,9 @@ fn appid_download_and_install_call1_returns_plan() {
                 .pointer("/error/message")
                 .and_then(Value::as_str)
                 .unwrap_or_else(|| panic!("no /error/message in {err}"));
-            let plan_ready = msg.contains("[code=confirmation_required]") && msg.contains("plan:");
+            let plan_ready = msg.contains("[code=confirmation_required]")
+                && msg.contains("plan:")
+                && msg.contains("confirmation_token");
             let lab_gap = msg.contains("[code=signatures_server_unreachable]");
             assert!(
                 plan_ready || lab_gap,
@@ -357,7 +390,9 @@ fn appid_uninstall_call1_returns_plan() {
         .pointer("/error/message")
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("no /error/message in {err}"));
-    let has_plan = msg.contains("[code=confirmation_required]") && msg.contains("plan:");
+    let has_plan = msg.contains("[code=confirmation_required]")
+        && msg.contains("plan:")
+        && msg.contains("confirmation_token");
     let already_clean = msg.contains("[code=no_uninstall_target]");
     assert!(
         has_plan || already_clean,
@@ -373,10 +408,28 @@ fn appid_uninstall_call2_succeeds() {
     // (device was already clean from a prior run).
     let (url, token) = endpoint();
     let mut c = Client::connect(&url, &token);
+    let confirmation_token = match c.preview_confirmation_token(
+        "manage_appid_signature_package",
+        json!({"router": APPID_PRIMARY, "action": "uninstall"}),
+    ) {
+        Ok(token) => token,
+        Err(outcome) => {
+            let msg = outcome
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("expected uninstall preview error: {outcome}"));
+            assert!(
+                msg.contains("[code=no_uninstall_target]"),
+                "expected no_uninstall_target if already clean, got: {msg}"
+            );
+            return;
+        }
+    };
     let body = json!({
         "router": APPID_PRIMARY,
         "action": "uninstall",
         "confirm": true,
+        "confirmation_token": confirmation_token,
         "timeout": 600_u64,
     });
     match c.try_tool_call("manage_appid_signature_package", body) {
@@ -390,8 +443,8 @@ fn appid_uninstall_call2_succeeds() {
                 .and_then(Value::as_str)
                 .unwrap_or_else(|| panic!("no /error/message in {err}"));
             assert!(
-                msg.contains("[code=no_uninstall_target]"),
-                "expected no_uninstall_target if call2 errors, got: {msg}"
+                msg.contains("[code=confirmation_plan_drift]"),
+                "expected plan drift if device state changed after preview, got: {msg}"
             );
         }
     }
@@ -408,10 +461,34 @@ fn appid_cluster_install_syncs_both_nodes() {
     // cluster pair lands.
     let (url, token) = endpoint();
     let mut c = Client::connect(&url, &token);
+    let confirmation_token = match c.preview_confirmation_token(
+        "manage_appid_signature_package",
+        json!({"router": APPID_CLUSTER, "action": "download_and_install"}),
+    ) {
+        Ok(token) => token,
+        Err(outcome) if outcome.pointer("/result").is_some() => {
+            let inner = parse_tool_text(&outcome);
+            assert_eq!(inner["status"], "already_at_target", "preview: {inner}");
+            return;
+        }
+        Err(err) => {
+            let msg = err
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("no /error/message in {err}"));
+            let lab_gap = msg.contains("[code=license_inactive]")
+                || msg.contains("[code=signatures_server_unreachable]")
+                || msg.contains("Connection reset")
+                || msg.contains("opening device");
+            assert!(lab_gap, "unexpected preview error: {msg}");
+            return;
+        }
+    };
     let body = json!({
         "router": APPID_CLUSTER,
         "action": "download_and_install",
         "confirm": true,
+        "confirmation_token": confirmation_token,
         "timeout": 1500_u64,
     });
     match c.try_tool_call("manage_appid_signature_package", body) {
@@ -517,6 +594,38 @@ impl Client {
             r.body
         );
         r.body
+    }
+
+    /// Run call 1 and extract the opaque artifact embedded in the
+    /// `confirmation_required` plan. A successful short-circuit or any other
+    /// error is returned unchanged for the test to classify.
+    fn preview_confirmation_token(
+        &mut self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<String, Value> {
+        match self.try_tool_call(name, arguments) {
+            Ok(success) => Err(success),
+            Err(error) => {
+                let Some(message) = error.pointer("/error/message").and_then(Value::as_str) else {
+                    return Err(error);
+                };
+                if !message.contains("[code=confirmation_required]") {
+                    return Err(error);
+                }
+                let plan_json = message
+                    .split_once("plan: ")
+                    .map(|(_, plan)| plan)
+                    .unwrap_or_else(|| panic!("confirmation error missing plan JSON: {message}"));
+                let plan: Value = serde_json::from_str(plan_json).unwrap_or_else(|e| {
+                    panic!("invalid confirmation plan JSON ({e}): {plan_json}")
+                });
+                Ok(plan["confirmation_token"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("plan missing confirmation_token: {plan}"))
+                    .to_string())
+            }
+        }
     }
 
     /// Polymorphic variant: returns Ok(body) on success (HTTP 200,

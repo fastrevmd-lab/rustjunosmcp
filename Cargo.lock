@@ -2487,8 +2487,10 @@ dependencies = [
 name = "rust-srxmcp-core"
 version = "0.3.6"
 dependencies = [
+ "base64ct",
  "pretty_assertions",
  "quick-xml",
+ "rand 0.8.6",
  "roxmltree",
  "rust-junosmcp-core",
  "rustez",
