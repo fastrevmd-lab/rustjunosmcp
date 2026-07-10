@@ -38,7 +38,9 @@
 //!   *not* `get-*-status`) → poll-style status reply.
 //! * `<request-idp-security-package-rollback/>` (flat).
 
-use crate::workflows::signature_package::Service;
+use crate::workflows::signature_package::{
+    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore, Service,
+};
 use crate::SrxError;
 use rust_junosmcp_core::device_manager::PooledDevice;
 use rust_junosmcp_core::tools::transfer_file::TransferLocks;
@@ -98,6 +100,10 @@ pub struct IdpPackageArgs {
     /// Ignored for `check_server`.
     #[serde(default)]
     pub confirm: bool,
+    /// Opaque, short-lived artifact returned by the preview call. A bare
+    /// `confirm=true` is never sufficient to authorize a destructive action.
+    #[serde(default)]
+    pub confirmation_token: Option<String>,
     /// Per-call outer budget in seconds (download poll + install poll combined).
     /// Default 600s (10 min), cap 1800s (30 min).
     #[serde(default)]
@@ -380,7 +386,7 @@ pub fn parse_async_status_detail(detail: &str) -> AsyncStatusOutcome {
 
 /// What `download_and_install` call 1 produces from the parsed pre-flight
 /// snapshot: either a short-circuit "already at target" success or a plan
-/// that needs the operator to re-call with `confirm=true`.
+/// that needs the operator to re-call with `confirm=true` and the issued token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanOutcome {
     /// Every node already runs the target version — no destructive RPC will fire.
@@ -584,22 +590,38 @@ pub enum IdpPackageResponse {
 pub async fn run(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<IdpPackageResponse, SrxError> {
     match args.action {
         IdpAction::CheckServer => check_server(device, args)
             .await
             .map(IdpPackageResponse::CheckServer),
-        IdpAction::DownloadAndInstall => {
-            download_and_install(device, transfer_locks, args, caller, request_id)
-                .await
-                .map(IdpPackageResponse::DownloadAndInstall)
-        }
-        IdpAction::Rollback => rollback(device, transfer_locks, args, caller, request_id)
-            .await
-            .map(IdpPackageResponse::Rollback),
+        IdpAction::DownloadAndInstall => download_and_install(
+            device,
+            transfer_locks,
+            confirmations,
+            args,
+            caller,
+            device_identity,
+            request_id,
+        )
+        .await
+        .map(IdpPackageResponse::DownloadAndInstall),
+        IdpAction::Rollback => rollback(
+            device,
+            transfer_locks,
+            confirmations,
+            args,
+            caller,
+            device_identity,
+            request_id,
+        )
+        .await
+        .map(IdpPackageResponse::Rollback),
     }
 }
 
@@ -646,8 +668,8 @@ pub enum DownloadAndInstallResponse {
 ///   * On `already_at_target`, returns `Ok(AlreadyAtTarget(...))`.
 ///   * Otherwise, builds the plan and returns
 ///     `Err(SignaturePackageConfirmationRequired { plan })` so the caller
-///     can re-call with `confirm=true`.
-/// * `args.confirm == true`:
+///     can re-call with `confirm=true` and the issued `confirmation_token`.
+/// * `args.confirm == true` with `args.confirmation_token`:
 ///   * Per-router lock acquired **first** (closes TOCTOU per design D4),
 ///     then pre-flight re-runs under the lock.
 ///   * 12-phase pipeline: download → poll → install → poll → verify.
@@ -655,34 +677,68 @@ pub enum DownloadAndInstallResponse {
 pub async fn download_and_install(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<DownloadAndInstallResponse, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
     }
 
-    // Call 1 — no lock yet, just preview + plan.
-    if !args.confirm {
-        let (snapshot, _blockers) = preflight(device, args).await?;
-        match build_plan(&snapshot, args.version.as_deref(), &[]) {
-            PlanOutcome::AlreadyAtTarget(resp) => {
-                Ok(DownloadAndInstallResponse::AlreadyAtTarget(resp))
-            }
-            PlanOutcome::NeedsConfirmation(plan) => {
-                let plan_value = serde_json::to_value(&plan)
-                    .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
-                Err(SrxError::SignaturePackageConfirmationRequired {
-                    router: args.router.clone(),
-                    plan: plan_value,
-                })
+    let confirmation_token = confirmation_token_for_request(
+        args.confirm,
+        args.confirmation_token.as_deref(),
+        &args.router,
+    )?;
+    let binding = ConfirmationBinding::new(caller, &args.router, device_identity);
+
+    // Call 1 — no lock yet, just preview + server-issued plan.
+    match confirmation_token {
+        None => {
+            let (snapshot, _blockers) = preflight(device, args).await?;
+            match build_plan(&snapshot, args.version.as_deref(), &[]) {
+                PlanOutcome::AlreadyAtTarget(resp) => {
+                    Ok(DownloadAndInstallResponse::AlreadyAtTarget(resp))
+                }
+                PlanOutcome::NeedsConfirmation(plan) => {
+                    let plan_value = serde_json::to_value(&plan).map_err(|e| {
+                        SrxError::Parse(format!("serializing ConfirmationPlan: {e}"))
+                    })?;
+                    let plan_value = confirmations
+                        .issue(plan_value, binding, request_id)
+                        .map_err(|e| e.into_srx_error(&args.router))?;
+                    Err(SrxError::SignaturePackageConfirmationRequired {
+                        router: args.router.clone(),
+                        plan: plan_value,
+                    })
+                }
             }
         }
-    } else {
-        // Call 2 — lock-first, then re-run pre-flight under the lock.
-        let _permit = transfer_locks.acquire(&args.router).await;
-        run_destructive(device, args, caller, request_id).await
+        Some(token) => {
+            confirmations
+                .validate_binding(token, &binding)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+
+            // Call 2 — lock-first, re-run pre-flight, compare the exact plan, then
+            // atomically consume the one-time artifact before any destructive RPC.
+            let _permit = transfer_locks.acquire(&args.router).await;
+            let (snapshot, _blockers) = preflight(device, args).await?;
+            let current_plan = match build_plan(&snapshot, args.version.as_deref(), &[]) {
+                PlanOutcome::NeedsConfirmation(plan) => serde_json::to_value(&plan)
+                    .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?,
+                PlanOutcome::AlreadyAtTarget(_) => {
+                    return Err(SrxError::SignaturePackageConfirmationPlanDrift {
+                        router: args.router.clone(),
+                    })
+                }
+            };
+            let confirmed = confirmations
+                .consume(token, &binding, &current_plan)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            run_destructive(device, args, caller, &confirmed.correlation_id, snapshot).await
+        }
     }
 }
 
@@ -740,12 +796,10 @@ async fn run_destructive(
     args: &IdpPackageArgs,
     caller: Option<&str>,
     request_id: &str,
+    snapshot: IdpCheckServerData,
 ) -> Result<DownloadAndInstallResponse, SrxError> {
     let started = tokio::time::Instant::now();
     let outer_budget = clamp_timeout(args.timeout);
-
-    // Phase 3: re-run pre-flight under the lock (TOCTOU guard per design D4).
-    let (snapshot, _blockers) = preflight(device, args).await?;
 
     // Resolve target: pinned wins over check_server's latest.
     let target = match args.version.as_deref() {
@@ -1110,7 +1164,7 @@ pub enum RollbackResponse {
 ///     `Err(SignaturePackageNoRollbackTarget)`.
 ///   * Otherwise builds the plan and returns
 ///     `Err(SignaturePackageConfirmationRequired { plan })`.
-/// * `args.confirm == true`:
+/// * `args.confirm == true` with `args.confirmation_token`:
 ///   * Per-router lock acquired **first** (TOCTOU per design D4), then
 ///     pre-flight re-runs under the lock.
 ///   * Fires `request-idp-security-package-rollback`. Per design §"IDP
@@ -1121,26 +1175,51 @@ pub enum RollbackResponse {
 pub async fn rollback(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<RollbackResponse, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
     }
 
-    if !args.confirm {
-        let (snapshot, _blockers) = preflight_rollback(device, args).await?;
-        let plan = build_rollback_plan(&snapshot, &[])?;
-        let plan_value = serde_json::to_value(&plan)
-            .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
-        Err(SrxError::SignaturePackageConfirmationRequired {
-            router: args.router.clone(),
-            plan: plan_value,
-        })
-    } else {
-        let _permit = transfer_locks.acquire(&args.router).await;
-        run_rollback_destructive(device, args, caller, request_id).await
+    let confirmation_token = confirmation_token_for_request(
+        args.confirm,
+        args.confirmation_token.as_deref(),
+        &args.router,
+    )?;
+    let binding = ConfirmationBinding::new(caller, &args.router, device_identity);
+
+    match confirmation_token {
+        None => {
+            let (snapshot, _blockers) = preflight_rollback(device, args).await?;
+            let plan = build_rollback_plan(&snapshot, &[])?;
+            let plan_value = serde_json::to_value(&plan)
+                .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
+            let plan_value = confirmations
+                .issue(plan_value, binding, request_id)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            Err(SrxError::SignaturePackageConfirmationRequired {
+                router: args.router.clone(),
+                plan: plan_value,
+            })
+        }
+        Some(token) => {
+            confirmations
+                .validate_binding(token, &binding)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            let _permit = transfer_locks.acquire(&args.router).await;
+            let (snapshot, _blockers) = preflight_rollback(device, args).await?;
+            let current_plan = serde_json::to_value(build_rollback_plan(&snapshot, &[])?)
+                .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
+            let confirmed = confirmations
+                .consume(token, &binding, &current_plan)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            run_rollback_destructive(device, args, caller, &confirmed.correlation_id, snapshot)
+                .await
+        }
     }
 }
 
@@ -1209,11 +1288,9 @@ async fn run_rollback_destructive(
     args: &IdpPackageArgs,
     caller: Option<&str>,
     request_id: &str,
+    snapshot: IdpCheckServerData,
 ) -> Result<RollbackResponse, SrxError> {
     let started = tokio::time::Instant::now();
-
-    // Phase 3: re-run pre-flight under the lock.
-    let (snapshot, _blockers) = preflight_rollback(device, args).await?;
 
     let target = snapshot
         .nodes

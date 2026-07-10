@@ -33,12 +33,33 @@ pub enum SrxError {
     // MCP callers pattern-match on the bracketed `code=...` token.
     // ---------------------------------------------------------------------
     #[error(
-        "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true; plan: {plan}"
+        "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true and the plan's confirmation_token; plan: {plan}"
     )]
     SignaturePackageConfirmationRequired {
         router: String,
         plan: serde_json::Value,
     },
+
+    #[error(
+        "[code=confirmation_token_required] router={router}: confirm=true requires the server-issued confirmation_token from a fresh preview"
+    )]
+    SignaturePackageConfirmationTokenRequired { router: String },
+
+    #[error("[code=confirmation_token_invalid] router={router}: {reason}")]
+    SignaturePackageConfirmationTokenInvalid {
+        router: String,
+        reason: &'static str,
+    },
+
+    #[error(
+        "[code=confirmation_plan_drift] router={router}: device state or requested plan changed; request and review a new preview"
+    )]
+    SignaturePackageConfirmationPlanDrift { router: String },
+
+    #[error(
+        "[code=confirmation_capacity_exceeded] router={router}: too many pending confirmations; retry after existing confirmations expire"
+    )]
+    SignaturePackageConfirmationCapacityExceeded { router: String },
 
     #[error("[code=license_inactive] router={router}: feature license '{feature}' not active")]
     SignaturePackageLicenseInactive { router: String, feature: String },
@@ -174,6 +195,21 @@ mod tests {
         .to_string();
         assert!(s.contains("[code=confirmation_required]"), "got {s}");
         assert!(s.contains("vsrx-test10"), "got {s}");
+    }
+
+    #[test]
+    fn confirmation_token_errors_have_stable_codes() {
+        let required = SrxError::SignaturePackageConfirmationTokenRequired {
+            router: "vsrx-test10".into(),
+        }
+        .to_string();
+        assert!(required.contains("[code=confirmation_token_required]"));
+
+        let drift = SrxError::SignaturePackageConfirmationPlanDrift {
+            router: "vsrx-test10".into(),
+        }
+        .to_string();
+        assert!(drift.contains("[code=confirmation_plan_drift]"));
     }
 
     #[test]

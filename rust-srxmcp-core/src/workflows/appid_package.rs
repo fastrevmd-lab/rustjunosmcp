@@ -41,7 +41,9 @@
 //! * `<request-appid-application-package-uninstall-status/>` (flat) →
 //!   `<apppack-uninstall-status><apppack-uninstall-status-detail>`.
 
-use crate::workflows::signature_package::Service;
+use crate::workflows::signature_package::{
+    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore, Service,
+};
 use crate::SrxError;
 use rust_junosmcp_core::device_manager::PooledDevice;
 use rust_junosmcp_core::tools::transfer_file::TransferLocks;
@@ -95,6 +97,10 @@ pub struct AppidPackageArgs {
     /// Required for destructive actions (`download_and_install`, `uninstall`).
     #[serde(default)]
     pub confirm: bool,
+    /// Opaque, short-lived artifact returned by the preview call. A bare
+    /// `confirm=true` is never sufficient to authorize a destructive action.
+    #[serde(default)]
+    pub confirmation_token: Option<String>,
     /// Per-call outer budget in seconds. Default 600s, cap 1800s.
     #[serde(default)]
     pub timeout: Option<u64>,
@@ -492,22 +498,38 @@ pub enum AppidPackageResponse {
 pub async fn run(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<AppidPackageResponse, SrxError> {
     match args.action {
         AppidAction::CheckServer => check_server(device, args)
             .await
             .map(AppidPackageResponse::CheckServer),
-        AppidAction::DownloadAndInstall => {
-            download_and_install(device, transfer_locks, args, caller, request_id)
-                .await
-                .map(AppidPackageResponse::DownloadAndInstall)
-        }
-        AppidAction::Uninstall => uninstall(device, transfer_locks, args, caller, request_id)
-            .await
-            .map(AppidPackageResponse::Uninstall),
+        AppidAction::DownloadAndInstall => download_and_install(
+            device,
+            transfer_locks,
+            confirmations,
+            args,
+            caller,
+            device_identity,
+            request_id,
+        )
+        .await
+        .map(AppidPackageResponse::DownloadAndInstall),
+        AppidAction::Uninstall => uninstall(
+            device,
+            transfer_locks,
+            confirmations,
+            args,
+            caller,
+            device_identity,
+            request_id,
+        )
+        .await
+        .map(AppidPackageResponse::Uninstall),
     }
 }
 
@@ -541,32 +563,64 @@ pub enum DownloadAndInstallResponse {
 pub async fn download_and_install(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<DownloadAndInstallResponse, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
     }
 
-    if !args.confirm {
-        let (snapshot, _blockers) = preflight(device, args).await?;
-        match build_plan(&snapshot, args.version.as_deref(), &[]) {
-            PlanOutcome::AlreadyAtTarget(resp) => {
-                Ok(DownloadAndInstallResponse::AlreadyAtTarget(resp))
-            }
-            PlanOutcome::NeedsConfirmation(plan) => {
-                let plan_value = serde_json::to_value(&plan)
-                    .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
-                Err(SrxError::SignaturePackageConfirmationRequired {
-                    router: args.router.clone(),
-                    plan: plan_value,
-                })
+    let confirmation_token = confirmation_token_for_request(
+        args.confirm,
+        args.confirmation_token.as_deref(),
+        &args.router,
+    )?;
+    let binding = ConfirmationBinding::new(caller, &args.router, device_identity);
+
+    match confirmation_token {
+        None => {
+            let (snapshot, _blockers) = preflight(device, args).await?;
+            match build_plan(&snapshot, args.version.as_deref(), &[]) {
+                PlanOutcome::AlreadyAtTarget(resp) => {
+                    Ok(DownloadAndInstallResponse::AlreadyAtTarget(resp))
+                }
+                PlanOutcome::NeedsConfirmation(plan) => {
+                    let plan_value = serde_json::to_value(&plan).map_err(|e| {
+                        SrxError::Parse(format!("serializing ConfirmationPlan: {e}"))
+                    })?;
+                    let plan_value = confirmations
+                        .issue(plan_value, binding, request_id)
+                        .map_err(|e| e.into_srx_error(&args.router))?;
+                    Err(SrxError::SignaturePackageConfirmationRequired {
+                        router: args.router.clone(),
+                        plan: plan_value,
+                    })
+                }
             }
         }
-    } else {
-        let _permit = transfer_locks.acquire(&args.router).await;
-        run_install_destructive(device, args, caller, request_id).await
+        Some(token) => {
+            confirmations
+                .validate_binding(token, &binding)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            let _permit = transfer_locks.acquire(&args.router).await;
+            let (snapshot, _blockers) = preflight(device, args).await?;
+            let current_plan = match build_plan(&snapshot, args.version.as_deref(), &[]) {
+                PlanOutcome::NeedsConfirmation(plan) => serde_json::to_value(&plan)
+                    .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?,
+                PlanOutcome::AlreadyAtTarget(_) => {
+                    return Err(SrxError::SignaturePackageConfirmationPlanDrift {
+                        router: args.router.clone(),
+                    })
+                }
+            };
+            let confirmed = confirmations
+                .consume(token, &binding, &current_plan)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            run_install_destructive(device, args, caller, &confirmed.correlation_id, snapshot).await
+        }
     }
 }
 
@@ -670,11 +724,10 @@ async fn run_install_destructive(
     args: &AppidPackageArgs,
     caller: Option<&str>,
     request_id: &str,
+    snapshot: AppidCheckServerData,
 ) -> Result<DownloadAndInstallResponse, SrxError> {
     let started = tokio::time::Instant::now();
     let outer_budget = clamp_timeout(args.timeout);
-
-    let (snapshot, _blockers) = preflight(device, args).await?;
 
     let target = match args.version.as_deref() {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
@@ -1004,32 +1057,58 @@ pub enum UninstallResponse {
 /// Run the `uninstall` verb. Mirror of IDP `rollback` semantics:
 /// * call 1 (confirm=false) → preflight + plan emission as
 ///   `SrxError::SignaturePackageConfirmationRequired { plan }`.
-/// * call 2 (confirm=true) → lock-first, fire `request-appid-application-package-uninstall`,
+/// * call 2 (confirm=true + confirmation_token) → lock-first, validate the
+///   fresh plan, fire `request-appid-application-package-uninstall`,
 ///   poll the matching `-uninstall-status`, then re-read
 ///   `get-appid-package-version` and verify it now reports `N/A`.
 pub async fn uninstall(
     device: &mut PooledDevice,
     transfer_locks: &TransferLocks,
+    confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
+    device_identity: &str,
     request_id: &str,
 ) -> Result<UninstallResponse, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
     }
 
-    if !args.confirm {
-        let (snapshot, _blockers) = preflight_uninstall(device, args).await?;
-        let plan = build_uninstall_plan(&snapshot, &[])?;
-        let plan_value = serde_json::to_value(&plan)
-            .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
-        Err(SrxError::SignaturePackageConfirmationRequired {
-            router: args.router.clone(),
-            plan: plan_value,
-        })
-    } else {
-        let _permit = transfer_locks.acquire(&args.router).await;
-        run_uninstall_destructive(device, args, caller, request_id).await
+    let confirmation_token = confirmation_token_for_request(
+        args.confirm,
+        args.confirmation_token.as_deref(),
+        &args.router,
+    )?;
+    let binding = ConfirmationBinding::new(caller, &args.router, device_identity);
+
+    match confirmation_token {
+        None => {
+            let (snapshot, _blockers) = preflight_uninstall(device, args).await?;
+            let plan = build_uninstall_plan(&snapshot, &[])?;
+            let plan_value = serde_json::to_value(&plan)
+                .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
+            let plan_value = confirmations
+                .issue(plan_value, binding, request_id)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            Err(SrxError::SignaturePackageConfirmationRequired {
+                router: args.router.clone(),
+                plan: plan_value,
+            })
+        }
+        Some(token) => {
+            confirmations
+                .validate_binding(token, &binding)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            let _permit = transfer_locks.acquire(&args.router).await;
+            let (snapshot, _blockers) = preflight_uninstall(device, args).await?;
+            let current_plan = serde_json::to_value(build_uninstall_plan(&snapshot, &[])?)
+                .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;
+            let confirmed = confirmations
+                .consume(token, &binding, &current_plan)
+                .map_err(|e| e.into_srx_error(&args.router))?;
+            run_uninstall_destructive(device, args, caller, &confirmed.correlation_id, snapshot)
+                .await
+        }
     }
 }
 
@@ -1038,11 +1117,10 @@ async fn run_uninstall_destructive(
     args: &AppidPackageArgs,
     caller: Option<&str>,
     request_id: &str,
+    snapshot: AppidCheckServerData,
 ) -> Result<UninstallResponse, SrxError> {
     let started = tokio::time::Instant::now();
     let outer_budget = clamp_timeout(args.timeout);
-
-    let (snapshot, _blockers) = preflight_uninstall(device, args).await?;
 
     let previous = snapshot
         .nodes

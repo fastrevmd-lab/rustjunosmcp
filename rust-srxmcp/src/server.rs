@@ -7,6 +7,9 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_core::tools::transfer_file::TransferLocks;
 use rust_junosmcp_core::DeviceManager;
+use rust_srxmcp_core::workflows::signature_package::{
+    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -55,10 +58,10 @@ pub struct JmcpSrxHandler {
     started: Arc<Instant>,
     device_manager: Arc<DeviceManager>,
     authorization_required: bool,
-    /// Per-router semaphore shared across destructive workflows. Mirrors the
-    /// pattern in `rust-junosmcp/src/server.rs` so a srxmcp `rollback` and a
-    /// junos `upgrade_junos` can never race against the same device.
+    /// Process-local per-router semaphore for SRX destructive workflows.
+    /// Stage 2 of #129 replaces this with a lease shared with rust-junosmcp.
     transfer_locks: Arc<TransferLocks>,
+    confirmation_store: ConfirmationStore,
 }
 
 impl JmcpSrxHandler {
@@ -81,6 +84,7 @@ impl JmcpSrxHandler {
             device_manager,
             authorization_required,
             transfer_locks,
+            confirmation_store: ConfirmationStore::default(),
         }
     }
 
@@ -160,6 +164,48 @@ impl JmcpSrxHandler {
             self.check_router_scope(ctx, tool, router)?;
         }
         Ok(ctx)
+    }
+
+    fn device_identity(&self, router: &str) -> Result<String, rust_junosmcp_core::JmcpError> {
+        let inventory = self.device_manager.inventory();
+        let entry = inventory.get(router)?;
+        Ok(format!(
+            "{}|{}|{}|{}",
+            router, entry.ip, entry.port, entry.username
+        ))
+    }
+
+    fn signature_error_to_rmcp(e: rust_srxmcp_core::SrxError) -> rmcp::ErrorData {
+        match e {
+            rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rmcp::ErrorData::invalid_params(e.to_string(), None)
+            }
+            rust_srxmcp_core::SrxError::SignaturePackageConfirmationRequired { .. }
+            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenRequired { .. }
+            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenInvalid { .. }
+            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationPlanDrift { .. }
+            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationCapacityExceeded { .. } => {
+                rmcp::ErrorData::invalid_request(e.to_string(), None)
+            }
+            _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+        }
+    }
+
+    fn validate_confirmation_request(
+        &self,
+        confirm: bool,
+        token: Option<&str>,
+        caller: Option<&str>,
+        router: &str,
+        device_identity: &str,
+    ) -> Result<(), rust_srxmcp_core::SrxError> {
+        if let Some(token) = confirmation_token_for_request(confirm, token, router)? {
+            let binding = ConfirmationBinding::new(caller, router, device_identity);
+            self.confirmation_store
+                .validate_binding(token, &binding)
+                .map_err(|e| e.into_srx_error(router))?;
+        }
+        Ok(())
     }
 }
 
@@ -387,8 +433,9 @@ impl JmcpSrxHandler {
                        and installs the latest or a pinned `version`), and `rollback` \
                        (reverts to the device's preserved previous package). Destructive \
                        verbs use a two-call confirmation protocol: call 1 with `confirm=false` \
-                       returns `[code=confirmation_required]` carrying a `plan` describing the \
-                       intended change; call 2 with `confirm=true` executes. `download_and_install` \
+                       returns `[code=confirmation_required]` carrying a `plan` and short-lived \
+                       `confirmation_token`; call 2 supplies both `confirm=true` and that token. \
+                       Tokens are caller-bound and one-time. `download_and_install` \
                        short-circuits with `status=already_at_target` when every node already \
                        runs the requested version."
     )]
@@ -407,6 +454,19 @@ impl JmcpSrxHandler {
         };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
+        let device_identity = self.device_identity(&args.router).map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("resolving device identity: {e}"), None)
+        })?;
+        if args.action != rust_srxmcp_core::IdpAction::CheckServer {
+            self.validate_confirmation_request(
+                args.confirm,
+                args.confirmation_token.as_deref(),
+                caller,
+                &args.router,
+                &device_identity,
+            )
+            .map_err(Self::signature_error_to_rmcp)?;
+        }
 
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
@@ -415,24 +475,14 @@ impl JmcpSrxHandler {
         let resp = rust_srxmcp_core::workflows::idp_package::run(
             &mut device,
             &self.transfer_locks,
+            &self.confirmation_store,
             &args,
             caller,
+            &device_identity,
             &request_id,
         )
         .await
-        .map_err(|e| match e {
-            rust_srxmcp_core::SrxError::InvalidInput(_) => {
-                rmcp::ErrorData::invalid_params(e.to_string(), None)
-            }
-            // The two-call confirmation protocol surfaces as a bracketed
-            // `[code=confirmation_required]` error string — InvalidRequest
-            // is the closest JSON-RPC code (caller needs to re-call with
-            // different args).
-            rust_srxmcp_core::SrxError::SignaturePackageConfirmationRequired { .. } => {
-                rmcp::ErrorData::invalid_request(e.to_string(), None)
-            }
-            _ => rmcp::ErrorData::internal_error(e.to_string(), None),
-        })?;
+        .map_err(Self::signature_error_to_rmcp)?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
@@ -449,8 +499,9 @@ impl JmcpSrxHandler {
                        `uninstall` (removes the currently-installed application package and \
                        protocol bundle). Destructive verbs use a two-call confirmation \
                        protocol: call 1 with `confirm=false` returns \
-                       `[code=confirmation_required]` carrying a `plan` describing the \
-                       intended change; call 2 with `confirm=true` executes. \
+                       `[code=confirmation_required]` carrying a `plan` and short-lived \
+                       `confirmation_token`; call 2 supplies both `confirm=true` and that \
+                       caller-bound, one-time token. \
                        `download_and_install` short-circuits with `status=already_at_target` \
                        when every node already runs the requested version."
     )]
@@ -469,6 +520,19 @@ impl JmcpSrxHandler {
         };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
+        let device_identity = self.device_identity(&args.router).map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("resolving device identity: {e}"), None)
+        })?;
+        if args.action != rust_srxmcp_core::AppidAction::CheckServer {
+            self.validate_confirmation_request(
+                args.confirm,
+                args.confirmation_token.as_deref(),
+                caller,
+                &args.router,
+                &device_identity,
+            )
+            .map_err(Self::signature_error_to_rmcp)?;
+        }
 
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
@@ -477,20 +541,14 @@ impl JmcpSrxHandler {
         let resp = rust_srxmcp_core::workflows::appid_package::run(
             &mut device,
             &self.transfer_locks,
+            &self.confirmation_store,
             &args,
             caller,
+            &device_identity,
             &request_id,
         )
         .await
-        .map_err(|e| match e {
-            rust_srxmcp_core::SrxError::InvalidInput(_) => {
-                rmcp::ErrorData::invalid_params(e.to_string(), None)
-            }
-            rust_srxmcp_core::SrxError::SignaturePackageConfirmationRequired { .. } => {
-                rmcp::ErrorData::invalid_request(e.to_string(), None)
-            }
-            _ => rmcp::ErrorData::internal_error(e.to_string(), None),
-        })?;
+        .map_err(Self::signature_error_to_rmcp)?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
@@ -685,5 +743,46 @@ mod scope_tests {
                 .check_router_scope(Some(&ctx), tool, "srx-01")
                 .is_ok());
         }
+    }
+
+    #[test]
+    fn destructive_confirmation_is_checked_before_device_open() {
+        let handler = make_handler(true);
+        let missing = handler.validate_confirmation_request(
+            true,
+            None,
+            Some("alice"),
+            "srx-01",
+            "srx-01|192.0.2.1|830|netconf",
+        );
+        assert!(matches!(
+            missing,
+            Err(rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenRequired { .. })
+        ));
+
+        let binding =
+            ConfirmationBinding::new(Some("alice"), "srx-01", "srx-01|192.0.2.1|830|netconf");
+        let plan = handler
+            .confirmation_store
+            .issue(
+                serde_json::json!({
+                    "code": "confirmation_required",
+                    "router": "srx-01",
+                    "action": "rollback"
+                }),
+                binding,
+                "req-precheck",
+            )
+            .unwrap();
+        let token = plan["confirmation_token"].as_str().unwrap();
+        assert!(handler
+            .validate_confirmation_request(
+                true,
+                Some(token),
+                Some("alice"),
+                "srx-01",
+                "srx-01|192.0.2.1|830|netconf",
+            )
+            .is_ok());
     }
 }
