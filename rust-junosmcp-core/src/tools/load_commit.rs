@@ -5,15 +5,26 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{build_config_payload, excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
+use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use crate::tools::LoadCommitArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 pub async fn handle(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
+) -> Result<Value, JmcpError> {
+    handle_with_cancel(args, dm, policy, CancellationToken::new()).await
+}
+
+pub async fn handle_with_cancel(
+    args: LoadCommitArgs,
+    dm: Arc<DeviceManager>,
+    policy: Arc<Policy>,
+    ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     validate_input_length("config_text", &args.config_text)?;
     // Confirm the router exists before consulting the policy.
@@ -54,79 +65,48 @@ pub async fn handle(
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
 
     let timeout_dur = Duration::from_secs(args.timeout);
-    let confirmed = args.confirm_timeout_mins.is_some();
-    let confirm_timeout_mins = args.confirm_timeout_mins;
-    let commit_comment = args.commit_comment.clone();
+    let confirmed = args.confirm_timeout_mins;
+    let mode = match confirmed {
+        Some(mins) => CandidateMode::CommitConfirmed(mins * 60),
+        None => CandidateMode::CommitWithComment(args.commit_comment.clone()),
+    };
+    let result = candidate_transaction::run(
+        &dm,
+        &args.router_name,
+        CandidateRequest {
+            payload: Some(payload),
+            mode,
+        },
+        timeout_dur,
+        &ct,
+    )
+    .await?;
 
-    let result = tokio::time::timeout(timeout_dur, async {
-        let mut dev = dm.open(&args.router_name).await?;
-        let mut cfg = dev.config()?;
-
-        cfg.lock().await?;
-
-        // Run load -> diff -> commit in an inner block so cleanup runs on every
-        // exit after a successful lock. Previously a `cfg.diff().await?` (or
-        // `load`) failure propagated out before the unlock/rollback, leaving a
-        // loaded, LOCKED candidate on the pooled session that poisoned the next
-        // request. Now: always unlock, and roll back the candidate on any
-        // pre-commit error (load/diff). A *successful* commit is NOT rolled back.
-        let outcome: Result<Value, JmcpError> = async {
-            cfg.load(payload).await?;
-            let diff = cfg.diff().await?.unwrap_or_default();
-
-            let commit_result = if let Some(mins) = confirm_timeout_mins {
-                let seconds = mins * 60;
-                // rustez's commit_confirmed API does not accept a log comment;
-                // the comment is noted in the response but not sent to the device.
-                cfg.commit_confirmed(seconds).await
-            } else {
-                cfg.commit_with_comment(&commit_comment).await
-            };
-
-            match commit_result {
-                Ok(_) => {
-                    let mut obj = json!({ "success": true, "diff": diff });
-                    if confirmed {
-                        let mins = confirm_timeout_mins.unwrap();
-                        obj["confirmed"] = json!(true);
-                        obj["rollback_in_minutes"] = json!(mins);
-                        obj["message"] = json!(format!(
-                            "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
-                             Send another commit to confirm.",
-                            mins
-                        ));
-                        if !commit_comment.is_empty() {
-                            obj["note"] = json!(
-                                "commit_comment is not applied during confirmed commits \
-                                 (rustez API limitation)"
-                            );
-                        }
-                    }
-                    Ok(obj)
-                }
-                Err(e) => {
-                    // Commit failed: discard the candidate, report the error.
-                    let _ = cfg.rollback(0).await;
-                    Ok(json!({ "success": false, "diff": diff, "error": e.to_string() }))
+    match result {
+        CandidateResult::Committed { diff } => {
+            let mut obj = json!({ "success": true, "diff": diff });
+            if let Some(mins) = confirmed {
+                obj["confirmed"] = json!(true);
+                obj["rollback_in_minutes"] = json!(mins);
+                obj["message"] = json!(format!(
+                    "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
+                     Send another commit to confirm.",
+                    mins
+                ));
+                if !args.commit_comment.is_empty() {
+                    obj["note"] = json!(
+                        "commit_comment is not applied during confirmed commits \
+                         (rustez API limitation)"
+                    );
                 }
             }
+            Ok(obj)
         }
-        .await;
-
-        // Cleanup on every post-lock exit. Roll back only on a pre-commit error
-        // (load/diff) — a committed change is left in place, and the
-        // commit-failure branch above already rolled back.
-        if outcome.is_err() {
-            let _ = cfg.rollback(0).await;
+        CandidateResult::CommitFailed { diff, error } => {
+            Ok(json!({ "success": false, "diff": diff, "error": error }))
         }
-        let _ = cfg.unlock().await;
-
-        outcome
-    })
-    .await
-    .map_err(|_| JmcpError::Timeout(timeout_dur))??;
-
-    Ok(result)
+        _ => unreachable!("load/commit transaction returned the wrong result kind"),
+    }
 }
 
 #[cfg(test)]

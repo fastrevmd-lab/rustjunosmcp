@@ -384,6 +384,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<LoadCommitArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "load_and_commit_config") {
@@ -393,7 +394,8 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
         Self::to_call_result(
-            load_commit::handle(args, self.dm.clone(), self.policy.load_full()).await,
+            load_commit::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct)
+                .await,
         )
     }
 
@@ -405,6 +407,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<CommitCheckArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "commit_check_config") {
@@ -414,7 +417,8 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
         Self::to_call_result(
-            commit_check::handle(args, self.dm.clone(), self.policy.load_full()).await,
+            commit_check::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct)
+                .await,
         )
     }
 
@@ -426,6 +430,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<DiscardCandidateArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "discard_candidate") {
@@ -434,7 +439,7 @@ impl JmcpHandler {
         if let Err(e) = self.check_router_scope(ctx, "discard_candidate", &args.router_name) {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(discard_candidate::handle(args, self.dm.clone()).await)
+        Self::to_call_result(discard_candidate::handle_with_cancel(args, self.dm.clone(), ct).await)
     }
 
     #[tool(
@@ -486,6 +491,7 @@ impl JmcpHandler {
         &self,
         Parameters(args): Parameters<TemplateArgs>,
         extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
         if let Err(e) = self.check_tool_scope(ctx, "render_and_apply_j2_template") {
@@ -504,7 +510,9 @@ impl JmcpHandler {
                 return Self::scope_to_call_result(e);
             }
         }
-        Self::to_call_result(template::handle(args, self.dm.clone(), self.policy.load_full()).await)
+        Self::to_call_result(
+            template::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await,
+        )
     }
 
     #[tool(

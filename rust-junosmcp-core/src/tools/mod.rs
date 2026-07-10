@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 pub mod add_device;
 pub mod batch;
+pub(crate) mod candidate_transaction;
 pub mod commit_check;
 pub mod config_diff;
 pub mod discard_candidate;

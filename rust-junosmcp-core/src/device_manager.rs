@@ -216,12 +216,25 @@ impl SessionPool {
 
 /// RAII wrapper around `Device` that returns the session to the pool on drop.
 ///
-/// If the config-db is left open (e.g. tool crashed between lock and unlock),
-/// the session is closed instead of pooled.
+/// If candidate state is uncertain or the config DB is left open, the session
+/// is closed instead of pooled.
 pub struct PooledDevice {
     dev: Option<Device>,
     router_name: String,
     pool: Arc<SessionPool>,
+    reuse_allowed: bool,
+}
+
+impl PooledDevice {
+    /// Keep a session with uncertain candidate state out of the pool.
+    pub(crate) fn prevent_reuse(&mut self) {
+        self.reuse_allowed = false;
+    }
+
+    /// Re-enable pooling only after candidate cleanup completed successfully.
+    pub(crate) fn allow_reuse(&mut self) {
+        self.reuse_allowed = true;
+    }
 }
 
 impl Deref for PooledDevice {
@@ -243,8 +256,8 @@ impl Drop for PooledDevice {
             let Ok(handle) = tokio::runtime::Handle::try_current() else {
                 return; // No runtime — session leaks but process doesn't crash
             };
-            if dev.is_config_db_open() {
-                // Config DB left open — cannot reuse, must close.
+            if !self.reuse_allowed || dev.is_config_db_open() {
+                // Candidate state is uncertain or a config DB was left open.
                 handle.spawn(async move {
                     let mut d = dev;
                     let _ = d.close().await;
@@ -357,6 +370,7 @@ impl DeviceManager {
                 dev: Some(dev),
                 router_name: router_name.to_string(),
                 pool: self.pool.clone(),
+                reuse_allowed: true,
             });
         }
 
@@ -471,6 +485,7 @@ impl DeviceManager {
             dev: Some(dev),
             router_name: router_name.to_string(),
             pool: self.pool.clone(),
+            reuse_allowed: true,
         })
     }
 }

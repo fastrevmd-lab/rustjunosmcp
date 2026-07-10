@@ -6,15 +6,26 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{build_config_payload, excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
+use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use crate::tools::CommitCheckArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 pub async fn handle(
     args: CommitCheckArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
+) -> Result<Value, JmcpError> {
+    handle_with_cancel(args, dm, policy, CancellationToken::new()).await
+}
+
+pub async fn handle_with_cancel(
+    args: CommitCheckArgs,
+    dm: Arc<DeviceManager>,
+    policy: Arc<Policy>,
+    ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     validate_input_length("config_text", &args.config_text)?;
     // Confirm the router exists before consulting the policy.
@@ -55,38 +66,27 @@ pub async fn handle(
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
     let timeout_dur = Duration::from_secs(args.timeout);
 
-    let result = tokio::time::timeout(timeout_dur, async {
-        let mut dev = dm.open(&args.router_name).await?;
-        let mut cfg = dev.config()?;
-
-        cfg.lock().await?;
-
-        // After a successful lock, cleanup MUST run on every exit path:
-        // discard the candidate (rollback) and release the lock, so a pooled
-        // session is never left loaded-and-locked. Run load/diff/check in an
-        // inner block, then clean up unconditionally regardless of outcome.
-        let outcome: Result<(String, Result<(), rustez::RustEzError>), JmcpError> = async {
-            cfg.load(payload).await?;
-            let diff = cfg.diff().await?.unwrap_or_default();
-            let check = cfg.commit_check().await;
-            Ok((diff, check))
+    match candidate_transaction::run(
+        &dm,
+        &args.router_name,
+        CandidateRequest {
+            payload: Some(payload),
+            mode: CandidateMode::CommitCheck,
+        },
+        timeout_dur,
+        &ct,
+    )
+    .await?
+    {
+        CandidateResult::CommitCheck { diff, error: None } => {
+            Ok(json!({ "success": true, "diff": diff, "checked_only": true }))
         }
-        .await;
-
-        let _ = cfg.rollback(0).await;
-        let _ = cfg.unlock().await;
-
-        let (diff, check_result) = outcome?;
-        let result = match check_result {
-            Ok(_) => json!({ "success": true, "diff": diff, "checked_only": true }),
-            Err(e) => json!({ "success": false, "diff": diff, "error": e.to_string() }),
-        };
-        Ok::<_, JmcpError>(result)
-    })
-    .await
-    .map_err(|_| JmcpError::Timeout(timeout_dur))??;
-
-    Ok(result)
+        CandidateResult::CommitCheck {
+            diff,
+            error: Some(error),
+        } => Ok(json!({ "success": false, "diff": diff, "error": error })),
+        _ => unreachable!("commit-check transaction returned the wrong result kind"),
+    }
 }
 
 #[cfg(test)]

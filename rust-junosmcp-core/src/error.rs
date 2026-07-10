@@ -153,6 +153,15 @@ pub enum JmcpError {
     #[error("operation cancelled by client [code=cancelled]")]
     Cancelled,
 
+    #[error(
+        "candidate cleanup failed [code=candidate_cleanup_failed]: primary={primary}; rollback={rollback}; unlock={unlock}"
+    )]
+    CandidateCleanupFailed {
+        primary: String,
+        rollback: String,
+        unlock: String,
+    },
+
     #[error(transparent)]
     Rustez(Box<rustez::RustEzError>),
 

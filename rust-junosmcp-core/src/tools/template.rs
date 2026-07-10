@@ -75,9 +75,11 @@ pub(crate) fn detect_format(rendered: &str) -> &'static str {
 use crate::device_manager::DeviceManager;
 use crate::helpers::build_config_payload;
 use crate::policy::Policy;
+use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use crate::tools::TemplateArgs;
 use serde_json::json;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Resolve the router-selector args to a single canonical Vec<String>.
 /// Rejects both-supplied; rejects empty `router_names`; allows neither
@@ -100,6 +102,15 @@ pub async fn handle(
     args: TemplateArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
+) -> Result<serde_json::Value, JmcpError> {
+    handle_with_cancel(args, dm, policy, CancellationToken::new()).await
+}
+
+pub async fn handle_with_cancel(
+    args: TemplateArgs,
+    dm: Arc<DeviceManager>,
+    policy: Arc<Policy>,
+    ct: CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
     let routers = resolve_routers(&args)?;
 
@@ -148,6 +159,7 @@ pub async fn handle(
     }
 
     // Apply path: per-router blocklist on the rendered output, then commit.
+    let payload = build_config_payload(rendered.clone(), Some(&format))?;
     let mut rows: Vec<serde_json::Value> = Vec::with_capacity(routers.len());
     for r in &routers {
         match policy.check_config(r, &format, &rendered)? {
@@ -179,15 +191,16 @@ pub async fn handle(
 
         let row = match commit_one(
             r,
-            &rendered,
-            &format,
+            payload.clone(),
             &args.commit_comment,
             args.dry_run,
             &dm,
             Duration::from_secs(args.timeout),
+            &ct,
         )
         .await
         {
+            Err(JmcpError::Cancelled) => return Err(JmcpError::Cancelled),
             Ok(diff_or_id) => {
                 if args.dry_run {
                     json!({
@@ -227,45 +240,36 @@ pub async fn handle(
 /// should treat the apply-mode return value as the comment that was used.
 async fn commit_one(
     router: &str,
-    rendered: &str,
-    format: &str,
+    payload: rustez::ConfigPayload,
     commit_comment: &str,
     dry_run: bool,
     dm: &Arc<DeviceManager>,
     timeout: Duration,
+    ct: &CancellationToken,
 ) -> Result<String, JmcpError> {
-    let payload = build_config_payload(rendered.to_string(), Some(format))?;
     let commit_comment = commit_comment.to_string();
-
-    tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(router).await?;
-        let mut cfg = dev.config()?;
-
-        cfg.lock().await?;
-        if let Err(e) = cfg.load(payload).await {
-            let _ = cfg.unlock().await;
-            return Err(JmcpError::from(e));
-        }
-        let diff = cfg.diff().await?.unwrap_or_default();
-
-        let result = if dry_run {
-            let _ = cfg.rollback(0).await;
-            Ok(diff)
-        } else {
-            match cfg.commit_with_comment(&commit_comment).await {
-                Ok(_) => Ok(commit_comment.clone()),
-                Err(e) => {
-                    let _ = cfg.rollback(0).await;
-                    Err(JmcpError::from(e))
-                }
-            }
-        };
-
-        let _ = cfg.unlock().await;
-        result
-    })
-    .await
-    .map_err(|_| JmcpError::Timeout(timeout))?
+    let mode = if dry_run {
+        CandidateMode::DryRun
+    } else {
+        CandidateMode::CommitWithComment(commit_comment.clone())
+    };
+    match candidate_transaction::run(
+        dm,
+        router,
+        CandidateRequest {
+            payload: Some(payload),
+            mode,
+        },
+        timeout,
+        ct,
+    )
+    .await?
+    {
+        CandidateResult::DryRun { diff } => Ok(diff),
+        CandidateResult::Committed { .. } => Ok(commit_comment),
+        CandidateResult::CommitFailed { error, .. } => Err(JmcpError::Validation(error)),
+        _ => unreachable!("template transaction returned the wrong result kind"),
+    }
 }
 
 #[cfg(test)]
