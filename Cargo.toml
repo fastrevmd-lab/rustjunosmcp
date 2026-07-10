@@ -22,7 +22,6 @@ schemars     = "1.0"
 anyhow       = "1"
 rustez       = "0.12.1"
 globset      = "0.4"
-# rmcp 0.x — pinned at task 16; placeholder here
 
 # auth + remote transport (sub-project #2)
 arc-swap         = "1"

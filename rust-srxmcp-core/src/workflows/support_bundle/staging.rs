@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 /// Default staging directory if `JMCP_SRX_STAGING_DIR` is unset.
-pub const DEFAULT_STAGING_DIR: &str = "/var/lib/rust-srxmcp/staging/bundles";
+pub const DEFAULT_STAGING_DIR: &str = "/var/lib/jmcp/srx-staging/bundles";
 
 /// Default staging cap if `JMCP_SRX_STAGING_MAX_BYTES` is unset (500 MiB).
 pub const DEFAULT_STAGING_MAX_BYTES: u64 = 500 * 1024 * 1024;
@@ -320,6 +320,11 @@ pub fn enforce_staging_cap(_cap_bytes: u64) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_staging_dir_matches_packaged_systemd_write_path() {
+        assert!(DEFAULT_STAGING_DIR.starts_with("/var/lib/jmcp/"));
+    }
 
     #[test]
     fn path_components_accept_expected_ids() {

@@ -55,3 +55,38 @@ jobs:
       - run: cargo install cargo-audit --locked
       - working-directory: RustJunosMCP
         run: cargo audit
+
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout RustJunosMCP
+        uses: actions/checkout@v5
+        with:
+          path: RustJunosMCP
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: RustJunosMCP
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck packaging scripts
+        working-directory: RustJunosMCP
+        run: shellcheck scripts/package-lxc.sh scripts/test-lxc-distributions.sh packaging/lxc/install.sh packaging/tests/*.sh
+
+      - name: Build LXC package
+        working-directory: RustJunosMCP
+        run: ./scripts/package-lxc.sh
+
+      - name: Package and MCP endpoint smoke test
+        working-directory: RustJunosMCP
+        run: ./packaging/tests/package-smoke.sh dist/rust-junosmcp_*_amd64.tar.gz
+
+      - name: Debian and Ubuntu install smoke tests
+        working-directory: RustJunosMCP
+        run: ./scripts/test-lxc-distributions.sh dist/rust-junosmcp_*_amd64.tar.gz
