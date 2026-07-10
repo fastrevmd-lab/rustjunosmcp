@@ -5,14 +5,11 @@ MCP server for Juniper **SRX-specific** operational workflows. Sibling to
 and SSH/NETCONF plumbing, but runs as an independent binary on a separate
 port so the generic Junos MCP service is unaffected.
 
-## Status (v0.1.0)
+## Status (v0.3.x)
 
-Phase 1B + Phase 2 — read-only SRX status tools plus destructive
-signature-package lifecycle tools. Tool surface is 8: one diagnostic, four
-typed read-only workflows backed by NETCONF RPCs (`SrxToolResponse<T>`
-envelopes with `state=active` / `state=not_configured`), and two
-destructive lifecycle tools that use a two-call confirmation protocol
-with per-router transfer locks.
+The server exposes nine SRX-specific tools covering status, chassis-cluster
+health, VPN lifecycle, licensing, security services, signature-package
+lifecycle, and JTAC support-bundle collection.
 
 ## Tools
 
@@ -25,6 +22,8 @@ with per-router transfer locks.
 | `vpn_lifecycle_report` | Correlated IKE Phase-1 + IPsec Phase-2 view with optional `peer` / `tunnel` substring filters |
 | `manage_idp_security_package` | **DESTRUCTIVE** — IDP signature-package lifecycle. Actions: `check_server`, `download_and_install`, `rollback`. Two-call confirmation. |
 | `manage_appid_signature_package` | **DESTRUCTIVE** — AppID application signature-package lifecycle. Actions: `check_server`, `download_and_install`, `uninstall`. Two-call confirmation. |
+| `validate_chassis_cluster_health` | Runs the full chassis-cluster diagnostic set and returns ordered findings with a rolled-up verdict. |
+| `collect_jtac_support_bundle` | Collects and redacts a JTAC-ready diagnostic bundle. |
 
 ## Build
 
@@ -42,24 +41,48 @@ cargo run   -p rust-srxmcp -- --help
 
 ```bash
 rust-srxmcp \
+    --host 127.0.0.1 \
     --tokens-file /etc/jmcp/tokens.json \
     --device-mapping /etc/jmcp/devices.json
 ```
 
-Default HTTP port: **30032** (overridable with `--port` /
-`JMCP_SRX_HTTP_PORT`). The companion `rust-junosmcp` listens on 30031.
+The secure default bind is **127.0.0.1:30032** (overridable with `--host`,
+`--port`, `JMCP_SRX_HTTP_HOST`, and `JMCP_SRX_HTTP_PORT`). The companion
+`rust-junosmcp` defaults to port 30030.
 
 The two binaries share `/etc/jmcp/tokens.json` and `/etc/jmcp/devices.json`
 but have independent systemd units and independent process lifecycles.
 
 ## Endpoint
 
-```
-http://<host>:30032/mcp
+For a local plaintext deployment, the endpoint is
+`http://127.0.0.1:30032/mcp`. Bearer-token authentication remains required.
+
+### Remote TLS deployment
+
+Non-loopback binds require TLS by default:
+
+```bash
+rust-srxmcp \
+    --host 0.0.0.0 \
+    --tokens-file /etc/jmcp/tokens.json \
+    --device-mapping /etc/jmcp/devices.json \
+    --tls-cert /etc/jmcp/tls/server.crt \
+    --tls-key /etc/jmcp/tls/server.key \
+    --allowed-host srxmcp.example.internal
 ```
 
-Streamable-HTTP MCP, bearer-token auth (RFC 6750), `Authorization: Bearer
-<token>` required on every call.
+The endpoint is then `https://srxmcp.example.internal:30032/mcp`.
+
+`--allow-insecure-bind` permits authenticated plaintext HTTP on a non-loopback
+address. Use it only when a trusted reverse proxy or service mesh provides
+transport security. `--allow-no-auth` is always restricted to a loopback bind;
+TLS and `--allow-insecure-bind` do not override that restriction.
+
+Host-header validation is independent of TLS and bearer authentication.
+Off-loopback clients must send an authority listed with `--allowed-host`
+(repeatable). `--disable-host-check` disables this DNS-rebinding defense and is
+not recommended.
 
 ## Hot reload
 
@@ -74,9 +97,9 @@ in-flight requests are dropped.
 
 | | `rust-junosmcp` | `rust-srxmcp` |
 |---|---|---|
-| Crate version | `0.6.x` | `0.1.x` |
-| Default port | 30031 | 30032 |
-| Tool surface | 15 generic Junos tools | 5 SRX-specific tools |
+| Crate version | `0.7.x` | `0.3.x` |
+| Default port | 30030 | 30032 |
+| Tool surface | 17 generic Junos tools | 9 SRX-specific tools |
 | Auth | shared `rust-junosmcp-auth` crate | shared `rust-junosmcp-auth` crate |
 | Inventory | shared `devices.json` | shared `devices.json` |
 

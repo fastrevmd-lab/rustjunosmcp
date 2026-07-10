@@ -8,9 +8,12 @@ Type=simple
 User=jmcp
 Group=jmcp
 Environment=JMCP_SRX_HTTP_PORT=30032
+Environment=JMCP_SRX_HTTP_HOST=127.0.0.1
 Environment=JMCP_TOKENS_PATH=/etc/jmcp/tokens.json
 Environment=JMCP_DEVICES_PATH=/etc/jmcp/devices.json
 Environment=RUST_LOG=info
+# Secure default: loopback-only plaintext. For remote access, provision a
+# certificate/key and add --host, --tls-cert, --tls-key, and --allowed-host.
 ExecStart=/usr/local/bin/rust-srxmcp --tokens-file /etc/jmcp/tokens.json --device-mapping /etc/jmcp/devices.json
 Restart=on-failure
 RestartSec=5
