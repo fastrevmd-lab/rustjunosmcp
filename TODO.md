@@ -18,7 +18,7 @@ and should not be duplicated as implementation checklists here.
   Make the published container support SCP file tools (high).
 - [x] [#128](https://github.com/fastrevmd-lab/RustJunosMCP/issues/128)
   Repair and test LXC and systemd packaging (high).
-- [ ] [#129](https://github.com/fastrevmd-lab/RustJunosMCP/issues/129)
+- [x] [#129](https://github.com/fastrevmd-lab/RustJunosMCP/issues/129)
   Bind destructive confirmations to server-issued plans (high).
 - [ ] [#130](https://github.com/fastrevmd-lab/RustJunosMCP/issues/130)
   Filter `get_router_list` by caller router scope (medium).

@@ -40,9 +40,17 @@ fn lists_seventeen_tools() {
     // Empty inventory file is enough for `tools/list`.
     let inv = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(inv.path(), "{}").unwrap();
+    let device_lease_dir = tempfile::tempdir().unwrap();
 
     let mut child = Command::new(binary_path())
-        .args(["-f", inv.path().to_str().unwrap(), "-t", "stdio"])
+        .args([
+            "-f",
+            inv.path().to_str().unwrap(),
+            "-t",
+            "stdio",
+            "--device-lease-dir",
+            device_lease_dir.path().to_str().unwrap(),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -146,9 +154,17 @@ fn denied_command_returns_tool_error() {
         }"#,
     )
     .unwrap();
+    let device_lease_dir = tempfile::tempdir().unwrap();
 
     let mut child = Command::new(binary_path())
-        .args(["-f", inv.path().to_str().unwrap(), "-t", "stdio"])
+        .args([
+            "-f",
+            inv.path().to_str().unwrap(),
+            "-t",
+            "stdio",
+            "--device-lease-dir",
+            device_lease_dir.path().to_str().unwrap(),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

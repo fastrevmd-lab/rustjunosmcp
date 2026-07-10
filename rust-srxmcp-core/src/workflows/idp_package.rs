@@ -43,7 +43,7 @@ use crate::workflows::signature_package::{
 };
 use crate::SrxError;
 use rust_junosmcp_core::device_manager::PooledDevice;
-use rust_junosmcp_core::tools::transfer_file::TransferLocks;
+use rust_junosmcp_core::DeviceLeaseManager;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -580,16 +580,16 @@ pub enum IdpPackageResponse {
 /// Single entry point used by the MCP handler. Matches on `args.action` and
 /// fans out to the per-verb implementations.
 ///
-/// * `transfer_locks` — per-router lock map (shared with `transfer_file` and
-///   `upgrade_junos`). Ignored by `check_server`; required for the destructive
-///   verbs to enforce the lock-first ordering documented in design §D4.
+/// * `device_leases` — kernel-backed per-router leases shared across the Junos
+///   and SRX processes. Ignored by `check_server`; required for destructive
+///   verbs to enforce lock-first preflight and execution.
 /// * `caller` — `token_name` of the authenticated bearer token, or `None`
 ///   under stdio. Surfaces in audit lines.
 /// * `request_id` — short unique tag the handler generates per call so the
 ///   audit log can correlate phases of a single workflow run.
 pub async fn run(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
@@ -602,7 +602,7 @@ pub async fn run(
             .map(IdpPackageResponse::CheckServer),
         IdpAction::DownloadAndInstall => download_and_install(
             device,
-            transfer_locks,
+            device_leases,
             confirmations,
             args,
             caller,
@@ -613,7 +613,7 @@ pub async fn run(
         .map(IdpPackageResponse::DownloadAndInstall),
         IdpAction::Rollback => rollback(
             device,
-            transfer_locks,
+            device_leases,
             confirmations,
             args,
             caller,
@@ -676,7 +676,7 @@ pub enum DownloadAndInstallResponse {
 ///   * Returns `Ok(Completed(...))` on terminal success.
 pub async fn download_and_install(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
@@ -717,13 +717,20 @@ pub async fn download_and_install(
             }
         }
         Some(token) => {
-            confirmations
+            let validated = confirmations
                 .validate_binding(token, &binding)
                 .map_err(|e| e.into_srx_error(&args.router))?;
 
-            // Call 2 — lock-first, re-run pre-flight, compare the exact plan, then
-            // atomically consume the one-time artifact before any destructive RPC.
-            let _permit = transfer_locks.acquire(&args.router).await;
+            // Call 2 — take the cross-process lease first, re-run pre-flight,
+            // compare the exact plan, then atomically consume the one-time
+            // artifact before any destructive RPC.
+            let _lease = device_leases
+                .acquire(
+                    &args.router,
+                    "manage_idp_security_package/download_and_install",
+                    &validated.correlation_id,
+                )
+                .await?;
             let (snapshot, _blockers) = preflight(device, args).await?;
             let current_plan = match build_plan(&snapshot, args.version.as_deref(), &[]) {
                 PlanOutcome::NeedsConfirmation(plan) => serde_json::to_value(&plan)
@@ -1174,7 +1181,7 @@ pub enum RollbackResponse {
 ///   * Returns `Ok(Completed(...))` on terminal success.
 pub async fn rollback(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &IdpPackageArgs,
     caller: Option<&str>,
@@ -1207,10 +1214,16 @@ pub async fn rollback(
             })
         }
         Some(token) => {
-            confirmations
+            let validated = confirmations
                 .validate_binding(token, &binding)
                 .map_err(|e| e.into_srx_error(&args.router))?;
-            let _permit = transfer_locks.acquire(&args.router).await;
+            let _lease = device_leases
+                .acquire(
+                    &args.router,
+                    "manage_idp_security_package/rollback",
+                    &validated.correlation_id,
+                )
+                .await?;
             let (snapshot, _blockers) = preflight_rollback(device, args).await?;
             let current_plan = serde_json::to_value(build_rollback_plan(&snapshot, &[])?)
                 .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;

@@ -23,6 +23,7 @@ fn write_self_signed(dir: &Path) -> (PathBuf, PathBuf) {
 
 fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server {
     let port = pick_port();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let mut child = Command::new(binary_path())
         .args([
             "--host",
@@ -37,6 +38,8 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
             cert.to_str().unwrap(),
             "--tls-key",
             key.to_str().unwrap(),
+            "--device-lease-dir",
+            device_lease_dir.path().to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -67,6 +70,7 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
         child,
         port,
         _stderr_drain: drain,
+        _device_lease_dir: device_lease_dir,
     }
 }
 

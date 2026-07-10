@@ -106,8 +106,18 @@ async fn main() -> Result<()> {
         ),
         accept_new_host_keys: args.ssh_accept_new_host_keys,
     };
+    let device_leases = std::sync::Arc::new(
+        rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)
+            .with_context(|| {
+                format!(
+                    "initializing device leases in {}",
+                    args.device_lease_dir.display()
+                )
+            })?,
+    );
     let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
         transfer_cfg: transfer_cfg.clone(),
+        device_leases,
     };
     let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg, upgrade_cfg);
 

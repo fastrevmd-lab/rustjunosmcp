@@ -69,7 +69,7 @@ use tokio::sync::Semaphore;
 
 /// Map of `(router, "support_bundle") → Semaphore(1)` used to serialize
 /// concurrent `collect_jtac_support_bundle` calls against the same router.
-/// Distinct from Phase 2's `TransferLocks` (which keys on staging filename).
+/// Distinct from destructive workflow `DeviceLeaseManager` leases.
 /// The semaphore is permit=1 (mutex semantics) and lives in-process for
 /// the lifetime of the binary.
 fn staging_key_locks() -> &'static Mutex<BTreeMap<String, Arc<Semaphore>>> {

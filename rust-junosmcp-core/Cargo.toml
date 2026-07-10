@@ -24,3 +24,6 @@ minijinja    = { workspace = true }
 arc-swap     = { workspace = true }
 tempfile     = { workspace = true }
 sha2         = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

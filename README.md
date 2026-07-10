@@ -22,7 +22,7 @@ Benchmarked against [Juniper/junos-mcp-server](https://github.com/Juniper/junos-
 (Python/PyEZ) on the same vSRX lab devices, same network path.
 
 | Test | rust-junosmcp (v0.3.0) | junos-mcp (Python) | Speedup |
-|------|------------------------|--------------------|---------| 
+|------|------------------------|--------------------|---------|
 | 5 sequential commands | 30.4s (6.1s/cmd) | 52.2s (10.4s/cmd) | **1.7x** |
 | 5 parallel commands | 8.1s (1.6s/cmd) | 11.1s (2.2s/cmd) | **1.4x** |
 | 4 routers x 3 commands (batch) | 16.1s (1.3s/cmd) | N/A | Rust-only |
@@ -193,8 +193,11 @@ via `auth.private_key_path` in `devices.json`.
 | ----------------------------- | --------------------------------------------- | ------------ | ----------- |
 | `/var/lib/jmcp/staging/`      | Host-side stage for files awaiting transfer  | `0750`       | `jmcp:jmcp` |
 | `/etc/jmcp/known_hosts`       | SSH `known_hosts` consulted for every push    | `0644`       | `jmcp:jmcp` |
+| `/var/lib/jmcp/device-leases` | Shared Junos/SRX destructive-operation locks | `0700`       | `jmcp:jmcp` |
 
-Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
+Override at startup with `--staging-dir <path>`, `--known-hosts-file <path>`,
+and `--device-lease-dir <path>`. Junos and SRX services must use the same
+device lease directory.
 
 **Host-key policy (v0.5.2+):** scp runs with `StrictHostKeyChecking=yes` by
 default — unknown device host keys are refused. The `known_hosts` file must
@@ -528,6 +531,9 @@ Options:
       --allow-password-auth-add
           Permit add_device to accept auth.type=password (mutually exclusive
           with --inventory-readonly)
+      --device-lease-dir <DEVICE_LEASE_DIR>
+          Shared directory for cross-process destructive-operation leases
+          [default: /var/lib/jmcp/device-leases]
       --allowed-host <HOST>
           Additional Host authorities to accept on the streamable-http
           endpoint, beyond the loopback defaults (localhost, 127.0.0.1, ::1).

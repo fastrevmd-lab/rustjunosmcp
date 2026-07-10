@@ -12,6 +12,7 @@ Environment=JMCP_SRX_HTTP_HOST=127.0.0.1
 Environment=JMCP_TOKENS_PATH=/etc/jmcp/tokens.json
 Environment=JMCP_DEVICES_PATH=/etc/jmcp/devices.json
 Environment=JMCP_SRX_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles
+Environment=JMCP_DEVICE_LEASE_DIR=/var/lib/jmcp/device-leases
 Environment=RUST_LOG=info
 # Secure default: loopback-only plaintext. For remote access, provision a
 # certificate/key and add --host, --tls-cert, --tls-key, and --allowed-host.
@@ -38,9 +39,8 @@ RestrictSUIDSGID=true
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 
-# Independent of rust-junosmcp.service. The two binaries share
-# /etc/jmcp/tokens.json and /etc/jmcp/devices.json but otherwise run
-# under separate unit lifecycles.
+# Independent process lifecycle from rust-junosmcp.service. Both services use
+# /var/lib/jmcp/device-leases for kernel-backed destructive-operation leases.
 
 [Install]
 WantedBy=multi-user.target

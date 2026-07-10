@@ -2,7 +2,7 @@
 //! `JmcpSrxHandler` with a known start instant, invokes the test-only
 //! body, and asserts the response shape.
 
-use rust_junosmcp_core::{DeviceManager, Inventory};
+use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager, Inventory};
 use rust_srxmcp::server::{JmcpSrxHandler, SrxmcpStatusArgs};
 use std::io::Write;
 use std::sync::Arc;
@@ -16,9 +16,9 @@ async fn srxmcp_status_returns_version_endpoint_and_uptime() {
     let dev_manager = Arc::new(DeviceManager::new(inv));
 
     let started = Arc::new(Instant::now());
-    let transfer_locks =
-        Arc::new(rust_junosmcp_core::tools::transfer_file::TransferLocks::default());
-    let handler = JmcpSrxHandler::new(started.clone(), dev_manager, transfer_locks);
+    let lease_dir = tempfile::tempdir().unwrap();
+    let device_leases = Arc::new(DeviceLeaseManager::for_directory(lease_dir.path()).unwrap());
+    let handler = JmcpSrxHandler::new(started.clone(), dev_manager, device_leases);
 
     // Small delay so uptime > 0 ms (still 0 seconds, fine).
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;

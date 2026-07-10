@@ -61,9 +61,11 @@ UNIT_DIR="$(target_path /etc/systemd/system)"
 STATE_DIR="$(target_path /var/lib/jmcp)"
 JUNOS_STAGING_DIR="$STATE_DIR/staging"
 SRX_STAGING_DIR="$STATE_DIR/srx-staging/bundles"
+DEVICE_LEASE_DIR="$STATE_DIR/device-leases"
 
 install -d -m 0755 "$BIN_DIR" "$UNIT_DIR"
 install -d -m 0750 "$CONFIG_DIR" "$STATE_DIR" "$JUNOS_STAGING_DIR" "$SRX_STAGING_DIR"
+install -d -m 0700 "$DEVICE_LEASE_DIR"
 
 install -m 0755 "$PACKAGE_ROOT/usr/local/bin/rust-junosmcp" "$BIN_DIR/rust-junosmcp"
 install -m 0755 "$PACKAGE_ROOT/usr/local/bin/rust-srxmcp" "$BIN_DIR/rust-srxmcp"

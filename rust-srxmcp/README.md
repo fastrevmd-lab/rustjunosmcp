@@ -53,6 +53,14 @@ The secure default bind is **127.0.0.1:30032** (overridable with `--host`,
 The two binaries share `/etc/jmcp/tokens.json` and `/etc/jmcp/devices.json`
 but have independent systemd units and independent process lifecycles.
 
+Both binaries must also use the same device lease directory (default
+`/var/lib/jmcp/device-leases`). Kernel-backed file locks serialize Junos
+upgrades with destructive IDP/AppID package operations for the same inventory
+router. A process crash closes its file descriptor and releases the lease;
+waiters return `device_lease_busy` after 30 seconds instead of waiting forever.
+Lock files are persistent metadata records and must not be manually deleted
+while either service is running.
+
 ## Destructive confirmations
 
 IDP and AppID package changes require a fresh preview. Call the destructive

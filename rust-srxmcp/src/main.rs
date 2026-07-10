@@ -89,15 +89,20 @@ async fn main() -> Result<()> {
     // ── Handler ──────────────────────────────────────────────────────────────
 
     let started = Arc::new(Instant::now());
-    // Shared per-router lock map. Destructive sig-package workflows acquire
-    // a permit before pre-flight re-runs (design D4 lock-first ordering).
-    let transfer_locks =
-        Arc::new(rust_junosmcp_core::tools::transfer_file::TransferLocks::default());
+    let device_leases = Arc::new(
+        rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)
+            .with_context(|| {
+                format!(
+                    "initializing device leases in {}",
+                    args.device_lease_dir.display()
+                )
+            })?,
+    );
     let authorization_required = token_store.is_some();
     let handler = JmcpSrxHandler::new_with_authorization(
         started,
         dev_manager.clone(),
-        transfer_locks,
+        device_leases,
         authorization_required,
     );
 

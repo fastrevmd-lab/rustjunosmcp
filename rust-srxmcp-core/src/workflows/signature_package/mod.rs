@@ -20,7 +20,7 @@ pub mod preflight;
 
 pub use confirmation::{
     confirmation_token_for_request, ConfirmationBinding, ConfirmationError, ConfirmationStore,
-    ConfirmedPlan,
+    ConfirmedPlan, ValidatedPlan,
 };
 pub use plan::{
     AlreadyAtTargetResponse, ConfirmationPlan, ConfirmationRequiredTag, DownloadAndInstallAction,

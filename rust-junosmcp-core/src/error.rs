@@ -154,6 +154,14 @@ pub enum JmcpError {
     Cancelled,
 
     #[error(
+        "device lease busy [code=device_lease_busy]: router '{router}' remained locked by another destructive workflow after {waited_secs}s"
+    )]
+    DeviceLeaseBusy { router: String, waited_secs: u64 },
+
+    #[error("device lease failed [code=device_lease_error]: router '{router}': {detail}")]
+    DeviceLeaseError { router: String, detail: String },
+
+    #[error(
         "candidate cleanup failed [code=candidate_cleanup_failed]: primary={primary}; rollback={rollback}; unlock={unlock}"
     )]
     CandidateCleanupFailed {
@@ -620,6 +628,23 @@ mod tests {
         let s = JmcpError::Cancelled.to_string();
         assert!(s.contains("[code=cancelled]"), "got {s}");
         assert!(s.contains("cancelled by client"), "got {s}");
+    }
+
+    #[test]
+    fn device_lease_errors_have_stable_codes() {
+        let busy = JmcpError::DeviceLeaseBusy {
+            router: "srx-01".into(),
+            waited_secs: 30,
+        }
+        .to_string();
+        assert!(busy.contains("[code=device_lease_busy]"));
+
+        let failed = JmcpError::DeviceLeaseError {
+            router: "srx-01".into(),
+            detail: "permission denied".into(),
+        }
+        .to_string();
+        assert!(failed.contains("[code=device_lease_error]"));
     }
 
     #[test]

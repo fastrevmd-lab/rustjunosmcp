@@ -2441,6 +2441,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "globset",
+ "libc",
  "minijinja",
  "rustez",
  "schemars",

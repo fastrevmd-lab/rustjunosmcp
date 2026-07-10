@@ -70,6 +70,10 @@ pub struct Cli {
     #[arg(long, default_value = "/etc/jmcp/known_hosts")]
     pub known_hosts_file: PathBuf,
 
+    /// Shared directory for cross-process destructive-operation leases.
+    #[arg(long, default_value = "/var/lib/jmcp/device-leases")]
+    pub device_lease_dir: PathBuf,
+
     /// Accept and pin new device host keys on first contact (TOFU,
     /// `StrictHostKeyChecking=accept-new`). Off by default — the server
     /// uses `StrictHostKeyChecking=yes` and requires a pre-populated
@@ -202,6 +206,10 @@ mod tests {
         assert_eq!(
             cli.known_hosts_file,
             std::path::PathBuf::from("/etc/jmcp/known_hosts")
+        );
+        assert_eq!(
+            cli.device_lease_dir,
+            std::path::PathBuf::from("/var/lib/jmcp/device-leases")
         );
     }
 

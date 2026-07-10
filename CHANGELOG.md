@@ -6,6 +6,14 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **#129 stage 2 - cross-process destructive-operation lease.**
+  `upgrade_junos` now shares a kernel-backed per-device lease with the SRX IDP
+  and AppID package workflows. It re-runs device preflight under the lease and
+  holds it through transfer, install, reboot verification, and post-baseline.
+  Lease acquisition and every upgrade phase carry one correlation ID.
+
 ## [0.7.0] — 2026-07-03
 
 ### Added

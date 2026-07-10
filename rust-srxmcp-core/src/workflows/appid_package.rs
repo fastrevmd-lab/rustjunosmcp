@@ -46,7 +46,7 @@ use crate::workflows::signature_package::{
 };
 use crate::SrxError;
 use rust_junosmcp_core::device_manager::PooledDevice;
-use rust_junosmcp_core::tools::transfer_file::TransferLocks;
+use rust_junosmcp_core::DeviceLeaseManager;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -497,7 +497,7 @@ pub enum AppidPackageResponse {
 
 pub async fn run(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
@@ -510,7 +510,7 @@ pub async fn run(
             .map(AppidPackageResponse::CheckServer),
         AppidAction::DownloadAndInstall => download_and_install(
             device,
-            transfer_locks,
+            device_leases,
             confirmations,
             args,
             caller,
@@ -521,7 +521,7 @@ pub async fn run(
         .map(AppidPackageResponse::DownloadAndInstall),
         AppidAction::Uninstall => uninstall(
             device,
-            transfer_locks,
+            device_leases,
             confirmations,
             args,
             caller,
@@ -562,7 +562,7 @@ pub enum DownloadAndInstallResponse {
 
 pub async fn download_and_install(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
@@ -602,10 +602,16 @@ pub async fn download_and_install(
             }
         }
         Some(token) => {
-            confirmations
+            let validated = confirmations
                 .validate_binding(token, &binding)
                 .map_err(|e| e.into_srx_error(&args.router))?;
-            let _permit = transfer_locks.acquire(&args.router).await;
+            let _lease = device_leases
+                .acquire(
+                    &args.router,
+                    "manage_appid_signature_package/download_and_install",
+                    &validated.correlation_id,
+                )
+                .await?;
             let (snapshot, _blockers) = preflight(device, args).await?;
             let current_plan = match build_plan(&snapshot, args.version.as_deref(), &[]) {
                 PlanOutcome::NeedsConfirmation(plan) => serde_json::to_value(&plan)
@@ -1063,7 +1069,7 @@ pub enum UninstallResponse {
 ///   `get-appid-package-version` and verify it now reports `N/A`.
 pub async fn uninstall(
     device: &mut PooledDevice,
-    transfer_locks: &TransferLocks,
+    device_leases: &DeviceLeaseManager,
     confirmations: &ConfirmationStore,
     args: &AppidPackageArgs,
     caller: Option<&str>,
@@ -1096,10 +1102,16 @@ pub async fn uninstall(
             })
         }
         Some(token) => {
-            confirmations
+            let validated = confirmations
                 .validate_binding(token, &binding)
                 .map_err(|e| e.into_srx_error(&args.router))?;
-            let _permit = transfer_locks.acquire(&args.router).await;
+            let _lease = device_leases
+                .acquire(
+                    &args.router,
+                    "manage_appid_signature_package/uninstall",
+                    &validated.correlation_id,
+                )
+                .await?;
             let (snapshot, _blockers) = preflight_uninstall(device, args).await?;
             let current_plan = serde_json::to_value(build_uninstall_plan(&snapshot, &[])?)
                 .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;

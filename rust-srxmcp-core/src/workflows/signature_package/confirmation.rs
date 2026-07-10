@@ -43,6 +43,11 @@ pub struct ConfirmedPlan {
     pub correlation_id: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedPlan {
+    pub correlation_id: String,
+}
+
 pub fn confirmation_token_for_request<'a>(
     confirm: bool,
     token: Option<&'a str>,
@@ -188,7 +193,7 @@ impl ConfirmationStore {
         &self,
         token: &str,
         binding: &ConfirmationBinding,
-    ) -> Result<(), ConfirmationError> {
+    ) -> Result<ValidatedPlan, ConfirmationError> {
         let token_digest = digest_bytes(token.as_bytes());
         let now = Instant::now();
         let mut entries = self.entries();
@@ -225,7 +230,9 @@ impl ConfirmationStore {
             );
             return Err(ConfirmationError::BindingMismatch);
         }
-        Ok(())
+        Ok(ValidatedPlan {
+            correlation_id: pending.correlation_id,
+        })
     }
 
     /// Validate all bindings and the freshly recomputed plan, then consume the

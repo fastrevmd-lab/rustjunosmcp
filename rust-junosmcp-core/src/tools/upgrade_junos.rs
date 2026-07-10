@@ -570,6 +570,7 @@ use crate::tools::transfer_file::{
     sha256_file_cancellable, validate_source_basename, TransferConfig,
 };
 use crate::tools::UpgradeJunosArgs;
+use crate::DeviceLeaseManager;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -581,6 +582,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct UpgradeConfig {
     pub transfer_cfg: TransferConfig,
+    pub device_leases: Arc<DeviceLeaseManager>,
 }
 
 async fn gather_facts(
@@ -685,9 +687,10 @@ pub async fn handle(
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
     ct: CancellationToken,
+    correlation_id: String,
 ) -> Result<serde_json::Value, JmcpError> {
     let timeout = std::time::Duration::from_secs(args.timeout);
-    tokio::time::timeout(timeout, run(args, dm, cfg, ct))
+    tokio::time::timeout(timeout, run(args, dm, cfg, ct, correlation_id))
         .await
         .map_err(|_| JmcpError::UpgradeOuterTimeout(timeout))?
 }
@@ -697,6 +700,7 @@ async fn run(
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
     ct: CancellationToken,
+    correlation_id: String,
 ) -> Result<serde_json::Value, JmcpError> {
     // Issue #44 Half A: short-circuit if already cancelled before entry.
     if ct.is_cancelled() {
@@ -766,7 +770,7 @@ async fn run(
     .await?;
 
     // 7. Pure preflight decision.
-    dispatch_preflight(&args, &facts, dm.clone(), &cfg, &ct).await
+    dispatch_preflight(&args, &facts, dm.clone(), &cfg, &ct, &correlation_id).await
 }
 
 /// Translate a PreflightDecision into a handle() outcome. Task 9
@@ -777,8 +781,43 @@ async fn dispatch_preflight(
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
     ct: &CancellationToken,
+    correlation_id: &str,
 ) -> Result<serde_json::Value, JmcpError> {
-    match evaluate_preflight(facts, args) {
+    let initial_decision = evaluate_preflight(facts, args);
+    if !matches!(initial_decision, PreflightDecision::Proceed) {
+        return finish_preflight(initial_decision, args);
+    }
+
+    let _lease = cfg
+        .device_leases
+        .acquire_cancellable(&args.router_name, "upgrade_junos", correlation_id, ct)
+        .await?;
+
+    // Re-read every device fact after acquiring the shared lease. This closes
+    // the gap where an SRX package operation could change device state between
+    // the initial preview/preflight and the Junos upgrade's destructive path.
+    let locked_facts = gather_facts(
+        &args.router_name,
+        dm.clone(),
+        facts.image_basename.clone(),
+        facts.local_image_size,
+        facts.local_image_sha256,
+        ct,
+    )
+    .await?;
+    let locked_decision = evaluate_preflight(&locked_facts, args);
+    if !matches!(locked_decision, PreflightDecision::Proceed) {
+        return finish_preflight(locked_decision, args);
+    }
+
+    run_destructive(args, &locked_facts, dm, cfg, ct, correlation_id).await
+}
+
+fn finish_preflight(
+    decision: PreflightDecision,
+    args: &UpgradeJunosArgs,
+) -> Result<serde_json::Value, JmcpError> {
+    match decision {
         PreflightDecision::ClusterUnsupported => Err(JmcpError::UpgradeClusterUnsupported {
             router: args.router_name.clone(),
         }),
@@ -816,7 +855,7 @@ async fn dispatch_preflight(
         PreflightDecision::ConfirmationRequired(payload) => {
             Err(JmcpError::ConfirmationRequired { payload })
         }
-        PreflightDecision::Proceed => run_destructive(args, facts, dm.clone(), cfg, ct).await,
+        PreflightDecision::Proceed => unreachable!("Proceed is handled while holding the lease"),
     }
 }
 
@@ -826,6 +865,7 @@ async fn run_destructive(
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
     ct: &CancellationToken,
+    correlation_id: &str,
 ) -> Result<serde_json::Value, JmcpError> {
     use std::time::Instant;
     let started = Instant::now();
@@ -833,6 +873,7 @@ async fn run_destructive(
 
     tracing::info!(
         router = %args.router_name,
+        correlation_id,
         phase = "destructive_entry",
         "upgrade_junos.phase_diag"
     );
@@ -842,6 +883,7 @@ async fn run_destructive(
     let phase1_done = Instant::now();
     tracing::info!(
         router = %args.router_name,
+        correlation_id,
         phase = "pre_baseline_done",
         "upgrade_junos.phase_diag"
     );
@@ -856,6 +898,7 @@ async fn run_destructive(
     let transfer_args = build_transfer_args(args);
     tracing::info!(
         router = %args.router_name,
+        correlation_id,
         phase = "transfer_start",
         "upgrade_junos.phase_diag"
     );
@@ -869,6 +912,7 @@ async fn run_destructive(
     let phase2_done = Instant::now();
     tracing::info!(
         router = %args.router_name,
+        correlation_id,
         phase = "transfer_done",
         "upgrade_junos.phase_diag"
     );
@@ -893,6 +937,7 @@ async fn run_destructive(
                     if ct.is_cancelled() {
                         tracing::warn!(
                             router = %args.router_name,
+                            correlation_id,
                             phase = "install_rpc",
                             "upgrade_junos.cancel_diag: cancel observed after install RPC; \
                              device upgrade already committed server-side"
@@ -916,6 +961,12 @@ async fn run_destructive(
         Err(e) => return Err(e),
     };
     let phase3_done = Instant::now();
+    tracing::info!(
+        router = %args.router_name,
+        correlation_id,
+        phase = "install_rpc_done",
+        "upgrade_junos.phase_diag"
+    );
 
     let _ = install_stdout;
 
@@ -949,17 +1000,29 @@ async fn run_destructive(
     };
     let _ = &post_version_output;
     let phase4_done = Instant::now();
+    tracing::info!(
+        router = %args.router_name,
+        correlation_id,
+        phase = "reboot_verified",
+        "upgrade_junos.phase_diag"
+    );
     // The reboot wait and post-verify are now one budgeted loop; report the
     // full wait under reboot_wait and leave post-verify at zero.
     let phase5_done = phase4_done;
 
     // Phase 6: post-baseline.
     let post_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
+    tracing::info!(
+        router = %args.router_name,
+        correlation_id,
+        phase = "post_baseline_done",
+        "upgrade_junos.phase_diag"
+    );
 
     // Phase 7: assemble success response.
     let from_version =
         parse_junos_version(&facts.version_output).unwrap_or_else(|| "<unknown>".to_string());
-    Ok(build_success_response(BuildSuccessArgs {
+    let mut response = build_success_response(BuildSuccessArgs {
         router: &args.router_name,
         from_version: &from_version,
         to_version: &args.target_version,
@@ -973,7 +1036,9 @@ async fn run_destructive(
         postverify_secs: (phase5_done - phase4_done).as_secs(),
         pre_baseline: &pre_baseline,
         post_baseline: &post_baseline,
-    }))
+    });
+    response["correlation_id"] = serde_json::Value::String(correlation_id.to_string());
+    Ok(response)
 }
 
 /// Build the `TransferFileArgs` snapshot passed to `transfer_file::handle`
@@ -1079,6 +1144,9 @@ mod handle_early_exit_tests {
                 // dedicated pre-check tests in transfer_file.rs.
                 accept_new_host_keys: true,
             },
+            device_leases: Arc::new(
+                DeviceLeaseManager::for_directory(dir.join("device-leases")).unwrap(),
+            ),
         }
     }
 
@@ -1128,6 +1196,7 @@ mod handle_early_exit_tests {
             dm,
             cfg(dir.path()),
             CancellationToken::new(),
+            "test-rejects-bad-basename".into(),
         )
         .await;
         assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
@@ -1147,6 +1216,7 @@ mod handle_early_exit_tests {
             dm,
             cfg(dir.path()),
             CancellationToken::new(),
+            "test-unknown-router".into(),
         )
         .await;
         assert!(matches!(r, Err(crate::error::JmcpError::UnknownRouter(_))));
@@ -1166,6 +1236,7 @@ mod handle_early_exit_tests {
             dm,
             cfg(dir.path()),
             CancellationToken::new(),
+            "test-password-auth".into(),
         )
         .await;
         assert!(matches!(r, Err(crate::error::JmcpError::UnsupportedAuth(ref s)) if s == "r1"));
@@ -1184,6 +1255,7 @@ mod handle_early_exit_tests {
             dm,
             cfg(dir.path()),
             CancellationToken::new(),
+            "test-missing-file".into(),
         )
         .await;
         assert!(matches!(r, Err(crate::error::JmcpError::BadSourcePath(_))));
@@ -1207,7 +1279,13 @@ mod handle_early_exit_tests {
         ct.cancel();
         let r = tokio::time::timeout(
             std::time::Duration::from_millis(200),
-            handle(args("r1", "missing.tgz"), dm, cfg(dir.path()), ct),
+            handle(
+                args("r1", "missing.tgz"),
+                dm,
+                cfg(dir.path()),
+                ct,
+                "test-pre-cancelled".into(),
+            ),
         )
         .await
         .expect("handle should return well within 200ms when pre-cancelled");

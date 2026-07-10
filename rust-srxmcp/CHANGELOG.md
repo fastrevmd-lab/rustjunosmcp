@@ -9,6 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **#129 stage 2 - cross-process destructive-operation races.** Junos upgrades
+  and destructive SRX IDP/AppID package actions now hold the same kernel-backed
+  per-device file lease across locked preflight and execution. Lease waits are
+  bounded, cancellation-aware for upgrades, and audited with one correlation
+  ID. The kernel releases leases on process exit/crash; persistent lock files
+  retain last-owner metadata and are never used as the lock-state authority.
 - **#129 stage 1 - destructive signature-package confirmation bypass.**
   IDP and AppID previews now issue 256-bit, five-minute, one-time confirmation
   tokens. Execution binds the token to the authenticated caller, inventory

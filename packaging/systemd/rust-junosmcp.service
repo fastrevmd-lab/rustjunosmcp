@@ -13,6 +13,7 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --host 127.0.0.1 \
     --port 30030 \
     --tokens-file /etc/jmcp/tokens.json \
+    --device-lease-dir /var/lib/jmcp/device-leases \
     --inventory-readonly
 Restart=on-failure
 RestartSec=5

@@ -5,8 +5,7 @@ use rmcp::model::{
     CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
-use rust_junosmcp_core::tools::transfer_file::TransferLocks;
-use rust_junosmcp_core::DeviceManager;
+use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager};
 use rust_srxmcp_core::workflows::signature_package::{
     confirmation_token_for_request, ConfirmationBinding, ConfirmationStore,
 };
@@ -58,9 +57,7 @@ pub struct JmcpSrxHandler {
     started: Arc<Instant>,
     device_manager: Arc<DeviceManager>,
     authorization_required: bool,
-    /// Process-local per-router semaphore for SRX destructive workflows.
-    /// Stage 2 of #129 replaces this with a lease shared with rust-junosmcp.
-    transfer_locks: Arc<TransferLocks>,
+    device_leases: Arc<DeviceLeaseManager>,
     confirmation_store: ConfirmationStore,
 }
 
@@ -68,22 +65,22 @@ impl JmcpSrxHandler {
     pub fn new(
         started: Arc<Instant>,
         device_manager: Arc<DeviceManager>,
-        transfer_locks: Arc<TransferLocks>,
+        device_leases: Arc<DeviceLeaseManager>,
     ) -> Self {
-        Self::new_with_authorization(started, device_manager, transfer_locks, false)
+        Self::new_with_authorization(started, device_manager, device_leases, false)
     }
 
     pub fn new_with_authorization(
         started: Arc<Instant>,
         device_manager: Arc<DeviceManager>,
-        transfer_locks: Arc<TransferLocks>,
+        device_leases: Arc<DeviceLeaseManager>,
         authorization_required: bool,
     ) -> Self {
         Self {
             started,
             device_manager,
             authorization_required,
-            transfer_locks,
+            device_leases,
             confirmation_store: ConfirmationStore::default(),
         }
     }
@@ -187,6 +184,9 @@ impl JmcpSrxHandler {
             | rust_srxmcp_core::SrxError::SignaturePackageConfirmationCapacityExceeded { .. } => {
                 rmcp::ErrorData::invalid_request(e.to_string(), None)
             }
+            rust_srxmcp_core::SrxError::Transport(
+                rust_junosmcp_core::JmcpError::DeviceLeaseBusy { .. },
+            ) => rmcp::ErrorData::invalid_request(e.to_string(), None),
             _ => rmcp::ErrorData::internal_error(e.to_string(), None),
         }
     }
@@ -474,7 +474,7 @@ impl JmcpSrxHandler {
             })?;
         let resp = rust_srxmcp_core::workflows::idp_package::run(
             &mut device,
-            &self.transfer_locks,
+            &self.device_leases,
             &self.confirmation_store,
             &args,
             caller,
@@ -540,7 +540,7 @@ impl JmcpSrxHandler {
             })?;
         let resp = rust_srxmcp_core::workflows::appid_package::run(
             &mut device,
-            &self.transfer_locks,
+            &self.device_leases,
             &self.confirmation_store,
             &args,
             caller,
@@ -694,11 +694,12 @@ mod scope_tests {
     fn make_handler(authorization_required: bool) -> JmcpSrxHandler {
         let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
         let device_manager = Arc::new(DeviceManager::new(inventory));
-        let transfer_locks = Arc::new(TransferLocks::default());
+        let lease_dir = tempfile::tempdir().unwrap();
+        let device_leases = Arc::new(DeviceLeaseManager::for_directory(lease_dir.path()).unwrap());
         JmcpSrxHandler::new_with_authorization(
             Arc::new(Instant::now()),
             device_manager,
-            transfer_locks,
+            device_leases,
             authorization_required,
         )
     }

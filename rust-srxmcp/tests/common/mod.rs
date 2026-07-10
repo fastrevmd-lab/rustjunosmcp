@@ -41,6 +41,7 @@ pub struct Server {
     pub child: Child,
     pub port: u16,
     pub _stderr_drain: std::thread::JoinHandle<()>,
+    pub _device_lease_dir: tempfile::TempDir,
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -51,7 +52,7 @@ impl Drop for Server {
 
 /// Wait for the readiness line and spawn a stderr-drain thread; panics if the
 /// server doesn't announce within 15s.
-fn finish_spawn(mut child: Child, port: u16) -> Server {
+fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir) -> Server {
     let stderr = child.stderr.take().unwrap();
     let mut reader = BufReader::new(stderr);
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -90,6 +91,7 @@ fn finish_spawn(mut child: Child, port: u16) -> Server {
         child,
         port,
         _stderr_drain: drain,
+        _device_lease_dir: device_lease_dir,
     }
 }
 
@@ -97,6 +99,7 @@ fn finish_spawn(mut child: Child, port: u16) -> Server {
 pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
     let port = pick_port();
     let port_s = port.to_string();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let child = Command::new(binary_path())
         .args([
             "--host",
@@ -107,18 +110,21 @@ pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
             inv_path.to_str().unwrap(),
             "--tokens-file",
             tokens_path.to_str().unwrap(),
+            "--device-lease-dir",
+            device_lease_dir.path().to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn");
-    finish_spawn(child, port)
+    finish_spawn(child, port, device_lease_dir)
 }
 
 /// Spawn with `--allow-no-auth` (no auth layer) + extra args (host-allowlist flags).
 pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
     let port = pick_port();
     let port_s = port.to_string();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let mut argv = vec![
         "--host",
         "127.0.0.1",
@@ -127,6 +133,8 @@ pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
         "--device-mapping",
         inv_path.to_str().unwrap(),
         "--allow-no-auth",
+        "--device-lease-dir",
+        device_lease_dir.path().to_str().unwrap(),
     ];
     argv.extend_from_slice(extra);
     let child = Command::new(binary_path())
@@ -135,7 +143,7 @@ pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn");
-    finish_spawn(child, port)
+    finish_spawn(child, port, device_lease_dir)
 }
 
 pub struct PostResult {

@@ -45,6 +45,14 @@ fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::Ca
     })
 }
 
+fn mint_request_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("req-{nanos}")
+}
+
 /// Outcome of an `upgrade_junos` call, as observed by `UpgradeAuditGuard`.
 ///
 /// - `Settled`: the normal Ok/Err path completed; the match arms below
@@ -77,6 +85,7 @@ struct UpgradeAuditGuard {
     router: String,
     basename: String,
     target_version: String,
+    correlation_id: String,
 }
 
 impl Drop for UpgradeAuditGuard {
@@ -86,6 +95,7 @@ impl Drop for UpgradeAuditGuard {
         tracing::info!(
             tool = "upgrade_junos",
             router = %self.router,
+            correlation_id = %self.correlation_id,
             outcome = ?self.outcome,
             "upgrade_junos.drop_diag: guard dropped"
         );
@@ -100,6 +110,7 @@ impl Drop for UpgradeAuditGuard {
             router = %self.router,
             basename = %self.basename,
             target_version = %self.target_version,
+            correlation_id = %self.correlation_id,
             outcome = outcome_str,
             "audit"
         );
@@ -676,6 +687,7 @@ impl JmcpHandler {
         let router = args.router_name.clone();
         let basename = args.source_path.clone();
         let target_version = args.target_version.clone();
+        let correlation_id = mint_request_id();
         // #44 diagnostic: confirm handler entry — proves the future ran far
         // enough to construct the guard. If this fires but the drop diagnostic
         // does not, the future is being detached/leaked by the rmcp transport
@@ -686,6 +698,7 @@ impl JmcpHandler {
             router = %router,
             basename = %basename,
             target_version = %target_version,
+            correlation_id = %correlation_id,
             "upgrade_junos.entry_diag: handler entered, constructing guard"
         );
         // Cancellation guard: tracks the outcome so Drop can emit the
@@ -702,9 +715,16 @@ impl JmcpHandler {
             router: router.clone(),
             basename: basename.clone(),
             target_version: target_version.clone(),
+            correlation_id: correlation_id.clone(),
         };
-        let result =
-            upgrade_junos::handle(args, self.dm.clone(), self.upgrade_cfg.clone(), ct).await;
+        let result = upgrade_junos::handle(
+            args,
+            self.dm.clone(),
+            self.upgrade_cfg.clone(),
+            ct,
+            correlation_id.clone(),
+        )
+        .await;
         match &result {
             Ok(v) => tracing::info!(
                 tool = "upgrade_junos",
@@ -712,6 +732,7 @@ impl JmcpHandler {
                 router = %router,
                 basename = %basename,
                 target_version = %target_version,
+                correlation_id = %correlation_id,
                 status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
                 "audit"
             ),
@@ -721,6 +742,7 @@ impl JmcpHandler {
                 router = %router,
                 basename = %basename,
                 target_version = %target_version,
+                correlation_id = %correlation_id,
                 outcome = "error",
                 error = %e,
                 "audit"
@@ -819,6 +841,12 @@ mod scope_tests {
         }
     }
 
+    fn test_device_leases() -> Arc<rust_junosmcp_core::DeviceLeaseManager> {
+        let path =
+            std::env::temp_dir().join(format!("rustjunosmcp-server-tests-{}", std::process::id()));
+        Arc::new(rust_junosmcp_core::DeviceLeaseManager::for_directory(path).unwrap())
+    }
+
     fn make_handler() -> JmcpHandler {
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
@@ -826,6 +854,7 @@ mod scope_tests {
         let transfer_cfg = test_transfer_cfg();
         let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
             transfer_cfg: transfer_cfg.clone(),
+            device_leases: test_device_leases(),
         };
         JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
     }
@@ -908,6 +937,7 @@ mod scope_tests {
         };
         let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
             transfer_cfg: cfg.clone(),
+            device_leases: test_device_leases(),
         };
         let h = JmcpHandler::new(dm, policy, cfg.clone(), upgrade_cfg);
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
@@ -1066,6 +1096,7 @@ mod upgrade_audit_guard_tests {
             router: "vsrx-test10".into(),
             basename: "junos-25.4R1.12.tgz".into(),
             target_version: "25.4R1.12".into(),
+            correlation_id: "req-test".into(),
         }
     }
 

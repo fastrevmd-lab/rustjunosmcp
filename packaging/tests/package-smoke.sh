@@ -68,13 +68,17 @@ run_installer
 [[ "$(stat -c '%a' "$ROOTFS/etc/jmcp/tokens.json")" == "600" ]]
 [[ -d "$ROOTFS/var/lib/jmcp/staging" ]]
 [[ -d "$ROOTFS/var/lib/jmcp/srx-staging/bundles" ]]
+[[ -d "$ROOTFS/var/lib/jmcp/device-leases" ]]
+[[ "$(stat -c '%a' "$ROOTFS/var/lib/jmcp/device-leases")" == "700" ]]
 
 JUNOS_UNIT="$ROOTFS/etc/systemd/system/rust-junosmcp.service"
 SRX_UNIT="$ROOTFS/etc/systemd/system/rust-srxmcp.service"
 grep -Fq -- '--transport streamable-http' "$JUNOS_UNIT"
 grep -Fq -- '--tokens-file /etc/jmcp/tokens.json' "$JUNOS_UNIT"
 grep -Fq -- '--host 127.0.0.1' "$JUNOS_UNIT"
+grep -Fq -- '--device-lease-dir /var/lib/jmcp/device-leases' "$JUNOS_UNIT"
 grep -Fq 'JMCP_SRX_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles' "$SRX_UNIT"
+grep -Fq 'JMCP_DEVICE_LEASE_DIR=/var/lib/jmcp/device-leases' "$SRX_UNIT"
 printf '%s\n' 'jmcp:x:998:998:RustJunosMCP:/var/lib/jmcp:/usr/sbin/nologin' >"$ROOTFS/etc/passwd"
 printf '%s\n' 'jmcp:x:998:' >"$ROOTFS/etc/group"
 systemd-analyze verify --recursive-errors=no --root="$ROOTFS" \
@@ -102,6 +106,7 @@ PORT="${JMCP_PACKAGE_SMOKE_PORT:-39030}"
     --host 127.0.0.1 \
     --port "$PORT" \
     --tokens-file "$ROOTFS/etc/jmcp/tokens.json" \
+    --device-lease-dir "$ROOTFS/var/lib/jmcp/device-leases" \
     --inventory-readonly \
     >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!

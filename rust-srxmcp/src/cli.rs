@@ -51,6 +51,14 @@ pub struct Cli {
     #[arg(long, default_value = "/etc/jmcp/known_hosts")]
     pub known_hosts_file: PathBuf,
 
+    /// Shared directory for cross-process destructive-operation leases.
+    #[arg(
+        long,
+        default_value = "/var/lib/jmcp/device-leases",
+        env = "JMCP_DEVICE_LEASE_DIR"
+    )]
+    pub device_lease_dir: PathBuf,
+
     /// Additional Host authorities accepted by streamable HTTP, beyond the
     /// loopback defaults. Repeat for each expected host or authority.
     #[arg(long)]
@@ -76,5 +84,9 @@ mod tests {
         assert!(cli.tls_key.is_none());
         assert!(!cli.allow_no_auth);
         assert!(!cli.allow_insecure_bind);
+        assert_eq!(
+            cli.device_lease_dir,
+            std::path::PathBuf::from("/var/lib/jmcp/device-leases")
+        );
     }
 }

@@ -13,7 +13,7 @@
 use rust_junosmcp_core::tools::transfer_file::{OpenSshScpRunner, TransferConfig, TransferLocks};
 use rust_junosmcp_core::tools::upgrade_junos::{handle, UpgradeConfig};
 use rust_junosmcp_core::tools::UpgradeJunosArgs;
-use rust_junosmcp_core::{DeviceManager, Inventory};
+use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager, Inventory};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -47,7 +47,12 @@ async fn live_upgrade_round_trip() {
         // lab device whose host key is pre-pinned; accept-new is safe.
         accept_new_host_keys: true,
     };
-    let cfg = UpgradeConfig { transfer_cfg };
+    let lease_dir = std::env::var("JMCP_DEVICE_LEASE_DIR")
+        .unwrap_or_else(|_| "/var/lib/jmcp/device-leases".to_string());
+    let cfg = UpgradeConfig {
+        transfer_cfg,
+        device_leases: Arc::new(DeviceLeaseManager::for_directory(lease_dir).unwrap()),
+    };
     let args = UpgradeJunosArgs {
         router_name: router.clone(),
         source_path: image.clone(),
@@ -56,7 +61,14 @@ async fn live_upgrade_round_trip() {
         timeout: 1800,         // 30 min ceiling
         reboot_wait_secs: 600, // 10 min reboot budget
     };
-    let result = handle(args, dm, cfg, CancellationToken::new()).await;
+    let result = handle(
+        args,
+        dm,
+        cfg,
+        CancellationToken::new(),
+        "live-upgrade-round-trip".into(),
+    )
+    .await;
     eprintln!("upgrade result: {result:?}");
     let v = result.expect("upgrade should succeed end-to-end");
     assert_eq!(v["status"], "upgraded");

@@ -79,6 +79,7 @@ pub struct StdioChild {
     pub stdin: ChildStdin,
     pub reader: BufReader<ChildStdout>,
     pub next_id: i64,
+    _device_lease_dir: tempfile::TempDir,
 }
 
 impl Drop for StdioChild {
@@ -120,8 +121,12 @@ fn read_response_with_id(reader: &mut BufReader<ChildStdout>, id: i64) -> Value 
 pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
     ensure_built();
 
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let mut cmd = Command::new(binary_path());
-    cmd.arg("-t").arg("stdio");
+    cmd.arg("-t")
+        .arg("stdio")
+        .arg("--device-lease-dir")
+        .arg(device_lease_dir.path());
     for a in extra_args {
         cmd.arg(a);
     }
@@ -159,6 +164,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
         stdin,
         reader,
         next_id: 2,
+        _device_lease_dir: device_lease_dir,
     }
 }
 
@@ -224,6 +230,7 @@ pub struct Server {
     pub child: Child,
     pub port: u16,
     pub _stderr_drain: std::thread::JoinHandle<()>,
+    pub _device_lease_dir: tempfile::TempDir,
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -235,7 +242,7 @@ impl Drop for Server {
 /// Wait for the "streamable-http listening" readiness line on the child's
 /// stderr, then spawn a drain thread and return the guarded Server. Panics if
 /// the server doesn't announce within 15s.
-fn finish_spawn(mut child: Child, port: u16) -> Server {
+fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir) -> Server {
     let stderr = child.stderr.take().unwrap();
     let mut reader = BufReader::new(stderr);
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -277,11 +284,13 @@ fn finish_spawn(mut child: Child, port: u16) -> Server {
         child,
         port,
         _stderr_drain: drain,
+        _device_lease_dir: device_lease_dir,
     }
 }
 
 pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
     let port = pick_port();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let child = Command::new(binary_path())
         .args([
             "-f",
@@ -294,12 +303,14 @@ pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
             &port.to_string(),
             "--tokens-file",
             tokens_path.to_str().unwrap(),
+            "--device-lease-dir",
+            device_lease_dir.path().to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn");
-    finish_spawn(child, port)
+    finish_spawn(child, port, device_lease_dir)
 }
 
 /// Spawn with `--allow-no-auth` (no auth layer) plus extra CLI args (e.g.
@@ -308,6 +319,7 @@ pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
 pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
     let port = pick_port();
     let port_s = port.to_string();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let mut argv = vec![
         "-f",
         inv_path.to_str().unwrap(),
@@ -318,6 +330,8 @@ pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
         "-p",
         &port_s,
         "--allow-no-auth",
+        "--device-lease-dir",
+        device_lease_dir.path().to_str().unwrap(),
     ];
     argv.extend_from_slice(extra);
     let child = Command::new(binary_path())
@@ -326,7 +340,7 @@ pub fn spawn_no_auth(inv_path: &Path, extra: &[&str]) -> Server {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn");
-    finish_spawn(child, port)
+    finish_spawn(child, port, device_lease_dir)
 }
 
 /// Outcome of a streamable-http POST: status, body parsed as JSON-RPC payload
