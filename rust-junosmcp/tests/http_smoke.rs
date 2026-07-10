@@ -3,6 +3,7 @@
 
 mod common;
 use common::*;
+use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::process::Command; // still used by tests that mint tokens via `token add`
 
@@ -132,6 +133,50 @@ fn router_scope_denial_returns_tool_error_with_message() {
         text.contains("not authorized for router"),
         "expected scope denial, got {text}"
     );
+}
+
+#[test]
+fn router_list_returns_only_current_names_in_caller_scope() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{
+            "core-01":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}},
+            "edge-01":{"ip":"203.0.113.2","port":1,"username":"u","auth":{"type":"password","password":"x"}},
+            "edge-02":{"ip":"203.0.113.3","port":1,"username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "router-list-scope",
+        ScopeSet::Allowlist(vec!["edge-02".into(), "retired-99".into()]),
+        ScopeSet::Allowlist(vec!["get_router_list".into()]),
+    )
+    .unwrap();
+
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose());
+    let response = http_post(
+        server.port,
+        Some(secret.expose()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name":"get_router_list",
+            "arguments":{}
+        }}),
+    );
+    assert_eq!(response.code, 200, "body: {}", response.body);
+    let text = response
+        .body
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("missing router-list text: {}", response.body));
+    let names: Vec<String> = serde_json::from_str(text).unwrap();
+    assert_eq!(names, vec!["edge-02"]);
+    assert!(!text.contains("core-01"));
+    assert!(!text.contains("edge-01"));
+    assert!(!text.contains("retired-99"));
 }
 
 #[test]

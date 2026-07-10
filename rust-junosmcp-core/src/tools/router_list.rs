@@ -6,7 +6,12 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub async fn handle(inv: Arc<Inventory>) -> Result<Value, JmcpError> {
-    Ok(json!(inv.names()))
+    handle_names(inv.names()).await
+}
+
+/// Serialize names already filtered by the transport's caller scope.
+pub async fn handle_names(names: Vec<String>) -> Result<Value, JmcpError> {
+    Ok(json!(names))
 }
 
 #[cfg(test)]
@@ -30,5 +35,10 @@ mod tests {
         );
         let v = handle(inv).await.unwrap();
         assert_eq!(v, json!(["a", "z"]));
+    }
+
+    #[tokio::test]
+    async fn filtered_empty_set_is_successful_empty_array() {
+        assert_eq!(handle_names(Vec::new()).await.unwrap(), json!([]));
     }
 }

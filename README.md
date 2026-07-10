@@ -404,6 +404,12 @@ cargo run -- token add \
   --tools execute_junos_command,gather_device_facts
 ```
 
+`get_router_list` applies the same router scope as device tools. Authenticated
+allowlist tokens receive only the current inventory names in their scope;
+stale scope entries and excluded routers are omitted without counts or errors.
+An empty allowlist or empty intersection returns `[]`. Wildcard tokens, local
+stdio, and explicitly unauthenticated loopback mode retain the full inventory.
+
 > **Note:** See [`tokens-template.json`](tokens-template.json) for the file
 > shape. Use `token add` rather than editing the file by hand — the hash field
 > must be a SHA-256 of the secret, not the plaintext.

@@ -8,6 +8,11 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **#130 - router-list scope disclosure.** `get_router_list` now returns the
+  intersection of the current inventory and the authenticated caller's router
+  scope. Wildcard and local stdio callers retain the full sorted list; stale or
+  excluded scope entries are never returned, and an empty intersection is a
+  successful `[]` response without hidden-router counts or errors.
 - **#127 - container SCP support.** The published Junos image now includes an
   OpenSSH client with Junos legacy `scp -O` support, runs as numeric UID/GID
   65532, and uses `/var/lib/jmcp` for writable staging, host-key, and lease

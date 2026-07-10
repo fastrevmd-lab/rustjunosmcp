@@ -295,7 +295,7 @@ mod server_tools_const_tests {
 impl JmcpHandler {
     #[tool(
         name = "get_router_list",
-        description = "Get list of available Junos routers"
+        description = "Get the Junos routers visible to this caller. Returns [] when the caller's router scope has no current inventory matches."
     )]
     async fn get_router_list(
         &self,
@@ -306,7 +306,9 @@ impl JmcpHandler {
         if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(router_list::handle(self.dm.inventory()).await)
+        let names =
+            rust_junosmcp_auth::caller::filter_router_names(ctx, self.dm.inventory().names());
+        Self::to_call_result(router_list::handle_names(names).await)
     }
 
     #[tool(
