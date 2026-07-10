@@ -4,9 +4,13 @@
 //! `JMCP_SRX_HTTP_PORT`). Wires bearer auth against the shared
 //! `/etc/jmcp/tokens.json` store and registers Phase 1B tools.
 
+mod cli;
+mod cli_validate;
+
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use clap::Parser;
+use cli::Cli;
 use rust_junosmcp_auth::file::TokenStoreFile;
 use rust_junosmcp_core::DeviceManager;
 use rust_srxmcp::{http_transport, server::JmcpSrxHandler};
@@ -15,57 +19,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Instant;
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "rust-srxmcp",
-    version,
-    about = "Juniper SRX-specific MCP server."
-)]
-struct Cli {
-    /// HTTP bind host.
-    #[arg(long, default_value = "0.0.0.0", env = "JMCP_SRX_HTTP_HOST")]
-    host: String,
-
-    /// HTTP bind port.
-    #[arg(long, default_value_t = 30032, env = "JMCP_SRX_HTTP_PORT")]
-    port: u16,
-
-    /// Bearer-token file (shared with rust-junosmcp).
-    #[arg(long, env = "JMCP_TOKENS_PATH")]
-    tokens_file: Option<PathBuf>,
-
-    /// Devices file — required for NETCONF tools; also used for token-scope validation.
-    #[arg(long, env = "JMCP_DEVICES_PATH")]
-    device_mapping: Option<PathBuf>,
-
-    /// Allow unauthenticated requests (lab only).
-    #[arg(long)]
-    allow_no_auth: bool,
-
-    /// Accept unknown SSH host keys on first contact (TOFU; lab only).
-    #[arg(long)]
-    ssh_accept_new_host_keys: bool,
-
-    /// Path to the SSH known_hosts file for NETCONF strict host-key checking.
-    #[arg(long, default_value = "/etc/jmcp/known_hosts")]
-    known_hosts_file: PathBuf,
-
-    /// Additional Host authorities to accept on the streamable-http endpoint,
-    /// beyond the loopback defaults (localhost, 127.0.0.1, ::1). Repeatable.
-    #[arg(long)]
-    allowed_host: Vec<String>,
-
-    /// Disable the streamable-http Host allowlist entirely (accept any Host).
-    /// Reintroduces RUSTSEC-2026-0189 exposure; bearer auth still applies.
-    #[arg(long)]
-    disable_host_check: bool,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     rust_junosmcp_core::bootstrap::init_tracing();
 
     let args = Cli::parse();
+    cli_validate::validate(&args).map_err(|error| anyhow::anyhow!(error))?;
 
     // ── Inventory + DeviceManager ────────────────────────────────────────────
 
@@ -188,12 +147,43 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("parsing {}:{}", args.host, args.port))?;
 
-    http_transport::serve(
-        handler,
-        addr,
-        token_store,
-        args.allowed_host.clone(),
-        args.disable_host_check,
-    )
-    .await
+    #[cfg(feature = "tls")]
+    let tls_config = match (&args.tls_cert, &args.tls_key) {
+        (Some(cert), Some(key)) => {
+            Some(rust_srxmcp::tls::load(cert, key).context("loading TLS cert/key")?)
+        }
+        _ => None,
+    };
+
+    #[cfg(not(feature = "tls"))]
+    if args.tls_cert.is_some() || args.tls_key.is_some() {
+        anyhow::bail!(
+            "rust-srxmcp built without the 'tls' feature; cannot honor --tls-cert/--tls-key"
+        );
+    }
+
+    #[cfg(feature = "tls")]
+    {
+        http_transport::serve_with_tls(
+            handler,
+            addr,
+            token_store,
+            args.allowed_host.clone(),
+            args.disable_host_check,
+            tls_config,
+        )
+        .await
+    }
+
+    #[cfg(not(feature = "tls"))]
+    {
+        http_transport::serve(
+            handler,
+            addr,
+            token_store,
+            args.allowed_host.clone(),
+            args.disable_host_check,
+        )
+        .await
+    }
 }

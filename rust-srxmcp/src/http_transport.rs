@@ -1,6 +1,5 @@
 //! axum router for rust-srxmcp: AuthLayer + rmcp streamable-http handler.
 //! Mirror of rust-junosmcp/src/http_transport.rs, bound to JmcpSrxHandler.
-//! No TLS in 0.0.1.
 
 use crate::server::JmcpSrxHandler;
 use anyhow::{Context, Result};
@@ -40,6 +39,46 @@ pub async fn serve(
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
 ) -> Result<()> {
+    serve_inner(
+        handler,
+        addr,
+        token_store,
+        allowed_hosts,
+        disable_host_check,
+        #[cfg(feature = "tls")]
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "tls")]
+pub async fn serve_with_tls(
+    handler: JmcpSrxHandler,
+    addr: SocketAddr,
+    token_store: Option<Arc<ArcSwap<TokenStore>>>,
+    allowed_hosts: Vec<String>,
+    disable_host_check: bool,
+    tls: Option<Arc<rustls::ServerConfig>>,
+) -> Result<()> {
+    serve_inner(
+        handler,
+        addr,
+        token_store,
+        allowed_hosts,
+        disable_host_check,
+        tls,
+    )
+    .await
+}
+
+async fn serve_inner(
+    handler: JmcpSrxHandler,
+    addr: SocketAddr,
+    token_store: Option<Arc<ArcSwap<TokenStore>>>,
+    allowed_hosts: Vec<String>,
+    disable_host_check: bool,
+    #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
+) -> Result<()> {
     let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
 
     let http_cfg = build_http_config(allowed_hosts, disable_host_check);
@@ -59,6 +98,16 @@ pub async fn serve(
     } else {
         rmcp_router
     };
+
+    #[cfg(feature = "tls")]
+    if let Some(config) = tls {
+        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(config);
+        tracing::info!(addr = %addr, "rust-srxmcp streamable-http listening (TLS)");
+        return axum_server::bind_rustls(addr, rustls_config)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .context("axum_server::bind_rustls");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
