@@ -59,6 +59,11 @@ pub enum JmcpError {
     ScpFailed { exit_code: i32, stderr: String },
 
     #[error(
+        "required OpenSSH scp dependency unavailable [code=scp_dependency_unavailable]: {detail}; install openssh-client with legacy -O support or use the supported container image"
+    )]
+    ScpDependencyUnavailable { detail: String },
+
+    #[error(
         "scp connect timeout [code=connect_timeout]: device '{0}' may be unreachable or SSH (port 22) is filtered"
     )]
     ConnectTimeout(String),
@@ -491,6 +496,17 @@ mod tests {
         assert!(s.contains("code=scp_failed"));
         assert!(s.contains("Permission denied"));
         assert!(s.contains("exit=1"));
+    }
+
+    #[test]
+    fn scp_dependency_unavailable_display_includes_code_and_remediation() {
+        let s = JmcpError::ScpDependencyUnavailable {
+            detail: "executable 'scp' was not found in PATH".into(),
+        }
+        .to_string();
+        assert!(s.contains("[code=scp_dependency_unavailable]"));
+        assert!(s.contains("openssh-client"));
+        assert!(s.contains("legacy -O"));
     }
 
     #[test]

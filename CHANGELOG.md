@@ -6,6 +6,16 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **#127 - container SCP support.** The published Junos image now includes an
+  OpenSSH client with Junos legacy `scp -O` support, runs as numeric UID/GID
+  65532, and uses `/var/lib/jmcp` for writable staging, host-key, and lease
+  state. Both Docker stages are digest-pinned. Server startup now fails with
+  `[code=scp_dependency_unavailable]` if `scp` is missing or rejects `-O`.
+  Container CI performs real upload and fetch transfers against an isolated
+  OpenSSH fixture before release images can be published.
+
 ### Security
 
 - **#129 stage 2 - cross-process destructive-operation lease.**

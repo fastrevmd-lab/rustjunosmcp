@@ -14,7 +14,7 @@ and should not be duplicated as implementation checklists here.
   Validate support-bundle request IDs before path construction (critical).
 - [x] [#126](https://github.com/fastrevmd-lab/RustJunosMCP/issues/126)
   Guarantee candidate cleanup and surface cleanup failures (high).
-- [ ] [#127](https://github.com/fastrevmd-lab/RustJunosMCP/issues/127)
+- [x] [#127](https://github.com/fastrevmd-lab/RustJunosMCP/issues/127)
   Make the published container support SCP file tools (high).
 - [x] [#128](https://github.com/fastrevmd-lab/RustJunosMCP/issues/128)
   Repair and test LXC and systemd packaging (high).
