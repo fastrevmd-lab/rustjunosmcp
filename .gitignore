@@ -5,6 +5,7 @@
 
 # IDE
 .claude/
+.codex/
 .idea/
 .vscode/
 *.swp
@@ -36,3 +37,9 @@ config-snapshots/
 # Local untracked notes — review before sharing
 SECURITY_CODE_REVIEW_REPORT.md
 SRX_RUSTJUNOSMCP_CAPABILITY_GAPS.md
+.direnv/
+.ruff_cache/
+.mypy_cache/
+coverage/
+*.agekey
+*.decrypted.*
