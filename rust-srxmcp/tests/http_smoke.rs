@@ -4,7 +4,60 @@
 
 mod common;
 use common::*;
+use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
 use serde_json::json;
+
+fn add_token(path: &std::path::Path, name: &str, routers: ScopeSet, tools: ScopeSet) -> String {
+    TokenStoreFile::add(path, name, routers, tools)
+        .unwrap()
+        .expose()
+        .to_string()
+}
+
+fn initialize_authenticated(server: &Server, secret: &str) -> String {
+    let init = http_post(server.port, Some(secret), None, init_body());
+    assert_eq!(init.code, 200, "initialize failed: {:?}", init.body);
+    let sid = init
+        .session_id
+        .expect("server did not return Mcp-Session-Id");
+    let initialized = http_post(
+        server.port,
+        Some(secret),
+        Some(&sid),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    assert_eq!(
+        initialized.code, 202,
+        "initialized failed: {:?}",
+        initialized.body
+    );
+    sid
+}
+
+fn srx_router_tool_calls() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        ("get_chassis_cluster_status", json!({"router":"r1"})),
+        ("get_srx_security_services_status", json!({"router":"r1"})),
+        (
+            "check_srx_feature_license",
+            json!({"router":"r1","feature":"idp"}),
+        ),
+        ("vpn_lifecycle_report", json!({"router":"r1"})),
+        (
+            "manage_idp_security_package",
+            json!({"router":"r1","action":"check_server"}),
+        ),
+        (
+            "manage_appid_signature_package",
+            json!({"router":"r1","action":"check_server"}),
+        ),
+        ("validate_chassis_cluster_health", json!({"router":"r1"})),
+        (
+            "collect_jtac_support_bundle",
+            json!({"router":"r1","problem_type":"generic"}),
+        ),
+    ]
+}
 
 fn placeholder_inv() -> tempfile::NamedTempFile {
     write_inv(
@@ -145,4 +198,92 @@ fn lists_nine_tools() {
             .filter_map(|t| t.get("name"))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn every_srx_tool_enforces_tool_scope_before_device_access() {
+    ensure_built();
+    let inv = placeholder_inv();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = add_token(
+        &tokens,
+        "junos-only",
+        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(vec!["get_router_list".into()]),
+    );
+    let server = spawn(inv.path(), &tokens);
+    let sid = initialize_authenticated(&server, &secret);
+
+    let mut calls = vec![("srxmcp_status", json!({}))];
+    calls.extend(srx_router_tool_calls());
+    for (index, (tool, arguments)) in calls.into_iter().enumerate() {
+        let response = http_post(
+            server.port,
+            Some(&secret),
+            Some(&sid),
+            json!({"jsonrpc":"2.0","id":index + 1,"method":"tools/call","params":{
+                "name":tool,"arguments":arguments
+            }}),
+        );
+        assert_eq!(response.code, 200, "{tool}: {}", response.body);
+        let result = response.body.pointer("/result").expect("tool result");
+        assert_eq!(
+            result.get("isError"),
+            Some(&json!(true)),
+            "{tool}: {result}"
+        );
+        let text = serde_json::to_string(result).unwrap();
+        assert!(
+            text.contains("[code=tool_scope_denied]"),
+            "{tool} did not enforce tool scope: {text}"
+        );
+        assert!(
+            !text.contains("opening device"),
+            "{tool} reached DeviceManager before authorization: {text}"
+        );
+    }
+}
+
+#[test]
+fn every_router_tool_enforces_router_scope_without_disclosing_router() {
+    ensure_built();
+    let inv = placeholder_inv();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = add_token(
+        &tokens,
+        "other-router-only",
+        ScopeSet::Allowlist(vec!["other-router".into()]),
+        ScopeSet::Wildcard,
+    );
+    let server = spawn(inv.path(), &tokens);
+    let sid = initialize_authenticated(&server, &secret);
+
+    for (index, (tool, arguments)) in srx_router_tool_calls().into_iter().enumerate() {
+        let response = http_post(
+            server.port,
+            Some(&secret),
+            Some(&sid),
+            json!({"jsonrpc":"2.0","id":index + 1,"method":"tools/call","params":{
+                "name":tool,"arguments":arguments
+            }}),
+        );
+        assert_eq!(response.code, 200, "{tool}: {}", response.body);
+        let result = response.body.pointer("/result").expect("tool result");
+        assert_eq!(
+            result.get("isError"),
+            Some(&json!(true)),
+            "{tool}: {result}"
+        );
+        let text = serde_json::to_string(result).unwrap();
+        assert!(
+            text.contains("[code=router_scope_denied]"),
+            "{tool} did not enforce router scope: {text}"
+        );
+        assert!(
+            !text.contains("r1") && !text.contains("opening device"),
+            "{tool} disclosed the router or reached DeviceManager: {text}"
+        );
+    }
 }

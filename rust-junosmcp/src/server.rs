@@ -214,8 +214,8 @@ impl JmcpHandler {
 
 /// Single source of truth for the MCP tool names this server exposes.
 ///
-/// Listed in source-declaration order below (alphabetized in `KNOWN_TOOLS`).
-/// Must stay in sync with `rust_junosmcp_auth::file::KNOWN_TOOLS`; the
+/// Listed in source-declaration order below. Must stay in sync with
+/// `rust_junosmcp_auth::file::JUNOS_TOOLS`; the
 /// `server_tools_matches_known_tools_as_set` unit test enforces this.
 /// Drift here silently denies operators least-privilege token scopes for new
 /// tools (see RJMCP-SEC-001). This is a binary-crate tripwire consumed only
@@ -244,7 +244,7 @@ const SERVER_TOOLS: &[&str] = &[
 #[cfg(test)]
 mod server_tools_const_tests {
     use super::SERVER_TOOLS;
-    use rust_junosmcp_auth::file::KNOWN_TOOLS;
+    use rust_junosmcp_auth::file::JUNOS_TOOLS;
     use std::collections::HashSet;
 
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
@@ -262,18 +262,18 @@ mod server_tools_const_tests {
         }
     }
 
-    /// RJMCP-SEC-001: prevent `KNOWN_TOOLS` (auth crate) drifting from
+    /// RJMCP-SEC-001: prevent `JUNOS_TOOLS` (auth crate) drifting from
     /// `SERVER_TOOLS` (this crate). If a new `#[tool(name = "x")]` is added
     /// without updating both, this test fails and the operator cannot mint a
     /// scoped token for "x" — and would be tempted to fall back to wildcard.
     #[test]
     fn server_tools_matches_known_tools_as_set() {
         let server: HashSet<&str> = SERVER_TOOLS.iter().copied().collect();
-        let known: HashSet<&str> = KNOWN_TOOLS.iter().copied().collect();
+        let known: HashSet<&str> = JUNOS_TOOLS.iter().copied().collect();
         assert_eq!(
             server,
             known,
-            "SERVER_TOOLS / KNOWN_TOOLS drift: only-in-server={:?}, only-in-known={:?}",
+            "SERVER_TOOLS / JUNOS_TOOLS drift: only-in-server={:?}, only-in-known={:?}",
             server.difference(&known).collect::<Vec<_>>(),
             known.difference(&server).collect::<Vec<_>>(),
         );

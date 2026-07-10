@@ -188,3 +188,42 @@ fn add_rejects_unknown_tool() {
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(stderr.contains("no_such_tool"));
 }
+
+#[test]
+fn add_accepts_srx_only_tool_scope() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let out = Command::new(binary_path())
+        .args([
+            "token",
+            "add",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "srx-read-only",
+            "--routers",
+            "srx-01",
+            "--tools",
+            "get_chassis_cluster_status,get_srx_security_services_status",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "token add rejected SRX scopes: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim().len(), 43);
+
+    let body: serde_json::Value = serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
+    assert_eq!(body["tokens"][0]["routers"], serde_json::json!(["srx-01"]));
+    assert_eq!(
+        body["tokens"][0]["tools"],
+        serde_json::json!([
+            "get_chassis_cluster_status",
+            "get_srx_security_services_status"
+        ])
+    );
+}

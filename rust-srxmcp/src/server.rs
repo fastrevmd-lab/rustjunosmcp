@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::Instant;
 
-/// Resolve the authenticated bearer token's `token_name` for audit
+/// Resolve the authenticated bearer token context for authorization and audit
 /// attribution. Walks the same `Parts` → `Extensions` chain documented in
-/// `rust-junosmcp/src/server.rs::caller_ctx` — rmcp 0.8 inserts the whole
+/// `rust-junosmcp/src/server.rs::caller_ctx` — rmcp inserts the whole
 /// `http::request::Parts` into the per-request `Extensions`, and our auth
 /// layer attaches `CallerCtx` to `Parts.extensions`. Returns `None` under
 /// stdio (no HTTP frame) so audit lines still emit with `caller="unknown"`.
@@ -23,6 +23,20 @@ fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::Ca
             .extensions
             .get::<rust_junosmcp_auth::caller::CallerCtx>()
     })
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ScopeError {
+    #[error(
+        "[code=authorization_context_missing] authenticated request is missing authorization context"
+    )]
+    MissingCallerContext,
+    #[error("[code=tool_scope_denied] token '{token}' is not authorized for tool '{tool}'")]
+    ToolNotInScope { token: String, tool: &'static str },
+    #[error(
+        "[code=router_scope_denied] token '{token}' is not authorized for the requested router (tool '{tool}')"
+    )]
+    RouterNotInScope { token: String, tool: &'static str },
 }
 
 /// Mint a short per-request id used in audit lines. Format
@@ -40,6 +54,7 @@ fn mint_request_id() -> String {
 pub struct JmcpSrxHandler {
     started: Arc<Instant>,
     device_manager: Arc<DeviceManager>,
+    authorization_required: bool,
     /// Per-router semaphore shared across destructive workflows. Mirrors the
     /// pattern in `rust-junosmcp/src/server.rs` so a srxmcp `rollback` and a
     /// junos `upgrade_junos` can never race against the same device.
@@ -52,9 +67,19 @@ impl JmcpSrxHandler {
         device_manager: Arc<DeviceManager>,
         transfer_locks: Arc<TransferLocks>,
     ) -> Self {
+        Self::new_with_authorization(started, device_manager, transfer_locks, false)
+    }
+
+    pub fn new_with_authorization(
+        started: Arc<Instant>,
+        device_manager: Arc<DeviceManager>,
+        transfer_locks: Arc<TransferLocks>,
+        authorization_required: bool,
+    ) -> Self {
         Self {
             started,
             device_manager,
+            authorization_required,
             transfer_locks,
         }
     }
@@ -77,6 +102,113 @@ impl JmcpSrxHandler {
     pub fn srxmcp_status_test(&self, args: SrxmcpStatusArgs) -> SrxmcpStatusResponse {
         self.srxmcp_status_body(args)
     }
+
+    fn scope_to_call_result(e: ScopeError) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(CallToolResult::error(vec![ContentBlock::text(
+            e.to_string(),
+        )]))
+    }
+
+    fn check_tool_scope(
+        &self,
+        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        tool: &'static str,
+    ) -> Result<(), ScopeError> {
+        if let Some(ctx) = ctx {
+            if !ctx.tools.allows(tool) {
+                return Err(ScopeError::ToolNotInScope {
+                    token: ctx.token_name.clone(),
+                    tool,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn check_router_scope(
+        &self,
+        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        tool: &'static str,
+        router: &str,
+    ) -> Result<(), ScopeError> {
+        if let Some(ctx) = ctx {
+            if !ctx.routers.allows(router) {
+                return Err(ScopeError::RouterNotInScope {
+                    token: ctx.token_name.clone(),
+                    tool,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Authorize a tool call before any device lookup or workflow work. A
+    /// missing caller is accepted only when the handler was constructed for
+    /// the explicit no-auth path.
+    fn authorize_call<'a>(
+        &self,
+        extensions: &'a Extensions,
+        tool: &'static str,
+        router: Option<&str>,
+    ) -> Result<Option<&'a rust_junosmcp_auth::caller::CallerCtx>, ScopeError> {
+        let ctx = caller_ctx(extensions);
+        if self.authorization_required && ctx.is_none() {
+            return Err(ScopeError::MissingCallerContext);
+        }
+        self.check_tool_scope(ctx, tool)?;
+        if let Some(router) = router {
+            self.check_router_scope(ctx, tool, router)?;
+        }
+        Ok(ctx)
+    }
+}
+
+/// Source-declaration-order mirror of this server's `#[tool]` surface. The
+/// tests below compare it to the shared auth crate's SRX registry.
+#[cfg(test)]
+const SRX_SERVER_TOOLS: &[&str] = &[
+    "srxmcp_status",
+    "get_chassis_cluster_status",
+    "get_srx_security_services_status",
+    "check_srx_feature_license",
+    "vpn_lifecycle_report",
+    "manage_idp_security_package",
+    "manage_appid_signature_package",
+    "validate_chassis_cluster_health",
+    "collect_jtac_support_bundle",
+];
+
+#[cfg(test)]
+mod server_tools_const_tests {
+    use super::SRX_SERVER_TOOLS;
+    use rust_junosmcp_auth::file::SRX_TOOLS;
+    use std::collections::HashSet;
+
+    #[test]
+    fn server_tools_len_is_nine() {
+        assert_eq!(SRX_SERVER_TOOLS.len(), 9);
+    }
+
+    #[test]
+    fn server_tools_has_no_duplicates() {
+        let mut seen = HashSet::new();
+        for tool in SRX_SERVER_TOOLS {
+            assert!(seen.insert(*tool), "duplicate SRX tool name: {tool}");
+        }
+    }
+
+    #[test]
+    fn server_tools_matches_auth_registry() {
+        let server: HashSet<&str> = SRX_SERVER_TOOLS.iter().copied().collect();
+        let known: HashSet<&str> = SRX_TOOLS.iter().copied().collect();
+        assert_eq!(
+            server,
+            known,
+            "SRX_SERVER_TOOLS / SRX_TOOLS drift: only-in-server={:?}, only-in-known={:?}",
+            server.difference(&known).collect::<Vec<_>>(),
+            known.difference(&server).collect::<Vec<_>>(),
+        );
+    }
 }
 
 #[tool_router]
@@ -88,8 +220,11 @@ impl JmcpSrxHandler {
     async fn srxmcp_status(
         &self,
         Parameters(args): Parameters<SrxmcpStatusArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(&extensions, "srxmcp_status", None) {
+            return Self::scope_to_call_result(e);
+        }
         let resp = self.srxmcp_status_body(args);
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SrxmcpStatusResponse: {e}"), None)
@@ -105,8 +240,15 @@ impl JmcpSrxHandler {
     async fn get_chassis_cluster_status(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::ClusterStatusArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(
+            &extensions,
+            "get_chassis_cluster_status",
+            Some(&args.router),
+        ) {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -135,8 +277,15 @@ impl JmcpSrxHandler {
     async fn get_srx_security_services_status(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::ServicesStatusArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(
+            &extensions,
+            "get_srx_security_services_status",
+            Some(&args.router),
+        ) {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -166,8 +315,13 @@ impl JmcpSrxHandler {
     async fn check_srx_feature_license(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::LicenseArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) =
+            self.authorize_call(&extensions, "check_srx_feature_license", Some(&args.router))
+        {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -200,8 +354,12 @@ impl JmcpSrxHandler {
     async fn vpn_lifecycle_report(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::VpnLifecycleArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(&extensions, "vpn_lifecycle_report", Some(&args.router))
+        {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -239,7 +397,14 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::IdpPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let ctx = caller_ctx(&extensions);
+        let ctx = match self.authorize_call(
+            &extensions,
+            "manage_idp_security_package",
+            Some(&args.router),
+        ) {
+            Ok(ctx) => ctx,
+            Err(e) => return Self::scope_to_call_result(e),
+        };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
 
@@ -294,7 +459,14 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::AppidPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let ctx = caller_ctx(&extensions);
+        let ctx = match self.authorize_call(
+            &extensions,
+            "manage_appid_signature_package",
+            Some(&args.router),
+        ) {
+            Ok(ctx) => ctx,
+            Err(e) => return Self::scope_to_call_result(e),
+        };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
 
@@ -341,8 +513,15 @@ impl JmcpSrxHandler {
     async fn validate_chassis_cluster_health(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::ClusterHealthArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(
+            &extensions,
+            "validate_chassis_cluster_health",
+            Some(&args.router),
+        ) {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -386,8 +565,15 @@ impl JmcpSrxHandler {
     async fn collect_jtac_support_bundle(
         &self,
         Parameters(args): Parameters<rust_srxmcp_core::SupportBundleArgs>,
-        _extensions: Extensions,
+        extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Err(e) = self.authorize_call(
+            &extensions,
+            "collect_jtac_support_bundle",
+            Some(&args.router),
+        ) {
+            return Self::scope_to_call_result(e);
+        }
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
@@ -438,4 +624,65 @@ pub struct SrxmcpStatusResponse {
     pub version: String,
     pub endpoint: String,
     pub uptime_seconds: u64,
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use rust_junosmcp_auth::caller::CallerCtx;
+    use rust_junosmcp_auth::ScopeSet;
+
+    fn make_handler(authorization_required: bool) -> JmcpSrxHandler {
+        let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
+        let device_manager = Arc::new(DeviceManager::new(inventory));
+        let transfer_locks = Arc::new(TransferLocks::default());
+        JmcpSrxHandler::new_with_authorization(
+            Arc::new(Instant::now()),
+            device_manager,
+            transfer_locks,
+            authorization_required,
+        )
+    }
+
+    #[test]
+    fn missing_caller_context_preserves_explicit_no_auth_mode() {
+        let handler = make_handler(false);
+        assert!(handler
+            .authorize_call(
+                &Extensions::new(),
+                "manage_idp_security_package",
+                Some("srx-01"),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn missing_caller_context_fails_closed_when_authentication_is_required() {
+        let handler = make_handler(true);
+        assert!(matches!(
+            handler.authorize_call(
+                &Extensions::new(),
+                "manage_idp_security_package",
+                Some("srx-01"),
+            ),
+            Err(ScopeError::MissingCallerContext)
+        ));
+    }
+
+    #[test]
+    fn wildcard_scopes_allow_every_srx_tool_and_router() {
+        let handler = make_handler(true);
+        let ctx = CallerCtx {
+            token_name: "srx-admin".into(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Wildcard,
+        };
+
+        for tool in SRX_SERVER_TOOLS {
+            assert!(handler.check_tool_scope(Some(&ctx), tool).is_ok());
+            assert!(handler
+                .check_router_scope(Some(&ctx), tool, "srx-01")
+                .is_ok());
+        }
+    }
 }

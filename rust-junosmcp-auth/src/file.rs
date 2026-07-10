@@ -3,10 +3,9 @@
 use crate::store::{ScopeSet, TokenEntry, TokenStore};
 use std::path::Path;
 
-/// All known tool names, kept alphabetized. Must stay in sync with
-/// `rust_junosmcp::server::SERVER_TOOLS`; the
-/// `known_tools_matches_server_tools` integration test enforces this.
-pub const KNOWN_TOOLS: &[&str] = &[
+/// Generic Junos endpoint tool names. The server crate has a drift test that
+/// compares its `#[tool]` surface against this registry.
+pub const JUNOS_TOOLS: &[&str] = &[
     "add_device",
     "commit_check_config",
     "discard_candidate",
@@ -24,6 +23,52 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "render_and_apply_j2_template",
     "transfer_file",
     "upgrade_junos",
+];
+
+/// SRX endpoint tool names. Kept separate so each endpoint can enforce drift
+/// checks while both binaries continue to share one token file.
+pub const SRX_TOOLS: &[&str] = &[
+    "check_srx_feature_license",
+    "collect_jtac_support_bundle",
+    "get_chassis_cluster_status",
+    "get_srx_security_services_status",
+    "manage_appid_signature_package",
+    "manage_idp_security_package",
+    "srxmcp_status",
+    "validate_chassis_cluster_health",
+    "vpn_lifecycle_report",
+];
+
+/// All tool names accepted in token scopes, kept globally alphabetized for
+/// stable diagnostics. This must remain the exact union of [`JUNOS_TOOLS`] and
+/// [`SRX_TOOLS`]; the registry tests below enforce that invariant.
+pub const KNOWN_TOOLS: &[&str] = &[
+    "add_device",
+    "check_srx_feature_license",
+    "collect_jtac_support_bundle",
+    "commit_check_config",
+    "discard_candidate",
+    "execute_junos_command",
+    "execute_junos_command_batch",
+    "execute_junos_pfe_command",
+    "fetch_file",
+    "gather_device_facts",
+    "get_chassis_cluster_status",
+    "get_junos_config",
+    "get_router_list",
+    "get_srx_security_services_status",
+    "junos_config_diff",
+    "list_staged_files",
+    "load_and_commit_config",
+    "manage_appid_signature_package",
+    "manage_idp_security_package",
+    "reload_devices",
+    "render_and_apply_j2_template",
+    "srxmcp_status",
+    "transfer_file",
+    "upgrade_junos",
+    "validate_chassis_cluster_health",
+    "vpn_lifecycle_report",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -722,6 +767,49 @@ mod tests {
             sorted.as_slice(),
             "KNOWN_TOOLS must stay alphabetized for easy diff/audit"
         );
+    }
+
+    #[test]
+    fn known_tools_is_exact_endpoint_union() {
+        use std::collections::HashSet;
+
+        let known: HashSet<&str> = KNOWN_TOOLS.iter().copied().collect();
+        let endpoint_tools: HashSet<&str> = JUNOS_TOOLS
+            .iter()
+            .chain(SRX_TOOLS.iter())
+            .copied()
+            .collect();
+
+        assert_eq!(
+            known, endpoint_tools,
+            "KNOWN_TOOLS must be the exact union of JUNOS_TOOLS and SRX_TOOLS"
+        );
+        assert_eq!(
+            KNOWN_TOOLS.len(),
+            JUNOS_TOOLS.len() + SRX_TOOLS.len(),
+            "endpoint registries must not contain duplicate tool names"
+        );
+    }
+
+    #[test]
+    fn add_and_load_accept_every_scoped_srx_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        TokenStoreFile::save(&path, &TokenStore::new(vec![])).unwrap();
+
+        let _ = TokenStoreFile::add(
+            &path,
+            "srx-operator",
+            ScopeSet::Allowlist(vec!["srx-01".into()]),
+            ScopeSet::Allowlist(SRX_TOOLS.iter().map(|tool| (*tool).into()).collect()),
+        )
+        .unwrap();
+
+        let store = TokenStoreFile::load(&path, &["srx-01"]).unwrap();
+        assert_eq!(store.len(), 1);
+        for tool in SRX_TOOLS {
+            assert!(store.entries()[0].tools.allows(tool), "missing {tool}");
+        }
     }
 
     #[test]

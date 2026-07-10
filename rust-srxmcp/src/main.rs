@@ -93,7 +93,13 @@ async fn main() -> Result<()> {
     // a permit before pre-flight re-runs (design D4 lock-first ordering).
     let transfer_locks =
         Arc::new(rust_junosmcp_core::tools::transfer_file::TransferLocks::default());
-    let handler = JmcpSrxHandler::new(started, dev_manager.clone(), transfer_locks);
+    let authorization_required = token_store.is_some();
+    let handler = JmcpSrxHandler::new_with_authorization(
+        started,
+        dev_manager.clone(),
+        transfer_locks,
+        authorization_required,
+    );
 
     // ── SIGHUP: reload token store ───────────────────────────────────────────
     #[cfg(unix)]
