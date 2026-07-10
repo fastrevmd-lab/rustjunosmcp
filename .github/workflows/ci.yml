@@ -77,7 +77,7 @@ jobs:
 
       - name: Shellcheck packaging scripts
         working-directory: RustJunosMCP
-        run: shellcheck scripts/package-lxc.sh scripts/test-lxc-distributions.sh packaging/lxc/install.sh packaging/tests/*.sh
+        run: shellcheck scripts/package-lxc.sh scripts/test-lxc-distributions.sh packaging/lxc/install.sh packaging/tests/*.sh packaging/tests/fixtures/scp-server/entrypoint.sh
 
       - name: Build LXC package
         working-directory: RustJunosMCP
@@ -90,3 +90,15 @@ jobs:
       - name: Debian and Ubuntu install smoke tests
         working-directory: RustJunosMCP
         run: ./scripts/test-lxc-distributions.sh dist/rust-junosmcp_*_amd64.tar.gz
+
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout RustJunosMCP
+        uses: actions/checkout@v5
+        with:
+          path: RustJunosMCP
+
+      - name: Container runtime and SCP integration smoke test
+        working-directory: RustJunosMCP
+        run: ./packaging/tests/container-scp-smoke.sh

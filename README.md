@@ -300,18 +300,51 @@ $EDITOR devices.json   # set ip / username / auth
 ## Docker
 
 Prebuilt images are published to GHCR on every version tag. The package is
-public — no `docker login` required.
+public — no `docker login` required. The runtime includes OpenSSH `scp` with
+legacy `-O` protocol support and runs as numeric UID/GID `65532:65532`.
+
+Prepare read-only configuration/key mounts and one persistent writable state
+directory. Private-key paths in `devices.json` must use their in-container
+locations under `/etc/jmcp/keys`.
 
 ```bash
 # Pull the prebuilt image (tags: latest, 0.7, 0.7.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
-# Run. $PWD must contain your devices.json and keys/.
+# Prepare host paths. Review scanned host-key fingerprints against a trusted
+# source before starting the server in strict mode.
+mkdir -p keys jmcp-state/staging jmcp-state/device-leases
+touch jmcp-state/known_hosts
+./scripts/scan-known-hosts.sh \
+  --inventory "$PWD/devices.json" \
+  --known-hosts "$PWD/jmcp-state/known_hosts" \
+  --replace
+
+# The image's non-root process must own its writable state and be able to read
+# the inventory and private keys. Keep all three private from other host users.
+sudo chown -R 65532:65532 devices.json keys jmcp-state
+sudo chmod 0600 devices.json keys/* jmcp-state/known_hosts
+sudo chmod 0700 keys jmcp-state jmcp-state/device-leases
+sudo chmod 0750 jmcp-state/staging
+
+# Run with configuration/keys read-only and state persistent + writable.
 docker run --rm -i \
-  -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
-  -v $PWD/keys:/etc/jmcp/keys:ro \
+  -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
+  -v "$PWD/keys:/etc/jmcp/keys:ro" \
+  -v "$PWD/jmcp-state:/var/lib/jmcp" \
   ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 ```
+
+The state mount holds staged upload/download files, the shared destructive
+operation leases, and `known_hosts`. Do not delete its lease files while a
+server is running. Strict host-key checking is the default. For an isolated lab
+only, append `--ssh-accept-new-host-keys` to the `docker run` command; this lets
+`scp` add first-seen keys to the writable state file, but does not authenticate
+that first connection out of band.
+
+Startup fails with `[code=scp_dependency_unavailable]` when the runtime cannot
+execute an OpenSSH-compatible `scp -O`. That check occurs before the MCP server
+accepts requests, so a broken custom image is not advertised as transfer-ready.
 
 > **Apple Silicon (M-series):** images are built for `linux/amd64` only, so
 > they run under emulation on Apple Silicon. This works, but if you hit a
@@ -324,8 +357,9 @@ Prefer to build locally instead:
 docker build -t rust-junosmcp:0.7 .
 
 docker run --rm -i \
-  -v $PWD/devices.json:/etc/jmcp/devices.json:ro \
-  -v $PWD/keys:/etc/jmcp/keys:ro \
+  -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
+  -v "$PWD/keys:/etc/jmcp/keys:ro" \
+  -v "$PWD/jmcp-state:/var/lib/jmcp" \
   rust-junosmcp:0.7
 ```
 

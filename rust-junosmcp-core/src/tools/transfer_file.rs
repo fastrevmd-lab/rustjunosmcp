@@ -940,6 +940,61 @@ async fn drive_scp_child(
 /// Production runner — shells out to `scp` from system openssh-client.
 pub struct OpenSshScpRunner;
 
+/// Fail startup when the advertised file tools cannot invoke an OpenSSH SCP
+/// client that advertises Junos' required legacy protocol flag (`-O`). The
+/// invalid-option probe prints the OpenSSH usage synopsis and exits without
+/// opening a network connection or changing the filesystem.
+pub fn validate_scp_runtime(executable: &std::path::Path) -> Result<(), JmcpError> {
+    let mut attempts = 0;
+    let output = loop {
+        attempts += 1;
+        match std::process::Command::new(executable)
+            .arg("-?")
+            .env("LC_ALL", "C")
+            .output()
+        {
+            Ok(output) => break output,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(JmcpError::ScpDependencyUnavailable {
+                    detail: format!(
+                        "executable '{}' was not found in PATH",
+                        executable.display()
+                    ),
+                });
+            }
+            Err(_) if attempts < 3 => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(error) => {
+                return Err(JmcpError::ScpDependencyUnavailable {
+                    detail: format!(
+                        "executable '{}' could not be started: {error}",
+                        executable.display()
+                    ),
+                });
+            }
+        }
+    };
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    let supports_legacy_scp = stderr.lines().any(|line| {
+        let line = line.trim_start();
+        let Some(options) = line.strip_prefix("usage: scp [") else {
+            return false;
+        };
+        options
+            .split_once(']')
+            .is_some_and(|(flags, _)| flags.contains('o'))
+    });
+    if !supports_legacy_scp {
+        return Err(JmcpError::ScpDependencyUnavailable {
+            detail: format!(
+                "executable '{}' does not advertise the required legacy -O option",
+                executable.display()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 #[async_trait::async_trait]
 impl ScpRunner for OpenSshScpRunner {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
@@ -966,6 +1021,52 @@ impl ScpRunner for OpenSshScpRunner {
             .stderr(std::process::Stdio::piped())
             .spawn()?;
         drive_scp_child(child, ct, "fetch_file.scp_diag").await
+    }
+}
+
+#[cfg(test)]
+mod runtime_dependency_tests {
+    use super::validate_scp_runtime;
+    use crate::JmcpError;
+
+    #[test]
+    fn missing_scp_fails_with_stable_dependency_error() {
+        let missing =
+            std::env::temp_dir().join(format!("rust-junosmcp-missing-scp-{}", std::process::id()));
+        let error = validate_scp_runtime(&missing).unwrap_err();
+        assert!(matches!(error, JmcpError::ScpDependencyUnavailable { .. }));
+        assert!(error.to_string().contains("not found"));
+    }
+
+    #[cfg(unix)]
+    fn fake_scp(stderr: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("scp");
+        std::fs::write(
+            &executable,
+            format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit 1\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (directory, executable)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scp_without_legacy_option_is_rejected() {
+        let (_directory, executable) = fake_scp("usage: scp [-pr] source target");
+        let error = validate_scp_runtime(&executable).unwrap_err();
+        assert!(matches!(error, JmcpError::ScpDependencyUnavailable { .. }));
+        assert!(error.to_string().contains("does not advertise"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scp_that_accepts_legacy_option_passes_probe() {
+        let (_directory, executable) = fake_scp("usage: scp [-Opr] source target");
+        validate_scp_runtime(&executable).unwrap();
     }
 }
 

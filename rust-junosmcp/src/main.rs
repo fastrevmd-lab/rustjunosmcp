@@ -27,6 +27,10 @@ async fn main() -> Result<()> {
 
     cli_validate::validate(&args).map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    rust_junosmcp_core::tools::transfer_file::validate_scp_runtime(std::path::Path::new("scp"))
+        .map_err(anyhow::Error::from)
+        .context("checking file-transfer runtime dependency")?;
+
     let inv_path = args.device_mapping.clone();
     let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
         .map_err(anyhow::Error::from)
