@@ -53,6 +53,11 @@ The secure default bind is **127.0.0.1:30032** (overridable with `--host`,
 The two binaries share `/etc/jmcp/tokens.json` and `/etc/jmcp/devices.json`
 but have independent systemd units and independent process lifecycles.
 
+Packaged support bundles default to
+`/var/lib/jmcp/srx-staging/bundles`, which is owned by the `jmcp` service user
+and included in the systemd unit's writable state path. Override it with
+`JMCP_SRX_STAGING_DIR` when running outside the packaged service.
+
 ## Endpoint
 
 For a local plaintext deployment, the endpoint is

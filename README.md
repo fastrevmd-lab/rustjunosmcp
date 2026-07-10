@@ -191,7 +191,7 @@ via `auth.private_key_path` in `devices.json`.
 
 | Path                          | Purpose                                       | Default mode | Owner       |
 | ----------------------------- | --------------------------------------------- | ------------ | ----------- |
-| `/var/lib/jmcp/staging/`      | Host-side stage for files awaiting transfer  | `0755`       | `jmcp:jmcp` |
+| `/var/lib/jmcp/staging/`      | Host-side stage for files awaiting transfer  | `0750`       | `jmcp:jmcp` |
 | `/etc/jmcp/known_hosts`       | SSH `known_hosts` consulted for every push    | `0644`       | `jmcp:jmcp` |
 
 Override at startup with `--staging-dir <path>` and `--known-hosts-file <path>`.
@@ -332,20 +332,30 @@ docker run --rm -i \
 # Build the tarball.
 ./scripts/package-lxc.sh
 
-# Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC).
+# Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
+# installer copies both binaries and units from its extracted package root.
 pct push 115 dist/rust-junosmcp_0.7.0_amd64.tar.gz /tmp/jmcp.tar.gz
 pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.7.0_amd64/install.sh"
 
-# Edit /etc/jmcp/devices.json on the LXC, then:
-pct exec 115 -- systemctl enable --now rust-junosmcp
+# Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
+# prints the one-time secret needed by MCP clients.
+pct exec 115 -- runuser -u jmcp -- /usr/local/bin/rust-junosmcp token add \
+  --tokens-file /etc/jmcp/tokens.json \
+  --name ops \
+  --routers '*' \
+  --tools '*'
+
+# Start the authenticated loopback HTTP endpoints. Enable either or both.
+pct exec 115 -- systemctl enable --now rust-junosmcp rust-srxmcp
 ```
 
-> **v0.1 caveat on the systemd unit:** stdio doesn't suit a long-running
-> daemon. The unit is shipped for forward-compat with v0.2's HTTP transport.
-> For v0.1, the practical pattern is invoking the binary on demand from an
-> MCP client running outside the LXC.
+The installer is idempotent: rerunning it upgrades binaries and units without
+overwriting `devices.json`, `tokens.json`, or `known_hosts`. It validates the
+complete archive before changing system state. The packaged endpoints listen on
+`127.0.0.1:30030/mcp` (Junos) and `127.0.0.1:30032/mcp` (SRX) and require bearer
+authentication. Use an SSH tunnel or a TLS reverse proxy for remote clients.
 
-## Remote transport + auth (v0.2)
+## Remote transport + auth
 
 ### Mint a token
 

@@ -551,17 +551,15 @@ impl JmcpSrxHandler {
                        Per-type values capture the universal baseline (get-configuration, \
                        get-software-information, get-system-uptime-information, \
                        get-system-alarm-information) plus type-specific RPCs, and assemble \
-                       the tarball on LXC 601 under JMCP_SRX_STAGING_DIR (default \
-                       /var/lib/rust-srxmcp/staging/bundles/<router>/srxmcp-<rid>.tgz). \
+                       the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default \
+                       /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). \
                        The response's bundle.location field is 'device' or 'lxc_staging'. \
                        Caller-supplied request_id is a validated correlation label used only \
                        in response metadata and audit logs. Filesystem paths always use a \
                        separate server-minted srxmcp-<uuid> returned as filesystem_id. \
                        Concurrent calls against the same router serialize on an in-process \
                        per-router semaphore and surface contention as \
-                       [code=bundle_per_router_contention]. v0.3.0 gap: log archival in the \
-                       per-type path is deferred to v0.3.1 — log entries are emitted in the \
-                       manifest with an explicit error noting the gap."
+                       [code=bundle_per_router_contention]."
     )]
     async fn collect_jtac_support_bundle(
         &self,
