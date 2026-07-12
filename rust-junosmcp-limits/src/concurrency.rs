@@ -36,7 +36,11 @@ pub struct ConcurrencyState {
 impl ConcurrencyState {
     /// Build from config. `sessions` enables the `session_cap` early-shed.
     pub fn new(cfg: &LimitsConfig, sessions: Option<Arc<crate::session::SessionTracker>>) -> Self {
-        let global_permits = if cfg.max_inflight_requests > 0 { cfg.max_inflight_requests } else { 1 };
+        let global_permits = if cfg.max_inflight_requests > 0 {
+            cfg.max_inflight_requests
+        } else {
+            1
+        };
         Self {
             global: Arc::new(Semaphore::new(global_permits)),
             max_global: cfg.max_inflight_requests,
@@ -66,7 +70,11 @@ pub async fn concurrency_middleware(
         match state.global.clone().try_acquire_owned() {
             Ok(p) => permits.push(p),
             Err(_) => {
-                tracing::warn!(limit = "global_concurrency", max = state.max_global, "request shed");
+                tracing::warn!(
+                    limit = "global_concurrency",
+                    max = state.max_global,
+                    "request shed"
+                );
                 return overload_response("global_concurrency");
             }
         }
@@ -117,7 +125,13 @@ fn attach_permits(resp: Response, permits: Vec<OwnedSemaphorePermit>) -> Respons
         return resp;
     }
     let (parts, body) = resp.into_parts();
-    Response::from_parts(parts, Body::new(GuardedBody { inner: body, _permits: permits }))
+    Response::from_parts(
+        parts,
+        Body::new(GuardedBody {
+            inner: body,
+            _permits: permits,
+        }),
+    )
 }
 
 /// Response body wrapper that owns concurrency permits until the body ends.
@@ -151,9 +165,9 @@ impl HttpBody for GuardedBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::get, Router};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use axum::{routing::get, Router};
     use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
     use std::sync::Arc;
@@ -161,39 +175,59 @@ mod tests {
     use tower::ServiceExt as _; // oneshot
 
     fn ctx(name: &str) -> CallerCtx {
-        CallerCtx { token_name: name.to_string(), routers: ScopeSet::Wildcard, tools: ScopeSet::Wildcard }
+        CallerCtx {
+            token_name: name.to_string(),
+            routers: ScopeSet::Wildcard,
+            tools: ScopeSet::Wildcard,
+        }
     }
 
     // A handler that blocks until `release` is notified, so we can pin permits.
     fn blocking_router(release: Arc<Notify>) -> Router {
-        Router::new().route("/mcp", get(move || {
-            let release = release.clone();
-            async move { release.notified().await; "ok" }
-        }))
+        Router::new().route(
+            "/mcp",
+            get(move || {
+                let release = release.clone();
+                async move {
+                    release.notified().await;
+                    "ok"
+                }
+            }),
+        )
     }
 
     #[tokio::test]
     async fn global_concurrency_sheds_over_limit() {
         let state = ConcurrencyState::new(
-            &LimitsConfig { max_inflight_requests: 1, max_inflight_requests_per_token: 0, ..Default::default() },
+            &LimitsConfig {
+                max_inflight_requests: 1,
+                max_inflight_requests_per_token: 0,
+                ..Default::default()
+            },
             None,
         );
         let release = Arc::new(Notify::new());
-        let app = blocking_router(release.clone())
-            .layer(axum::middleware::from_fn_with_state(state, concurrency_middleware));
+        let app = blocking_router(release.clone()).layer(axum::middleware::from_fn_with_state(
+            state,
+            concurrency_middleware,
+        ));
 
         // First request occupies the only permit (held on the blocked handler).
         let app2 = app.clone();
         let inflight = tokio::spawn(async move {
-            app2.oneshot(Request::builder().uri("/mcp").body(Body::empty()).unwrap()).await.unwrap()
+            app2.oneshot(Request::builder().uri("/mcp").body(Body::empty()).unwrap())
+                .await
+                .unwrap()
         });
         tokio::task::yield_now().await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Second concurrent request must be shed with 503.
-        let resp = app.clone()
+        let resp = app
+            .clone()
             .oneshot(Request::builder().uri("/mcp").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers().get("retry-after").unwrap(), "1");
 
@@ -204,18 +238,26 @@ mod tests {
 
         // A new request now succeeds (permit freed at end-of-body).
         // Drain the first response body first to release its GuardedBody permit.
-        let _ = axum::body::to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let _ = axum::body::to_bytes(first.into_body(), usize::MAX)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn per_token_isolated() {
         let state = ConcurrencyState::new(
-            &LimitsConfig { max_inflight_requests: 0, max_inflight_requests_per_token: 1, ..Default::default() },
+            &LimitsConfig {
+                max_inflight_requests: 0,
+                max_inflight_requests_per_token: 1,
+                ..Default::default()
+            },
             None,
         );
         let release = Arc::new(Notify::new());
-        let app = blocking_router(release.clone())
-            .layer(axum::middleware::from_fn_with_state(state, concurrency_middleware));
+        let app = blocking_router(release.clone()).layer(axum::middleware::from_fn_with_state(
+            state,
+            concurrency_middleware,
+        ));
 
         // token "a" occupies its single per-token permit.
         let app_a = app.clone();

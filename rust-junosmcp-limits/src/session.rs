@@ -5,10 +5,8 @@ use crate::config::LimitsConfig;
 use dashmap::DashMap;
 use futures::Stream;
 use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage};
-use rmcp::transport::streamable_http_server::session::{
-    RestoreOutcome, SessionManager,
-};
 use rmcp::transport::common::server_side_http::{ServerSseMessage, SessionId};
+use rmcp::transport::streamable_http_server::session::{RestoreOutcome, SessionManager};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -42,7 +40,9 @@ impl SessionTracker {
     }
 
     /// Current live session count.
-    pub fn active(&self) -> usize { self.active.load(Ordering::Acquire) }
+    pub fn active(&self) -> usize {
+        self.active.load(Ordering::Acquire)
+    }
 
     /// True when at or above the configured cap (`0` = never).
     pub fn at_capacity(&self) -> bool {
@@ -57,7 +57,13 @@ impl SessionTracker {
             self.active.fetch_sub(1, Ordering::AcqRel);
             return false;
         }
-        self.activity.insert(id, SessionMeta { created_at: now, last_active: now });
+        self.activity.insert(
+            id,
+            SessionMeta {
+                created_at: now,
+                last_active: now,
+            },
+        );
         true
     }
 
@@ -80,8 +86,12 @@ impl SessionTracker {
         let mut expired = Vec::new();
         for e in self.activity.iter() {
             let m = e.value();
-            let idle = self.idle_timeout.is_some_and(|t| now.duration_since(m.last_active) >= t);
-            let old = self.max_lifetime.is_some_and(|t| now.duration_since(m.created_at) >= t);
+            let idle = self
+                .idle_timeout
+                .is_some_and(|t| now.duration_since(m.last_active) >= t);
+            let old = self
+                .max_lifetime
+                .is_some_and(|t| now.duration_since(m.created_at) >= t);
             if idle || old {
                 expired.push(e.key().clone());
             }
@@ -121,11 +131,17 @@ impl<S: SessionManager> LimitedSessionManager<S> {
                 }
             }))
         };
-        Arc::new(Self { inner, tracker, _reaper: reaper })
+        Arc::new(Self {
+            inner,
+            tracker,
+            _reaper: reaper,
+        })
     }
 
     /// Shared tracker handle for the concurrency middleware's session-cap shed.
-    pub fn tracker(&self) -> Arc<SessionTracker> { self.tracker.clone() }
+    pub fn tracker(&self) -> Arc<SessionTracker> {
+        self.tracker.clone()
+    }
 }
 
 impl<S: SessionManager> SessionManager for LimitedSessionManager<S> {
@@ -211,11 +227,16 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    fn id(s: &str) -> SessionId { Arc::from(s) }
+    fn id(s: &str) -> SessionId {
+        Arc::from(s)
+    }
 
     #[test]
     fn cap_enforced_and_gauge_accurate() {
-        let t = SessionTracker::new(&LimitsConfig { max_sessions: 2, ..Default::default() });
+        let t = SessionTracker::new(&LimitsConfig {
+            max_sessions: 2,
+            ..Default::default()
+        });
         let now = Instant::now();
         assert!(t.try_register(id("a"), now));
         assert!(t.try_register(id("b"), now));
@@ -249,9 +270,14 @@ mod tests {
 
     #[test]
     fn zero_disables_cap() {
-        let t = SessionTracker::new(&LimitsConfig { max_sessions: 0, ..Default::default() });
+        let t = SessionTracker::new(&LimitsConfig {
+            max_sessions: 0,
+            ..Default::default()
+        });
         let now = Instant::now();
-        for i in 0..1000 { assert!(t.try_register(id(&i.to_string()), now)); }
+        for i in 0..1000 {
+            assert!(t.try_register(id(&i.to_string()), now));
+        }
         assert!(!t.at_capacity());
     }
 }

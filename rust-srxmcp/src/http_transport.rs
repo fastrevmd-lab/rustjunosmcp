@@ -99,11 +99,17 @@ async fn serve_inner(
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 
     // Innermost added layer: concurrency (needs CallerCtx from auth, which runs first).
-    let app = rmcp_router.layer(axum::middleware::from_fn_with_state(conc, concurrency_middleware));
+    let app = rmcp_router.layer(axum::middleware::from_fn_with_state(
+        conc,
+        concurrency_middleware,
+    ));
 
     // Auth runs before concurrency so CallerCtx is present.
     let app = if let Some(store) = token_store {
-        app.layer(axum::middleware::from_fn_with_state(AuthState { store }, auth_layer))
+        app.layer(axum::middleware::from_fn_with_state(
+            AuthState { store },
+            auth_layer,
+        ))
     } else {
         app
     };

@@ -103,7 +103,11 @@ pub struct Cli {
     pub max_inflight_requests: usize,
 
     /// Max concurrent in-flight requests per bearer token. 0 = unlimited.
-    #[arg(long, env = "JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN", default_value_t = 16)]
+    #[arg(
+        long,
+        env = "JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN",
+        default_value_t = 16
+    )]
     pub max_inflight_requests_per_token: usize,
 
     /// Max concurrent MCP sessions. 0 = unlimited.

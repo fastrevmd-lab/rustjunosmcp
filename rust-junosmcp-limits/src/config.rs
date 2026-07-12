@@ -36,12 +36,14 @@ impl Default for LimitsConfig {
 impl LimitsConfig {
     /// Idle timeout as a `Duration`, or `None` when disabled (`0`).
     pub fn idle_timeout(&self) -> Option<Duration> {
-        (self.session_idle_timeout_secs > 0).then(|| Duration::from_secs(self.session_idle_timeout_secs))
+        (self.session_idle_timeout_secs > 0)
+            .then(|| Duration::from_secs(self.session_idle_timeout_secs))
     }
 
     /// Max lifetime as a `Duration`, or `None` when disabled (`0`).
     pub fn max_lifetime(&self) -> Option<Duration> {
-        (self.session_max_lifetime_secs > 0).then(|| Duration::from_secs(self.session_max_lifetime_secs))
+        (self.session_max_lifetime_secs > 0)
+            .then(|| Duration::from_secs(self.session_max_lifetime_secs))
     }
 
     /// Emit the effective configuration at startup.
@@ -74,7 +76,11 @@ mod tests {
 
     #[test]
     fn zero_disables_timeouts() {
-        let c = LimitsConfig { session_idle_timeout_secs: 0, session_max_lifetime_secs: 0, ..Default::default() };
+        let c = LimitsConfig {
+            session_idle_timeout_secs: 0,
+            session_max_lifetime_secs: 0,
+            ..Default::default()
+        };
         assert_eq!(c.idle_timeout(), None);
         assert_eq!(c.max_lifetime(), None);
     }

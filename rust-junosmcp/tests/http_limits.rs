@@ -1,7 +1,7 @@
 //! e2e: request-body limit returns 413; happy-path still works with limits on.
 
 mod common;
-use common::{spawn_with_args, http_post_raw};
+use common::{http_post_raw, spawn_with_args};
 
 #[test]
 fn oversized_body_returns_413() {
@@ -10,5 +10,8 @@ fn oversized_body_returns_413() {
     let big = "x".repeat(4096);
     let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"ping","params":"{big}"}}"#);
     let status = http_post_raw(server.port, &server.token, None, &body);
-    assert_eq!(status, 413, "oversized body must be rejected before buffering");
+    assert_eq!(
+        status, 413,
+        "oversized body must be rejected before buffering"
+    );
 }
