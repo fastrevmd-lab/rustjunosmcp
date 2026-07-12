@@ -12,7 +12,7 @@ COPY . .
 RUN cargo build --release --bin rust-junosmcp
 
 FROM debian:12-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
-LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/RustJunosMCP"
+LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/rustjunosmcp"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 RUN apt-get update \

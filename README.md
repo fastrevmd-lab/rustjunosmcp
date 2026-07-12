@@ -54,7 +54,7 @@ parallel with a configurable concurrency cap.
 > deployments must pass `--allowed-host`) and `quick-xml` 0.36 → 0.41
 > (closes RUSTSEC-2026-0194/-0195 DoS). Tool surface 15 → 17.
 >
-> See the [v0.7.0 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.7.0).
+> See the [v0.7.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.7.0).
 
 ## Feature scope
 
@@ -281,7 +281,7 @@ before deploying. The same warnings apply.
 ## Quick start (local)
 
 ```bash
-git clone https://github.com/fastrevmd-lab/RustJunosMCP.git
+git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
 # Build (rustez pulled from crates.io automatically).
