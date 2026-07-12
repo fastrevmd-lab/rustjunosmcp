@@ -1,0 +1,23 @@
+[package]
+name        = "rust-junosmcp-limits"
+version     = "0.1.0"
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+description = "HTTP resource, concurrency, and session limits for rust-junosmcp / rust-srxmcp."
+
+[dependencies]
+axum         = { workspace = true }
+tower-http   = { workspace = true, features = ["limit"] }
+http         = { workspace = true }
+http-body    = { workspace = true }
+rmcp         = { version = "2", features = ["server", "transport-streamable-http-server"] }
+rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+tokio        = { workspace = true }
+tokio-util   = { workspace = true }
+dashmap      = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+tokio        = { workspace = true }
