@@ -246,3 +246,62 @@ pub fn write_tokens(json: &str) -> tempfile::NamedTempFile {
     std::fs::write(f.path(), json).unwrap();
     f
 }
+
+/// Spawn with `--allow-no-auth` (no auth layer) + extra CLI args, carrying a
+/// stub token string for signature parity with authed harnesses (not actually used).
+pub struct ServerWithToken {
+    pub server: Server,
+    pub token: String,
+}
+
+impl std::ops::Deref for ServerWithToken {
+    type Target = Server;
+    fn deref(&self) -> &Self::Target {
+        &self.server
+    }
+}
+
+pub fn spawn_with_args(extra: &[&str]) -> ServerWithToken {
+    let inv = write_inv(
+        r#"{"stub":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let port = pick_port();
+    let port_s = port.to_string();
+    let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
+    let mut argv = vec![
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port_s,
+        "--device-mapping",
+        inv.path().to_str().unwrap(),
+        "--allow-no-auth",
+        "--device-lease-dir",
+        device_lease_dir.path().to_str().unwrap(),
+    ];
+    argv.extend_from_slice(extra);
+    let child = Command::new(binary_path())
+        .args(&argv)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let server = finish_spawn(child, port, device_lease_dir);
+    ServerWithToken {
+        server,
+        token: String::new(),
+    }
+}
+
+/// POST raw body bytes and return just the HTTP status code (for testing
+/// body-limit rejections before the JSON-RPC layer).
+pub fn http_post_raw(port: u16, _bearer: &str, _session_id: Option<&str>, body: &str) -> u16 {
+    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+        .set("Accept", "application/json, text/event-stream")
+        .set("Content-Type", "application/json");
+    match req.send_string(body) {
+        Ok(resp) => resp.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {e}"),
+    }
+}

@@ -22,6 +22,7 @@ path = "src/lib.rs"
 [dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+rust-junosmcp-limits = { path = "../rust-junosmcp-limits" }
 rust-srxmcp-core   = { path = "../rust-srxmcp-core" }
 tokio              = { workspace = true }
 serde              = { workspace = true }
