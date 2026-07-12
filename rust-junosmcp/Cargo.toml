@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+rust-junosmcp-limits = { path = "../rust-junosmcp-limits" }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
 serde              = { workspace = true }
@@ -26,7 +27,7 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 rmcp = { version = "2", features = [
     "server",
     "macros",

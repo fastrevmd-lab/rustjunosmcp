@@ -10,6 +10,9 @@ use rmcp::transport::streamable_http_server::{
 };
 use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
+use rust_junosmcp_limits::{
+    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager, LimitsConfig,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -38,6 +41,7 @@ pub async fn serve(
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    limits: LimitsConfig,
 ) -> Result<()> {
     serve_inner(
         handler,
@@ -45,6 +49,7 @@ pub async fn serve(
         token_store,
         allowed_hosts,
         disable_host_check,
+        limits,
         #[cfg(feature = "tls")]
         None,
     )
@@ -58,6 +63,7 @@ pub async fn serve_with_tls(
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    limits: LimitsConfig,
     tls: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
     serve_inner(
@@ -66,6 +72,7 @@ pub async fn serve_with_tls(
         token_store,
         allowed_hosts,
         disable_host_check,
+        limits,
         tls,
     )
     .await
@@ -77,27 +84,38 @@ async fn serve_inner(
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    limits: LimitsConfig,
     #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
     let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
 
-    let http_cfg = build_http_config(allowed_hosts, disable_host_check);
-    let svc = StreamableHttpService::new(
-        handler_factory,
-        Arc::new(LocalSessionManager::default()),
-        http_cfg,
-    );
+    limits.log_effective();
 
+    let session_mgr = LimitedSessionManager::new(LocalSessionManager::default(), &limits);
+    let conc = ConcurrencyState::new(&limits, Some(session_mgr.tracker()));
+
+    let http_cfg = build_http_config(allowed_hosts, disable_host_check);
+    let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 
+    // Innermost added layer: concurrency (needs CallerCtx from auth, which runs first).
+    let app = rmcp_router.layer(axum::middleware::from_fn_with_state(
+        conc,
+        concurrency_middleware,
+    ));
+
+    // Auth runs before concurrency so CallerCtx is present.
     let app = if let Some(store) = token_store {
-        rmcp_router.layer(axum::middleware::from_fn_with_state(
+        app.layer(axum::middleware::from_fn_with_state(
             AuthState { store },
             auth_layer,
         ))
     } else {
-        rmcp_router
+        app
     };
+
+    // Body limit outermost: reject oversized bodies before buffering.
+    let app = apply_body_limit(app, &limits);
 
     #[cfg(feature = "tls")]
     if let Some(config) = tls {

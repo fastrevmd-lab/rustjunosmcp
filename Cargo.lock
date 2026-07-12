@@ -594,6 +594,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-utils"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
+
+[[package]]
 name = "crypto-bigint"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -709,6 +715,20 @@ dependencies = [
  "darling_core",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1196,6 +1216,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -2396,6 +2422,7 @@ dependencies = [
  "rmcp",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
+ "rust-junosmcp-limits",
  "rustls",
  "rustls-pki-types",
  "schemars",
@@ -2457,6 +2484,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-junosmcp-limits"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "dashmap",
+ "futures",
+ "http",
+ "http-body",
+ "rmcp",
+ "rust-junosmcp-auth",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "rust-srxmcp"
 version = "0.3.6"
 dependencies = [
@@ -2470,6 +2515,7 @@ dependencies = [
  "rmcp",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
+ "rust-junosmcp-limits",
  "rust-srxmcp-core",
  "rustls",
  "rustls-pki-types",
@@ -3204,6 +3250,7 @@ dependencies = [
  "bytes",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
  "tower-layer",
  "tower-service",

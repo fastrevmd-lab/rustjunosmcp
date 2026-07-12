@@ -210,12 +210,22 @@ async fn main() -> Result<()> {
                 );
             }
 
+            let limits = rust_junosmcp_limits::LimitsConfig {
+                max_request_body_bytes: args.max_request_body_bytes,
+                max_inflight_requests: args.max_inflight_requests,
+                max_inflight_requests_per_token: args.max_inflight_requests_per_token,
+                max_sessions: args.max_sessions,
+                session_idle_timeout_secs: args.session_idle_timeout_secs,
+                session_max_lifetime_secs: args.session_max_lifetime_secs,
+            };
+
             http_transport::serve(
                 handler,
                 addr,
                 token_store,
                 args.allowed_host.clone(),
                 args.disable_host_check,
+                limits,
                 #[cfg(feature = "tls")]
                 tls_cfg,
             )

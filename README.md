@@ -547,6 +547,27 @@ kill -HUP <pid>
 | `--tokens-file --allow-insecure-bind` | non-loopback, no TLS | OK — tokens are checked; you are asserting external transport security |
 | `--tokens-file --tls-cert cert.pem --tls-key key.pem` | any | OK |
 
+## Resource limits (streamable-HTTP)
+
+Both endpoints enforce configurable DoS guardrails, enabled by default with
+generous values. Every numeric limit accepts `0` to disable it.
+
+| Flag | Env (junos / srx) | Default | Effect |
+|------|-------------------|---------|--------|
+| `--max-request-body-bytes` | `JMCP_MAX_REQUEST_BODY_BYTES` / `JMCP_SRX_MAX_REQUEST_BODY_BYTES` | 10 MiB | Reject larger bodies with **413** before buffering |
+| `--max-inflight-requests` | `JMCP_MAX_INFLIGHT_REQUESTS` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS` | 64 | Global concurrency cap; over-limit → **503** |
+| `--max-inflight-requests-per-token` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_TOKEN` | 16 | Per-token concurrency cap → **503** |
+| `--max-sessions` | `JMCP_MAX_SESSIONS` / `JMCP_SRX_MAX_SESSIONS` | 128 | Session count cap → **503** |
+| `--session-idle-timeout-secs` | `JMCP_SESSION_IDLE_TIMEOUT_SECS` / `JMCP_SRX_SESSION_IDLE_TIMEOUT_SECS` | 300 | Idle sessions reaped |
+| `--session-max-lifetime-secs` | `JMCP_SESSION_MAX_LIFETIME_SECS` / `JMCP_SRX_SESSION_MAX_LIFETIME_SECS` | 3600 | Old sessions reaped |
+
+Over-limit responses carry `Retry-After: 1`. Concurrency permits are released when
+the response stream ends, so slow clients hold at most one slot each.
+
+**Deferred (follow-ups on #131):** per-router limits composing with destructive
+leases, per-token session caps, a Prometheus `/metrics` endpoint, and RPS
+rate-limiting.
+
 ## CLI
 
 ```
