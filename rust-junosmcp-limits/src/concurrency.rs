@@ -23,6 +23,11 @@ use tower_http::limit::RequestBodyLimitLayer;
 pub struct ConcurrencyState {
     global: Arc<Semaphore>,
     max_global: usize,
+    /// Map grows unbounded with the number of distinct token names ever seen.
+    /// In typical deployments, it is bounded by the token store's stable size
+    /// (hot-reloads replace tokens atomically, not additively). If high-churn
+    /// dynamic token provisioning becomes a use case, add LRU eviction or
+    /// periodic cleanup of semaphores with zero permits in use.
     per_token: Arc<DashMap<String, Arc<Semaphore>>>,
     max_per_token: usize,
     sessions: Option<Arc<crate::session::SessionTracker>>,
