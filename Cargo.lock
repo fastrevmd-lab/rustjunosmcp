@@ -2420,6 +2420,7 @@ dependencies = [
  "libc",
  "rcgen",
  "rmcp",
+ "rust-junosmcp-audit",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
  "rust-junosmcp-limits",
@@ -2428,6 +2429,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2445,6 +2447,7 @@ version = "0.1.0"
 dependencies = [
  "rust-junosmcp-auth",
  "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2523,6 +2526,7 @@ dependencies = [
  "http",
  "rcgen",
  "rmcp",
+ "rust-junosmcp-audit",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
  "rust-junosmcp-limits",

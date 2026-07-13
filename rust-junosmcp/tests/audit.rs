@@ -53,7 +53,11 @@ fn transfer_file_logs_sha256_not_content() {
         a.succeed();
     });
     assert!(out.contains("sha256=deadbeef1234"), "output: {}", out);
-    assert!(out.contains("basename=junos-upgrade.tgz"), "output: {}", out);
+    assert!(
+        out.contains("basename=junos-upgrade.tgz"),
+        "output: {}",
+        out
+    );
 }
 
 #[test]
@@ -105,7 +109,12 @@ fn batch_command_count_logged() {
 #[test]
 fn template_var_count_logged() {
     let out = run_with_capture(|| {
-        let mut a = AuditScope::new(None, "render_and_apply_j2_template", "apply", vec!["r1".into()]);
+        let mut a = AuditScope::new(
+            None,
+            "render_and_apply_j2_template",
+            "apply",
+            vec!["r1".into()],
+        );
         a.meta("var_count", 3u64);
         a.meta("committed", true);
         a.succeed();

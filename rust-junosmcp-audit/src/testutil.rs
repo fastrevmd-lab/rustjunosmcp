@@ -14,12 +14,16 @@ impl Write for CapturingWriter {
         self.0.lock().unwrap().extend_from_slice(buf);
         Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> MakeWriter<'a> for CapturingWriter {
     type Writer = Self;
-    fn make_writer(&'a self) -> Self::Writer { self.clone() }
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }
 
 /// Run `f` with a temporary subscriber capturing INFO output; return the text.

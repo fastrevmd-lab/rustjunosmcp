@@ -13,12 +13,19 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 /// stderr output format for logs and audit events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuditFormat { Text, Json }
+pub enum AuditFormat {
+    Text,
+    Json,
+}
 
 impl AuditFormat {
     /// Parse from a CLI/env string; unknown → Text.
     pub fn parse(s: &str) -> Self {
-        if s.eq_ignore_ascii_case("json") { AuditFormat::Json } else { AuditFormat::Text }
+        if s.eq_ignore_ascii_case("json") {
+            AuditFormat::Json
+        } else {
+            AuditFormat::Text
+        }
     }
 }
 
@@ -42,13 +49,19 @@ impl FileHandle {
 }
 
 impl Write for FileHandle {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> { self.0.lock().unwrap().write(buf) }
-    fn flush(&mut self) -> std::io::Result<()> { self.0.lock().unwrap().flush() }
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
 }
 
 impl<'a> MakeWriter<'a> for FileHandle {
     type Writer = FileHandle;
-    fn make_writer(&'a self) -> Self::Writer { self.clone() }
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }
 
 /// A JSON fmt layer filtered to `target == "audit"`, writing to `handle`.
@@ -68,7 +81,10 @@ pub fn init_tracing(cfg: &AuditConfig) {
     let stderr = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let stderr = match cfg.format {
         AuditFormat::Text => stderr.boxed(),
-        AuditFormat::Json => tracing_subscriber::fmt::layer().json().with_writer(std::io::stderr).boxed(),
+        AuditFormat::Json => tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(std::io::stderr)
+            .boxed(),
     };
     let file_layer = cfg
         .audit_log_file
@@ -105,6 +121,9 @@ mod tests {
         let line = body.lines().next().expect("one audit line");
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
         assert_eq!(v["fields"]["tool"], "t");
-        assert!(!body.contains("ignored"), "non-audit events must not hit the audit file");
+        assert!(
+            !body.contains("ignored"),
+            "non-audit events must not hit the audit file"
+        );
     }
 }
