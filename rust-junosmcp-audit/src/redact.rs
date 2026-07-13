@@ -36,6 +36,11 @@ pub enum FieldTransform {
 }
 
 /// A validated, installed redaction policy.
+///
+/// # Invariant
+/// `key` is `Some` iff at least one field in `policy` maps to `Hmac`.
+/// Enforced in `parse`; the struct is opaque so this cannot be violated
+/// via the public API. This is what makes the `expect` in `apply` safe.
 #[derive(Clone)]
 pub struct AuditRedaction {
     policy: HashMap<&'static str, FieldTransform>,
@@ -136,8 +141,9 @@ impl AuditRedaction {
         }
         let key = if needs_key {
             let path = key_file.ok_or(RedactError::HmacKeyRequired)?;
-            let bytes =
-                std::fs::read(path).map_err(|e| RedactError::HmacKeyUnreadable(e.to_string()))?;
+            let bytes = std::fs::read(path).map_err(|e| {
+                RedactError::HmacKeyUnreadable(format!("{}: {}", path.display(), e))
+            })?;
             if bytes.is_empty() {
                 return Err(RedactError::HmacKeyEmpty);
             }
@@ -179,7 +185,7 @@ fn hmac_hex(key: &[u8], msg: &[u8]) -> String {
     mac.update(msg);
     let tag = mac.finalize().into_bytes();
     let mut out = String::with_capacity(tag.len() * 2);
-    for byte in tag {
+    for byte in tag.iter() {
         out.push_str(&format!("{byte:02x}"));
     }
     out

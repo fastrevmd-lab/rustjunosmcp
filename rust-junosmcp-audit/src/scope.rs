@@ -87,6 +87,8 @@ impl Drop for AuditScope {
         let (routers, metadata) =
             crate::redact::render(crate::redact::active(), &self.routers, &self.metadata);
 
+        // `caller` is emitted directly and is NEVER redactable; only `routers` and
+        // `metadata` pass through redact::render above.
         let authorization = match &self.outcome {
             AuditOutcome::Denied { .. } => "denied",
             _ if self.caller == "stdio" => "no_auth",
