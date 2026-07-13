@@ -155,6 +155,43 @@ impl SrxError {
     pub fn schema_mismatch(rpc: &'static str, element: &'static str) -> Self {
         Self::SchemaMismatch { rpc, element }
     }
+
+    /// Returns the stable audit `error_kind` string for this error variant.
+    ///
+    /// Used by `AuditScope::fail_kind` to emit structured error classes to SIEM.
+    /// This match is EXHAUSTIVE (no `_` wildcard) so that any new variant added
+    /// to `SrxError` triggers a compile error here, forcing a deliberate
+    /// classification decision for the new variant.
+    pub fn audit_kind(&self) -> &'static str {
+        match self {
+            Self::Transport(inner) => inner.audit_kind(),
+            Self::Rpc { .. } => "rpc",
+            Self::Parse(_) => "parse",
+            Self::SchemaMismatch { .. } => "parse",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::SignaturePackageConfirmationRequired { .. } => "confirmation_required",
+            Self::SignaturePackageConfirmationTokenRequired { .. } => "confirmation_token",
+            Self::SignaturePackageConfirmationTokenInvalid { .. } => "confirmation_token",
+            Self::SignaturePackageConfirmationPlanDrift { .. } => "confirmation_token",
+            Self::SignaturePackageConfirmationCapacityExceeded { .. } => "confirmation_token",
+            Self::SignaturePackageLicenseInactive { .. } => "license_inactive",
+            Self::SignaturePackageServerUnreachable { .. } => "unreachable",
+            Self::SignaturePackageNoRollbackTarget { .. } => "precondition_failed",
+            Self::SignaturePackageNoUninstallTarget { .. } => "precondition_failed",
+            Self::SignaturePackageClusterDesynced { .. } => "cluster_desynced",
+            Self::SignaturePackageDownloadFailed { .. } => "download_failed",
+            Self::SignaturePackageInstallFailed { .. } => "install_failed",
+            Self::SignaturePackageVerificationFailed { .. } => "verify_mismatch",
+            Self::SignaturePackagePollTimeout { .. } => "timeout",
+            Self::SignaturePackageDaemonNotReady { .. } => "daemon_not_ready",
+            Self::ClusterHealthCheckTimeout { .. } => "timeout",
+            Self::BundleStagingFull { .. } => "staging_full",
+            Self::BundleStagingEvicted { .. } => "staging_evicted",
+            Self::BundleRpcSubsetFailed { .. } => "bundle_partial",
+            Self::BundlePerRouterContention { .. } => "contention",
+            Self::BundleConfigCaptureFailed { .. } => "capture_failed",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -327,5 +364,38 @@ mod tests {
         .to_string();
         assert!(s.contains("[code=daemon_not_ready]"), "got {s}");
         assert!(s.contains("vsrx-ci-tester"), "got {s}");
+    }
+
+    // --- audit_kind tests ---
+
+    #[test]
+    fn audit_kind_transport() {
+        let jmcp_err = rust_junosmcp_core::JmcpError::Timeout(std::time::Duration::from_secs(30));
+        assert_eq!(SrxError::Transport(jmcp_err).audit_kind(), "timeout");
+    }
+
+    #[test]
+    fn audit_kind_timeout() {
+        assert_eq!(
+            SrxError::SignaturePackagePollTimeout {
+                router: "r1".into(),
+                action: "download".into(),
+                elapsed_secs: 300,
+            }
+            .audit_kind(),
+            "timeout"
+        );
+    }
+
+    #[test]
+    fn audit_kind_confirmation_required() {
+        assert_eq!(
+            SrxError::SignaturePackageConfirmationRequired {
+                router: "r1".into(),
+                plan: serde_json::json!({}),
+            }
+            .audit_kind(),
+            "confirmation_required"
+        );
     }
 }

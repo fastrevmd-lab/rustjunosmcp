@@ -17,7 +17,7 @@ Every audit event has `target="audit"` and the following fields (in order):
 | `authorization` | enum | Authorization decision: `allowed`, `denied`, or `no_auth` (stdio caller). |
 | `result` | enum | Outcome: `ok` (success), `error` (failure), `denied` (authorization rejected), or `unsettled` (client disconnect). |
 | `duration_ms` | u64 | Elapsed time from handler entry to drop (milliseconds). |
-| `error_kind` | string | Stable error category when `result=error` (e.g., `"error"`, `"timeout"`, `"lease_busy"`). Empty otherwise. |
+| `error_kind` | string | Stable error category when `result=error` (e.g., `"timeout"`, `"lease_busy"`, `"transport"`). Empty otherwise. See [Error kinds](#error-kinds) for the full vocabulary. |
 | `error` | string | Bounded error message when `result=error` (max 512 chars, truncated with `…`). Empty otherwise. |
 | `reason` | string | Denial reason when `result=denied` (see below). Empty otherwise. |
 | `metadata` | string | Space-separated `key=value` pairs of allowlisted, non-secret tool-specific fields (e.g., `command_count=5 dry_run=true`). Empty if none. |
@@ -43,6 +43,64 @@ Every audit event has `target="audit"` and the following fields (in order):
 | `router_scope` | Token lacks permission for one or more target routers. |
 | `inventory_readonly` | Server started with `--inventory-readonly`; inventory mutations refused. |
 | `missing_caller_context` | SRX tool invoked without caller context (stdio or unauthenticated HTTP). |
+
+### Error kinds
+
+When `result=error`, `error_kind` carries a stable category derived from the failing error variant (`JmcpError::audit_kind` / `SrxError::audit_kind`). The strings are a closed vocabulary — the mapping is an exhaustive match, so adding a new error variant forces a deliberate classification at compile time. Use these to alert on error *classes* (e.g. "> 10 `lease_busy` in 5 min") rather than parsing free-text `error`.
+
+Emitted by both servers (SRX inherits every Junos kind via its `Transport` variant):
+
+| Kind | Meaning |
+|------|---------|
+| `unknown_router` | Target router is not present in the inventory. |
+| `invalid_input` | Malformed or invalid arguments, formats, SSH config, or blocklist rules (client error). |
+| `parse` | JSON, template, or config parse failure. |
+| `not_found` | A required file/resource is missing (key file, `known_hosts`, remote file). |
+| `unsupported` | Operation unsupported for this device/config (password auth, chassis cluster, etc.). |
+| `conflict` | Destination/device/inventory state conflict (exists-differs, on-disk drift, already-exists). |
+| `timeout` | Operation exceeded its time budget (connect, transfer, install, reboot, or outer timeout). |
+| `cancelled` | Client cancelled the in-flight operation. |
+| `lease_busy` | Device destructive-lease held by another workflow (contention). |
+| `lease_error` | Lease acquisition or candidate cleanup failed. |
+| `verify_mismatch` | Post-op checksum or version verification mismatch. |
+| `host_key_mismatch` | SSH host-key verification rejected the device. |
+| `confirmation_required` | Operation needs re-call with `confirm=true`. |
+| `commit_confirmed_active` | A pending commit-confirmed rollback window blocks the operation. |
+| `insufficient_disk` | Not enough free space on the device. |
+| `dependency_unavailable` | A required external tool (e.g. `scp`/openssh) is missing. |
+| `scp_failed` | An `scp` transfer returned a non-zero exit. |
+| `device_probe_failed` | A pre-flight device probe failed. |
+| `blocked` | A blocklist rule denied the command or config. |
+| `inventory_readonly` | Inventory mutation refused under `--inventory-readonly` (normally surfaces as a `denied`/`inventory_readonly` reason; see [Denial reasons](#denial-reasons)). |
+| `inventory_empty` | Inventory contains no devices. |
+| `transport` | NETCONF/SSH transport-layer error. |
+| `io` | Filesystem / I/O error (including inventory file read/write). |
+
+SRX-only kinds (`rust-srxmcp`):
+
+| Kind | Meaning |
+|------|---------|
+| `rpc` | Device returned an RPC error. |
+| `confirmation_token` | Confirmation token missing, invalid, drifted, or over capacity. |
+| `license_inactive` | Required feature license is not active. |
+| `unreachable` | Signature/AppID package server is unreachable. |
+| `precondition_failed` | Required precondition missing (no rollback/uninstall target). |
+| `cluster_desynced` | Chassis cluster is not synchronized. |
+| `download_failed` | Signature/AppID package download failed. |
+| `install_failed` | Signature/AppID package install failed. |
+| `daemon_not_ready` | `idp-policy` daemon not initialized. |
+| `timeout` | Poll or cluster-health-check budget exceeded. |
+| `staging_full` | Support-bundle staging dir over cap even after LRU eviction. |
+| `staging_evicted` | Requested bundle not present in staging (LRU evicted or never written). |
+| `bundle_partial` | A subset of support-bundle RPCs failed. |
+| `contention` | Another per-router workflow is already in flight. |
+| `capture_failed` | Universal-baseline config-capture RPC failed. |
+
+Server-level (not from an error enum):
+
+| Kind | Meaning |
+|------|---------|
+| `serialize` | Response serialization failed (internal error). |
 
 ## JSON Event Format
 

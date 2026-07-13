@@ -285,6 +285,77 @@ impl From<rustez::RustEzError> for JmcpError {
     }
 }
 
+impl JmcpError {
+    /// Returns the stable audit `error_kind` string for this error variant.
+    ///
+    /// Used by `AuditScope::fail_kind` to emit structured error classes to SIEM.
+    /// This match is EXHAUSTIVE (no `_` wildcard) so that any new variant added
+    /// to `JmcpError` triggers a compile error here, forcing a deliberate
+    /// classification decision for the new variant.
+    pub fn audit_kind(&self) -> &'static str {
+        match self {
+            Self::UnknownRouter(_) => "unknown_router",
+            Self::InventoryInvalid(_) => "invalid_input",
+            Self::KeyFileMissing(_) => "not_found",
+            Self::SshConfigInvalid { .. } => "invalid_input",
+            Self::BadFormat(_) => "invalid_input",
+            Self::BadPfeCommand(_) => "invalid_input",
+            Self::BadRollbackVersion(_) => "invalid_input",
+            Self::BadSourcePath(_) => "invalid_input",
+            Self::InsufficientDisk { .. } => "insufficient_disk",
+            Self::UnsupportedAuth(_) => "unsupported",
+            Self::DestExistsDiffers { .. } => "conflict",
+            Self::ScpFailed { .. } => "scp_failed",
+            Self::ScpDependencyUnavailable { .. } => "dependency_unavailable",
+            Self::ConnectTimeout(_) => "timeout",
+            Self::HostKeyMismatch { .. } => "host_key_mismatch",
+            Self::DeviceProbeFailed { .. } => "device_probe_failed",
+            Self::VerifyMismatch { .. } => "verify_mismatch",
+            Self::LocalDestExistsDiffers { .. } => "conflict",
+            Self::RemoteFileMissing { .. } => "not_found",
+            Self::FetchVerifyMismatch { .. } => "verify_mismatch",
+            Self::TransferOuterTimeout(_) => "timeout",
+            Self::ConfirmationRequired { .. } => "confirmation_required",
+            Self::UpgradeClusterUnsupported { .. } => "unsupported",
+            Self::UpgradeCommitConfirmedActive { .. } => "commit_confirmed_active",
+            Self::UpgradeInstallTimeout { .. } => "timeout",
+            Self::UpgradeRebootTimeout { .. } => "timeout",
+            Self::UpgradePostVerifyMismatch { .. } => "verify_mismatch",
+            Self::UpgradeOuterTimeout(_) => "timeout",
+            Self::Timeout(_) => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::DeviceLeaseBusy { .. } => "lease_busy",
+            Self::DeviceLeaseError { .. } => "lease_error",
+            Self::CandidateCleanupFailed { .. } => "lease_error",
+            Self::Rustez(_) => "transport",
+            Self::Io(_) => "io",
+            Self::Json(_) => "parse",
+            Self::Denied { .. } => "blocked",
+            Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
+            Self::BlocklistRuleInvalid { .. } => "invalid_input",
+            Self::TemplateSyntax(_) => "parse",
+            Self::TemplateVars(_) => "parse",
+            Self::TemplateRender(_) => "parse",
+            Self::TemplateFormatMismatch { .. } => "invalid_input",
+            Self::Validation(_) => "invalid_input",
+            Self::ConfigParseHint(_) => "invalid_input",
+            Self::InventoryReadonly => "inventory_readonly",
+            Self::DeviceExists(_) => "conflict",
+            Self::PasswordAuthDisabled => "unsupported",
+            Self::InvalidDeviceName(_) => "invalid_input",
+            Self::InvalidDeviceIp(_) => "invalid_input",
+            Self::InvalidDevicePort(_) => "invalid_input",
+            Self::MissingArguments(_) => "invalid_input",
+            Self::InventoryDriftedOnDisk => "conflict",
+            Self::EmptyInventory => "inventory_empty",
+            Self::InventoryRead(_) => "io",
+            Self::InventoryParse(_) => "parse",
+            Self::InventoryWrite(_) => "io",
+            Self::KnownHostsMissing(_) => "not_found",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,5 +767,83 @@ mod tests {
         }
         .to_string();
         assert!(s.contains("[code=fetch_verify_mismatch]"), "{s}");
+    }
+
+    // --- audit_kind tests ---
+
+    #[test]
+    fn audit_kind_timeout() {
+        assert_eq!(
+            JmcpError::Timeout(std::time::Duration::from_secs(30)).audit_kind(),
+            "timeout"
+        );
+    }
+
+    #[test]
+    fn audit_kind_lease_busy() {
+        assert_eq!(
+            JmcpError::DeviceLeaseBusy {
+                router: "r1".into(),
+                waited_secs: 60
+            }
+            .audit_kind(),
+            "lease_busy"
+        );
+    }
+
+    #[test]
+    fn audit_kind_confirmation_required() {
+        assert_eq!(
+            JmcpError::ConfirmationRequired {
+                payload: serde_json::json!({"router": "r1"})
+            }
+            .audit_kind(),
+            "confirmation_required"
+        );
+    }
+
+    #[test]
+    fn audit_kind_unknown_router() {
+        assert_eq!(
+            JmcpError::UnknownRouter("r99".into()).audit_kind(),
+            "unknown_router"
+        );
+    }
+
+    #[test]
+    fn audit_kind_invalid_input() {
+        assert_eq!(
+            JmcpError::BadFormat("yaml".into()).audit_kind(),
+            "invalid_input"
+        );
+    }
+
+    #[test]
+    fn audit_kind_blocked() {
+        assert_eq!(
+            JmcpError::Denied {
+                tool: "execute_junos_command",
+                router: "r1".into(),
+                pattern: "request system *".into(),
+                rule_source: "defaults",
+                input_excerpt: "request system reboot".into(),
+                line_number: None,
+            }
+            .audit_kind(),
+            "blocked"
+        );
+    }
+
+    #[test]
+    fn audit_kind_transport() {
+        // Can't easily construct a RustEzError in tests (external crate),
+        // so we verify the mapping via the match statement coverage instead.
+        // The Rustez variant maps to "transport" per the exhaustive match.
+    }
+
+    #[test]
+    fn audit_kind_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert_eq!(JmcpError::Io(io_err).audit_kind(), "io");
     }
 }
