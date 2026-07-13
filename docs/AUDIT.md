@@ -182,6 +182,32 @@ A ready-to-install fragment ships at [`packaging/logrotate/rust-junosmcp-audit`]
 
 The tradeoff: `copytruncate` has an inherent small race — audit lines written between the copy and the truncate can be **lost** (never duplicated). At typical audit volumes this window is negligible. If zero-loss retention is required, forward events to a SIEM in real time (see below) instead of relying on the rotated files as the system of record.
 
+### Field redaction
+
+By default every audit field is emitted in cleartext. For deployments that treat device identifiers as sensitive, an optional per-field transform can `keep`, `drop`, or `hmac` a **closed set** of fields. Redaction is **off by default** — with no configuration the output is byte-for-byte unchanged.
+
+| Flag | Env (junos / srx) | Meaning |
+|------|-------------------|---------|
+| `--audit-redact` | `JMCP_AUDIT_REDACT` / `JMCP_SRX_AUDIT_REDACT` | Comma-separated `field=transform` map. Empty = disabled. |
+| `--audit-hmac-key-file` | `JMCP_AUDIT_HMAC_KEY_FILE` / `JMCP_SRX_AUDIT_HMAC_KEY_FILE` | Path to a file holding the HMAC key. Required if any field uses `hmac`. The key value is never a flag or env value. |
+
+**Transforms:** `keep` (cleartext), `drop` (omit the field), `hmac` (emit `hmac:<hex>` = HMAC-SHA256 of the value under the key file's bytes). HMAC is deterministic, so a SIEM can still group events by a redacted identifier without learning it; it is keyed, so low-entropy values (IPs/hostnames) are not brute-force-reversible.
+
+**Redactable fields (only these; anything else is a startup error):** `routers`, `host`, `name`, `basename`, `command`, `pfe_command`. The `routers` field is transformed per router name and re-joined (`hmac:<h1>,hmac:<h2>`); `router_count` stays cleartext. `caller` and all structural fields (`result`, `duration_ms`, `error`, etc.) are never redactable.
+
+**Example** — HMAC the router names on every line and drop the device IP recorded by `add_device`:
+
+```
+rust-junosmcp \
+  --audit-redact 'routers=hmac,host=drop' \
+  --audit-hmac-key-file /etc/jmcp/audit-hmac.key \
+  ...
+```
+
+**Startup validation:** an unknown field, an unknown transform, a malformed entry, `hmac` without a key file, or an unreadable/empty key file all abort startup with a clear message — redaction never silently downgrades.
+
+**Limitation:** the free-text `error` field is bounded and secret-free by construction but may legitimately contain an identifier (e.g. `router 'r1' not found`). It is **not** field-redactable.
+
 ### SIEM / forwarding
 
 Ingest via:
@@ -197,7 +223,7 @@ The following capabilities are planned but not yet implemented:
 
 1. **Syslog / journald native sink** — currently, the tracing JSON layer writes to stderr only. A future release may add a dedicated syslog or journald subscriber.
 2. **Built-in log rotation** — the server does not manage file rotation in-process; retention is handled by the shipped `logrotate` fragment (see [Rotation & retention](#rotation--retention)). In-process size/age rotation with `SIGHUP`-reopen support remains out of scope by design.
-3. **Per-field encryption** — sensitive metadata fields (e.g., partial config diffs, router IPs) are not currently encrypted. A future release may add per-field envelope encryption for at-rest protection.
+3. **Per-field encryption** — sensitive metadata fields can be dropped or replaced with a keyed HMAC fingerprint via [Field redaction](#field-redaction). *Reversible* envelope encryption (recover the original from logs with a key) remains out of scope.
 
 ## Security & Privacy
 

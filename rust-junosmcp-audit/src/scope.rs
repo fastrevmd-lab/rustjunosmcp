@@ -83,17 +83,12 @@ impl AuditScope {
 impl Drop for AuditScope {
     fn drop(&mut self) {
         let duration_ms = self.started.elapsed().as_millis() as u64;
-        let routers = self.routers.join(",");
         let router_count = self.routers.len() as u64;
-        // Flatten safe metadata into a single string field to keep the macro
-        // call fixed-arity; JSON consumers still get `metadata` as key=val pairs.
-        let metadata = self
-            .metadata
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let (routers, metadata) =
+            crate::redact::render(crate::redact::active(), &self.routers, &self.metadata);
 
+        // `caller` is emitted directly and is NEVER redactable; only `routers` and
+        // `metadata` pass through redact::render above.
         let authorization = match &self.outcome {
             AuditOutcome::Denied { .. } => "denied",
             _ if self.caller == "stdio" => "no_auth",
@@ -194,5 +189,27 @@ mod tests {
         });
         assert!(out.contains("caller=stdio"));
         assert!(out.contains("authorization=no_auth"));
+    }
+
+    #[test]
+    fn drop_applies_installed_redaction() {
+        use crate::redact::{self, AuditRedaction};
+        // Install a drop policy for `host`. OnceLock is process-global, so this is
+        // the only scope test that installs redaction; other tests rely on None.
+        redact::install(AuditRedaction::parse("host=drop", None).unwrap());
+        let out = run_with_capture(|| {
+            let mut a = AuditScope::new(None, "add_device", "add-device", vec!["r1".into()]);
+            a.meta("host", "10.0.0.5");
+            a.meta("name", "r1");
+            a.succeed();
+        });
+        assert!(
+            !out.contains("10.0.0.5"),
+            "dropped host value must be absent: {out}"
+        );
+        assert!(
+            out.contains("name=r1"),
+            "non-dropped field must survive: {out}"
+        );
     }
 }

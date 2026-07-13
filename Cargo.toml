@@ -26,6 +26,7 @@ globset      = "0.4"
 # auth + remote transport (sub-project #2)
 arc-swap         = "1"
 sha2             = "0.10"
+hmac             = "0.12"
 rand             = "0.8"
 subtle           = "2"
 base64ct         = { version = "1", features = ["alloc"] }

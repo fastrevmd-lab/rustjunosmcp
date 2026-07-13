@@ -112,6 +112,17 @@ pub struct Cli {
     /// Optional file to append JSON audit lines to (in addition to stderr).
     #[arg(long, env = "JMCP_SRX_AUDIT_LOG_FILE")]
     pub audit_log_file: Option<std::path::PathBuf>,
+
+    /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
+    /// Fields: routers, host, name, basename, command, pfe_command.
+    /// Transforms: keep, drop, hmac. Empty = disabled.
+    #[arg(long, env = "JMCP_SRX_AUDIT_REDACT", default_value = "")]
+    pub audit_redact: String,
+
+    /// File containing the HMAC key used by any `=hmac` redaction. Required
+    /// when audit-redact requests hmac. Path only; the key is never a flag/env value.
+    #[arg(long, env = "JMCP_SRX_AUDIT_HMAC_KEY_FILE")]
+    pub audit_hmac_key_file: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
