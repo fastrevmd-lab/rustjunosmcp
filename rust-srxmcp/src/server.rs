@@ -1,6 +1,7 @@
 //! `JmcpSrxHandler` — rmcp `#[tool]` registry root for `rust-srxmcp`.
 
 use rmcp::handler::server::wrapper::Parameters;
+use rust_junosmcp_audit::AuditScope;
 use rmcp::model::{
     CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
@@ -268,14 +269,26 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<SrxmcpStatusArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "srxmcp_status", "read", vec![]);
+
         if let Err(e) = self.authorize_call(&extensions, "srxmcp_status", None) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let resp = self.srxmcp_status_body(args);
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SrxmcpStatusResponse: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -288,11 +301,19 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::ClusterStatusArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "get_chassis_cluster_status", "read", vec![args.router.clone()]);
+
         if let Err(e) = self.authorize_call(
             &extensions,
             "get_chassis_cluster_status",
             Some(&args.router),
         ) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let mut device =
@@ -307,10 +328,17 @@ impl JmcpSrxHandler {
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
             })?;
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ClusterStatusData: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -325,11 +353,19 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::ServicesStatusArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "get_srx_security_services_status", "read", vec![args.router.clone()]);
+
         if let Err(e) = self.authorize_call(
             &extensions,
             "get_srx_security_services_status",
             Some(&args.router),
         ) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let mut device =
@@ -344,10 +380,17 @@ impl JmcpSrxHandler {
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
             })?;
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ServicesStatusData: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -363,9 +406,19 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::LicenseArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "check_srx_feature_license", "read", vec![args.router.clone()]);
+
+        audit.meta("feature", format!("{:?}", args.feature));
+
         if let Err(e) =
             self.authorize_call(&extensions, "check_srx_feature_license", Some(&args.router))
         {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let mut device =
@@ -380,10 +433,14 @@ impl JmcpSrxHandler {
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
             })?;
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing LicenseData: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -402,8 +459,16 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::VpnLifecycleArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "vpn_lifecycle_report", "read", vec![args.router.clone()]);
+
         if let Err(e) = self.authorize_call(&extensions, "vpn_lifecycle_report", Some(&args.router))
         {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let mut device =
@@ -418,10 +483,17 @@ impl JmcpSrxHandler {
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
             })?;
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing VpnLifecycleData: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -444,13 +516,28 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::IdpPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx_opt = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx_opt, "manage_idp_security_package", "idp-package", vec![args.router.clone()]);
+
+        audit.meta("action", format!("{:?}", args.action));
+        if let Some(ref version) = args.version {
+            audit.meta("target_version", version.clone());
+        }
+
         let ctx = match self.authorize_call(
             &extensions,
             "manage_idp_security_package",
             Some(&args.router),
         ) {
             Ok(ctx) => ctx,
-            Err(e) => return Self::scope_to_call_result(e),
+            Err(e) => {
+                audit.deny(match e {
+                    ScopeError::MissingCallerContext => "missing_caller_context",
+                    ScopeError::RouterNotInScope { .. } => "router_scope",
+                    ScopeError::ToolNotInScope { .. } => "tool_scope",
+                });
+                return Self::scope_to_call_result(e);
+            }
         };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
@@ -472,7 +559,7 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::idp_package::run(
+        let result = rust_srxmcp_core::workflows::idp_package::run(
             &mut device,
             &self.device_leases,
             &self.confirmation_store,
@@ -482,7 +569,12 @@ impl JmcpSrxHandler {
             &request_id,
         )
         .await
-        .map_err(Self::signature_error_to_rmcp)?;
+        .map_err(Self::signature_error_to_rmcp);
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        let resp = result?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
@@ -510,13 +602,25 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::AppidPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx_opt = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx_opt, "manage_appid_signature_package", "appid-package", vec![args.router.clone()]);
+
+        audit.meta("action", format!("{:?}", args.action));
+
         let ctx = match self.authorize_call(
             &extensions,
             "manage_appid_signature_package",
             Some(&args.router),
         ) {
             Ok(ctx) => ctx,
-            Err(e) => return Self::scope_to_call_result(e),
+            Err(e) => {
+                audit.deny(match e {
+                    ScopeError::MissingCallerContext => "missing_caller_context",
+                    ScopeError::RouterNotInScope { .. } => "router_scope",
+                    ScopeError::ToolNotInScope { .. } => "tool_scope",
+                });
+                return Self::scope_to_call_result(e);
+            }
         };
         let caller = ctx.map(|c| c.token_name.as_str());
         let request_id = mint_request_id();
@@ -538,7 +642,7 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::appid_package::run(
+        let result = rust_srxmcp_core::workflows::appid_package::run(
             &mut device,
             &self.device_leases,
             &self.confirmation_store,
@@ -548,7 +652,12 @@ impl JmcpSrxHandler {
             &request_id,
         )
         .await
-        .map_err(Self::signature_error_to_rmcp)?;
+        .map_err(Self::signature_error_to_rmcp);
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        let resp = result?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
@@ -573,11 +682,19 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::ClusterHealthArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "validate_chassis_cluster_health", "read", vec![args.router.clone()]);
+
         if let Err(e) = self.authorize_call(
             &extensions,
             "validate_chassis_cluster_health",
             Some(&args.router),
         ) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         let mut device =
@@ -592,10 +709,17 @@ impl JmcpSrxHandler {
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
             })?;
-        let body = serde_json::to_string_pretty(&resp).map_err(|e| {
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing ClusterHealthData: {e}"), None)
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -624,11 +748,19 @@ impl JmcpSrxHandler {
         Parameters(args): Parameters<rust_srxmcp_core::SupportBundleArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "collect_jtac_support_bundle", "collect", vec![args.router.clone()]);
+
         if let Err(e) = self.authorize_call(
             &extensions,
             "collect_jtac_support_bundle",
             Some(&args.router),
         ) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
             return Self::scope_to_call_result(e);
         }
         rust_srxmcp_core::workflows::support_bundle::validate_path_inputs(&args)
@@ -637,7 +769,7 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args)
+        let result = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args)
             .await
             .map_err(|e| match e {
                 rust_srxmcp_core::SrxError::InvalidInput(_) => {
@@ -647,7 +779,12 @@ impl JmcpSrxHandler {
                     rmcp::ErrorData::invalid_request(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
-            })?;
+            });
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        let resp = result?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;

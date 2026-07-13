@@ -104,6 +104,14 @@ pub struct Cli {
         default_value_t = 3600
     )]
     pub session_max_lifetime_secs: u64,
+
+    /// Audit/log output format for stderr: text or json.
+    #[arg(long, env = "JMCP_SRX_AUDIT_FORMAT", default_value = "text")]
+    pub audit_format: String,
+
+    /// Optional file to append JSON audit lines to (in addition to stderr).
+    #[arg(long, env = "JMCP_SRX_AUDIT_LOG_FILE")]
+    pub audit_log_file: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
