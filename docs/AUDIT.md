@@ -158,19 +158,29 @@ journalctl -u rust-junosmcp.service --output=json | jq -r 'select(.TARGET == "au
 
 ### File sink
 
-When `--audit-log-file` is set, JSON events are appended to the specified file. The file is **append-only** — the server never rotates or truncates it. Use `logrotate` or equivalent for retention management:
+When `--audit-log-file` is set, JSON events are appended to the specified file. The file is **append-only** — the server never rotates or truncates it, so retention is handled externally by `logrotate`.
+
+#### Rotation & retention
+
+A ready-to-install fragment ships at [`packaging/logrotate/rust-junosmcp-audit`](../packaging/logrotate/rust-junosmcp-audit). Install it as `/etc/logrotate.d/rust-junosmcp-audit` (owned `root:root`, mode `0644`). It rotates the audit files daily, caps them at 100 MB, keeps 14 compressed generations, and matches the packaged systemd layout (`jmcp:jmcp`, files under `/var/lib/jmcp`). Tune `rotate`/`maxsize`/`daily` to your retention policy.
 
 ```
-/var/log/jmcp/audit.jsonl {
+/var/lib/jmcp/audit.jsonl /var/lib/jmcp/srx-audit.jsonl {
     daily
-    rotate 90
-    compress
-    delaycompress
+    rotate 14
+    maxsize 100M
     missingok
     notifempty
+    compress
+    delaycompress
     copytruncate
+    su jmcp jmcp
 }
 ```
+
+**`copytruncate` is required, not optional.** The server holds a single long-lived append (`O_APPEND`) file descriptor for the audit sink and never reopens it — `SIGHUP` is reserved for hot-reloading `devices.json`/`tokens.json` and does **not** reopen the audit file. With plain `create`-mode rotation (rename + create), the server would keep writing to the rotated inode and the active file would stay empty until the next restart. `copytruncate` copies the file, then truncates it in place; because the fd is `O_APPEND`, writes resume cleanly at offset 0 with no sparse gap.
+
+The tradeoff: `copytruncate` has an inherent small race — audit lines written between the copy and the truncate can be **lost** (never duplicated). At typical audit volumes this window is negligible. If zero-loss retention is required, forward events to a SIEM in real time (see below) instead of relying on the rotated files as the system of record.
 
 ### SIEM / forwarding
 
@@ -186,7 +196,7 @@ Filter on `target == "audit"` to separate audit events from operational logs.
 The following capabilities are planned but not yet implemented:
 
 1. **Syslog / journald native sink** — currently, the tracing JSON layer writes to stderr only. A future release may add a dedicated syslog or journald subscriber.
-2. **Built-in log rotation** — the server does not manage file rotation; use external tooling (`logrotate`, `systemd-tmpfiles`).
+2. **Built-in log rotation** — the server does not manage file rotation in-process; retention is handled by the shipped `logrotate` fragment (see [Rotation & retention](#rotation--retention)). In-process size/age rotation with `SIGHUP`-reopen support remains out of scope by design.
 3. **Per-field encryption** — sensitive metadata fields (e.g., partial config diffs, router IPs) are not currently encrypted. A future release may add per-field envelope encryption for at-rest protection.
 
 ## Security & Privacy
@@ -208,7 +218,7 @@ journalctl -u rust-junosmcp.service --since "1 hour ago" --output=json \
 
 ```bash
 jq -r 'select(.target == "audit") | select(.fields.result == "ok") | "\(.fields.duration_ms) \(.fields.tool) \(.fields.routers)"' \
-  /var/log/jmcp/audit.jsonl \
+  /var/lib/jmcp/audit.jsonl \
   | sort -rn | head -10
 ```
 
@@ -216,5 +226,5 @@ jq -r 'select(.target == "audit") | select(.fields.result == "ok") | "\(.fields.
 
 ```bash
 jq -r 'select(.target == "audit") | select(.fields.action == "commit") | select(.fields.result == "error") | "\(.fields.caller) \(.fields.routers) \(.fields.error)"' \
-  /var/log/jmcp/audit.jsonl
+  /var/lib/jmcp/audit.jsonl
 ```

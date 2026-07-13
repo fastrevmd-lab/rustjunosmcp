@@ -1,0 +1,34 @@
+# logrotate fragment for the rust-junosmcp / rust-srxmcp JSON audit sink.
+#
+# Install as /etc/logrotate.d/rust-junosmcp-audit (root:root, mode 0644).
+# Enable the sink by passing --audit-log-file (or JMCP_AUDIT_LOG_FILE /
+# JMCP_SRX_AUDIT_LOG_FILE). The paths below match the packaged systemd units,
+# which run as jmcp:jmcp with StateDirectory=jmcp (/var/lib/jmcp writable under
+# ProtectSystem=strict). Adjust paths/retention to your policy.
+#
+# copytruncate is REQUIRED, not optional:
+#   The server holds a single long-lived append (O_APPEND) file descriptor for
+#   the audit sink and never reopens it. SIGHUP is reserved for hot-reloading
+#   devices.json / tokens.json and does NOT reopen the audit file. With plain
+#   `create`-mode rotation (rename + create), the server would keep writing to
+#   the rotated inode and the active file would stay empty until restart.
+#   copytruncate copies the file, then truncates it in place; because the fd is
+#   O_APPEND, writes resume cleanly at offset 0 with no sparse gap.
+#
+#   Caveat: copytruncate has an inherent small race — audit lines written
+#   between the copy and the truncate can be lost (and are never duplicated).
+#   At typical audit volumes with size-based daily rotation this window is
+#   negligible; if zero-loss is required, forward lines to a SIEM in real time
+#   (Vector/Filebeat tailing the file) rather than relying on the rotated files.
+
+/var/lib/jmcp/audit.jsonl /var/lib/jmcp/srx-audit.jsonl {
+    daily
+    rotate 14
+    maxsize 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su jmcp jmcp
+}
