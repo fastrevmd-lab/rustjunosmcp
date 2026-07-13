@@ -17,9 +17,13 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    rust_junosmcp_core::bootstrap::init_tracing();
-
     let args = Cli::parse();
+
+    let audit_cfg = rust_junosmcp_audit::AuditConfig {
+        format: rust_junosmcp_audit::AuditFormat::parse(&args.audit_format),
+        audit_log_file: args.audit_log_file.clone(),
+    };
+    rust_junosmcp_audit::init_tracing(&audit_cfg);
 
     if let Some(Command::Token { action }) = args.command {
         return token_cmd::run(action);

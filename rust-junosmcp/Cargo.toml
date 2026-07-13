@@ -19,6 +19,7 @@ path = "src/main.rs"
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
 rust-junosmcp-limits = { path = "../rust-junosmcp-limits" }
+rust-junosmcp-audit = { path = "../rust-junosmcp-audit" }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
 serde              = { workspace = true }
@@ -27,6 +28,7 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
+sha2               = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 rmcp = { version = "2", features = [
     "server",
@@ -49,6 +51,7 @@ axum-server        = { workspace = true, optional = true, default-features = fal
 libc = "0.2"
 
 [dev-dependencies]
+rust-junosmcp-audit = { path = "../rust-junosmcp-audit", features = ["test-util"] }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

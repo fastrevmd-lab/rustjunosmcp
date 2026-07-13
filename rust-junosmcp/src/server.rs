@@ -5,6 +5,8 @@
 //! the `Result<serde_json::Value, JmcpError>` into the appropriate rmcp content.
 
 use rmcp::handler::server::wrapper::Parameters;
+use rust_junosmcp_audit::AuditScope;
+use sha2::{Digest, Sha256};
 use rmcp::model::{
     CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
@@ -51,70 +53,6 @@ fn mint_request_id() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     format!("req-{nanos}")
-}
-
-/// Outcome of an `upgrade_junos` call, as observed by `UpgradeAuditGuard`.
-///
-/// - `Settled`: the normal Ok/Err path completed; the match arms below
-///   already emitted the canonical `audit` line, so the guard stays silent.
-/// - `Cancelled`: the in-flight call returned `JmcpError::Cancelled` because
-///   the rmcp `RequestContext::ct` fired (issue #44 Half A — explicit
-///   `notifications/cancelled` or server-side timeout). The guard emits
-///   `outcome="cancelled"` so the journal captures it.
-/// - `Unsettled`: the future was dropped before reaching either the
-///   `Settled` or `Cancelled` assignment. Under the rmcp 0.8.5
-///   streamable-HTTP transport this is the raw TCP-disconnect path (Half B,
-///   tracked upstream): the request token does not fire, but our future is
-///   nevertheless dropped. The guard emits `outcome="unsettled"` so this
-///   case stays auditable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UpgradeOutcome {
-    Unsettled,
-    Cancelled,
-    Settled,
-}
-
-/// RAII guard that emits an `audit` line for `upgrade_junos` calls that
-/// did NOT reach the normal Ok/Err match arms below — i.e. cancellations
-/// (token fired) or future drops (transport disconnect under rmcp 0.8.5
-/// streamable-HTTP, Half B). The normal completed paths set
-/// `outcome = Settled` so the guard stays silent. (#44, #42)
-struct UpgradeAuditGuard {
-    outcome: UpgradeOutcome,
-    token: String,
-    router: String,
-    basename: String,
-    target_version: String,
-    correlation_id: String,
-}
-
-impl Drop for UpgradeAuditGuard {
-    fn drop(&mut self) {
-        // #44 diagnostic: every drop logs once so we can correlate guard
-        // lifetime with the journal during a live destructive run.
-        tracing::info!(
-            tool = "upgrade_junos",
-            router = %self.router,
-            correlation_id = %self.correlation_id,
-            outcome = ?self.outcome,
-            "upgrade_junos.drop_diag: guard dropped"
-        );
-        let outcome_str = match self.outcome {
-            UpgradeOutcome::Settled => return,
-            UpgradeOutcome::Cancelled => "cancelled",
-            UpgradeOutcome::Unsettled => "unsettled",
-        };
-        tracing::info!(
-            tool = "upgrade_junos",
-            token = %self.token,
-            router = %self.router,
-            basename = %self.basename,
-            target_version = %self.target_version,
-            correlation_id = %self.correlation_id,
-            outcome = outcome_str,
-            "audit"
-        );
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -303,12 +241,25 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "get_router_list", "read", vec![]);
+
         if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         let names =
             rust_junosmcp_auth::caller::filter_router_names(ctx, self.dm.inventory().names());
-        Self::to_call_result(router_list::handle_names(names).await)
+        let result = router_list::handle_names(names).await;
+        match &result {
+            Ok(v) => {
+                if let Some(arr) = v.as_object().and_then(|o| o.get("names")).and_then(|n| n.as_array()) {
+                    audit.meta("count", arr.len() as u64);
+                }
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -321,13 +272,26 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "gather_device_facts", "read", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "gather_device_facts") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "gather_device_facts", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(facts::handle(args, self.dm.clone()).await)
+
+        let result = facts::handle(args, self.dm.clone()).await;
+        match &result {
+            Ok(v) => {
+                audit.meta("output_bytes", v.to_string().len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -340,15 +304,27 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "execute_junos_command", "execute", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "execute_junos_command") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "execute_junos_command", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(
-            execute_command::handle(args, self.dm.clone(), self.policy.load_full()).await,
-        )
+        audit.meta("command", args.command.clone());
+
+        let result = execute_command::handle(args, self.dm.clone(), self.policy.load_full()).await;
+        match &result {
+            Ok(v) => {
+                audit.meta("output_bytes", v.to_string().len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -361,13 +337,26 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "get_junos_config", "read", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "get_junos_config") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "get_junos_config", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(get_config::handle(args, self.dm.clone()).await)
+
+        let result = get_config::handle(args, self.dm.clone()).await;
+        match &result {
+            Ok(v) => {
+                audit.meta("output_bytes", v.to_string().len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -380,13 +369,26 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "junos_config_diff", "read", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "junos_config_diff") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "junos_config_diff", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(config_diff::handle(args, self.dm.clone()).await)
+
+        let result = config_diff::handle(args, self.dm.clone()).await;
+        match &result {
+            Ok(v) => {
+                audit.meta("output_bytes", v.to_string().len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -400,16 +402,33 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "load_and_commit_config", "commit", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "load_and_commit_config") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "load_and_commit_config", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(
-            load_commit::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct)
-                .await,
-        )
+
+        audit.meta("config_bytes", args.config_text.len() as u64);
+        let mut hasher = Sha256::new();
+        hasher.update(args.config_text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        audit.meta("config_sha256", hash);
+        if let Some(confirm_mins) = args.confirm_timeout_mins {
+            audit.meta("commit_confirmed", confirm_mins as u64);
+        }
+        audit.meta("comment_present", !args.commit_comment.is_empty());
+
+        let result = load_commit::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -423,16 +442,29 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "commit_check_config", "commit-check", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "commit_check_config") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "commit_check_config", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(
-            commit_check::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct)
-                .await,
-        )
+
+        audit.meta("config_bytes", args.config_text.len() as u64);
+        let mut hasher = Sha256::new();
+        hasher.update(args.config_text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        audit.meta("config_sha256", hash);
+
+        let result = commit_check::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -446,13 +478,23 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "discard_candidate", "discard", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "discard_candidate") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "discard_candidate", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(discard_candidate::handle_with_cancel(args, self.dm.clone(), ct).await)
+
+        let result = discard_candidate::handle_with_cancel(args, self.dm.clone(), ct).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -465,14 +507,27 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "execute_junos_pfe_command", "execute", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "execute_junos_pfe_command") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        if let Err(e) = self.check_router_scope(ctx, "execute_junos_pfe_command", &args.router_name)
-        {
+        if let Err(e) = self.check_router_scope(ctx, "execute_junos_pfe_command", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        Self::to_call_result(pfe::handle(args, self.dm.clone(), self.policy.load_full()).await)
+        audit.meta("command", args.pfe_command.clone());
+
+        let result = pfe::handle(args, self.dm.clone(), self.policy.load_full()).await;
+        match &result {
+            Ok(v) => {
+                audit.meta("output_bytes", v.to_string().len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -485,15 +540,26 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "execute_junos_command_batch", "execute-batch", args.routers.clone());
+
         if let Err(e) = self.check_tool_scope(ctx, "execute_junos_command_batch") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         for r in &args.routers {
             if let Err(e) = self.check_router_scope(ctx, "execute_junos_command_batch", r) {
+                audit.deny("router_scope");
                 return Self::scope_to_call_result(e);
             }
         }
-        Self::to_call_result(batch::handle(args, self.dm.clone(), self.policy.load_full()).await)
+        audit.meta("command_count", args.commands.len() as u64);
+
+        let result = batch::handle(args, self.dm.clone(), self.policy.load_full()).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -507,25 +573,43 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        if let Err(e) = self.check_tool_scope(ctx, "render_and_apply_j2_template") {
-            return Self::scope_to_call_result(e);
-        }
-        // Per-router scope is enforced inside the handler against the
-        // resolved router list (router_name OR router_names). Same as
-        // execute_junos_command_batch.
         let resolved = match (&args.router_name, &args.router_names) {
             (Some(one), None) => vec![one.clone()],
             (None, Some(many)) => many.clone(),
             _ => Vec::new(),
         };
+        let mut audit = AuditScope::new(ctx, "render_and_apply_j2_template", "apply", resolved.clone());
+
+        if let Err(e) = self.check_tool_scope(ctx, "render_and_apply_j2_template") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
         for r in &resolved {
             if let Err(e) = self.check_router_scope(ctx, "render_and_apply_j2_template", r) {
+                audit.deny("router_scope");
                 return Self::scope_to_call_result(e);
             }
         }
-        Self::to_call_result(
-            template::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await,
-        )
+
+        // Parse vars_content to count vars
+        if let Ok(vars) = serde_json::from_str::<serde_json::Value>(&args.vars_content) {
+            if let Some(obj) = vars.as_object() {
+                audit.meta("var_count", obj.len() as u64);
+            }
+        }
+        audit.meta("committed", args.apply_config && !args.dry_run);
+
+        let result = template::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await;
+        match &result {
+            Ok(v) => {
+                if let Some(rendered) = v.get("rendered").and_then(|r| r.as_str()) {
+                    audit.meta("rendered_bytes", rendered.len() as u64);
+                }
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
+        }
+        Self::to_call_result(result)
     }
 
     #[tool(
@@ -538,17 +622,40 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "add_device", "add-device", vec![]);
+
         if let Err(e) = self.check_tool_scope(ctx, "add_device") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        // Elicitation: rmcp 0.8.5's elicit API is non-trivial to wire safely
-        // here; the handler returns MissingArguments for absent required fields,
-        // which is the documented contract for non-elicitation transports.
+
+        if let Some(name) = &args.device_name {
+            audit.meta("name", name.clone());
+        }
+        if let Some(host) = &args.device_ip {
+            audit.meta("host", host.clone());
+        }
+        if let Some(auth) = &args.auth {
+            let auth_kind = match auth {
+                rust_junosmcp_core::inventory::AuthConfig::Password { .. } => "password",
+                rust_junosmcp_core::inventory::AuthConfig::SshKey { .. } => "ssh_key",
+            };
+            audit.meta("auth_kind", auth_kind);
+        }
+
         let result = add_device::handle(args, self.dm.clone()).await;
-        // Rebuild policy from updated inventory so new device's blocklist rules
-        // take effect immediately.
-        if result.is_ok() {
-            self.rebuild_policy();
+        match &result {
+            Ok(_) => {
+                self.rebuild_policy();
+                audit.succeed();
+            }
+            Err(e) => {
+                if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
+                    audit.deny("inventory_readonly");
+                } else {
+                    audit.fail(e);
+                }
+            }
         }
         Self::to_call_result(result)
     }
@@ -563,14 +670,32 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "reload_devices", "reload-inventory", vec![]);
+
         if let Err(e) = self.check_tool_scope(ctx, "reload_devices") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
+
         let result = reload_devices::handle(args, self.dm.clone()).await;
-        // Rebuild policy from updated inventory so blocklist rules track the
-        // new device set.
-        if result.is_ok() {
-            self.rebuild_policy();
+        match &result {
+            Ok(v) => {
+                self.rebuild_policy();
+                if let Some(added) = v.get("added").and_then(|a| a.as_array()) {
+                    if let Some(removed) = v.get("removed").and_then(|r| r.as_array()) {
+                        let total = added.len() + removed.len();
+                        audit.meta("device_count", total as u64);
+                    }
+                }
+                audit.succeed();
+            }
+            Err(e) => {
+                if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
+                    audit.deny("inventory_readonly");
+                } else {
+                    audit.fail(e);
+                }
+            }
         }
         Self::to_call_result(result)
     }
@@ -586,36 +711,27 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "transfer_file", "transfer", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "transfer_file") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "transfer_file", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
-        let router = args.router_name.clone();
-        let basename = args.source_path.clone();
-        let result =
-            transfer_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
+        audit.meta("basename", args.source_path.clone());
+
+        let result = transfer_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
         match &result {
-            Ok(v) => tracing::info!(
-                tool = "transfer_file",
-                token = token,
-                router = %router,
-                basename = %basename,
-                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
-                sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or(""),
-                "audit"
-            ),
-            Err(e) => tracing::info!(
-                tool = "transfer_file",
-                token = token,
-                router = %router,
-                basename = %basename,
-                outcome = "error",
-                error = %e,
-                "audit"
-            ),
+            Ok(v) => {
+                if let Some(sha256) = v.get("sha256").and_then(|s| s.as_str()) {
+                    audit.meta("sha256", sha256);
+                }
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
         }
         Self::to_call_result(result)
     }
@@ -631,36 +747,27 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "fetch_file", "fetch", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "fetch_file") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "fetch_file", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
-        let router = args.router_name.clone();
-        let basename = args.remote_path.clone();
-        let result =
-            fetch_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
+        audit.meta("basename", args.remote_path.clone());
+
+        let result = fetch_file::handle(args, self.dm.clone(), self.transfer_config().clone(), ct).await;
         match &result {
-            Ok(v) => tracing::info!(
-                tool = "fetch_file",
-                token = token,
-                router = %router,
-                basename = %basename,
-                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
-                sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or(""),
-                "audit"
-            ),
-            Err(e) => tracing::info!(
-                tool = "fetch_file",
-                token = token,
-                router = %router,
-                basename = %basename,
-                outcome = "error",
-                error = %e,
-                "audit"
-            ),
+            Ok(v) => {
+                if let Some(sha256) = v.get("sha256").and_then(|s| s.as_str()) {
+                    audit.meta("sha256", sha256);
+                }
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
         }
         Self::to_call_result(result)
     }
@@ -676,84 +783,33 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(ctx, "upgrade_junos", "upgrade", vec![args.router_name.clone()]);
+
         if let Err(e) = self.check_tool_scope(ctx, "upgrade_junos") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Err(e) = self.check_router_scope(ctx, "upgrade_junos", &args.router_name) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
-        let token = ctx
-            .map(|c| c.token_name.as_str())
-            .unwrap_or("stdio")
-            .to_string();
-        let router = args.router_name.clone();
-        let basename = args.source_path.clone();
-        let target_version = args.target_version.clone();
+
+        audit.meta("basename", args.source_path.clone());
+        audit.meta("target_version", args.target_version.clone());
         let correlation_id = mint_request_id();
-        // #44 diagnostic: confirm handler entry — proves the future ran far
-        // enough to construct the guard. If this fires but the drop diagnostic
-        // does not, the future is being detached/leaked by the rmcp transport
-        // (not dropped) on client disconnect.
-        tracing::info!(
-            tool = "upgrade_junos",
-            token = %token,
-            router = %router,
-            basename = %basename,
-            target_version = %target_version,
-            correlation_id = %correlation_id,
-            "upgrade_junos.entry_diag: handler entered, constructing guard"
-        );
-        // Cancellation guard: tracks the outcome so Drop can emit the
-        // appropriate audit line. (#42, #44 Half A)
-        // - Settled: normal Ok/Err completed → guard stays silent.
-        // - Cancelled: `JmcpError::Cancelled` returned → guard emits
-        //   `outcome="cancelled"`.
-        // - Unsettled (default): future was dropped without ever reaching
-        //   the assignment below — the rmcp 0.8.5 streamable-HTTP raw
-        //   TCP-disconnect path (Half B). Guard emits `outcome="unsettled"`.
-        let mut guard = UpgradeAuditGuard {
-            outcome: UpgradeOutcome::Unsettled,
-            token: token.clone(),
-            router: router.clone(),
-            basename: basename.clone(),
-            target_version: target_version.clone(),
-            correlation_id: correlation_id.clone(),
-        };
+
         let result = upgrade_junos::handle(
             args,
             self.dm.clone(),
             self.upgrade_cfg.clone(),
             ct,
-            correlation_id.clone(),
+            correlation_id,
         )
         .await;
         match &result {
-            Ok(v) => tracing::info!(
-                tool = "upgrade_junos",
-                token = %token,
-                router = %router,
-                basename = %basename,
-                target_version = %target_version,
-                correlation_id = %correlation_id,
-                status = v.get("status").and_then(|s| s.as_str()).unwrap_or("ok"),
-                "audit"
-            ),
-            Err(e) => tracing::info!(
-                tool = "upgrade_junos",
-                token = %token,
-                router = %router,
-                basename = %basename,
-                target_version = %target_version,
-                correlation_id = %correlation_id,
-                outcome = "error",
-                error = %e,
-                "audit"
-            ),
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail(e),
         }
-        guard.outcome = match &result {
-            Err(rust_junosmcp_core::JmcpError::Cancelled) => UpgradeOutcome::Cancelled,
-            _ => UpgradeOutcome::Settled,
-        };
         Self::to_call_result(result)
     }
 
@@ -767,16 +823,24 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
+        let routers = if let Some(ref r) = args.router_name {
+            vec![r.clone()]
+        } else {
+            vec![]
+        };
+        let mut audit = AuditScope::new(ctx, "list_staged_files", "read", routers);
+
         if let Err(e) = self.check_tool_scope(ctx, "list_staged_files") {
+            audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
         if let Some(router) = args.router_name.as_deref() {
             if let Err(e) = self.check_router_scope(ctx, "list_staged_files", router) {
+                audit.deny("router_scope");
                 return Self::scope_to_call_result(e);
             }
         }
-        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("stdio");
-        let router = args.router_name.clone().unwrap_or_default();
+
         let result = list_staged_files::handle(
             args,
             self.dm.clone(),
@@ -784,25 +848,13 @@ impl JmcpHandler {
         )
         .await;
         match &result {
-            Ok(v) => tracing::info!(
-                tool = "list_staged_files",
-                token = token,
-                router = %router,
-                staged_count = v
-                    .get("staged_files")
-                    .and_then(|a| a.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0),
-                "audit"
-            ),
-            Err(e) => tracing::info!(
-                tool = "list_staged_files",
-                token = token,
-                router = %router,
-                outcome = "error",
-                error = %e,
-                "audit"
-            ),
+            Ok(v) => {
+                if let Some(arr) = v.get("staged_files").and_then(|a| a.as_array()) {
+                    audit.meta("count", arr.len() as u64);
+                }
+                audit.succeed();
+            }
+            Err(e) => audit.fail(e),
         }
         Self::to_call_result(result)
     }
@@ -1045,112 +1097,5 @@ mod scope_tests {
             }
         }
         assert_eq!(first_fail, Some("r2"));
-    }
-}
-
-#[cfg(test)]
-mod upgrade_audit_guard_tests {
-    use super::{UpgradeAuditGuard, UpgradeOutcome};
-    use std::io::Write;
-    use std::sync::{Arc, Mutex};
-    use tracing_subscriber::fmt::MakeWriter;
-
-    /// MakeWriter that captures all formatted log output into a shared
-    /// buffer so tests can assert on the emitted line.
-    #[derive(Clone, Default)]
-    struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for CapturingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> MakeWriter<'a> for CapturingWriter {
-        type Writer = Self;
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
-    fn run_with_capture<F: FnOnce()>(f: F) -> String {
-        let cap = CapturingWriter::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(cap.clone())
-            .with_ansi(false)
-            .with_level(false)
-            .with_target(false)
-            .with_max_level(tracing::Level::INFO)
-            .finish();
-        tracing::subscriber::with_default(subscriber, f);
-        let bytes = cap.0.lock().unwrap().clone();
-        String::from_utf8(bytes).unwrap()
-    }
-
-    fn guard() -> UpgradeAuditGuard {
-        UpgradeAuditGuard {
-            outcome: UpgradeOutcome::Unsettled,
-            token: "claude-client".into(),
-            router: "vsrx-test10".into(),
-            basename: "junos-25.4R1.12.tgz".into(),
-            target_version: "25.4R1.12".into(),
-            correlation_id: "req-test".into(),
-        }
-    }
-
-    #[test]
-    fn emits_unsettled_audit_when_dropped_without_outcome() {
-        // #44 Half B / #42: a future dropped by the rmcp HTTP transport
-        // without the in-band cancel token firing leaves the guard at
-        // `Unsettled`. The journal must still capture the tool call.
-        let captured = run_with_capture(|| {
-            let g = guard();
-            drop(g);
-        });
-        // `tracing`'s default `fmt` layer formats `%`-display fields
-        // unquoted: `router=vsrx-test10 …`. Quoted-string fields (e.g.
-        // string literals or `?`-debug) show as `tool="upgrade_junos"`.
-        assert!(
-            captured.contains("audit"),
-            "expected an `audit` message in: {captured}"
-        );
-        assert!(captured.contains("tool=\"upgrade_junos\""));
-        assert!(captured.contains("router=vsrx-test10"));
-        assert!(captured.contains("basename=junos-25.4R1.12.tgz"));
-        assert!(captured.contains("target_version=25.4R1.12"));
-        assert!(captured.contains("outcome=\"unsettled\""));
-    }
-
-    #[test]
-    fn emits_cancelled_audit_when_outcome_cancelled() {
-        // #44 Half A: when `JmcpError::Cancelled` is observed (the rmcp
-        // request token fired), the handler sets `outcome=Cancelled` and
-        // the guard emits `outcome="cancelled"` in the audit line.
-        let captured = run_with_capture(|| {
-            let mut g = guard();
-            g.outcome = UpgradeOutcome::Cancelled;
-            drop(g);
-        });
-        assert!(captured.contains("outcome=\"cancelled\""));
-    }
-
-    #[test]
-    fn silent_when_outcome_settled() {
-        // Normal Ok/Err paths set `outcome = Settled`; the guard must
-        // NOT emit a duplicate `audit` line on top of the canonical
-        // status/error one.
-        let captured = run_with_capture(|| {
-            let mut g = guard();
-            g.outcome = UpgradeOutcome::Settled;
-            drop(g);
-        });
-        assert!(
-            !captured.contains("audit"),
-            "expected no audit output when outcome=Settled, got: {captured}"
-        );
     }
 }

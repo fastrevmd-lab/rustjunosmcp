@@ -121,6 +121,14 @@ pub struct Cli {
     /// Session max lifetime in seconds. 0 = disabled.
     #[arg(long, env = "JMCP_SESSION_MAX_LIFETIME_SECS", default_value_t = 3600)]
     pub session_max_lifetime_secs: u64,
+
+    /// Audit/log output format for stderr: text or json.
+    #[arg(long, env = "JMCP_AUDIT_FORMAT", default_value = "text")]
+    pub audit_format: String,
+
+    /// Optional file to append JSON audit lines to (in addition to stderr).
+    #[arg(long, env = "JMCP_AUDIT_LOG_FILE")]
+    pub audit_log_file: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
