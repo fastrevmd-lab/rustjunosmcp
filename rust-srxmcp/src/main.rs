@@ -23,9 +23,21 @@ use tokio::time::Instant;
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
+    let redaction = if args.audit_redact.trim().is_empty() {
+        None
+    } else {
+        Some(
+            rust_junosmcp_audit::AuditRedaction::parse(
+                &args.audit_redact,
+                args.audit_hmac_key_file.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!("invalid --audit-redact: {e}"))?,
+        )
+    };
     let audit_cfg = rust_junosmcp_audit::AuditConfig {
         format: rust_junosmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
+        redaction,
     };
     rust_junosmcp_audit::init_tracing(&audit_cfg);
     cli_validate::validate(&args).map_err(|error| anyhow::anyhow!(error))?;
