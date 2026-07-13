@@ -35,6 +35,8 @@ pub struct AuditConfig {
     pub format: AuditFormat,
     /// When set, `target="audit"` events are also appended as JSON lines here.
     pub audit_log_file: Option<PathBuf>,
+    /// When set, per-field redaction is applied to emitted audit events.
+    pub redaction: Option<crate::redact::AuditRedaction>,
 }
 
 /// A cloneable append writer over a shared file handle.
@@ -97,6 +99,10 @@ pub fn init_tracing(cfg: &AuditConfig) {
         .with(stderr)
         .with(file_layer) // Option<Layer> is itself a Layer (no-op when None)
         .try_init();
+
+    if let Some(redaction) = cfg.redaction.clone() {
+        crate::redact::install(redaction);
+    }
 }
 
 #[cfg(test)]
