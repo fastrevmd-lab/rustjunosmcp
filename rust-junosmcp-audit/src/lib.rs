@@ -3,7 +3,8 @@
 mod schema;
 mod scope;
 pub mod testutil;
+mod init;
 
 pub use schema::{AuditOutcome, AuditValue};
 pub use scope::AuditScope;
-// `init` module added in Task 2.
+pub use init::{AuditConfig, AuditFormat, init_tracing};

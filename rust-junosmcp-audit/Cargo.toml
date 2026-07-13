@@ -18,3 +18,4 @@ serde_json         = { workspace = true }
 
 [dev-dependencies]
 tracing            = { workspace = true }
+tempfile           = "3"
