@@ -261,7 +261,7 @@ impl JmcpHandler {
                 }
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -298,7 +298,7 @@ impl JmcpHandler {
                 audit.meta("output_bytes", v.to_string().len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -336,7 +336,7 @@ impl JmcpHandler {
                 audit.meta("output_bytes", v.to_string().len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -373,7 +373,7 @@ impl JmcpHandler {
                 audit.meta("output_bytes", v.to_string().len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -410,7 +410,7 @@ impl JmcpHandler {
                 audit.meta("output_bytes", v.to_string().len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -457,7 +457,7 @@ impl JmcpHandler {
                 .await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -500,7 +500,7 @@ impl JmcpHandler {
                 .await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -535,7 +535,7 @@ impl JmcpHandler {
         let result = discard_candidate::handle_with_cancel(args, self.dm.clone(), ct).await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -574,7 +574,7 @@ impl JmcpHandler {
                 audit.meta("output_bytes", v.to_string().len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -611,7 +611,7 @@ impl JmcpHandler {
         let result = batch::handle(args, self.dm.clone(), self.policy.load_full()).await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -667,7 +667,7 @@ impl JmcpHandler {
                 }
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -713,7 +713,7 @@ impl JmcpHandler {
                 if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
                     audit.deny("inventory_readonly");
                 } else {
-                    audit.fail(e);
+                    audit.fail_kind(e.audit_kind(), e);
                 }
             }
         }
@@ -753,7 +753,7 @@ impl JmcpHandler {
                 if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
                     audit.deny("inventory_readonly");
                 } else {
-                    audit.fail(e);
+                    audit.fail_kind(e.audit_kind(), e);
                 }
             }
         }
@@ -797,7 +797,7 @@ impl JmcpHandler {
                 }
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -834,7 +834,7 @@ impl JmcpHandler {
                 }
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -880,7 +880,7 @@ impl JmcpHandler {
         .await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }
@@ -926,7 +926,7 @@ impl JmcpHandler {
                 }
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         Self::to_call_result(result)
     }

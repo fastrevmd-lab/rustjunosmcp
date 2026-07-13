@@ -286,7 +286,7 @@ impl JmcpSrxHandler {
         });
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -341,7 +341,7 @@ impl JmcpSrxHandler {
                 audit.meta("output_bytes", body.len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -398,7 +398,7 @@ impl JmcpSrxHandler {
                 audit.meta("output_bytes", body.len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -453,7 +453,7 @@ impl JmcpSrxHandler {
         });
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -511,7 +511,7 @@ impl JmcpSrxHandler {
                 audit.meta("output_bytes", body.len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -593,13 +593,12 @@ impl JmcpSrxHandler {
             &device_identity,
             &request_id,
         )
-        .await
-        .map_err(Self::signature_error_to_rmcp);
+        .await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
-        let resp = result?;
+        let resp = result.map_err(Self::signature_error_to_rmcp)?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
@@ -681,13 +680,12 @@ impl JmcpSrxHandler {
             &device_identity,
             &request_id,
         )
-        .await
-        .map_err(Self::signature_error_to_rmcp);
+        .await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
-        let resp = result?;
+        let resp = result.map_err(Self::signature_error_to_rmcp)?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
@@ -752,7 +750,7 @@ impl JmcpSrxHandler {
                 audit.meta("output_bytes", body.len() as u64);
                 audit.succeed();
             }
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind("serialize", e),
         }
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
@@ -809,22 +807,20 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let result = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args)
-            .await
-            .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
-                    rmcp::ErrorData::invalid_params(e.to_string(), None)
-                }
-                rust_srxmcp_core::SrxError::BundlePerRouterContention { .. } => {
-                    rmcp::ErrorData::invalid_request(e.to_string(), None)
-                }
-                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
-            });
+        let result = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args).await;
         match &result {
             Ok(_) => audit.succeed(),
-            Err(e) => audit.fail(e),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
-        let resp = result?;
+        let resp = result.map_err(|e| match e {
+            rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rmcp::ErrorData::invalid_params(e.to_string(), None)
+            }
+            rust_srxmcp_core::SrxError::BundlePerRouterContention { .. } => {
+                rmcp::ErrorData::invalid_request(e.to_string(), None)
+            }
+            _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+        })?;
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;
