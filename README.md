@@ -639,7 +639,7 @@ cargo test -p rust-junosmcp-core --test integration_real_device -- --ignored --n
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+Licensed under [MIT](LICENSE).
 
 ---
 
