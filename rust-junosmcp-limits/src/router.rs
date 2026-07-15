@@ -1,7 +1,9 @@
 //! Router-target extraction and per-router concurrency primitives.
 
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, Weak};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const ROUTER_KEYS: [&str; 4] = ["router", "router_name", "routers", "router_names"];
 
@@ -59,9 +61,115 @@ fn collect_field_targets(value: &Value, targets: &mut BTreeSet<String>) {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct RouterLimiter {
+    max: usize,
+    semaphores: Arc<Mutex<HashMap<String, Weak<Semaphore>>>>,
+}
+
+impl RouterLimiter {
+    pub(crate) fn new(max: usize) -> Self {
+        Self {
+            max,
+            semaphores: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn semaphore(&self, router: &str) -> Arc<Semaphore> {
+        let mut semaphores = self
+            .semaphores
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        semaphores.retain(|_, semaphore| semaphore.strong_count() > 0);
+
+        if let Some(semaphore) = semaphores.get(router).and_then(Weak::upgrade) {
+            return semaphore;
+        }
+
+        let semaphore = Arc::new(Semaphore::new(self.max.max(1)));
+        semaphores.insert(router.to_owned(), Arc::downgrade(&semaphore));
+        semaphore
+    }
+
+    pub(crate) fn try_acquire(
+        &self,
+        routers: &[String],
+    ) -> Result<Vec<OwnedSemaphorePermit>, String> {
+        if self.max == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut permits = Vec::with_capacity(routers.len());
+        for router in routers {
+            match self.semaphore(router).try_acquire_owned() {
+                Ok(permit) => permits.push(permit),
+                Err(_) => return Err(router.clone()),
+            }
+        }
+        Ok(permits)
+    }
+
+    #[cfg(test)]
+    fn registry_len(&self) -> usize {
+        self.semaphores
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::extract_router_targets;
+    use super::{extract_router_targets, RouterLimiter};
+
+    fn names(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn same_router_sheds_while_different_router_is_independent() {
+        let limiter = RouterLimiter::new(1);
+        let held = limiter.try_acquire(&names(&["r1"])).unwrap();
+
+        assert_eq!(limiter.try_acquire(&names(&["r1"])).unwrap_err(), "r1");
+        let other = limiter.try_acquire(&names(&["r2"])).unwrap();
+
+        drop(other);
+        drop(held);
+        assert!(limiter.try_acquire(&names(&["r1"])).is_ok());
+    }
+
+    #[test]
+    fn partial_multi_router_acquisition_rolls_back() {
+        let limiter = RouterLimiter::new(1);
+        let held_b = limiter.try_acquire(&names(&["b"])).unwrap();
+
+        assert_eq!(limiter.try_acquire(&names(&["a", "b"])).unwrap_err(), "b");
+        assert!(
+            limiter.try_acquire(&names(&["a"])).is_ok(),
+            "the failed batch must release its already-acquired a permit"
+        );
+        drop(held_b);
+    }
+
+    #[test]
+    fn zero_disables_router_permits() {
+        let limiter = RouterLimiter::new(0);
+        assert!(limiter.try_acquire(&names(&["r1"])).unwrap().is_empty());
+        assert!(limiter.try_acquire(&names(&["r1"])).unwrap().is_empty());
+    }
+
+    #[test]
+    fn weak_registry_reclaims_idle_router_names() {
+        let limiter = RouterLimiter::new(1);
+        let held = limiter.try_acquire(&names(&["old"])).unwrap();
+        assert_eq!(limiter.registry_len(), 1);
+        drop(held);
+
+        let replacement = limiter.try_acquire(&names(&["new"])).unwrap();
+        assert_eq!(limiter.registry_len(), 1);
+        drop(replacement);
+    }
 
     #[test]
     fn extracts_supported_keys_from_single_and_batched_calls() {
