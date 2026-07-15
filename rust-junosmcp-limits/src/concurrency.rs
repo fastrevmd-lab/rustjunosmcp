@@ -409,15 +409,24 @@ mod tests {
         let app = Router::new()
             .route(
                 "/mcp",
-                post(
-                    |axum::Extension(caller): axum::Extension<CallerCtx>| async move {
-                        Response::builder()
-                            .status(StatusCode::OK)
-                            .header("mcp-session-id", format!("{}-session", caller.token_name))
-                            .body(Body::empty())
-                            .unwrap()
-                    },
-                ),
+                post({
+                    let tracker = tracker.clone();
+                    move |axum::Extension(caller): axum::Extension<CallerCtx>| {
+                        let tracker = tracker.clone();
+                        async move {
+                            let session_id = format!("{}-session", caller.token_name);
+                            assert!(tracker.try_register(
+                                Arc::from(session_id.as_str()),
+                                std::time::Instant::now()
+                            ));
+                            Response::builder()
+                                .status(StatusCode::OK)
+                                .header("mcp-session-id", session_id)
+                                .body(Body::empty())
+                                .unwrap()
+                        }
+                    }
+                }),
             )
             .layer(axum::middleware::from_fn_with_state(
                 state,
@@ -520,14 +529,20 @@ mod tests {
                 post({
                     let entered = entered.clone();
                     let release = release.clone();
+                    let tracker = tracker.clone();
                     move || {
                         let entered = entered.clone();
                         let release = release.clone();
+                        let tracker = tracker.clone();
                         async move {
                             entered.notify_one();
                             timeout(TEST_TIMEOUT, release.notified())
                                 .await
                                 .expect("initialize handler was not released");
+                            assert!(tracker.try_register(
+                                Arc::from("alice-cancel-session"),
+                                std::time::Instant::now()
+                            ));
                             Response::builder()
                                 .status(StatusCode::OK)
                                 .header("mcp-session-id", "alice-cancel-session")

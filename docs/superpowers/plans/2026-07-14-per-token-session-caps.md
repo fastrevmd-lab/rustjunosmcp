@@ -295,6 +295,16 @@ impl TokenSessionReservation {
             drop(state);
             return false;
         }
+        // `unregister` releases its activity-map operation before taking this
+        // mutex. Keeping the mutex through this check and the binding insert
+        // therefore guarantees either-order cleanup without a lock inversion:
+        // an earlier unregister makes commit roll back, while a later one sees
+        // and removes the binding inserted below.
+        if !self.tracker.activity.contains_key(&id) {
+            tracing::warn!(session_id = %id, token = %token, "token session closed before binding");
+            drop(state);
+            return false;
+        }
         state.sessions.insert(id, token);
         self.token = None;
         true
@@ -312,7 +322,12 @@ impl Drop for TokenSessionReservation {
 }
 ```
 
-The duplicate branch must drop its mutex guard before returning so `Drop` can reacquire it.
+The duplicate and no-longer-live branches must drop their mutex guards before
+returning so `Drop` can reacquire the token-state mutex. `unregister` completes
+its activity-map removal before it takes that mutex: commit-first therefore
+inserts a binding that unregister subsequently removes, while unregister-first
+makes commit roll back without inserting. Neither order leaks a count or map
+entry, and no path holds the two locks in the opposite order.
 
 - [ ] **Step 5: Implement reservation, query, and unregister cleanup**
 
@@ -337,6 +352,7 @@ pub(crate) fn try_reserve_token(
     }))
 }
 
+#[cfg(test)]
 pub(crate) fn active_for_token(&self, token: &str) -> usize {
     self.token_state().counts.get(token).copied().unwrap_or(0)
 }

@@ -130,10 +130,21 @@ reservation to that session ID under the token-state mutex. A malformed header
 is treated as an internal anomaly: warn and release the uncommitted reservation.
 
 Commit moves the reservation into the `sessions` map without changing the
-already-reserved count. Session IDs are expected to be unique. A defensive
-duplicate binding, whether for the same or a different token, leaves the first
-binding authoritative, rolls back the new reservation count, and emits a
-warning rather than incrementing or reassigning.
+already-reserved count, but only while that session ID is still present in the
+authoritative global `activity` map. The token-state mutex remains held across
+the liveness check and binding insert. If close or reap already removed global
+activity, commit warns, explicitly releases the mutex guard, returns false, and
+reservation drop rolls back the token count. Session IDs are expected to be
+unique. A defensive duplicate binding, whether for the same or a different
+token, leaves the first binding authoritative, rolls back the new reservation
+count, and emits a warning rather than incrementing or reassigning.
+
+This ordering does not invert `unregister`: activity removal completes before
+`unregister` takes the token-state mutex. If commit observes a live session and
+inserts first, a concurrent unregister subsequently removes that binding. If
+unregister removes activity first, commit observes the session is absent and
+rolls back instead. Both orders reclaim the count and both token maps exactly
+once.
 
 ### Release
 
@@ -168,8 +179,8 @@ Within `concurrency_middleware`:
    router target; any early body/read failure drops the reservation.
 6. Run rmcp.
 7. If the response is successful and contains a valid `Mcp-Session-Id`, commit
-   the token reservation to that ID. Otherwise let the reservation drop and
-   release.
+   the token reservation to that ID only if the global tracker still reports
+   it live. Otherwise let the reservation drop and release.
 8. Attach request-concurrency permits to the response body as today. Session
    accounting is not tied to response-body lifetime; it persists until close or
    reap.
@@ -204,6 +215,8 @@ configured maximum. Existing overload bodies and content types are unchanged.
 - No-auth requests have no `CallerCtx` and skip this cap.
 - Invalid POST requests may reserve briefly but must release before returning.
 - Cancellation before response binding must release exactly once.
+- Close or reap before response binding makes commit fail and roll back; close
+  after binding removes the committed token ownership.
 - Explicit close, reaper close, and repeated unregister are idempotent.
 - Zero disables both reservation work and token-accounting map growth.
 - The token map contains only names with a positive reserved/live count.
@@ -215,8 +228,9 @@ configured maximum. Existing overload bodies and content types are unchanged.
 - Default/config tests verify `16` and `0` behavior.
 - Tracker tests prove same-token saturation, different-token isolation,
   reservation-drop rollback, commit, explicit unregister, idempotency, and map
-  reclamation.
-- Reaper-oriented tests prove expiration releases a committed token slot.
+  reclamation, including barrier-synchronized contention at the configured cap.
+- Close- and reaper-oriented tests prove expiration releases a committed token
+  slot and that close/reap before response binding rejects a late commit.
 - Middleware tests prove:
   - one live session for token A sheds A's second initialize at cap 1;
   - token B still initializes;
