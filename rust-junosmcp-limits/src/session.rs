@@ -26,10 +26,6 @@ struct TokenSessionState {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
-)]
 pub(crate) struct TokenSessionCapacity {
     pub(crate) current: usize,
     pub(crate) max: usize,
@@ -39,10 +35,6 @@ pub(crate) struct TokenSessionCapacity {
 pub struct SessionTracker {
     active: AtomicUsize,
     max_sessions: usize,
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "consumed by per-token middleware in Task 3")
-    )]
     max_sessions_per_token: usize,
     idle_timeout: Option<Duration>,
     max_lifetime: Option<Duration>,
@@ -50,10 +42,6 @@ pub struct SessionTracker {
     token_sessions: Mutex<TokenSessionState>,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
-)]
 pub(crate) struct TokenSessionReservation {
     tracker: Arc<SessionTracker>,
     token: Option<String>,
@@ -66,10 +54,6 @@ impl std::fmt::Debug for TokenSessionReservation {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
-)]
 impl TokenSessionReservation {
     pub(crate) fn commit(mut self, id: SessionId) -> bool {
         let token = self
@@ -143,10 +127,6 @@ impl SessionTracker {
         self.max_sessions > 0 && self.active() >= self.max_sessions
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "consumed by per-token middleware in Task 3")
-    )]
     pub(crate) fn try_reserve_token(
         self: &Arc<Self>,
         token: String,

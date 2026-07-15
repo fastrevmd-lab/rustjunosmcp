@@ -73,6 +73,8 @@ pub async fn concurrency_middleware(
     next: Next,
 ) -> Response {
     let mut permits: Vec<OwnedSemaphorePermit> = Vec::new();
+    let session_creating = is_session_creating(&req);
+    let mut token_session_reservation = None;
 
     if state.max_global > 0 {
         match state.global.clone().try_acquire_owned() {
@@ -103,9 +105,35 @@ pub async fn concurrency_middleware(
     }
 
     if let Some(tracker) = &state.sessions {
-        if is_session_creating(&req) && tracker.at_capacity() {
+        if session_creating && tracker.at_capacity() {
             tracing::warn!(limit = "session_cap", "request shed");
             return overload_response("session_cap");
+        }
+    }
+
+    if session_creating {
+        if let (Some(tracker), Some(ctx)) =
+            (state.sessions.as_ref(), req.extensions().get::<CallerCtx>())
+        {
+            let token = ctx.token_name.clone();
+            match tracker.try_reserve_token(token.clone()) {
+                Ok(reservation) => token_session_reservation = reservation,
+                Err(capacity) => {
+                    tracing::warn!(
+                        limit = "token_session_cap",
+                        token = %token,
+                        current = capacity.current,
+                        max = capacity.max,
+                        "request shed"
+                    );
+                    let mut response = overload_response("token_session_cap");
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::HeaderValue::from_static("application/json"),
+                    );
+                    return response;
+                }
+            }
         }
     }
 
@@ -136,6 +164,25 @@ pub async fn concurrency_middleware(
     }
 
     let resp = next.run(req).await;
+    if let Some(reservation) = token_session_reservation {
+        if resp.status().is_success() {
+            match resp
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok())
+            {
+                Some(session_id) => {
+                    let id: rmcp::transport::common::server_side_http::SessionId =
+                        Arc::from(session_id);
+                    let _ = reservation.commit(id);
+                }
+                None => tracing::warn!(
+                    limit = "token_session_cap",
+                    "successful initialize candidate returned no valid session id"
+                ),
+            }
+        }
+    }
     attach_permits(resp, permits)
 }
 
@@ -243,7 +290,8 @@ mod tests {
     use rust_junosmcp_core::DeviceLeaseManager;
     use serde_json::{json, Value};
     use std::convert::Infallible;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::sync::Notify;
     use tokio::time::timeout;
@@ -257,6 +305,42 @@ mod tests {
             routers: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
         }
+    }
+
+    fn initialize_request(token: &str) -> Request<Body> {
+        let mut request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/mcp")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "limits-test", "version": "1"}
+                    }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        request.extensions_mut().insert(ctx(token));
+        request
+    }
+
+    fn token_session_state(max: usize) -> (ConcurrencyState, Arc<crate::session::SessionTracker>) {
+        let cfg = LimitsConfig {
+            max_inflight_requests: 0,
+            max_inflight_requests_per_token: 0,
+            max_inflight_requests_per_router: 0,
+            max_sessions: 0,
+            max_sessions_per_token: max,
+            ..Default::default()
+        };
+        let tracker = Arc::new(crate::session::SessionTracker::new(&cfg));
+        (ConcurrencyState::new(&cfg, Some(tracker.clone())), tracker)
     }
 
     fn tool_request(arguments: Value) -> Request<Body> {
@@ -317,6 +401,183 @@ mod tests {
                 }
             }),
         )
+    }
+
+    #[tokio::test]
+    async fn per_token_session_cap_binds_response_and_isolates_tokens() {
+        let (state, tracker) = token_session_state(1);
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post(
+                    |axum::Extension(caller): axum::Extension<CallerCtx>| async move {
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("mcp-session-id", format!("{}-session", caller.token_name))
+                            .body(Body::empty())
+                            .unwrap()
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                concurrency_middleware,
+            ));
+
+        let first = app
+            .clone()
+            .oneshot(initialize_request("alice"))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        drop(first);
+
+        let shed = app
+            .clone()
+            .oneshot(initialize_request("alice"))
+            .await
+            .unwrap();
+        assert_eq!(shed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(shed.headers().get("retry-after").unwrap(), "1");
+        assert_eq!(
+            shed.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let body = axum::body::to_bytes(shed.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"error": "overloaded", "limit": "token_session_cap"})
+        );
+
+        let bob = app
+            .clone()
+            .oneshot(initialize_request("bob"))
+            .await
+            .unwrap();
+        assert_eq!(bob.status(), StatusCode::OK);
+        tracker.unregister(&Arc::from("alice-session"));
+        let alice_again = app.oneshot(initialize_request("alice")).await.unwrap();
+        assert_eq!(alice_again.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn failed_initialize_releases_token_session_reservation() {
+        let (state, tracker) = token_session_state(1);
+        let active_in_handler = Arc::new(Mutex::new(Vec::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post({
+                    let active_in_handler = active_in_handler.clone();
+                    let calls = calls.clone();
+                    let tracker = tracker.clone();
+                    move || {
+                        let active_in_handler = active_in_handler.clone();
+                        let calls = calls.clone();
+                        let tracker = tracker.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            active_in_handler
+                                .lock()
+                                .unwrap()
+                                .push(tracker.active_for_token("alice"));
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                concurrency_middleware,
+            ));
+
+        let first = app
+            .clone()
+            .oneshot(initialize_request("alice"))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+
+        let second = app.oneshot(initialize_request("alice")).await.unwrap();
+        assert_eq!(second.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(*active_in_handler.lock().unwrap(), vec![1, 1]);
+    }
+
+    #[tokio::test]
+    async fn cancelled_initialize_releases_token_session_reservation() {
+        let (state, tracker) = token_session_state(1);
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post({
+                    let entered = entered.clone();
+                    let release = release.clone();
+                    move || {
+                        let entered = entered.clone();
+                        let release = release.clone();
+                        async move {
+                            entered.notify_one();
+                            timeout(TEST_TIMEOUT, release.notified())
+                                .await
+                                .expect("initialize handler was not released");
+                            Response::builder()
+                                .status(StatusCode::OK)
+                                .header("mcp-session-id", "alice-cancel-session")
+                                .body(Body::empty())
+                                .unwrap()
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                concurrency_middleware,
+            ));
+
+        let first_app = app.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(initialize_request("alice"))
+                .await
+                .unwrap()
+        });
+        timeout(TEST_TIMEOUT, entered.notified())
+            .await
+            .expect("first initialize did not enter the handler");
+        assert_eq!(tracker.active_for_token("alice"), 1);
+
+        first.abort();
+        let cancelled = timeout(TEST_TIMEOUT, first)
+            .await
+            .expect("aborted initialize task did not finish")
+            .expect_err("aborted initialize unexpectedly completed");
+        assert!(cancelled.is_cancelled());
+        assert_eq!(tracker.active_for_token("alice"), 0);
+
+        let second_app = app.clone();
+        let second = tokio::spawn(async move {
+            second_app
+                .oneshot(initialize_request("alice"))
+                .await
+                .unwrap()
+        });
+        timeout(TEST_TIMEOUT, entered.notified())
+            .await
+            .expect("replacement initialize did not enter the handler");
+        release.notify_one();
+        let response = timeout(TEST_TIMEOUT, second)
+            .await
+            .expect("replacement initialize did not finish")
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
