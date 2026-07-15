@@ -8,6 +8,11 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
+- **#148 - per-token MCP session caps.** Streamable HTTP now limits each exact
+  bearer-token name to 16 live sessions by default (`0` disables), with atomic
+  initialize admission, stable `token_session_cap` 503 responses, token isolation,
+  and capacity returned on close or reap.
+
 - **#147 - per-router HTTP concurrency limits.** Both streamable-HTTP endpoints
   now cap concurrent work per exact router name at 4 by default (`0` disables),
   with immediate `503` + `Retry-After: 1` load shedding. Multi-router calls hold

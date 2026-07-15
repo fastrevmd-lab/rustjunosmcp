@@ -7,8 +7,9 @@ use futures::Stream;
 use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage};
 use rmcp::transport::common::server_side_http::{ServerSseMessage, SessionId};
 use rmcp::transport::streamable_http_server::session::{RestoreOutcome, SessionManager};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::task::AbortOnDropHandle;
 
@@ -18,13 +19,83 @@ struct SessionMeta {
     last_active: Instant,
 }
 
+#[derive(Default)]
+struct TokenSessionState {
+    counts: HashMap<String, usize>,
+    sessions: HashMap<SessionId, String>,
+    pending_reservations: usize,
+    created_unbound: HashSet<SessionId>,
+    closed_before_bind: HashSet<SessionId>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TokenSessionCapacity {
+    pub(crate) current: usize,
+    pub(crate) max: usize,
+}
+
 /// Tracks live sessions, enforces the count cap, and identifies stale sessions.
 pub struct SessionTracker {
     active: AtomicUsize,
     max_sessions: usize,
+    max_sessions_per_token: usize,
     idle_timeout: Option<Duration>,
     max_lifetime: Option<Duration>,
     activity: DashMap<SessionId, SessionMeta>,
+    token_sessions: Mutex<TokenSessionState>,
+}
+
+pub(crate) struct TokenSessionReservation {
+    tracker: Arc<SessionTracker>,
+    token: Option<String>,
+}
+
+impl std::fmt::Debug for TokenSessionReservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenSessionReservation")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TokenSessionReservation {
+    pub(crate) fn commit(mut self, id: SessionId) -> bool {
+        let token = self
+            .token
+            .as_ref()
+            .expect("uncommitted reservation")
+            .clone();
+        let mut state = self.tracker.token_state();
+        if state.sessions.contains_key(&id) {
+            tracing::warn!(session_id = %id, token = %token, "duplicate token session binding");
+            drop(state);
+            return false;
+        }
+        if state.closed_before_bind.remove(&id) {
+            tracing::warn!(session_id = %id, token = %token, "token session closed before binding");
+            drop(state);
+            return false;
+        }
+        if !state.created_unbound.remove(&id) {
+            tracing::warn!(session_id = %id, token = %token, "token session was not recorded at creation");
+            drop(state);
+            return false;
+        }
+        state.sessions.insert(id, token);
+        SessionTracker::complete_pending_reservation(&mut state);
+        self.token = None;
+        true
+    }
+}
+
+impl Drop for TokenSessionReservation {
+    fn drop(&mut self) {
+        let Some(token) = self.token.take() else {
+            return;
+        };
+        let mut state = self.tracker.token_state();
+        SessionTracker::decrement_token(&mut state, &token);
+        SessionTracker::complete_pending_reservation(&mut state);
+    }
 }
 
 impl SessionTracker {
@@ -33,9 +104,40 @@ impl SessionTracker {
         Self {
             active: AtomicUsize::new(0),
             max_sessions: cfg.max_sessions,
+            max_sessions_per_token: cfg.max_sessions_per_token,
             idle_timeout: cfg.idle_timeout(),
             max_lifetime: cfg.max_lifetime(),
             activity: DashMap::new(),
+            token_sessions: Mutex::new(TokenSessionState::default()),
+        }
+    }
+
+    fn token_state(&self) -> std::sync::MutexGuard<'_, TokenSessionState> {
+        self.token_sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn decrement_token(state: &mut TokenSessionState, token: &str) {
+        let remove = match state.counts.get_mut(token) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            Some(_) => true,
+            None => false,
+        };
+        if remove {
+            state.counts.remove(token);
+        }
+    }
+
+    fn complete_pending_reservation(state: &mut TokenSessionState) {
+        debug_assert!(state.pending_reservations > 0);
+        state.pending_reservations -= 1;
+        if state.pending_reservations == 0 {
+            state.created_unbound.clear();
+            state.closed_before_bind.clear();
         }
     }
 
@@ -47,6 +149,67 @@ impl SessionTracker {
     /// True when at or above the configured cap (`0` = never).
     pub fn at_capacity(&self) -> bool {
         self.max_sessions > 0 && self.active() >= self.max_sessions
+    }
+
+    pub(crate) fn try_reserve_token(
+        self: &Arc<Self>,
+        token: String,
+    ) -> Result<Option<TokenSessionReservation>, TokenSessionCapacity> {
+        if self.max_sessions_per_token == 0 {
+            return Ok(None);
+        }
+        let mut state = self.token_state();
+        let current = state.counts.get(&token).copied().unwrap_or(0);
+        if current >= self.max_sessions_per_token {
+            return Err(TokenSessionCapacity {
+                current,
+                max: self.max_sessions_per_token,
+            });
+        }
+        state.counts.insert(token.clone(), current + 1);
+        state.pending_reservations += 1;
+        drop(state);
+        Ok(Some(TokenSessionReservation {
+            tracker: self.clone(),
+            token: Some(token),
+        }))
+    }
+
+    pub(crate) fn note_session_created(&self, id: &SessionId) {
+        let mut state = self.token_state();
+        if state.pending_reservations > 0 {
+            state.created_unbound.insert(id.clone());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_for_token(&self, token: &str) -> usize {
+        self.token_state().counts.get(token).copied().unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    fn token_population_len(&self) -> usize {
+        self.token_state().counts.len()
+    }
+
+    #[cfg(test)]
+    fn token_binding_len(&self) -> usize {
+        self.token_state().sessions.len()
+    }
+
+    #[cfg(test)]
+    fn pending_reservation_count(&self) -> usize {
+        self.token_state().pending_reservations
+    }
+
+    #[cfg(test)]
+    fn closed_before_bind_len(&self) -> usize {
+        self.token_state().closed_before_bind.len()
+    }
+
+    #[cfg(test)]
+    fn created_unbound_len(&self) -> usize {
+        self.token_state().created_unbound.len()
     }
 
     /// Reserve a slot and record the session. Returns false if over cap
@@ -78,6 +241,12 @@ impl SessionTracker {
     pub fn unregister(&self, id: &SessionId) {
         if self.activity.remove(id).is_some() {
             self.active.fetch_sub(1, Ordering::AcqRel);
+        }
+        let mut state = self.token_state();
+        if let Some(token) = state.sessions.remove(id) {
+            Self::decrement_token(&mut state, &token);
+        } else if state.created_unbound.remove(id) {
+            state.closed_before_bind.insert(id.clone());
         }
     }
 
@@ -150,6 +319,7 @@ impl<S: SessionManager> SessionManager for LimitedSessionManager<S> {
 
     async fn create_session(&self) -> Result<(SessionId, Self::Transport), Self::Error> {
         let (id, transport) = self.inner.create_session().await?;
+        self.tracker.note_session_created(&id);
         // Best-effort registration; the middleware early-shed is the primary cap gate.
         self.tracker.try_register(id.clone(), Instant::now());
         Ok((id, transport))
@@ -225,6 +395,8 @@ impl<S: SessionManager> SessionManager for LimitedSessionManager<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
+    use std::thread;
     use std::time::{Duration, Instant};
 
     fn id(s: &str) -> SessionId {
@@ -279,5 +451,385 @@ mod tests {
             assert!(t.try_register(id(&i.to_string()), now));
         }
         assert!(!t.at_capacity());
+    }
+
+    #[test]
+    fn token_reservations_enforce_isolation_and_drop_rollback() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let alice = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        let full = tracker.try_reserve_token("alice".to_owned()).unwrap_err();
+        assert_eq!(full, TokenSessionCapacity { current: 1, max: 1 });
+        let bob = tracker
+            .try_reserve_token("bob".to_owned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.active_for_token("bob"), 1);
+        assert_eq!(tracker.pending_reservation_count(), 2);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        let created_open = id("created-open");
+        let created_closed = id("created-closed");
+        tracker.note_session_created(&created_open);
+        tracker.note_session_created(&created_closed);
+        assert_eq!(tracker.created_unbound_len(), 2);
+        tracker.unregister(&created_closed);
+        tracker.unregister(&created_closed);
+        assert_eq!(tracker.created_unbound_len(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+        drop(alice);
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.created_unbound_len(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+        drop(bob);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.active_for_token("bob"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn arbitrary_unregister_ids_do_not_grow_pending_coordination() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+
+        for index in 0..10_000 {
+            tracker.unregister(&id(&format!("arbitrary-{index}")));
+        }
+
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        drop(reservation);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn created_session_hook_moves_to_closed_before_bind_once() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let session = id("created-then-closed");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+
+        tracker.note_session_created(&session);
+        assert_eq!(tracker.created_unbound_len(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+
+        tracker.unregister(&session);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+        tracker.unregister(&session);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+
+        assert!(!reservation.commit(session));
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn unrecorded_response_session_does_not_bind() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+
+        assert!(!reservation.commit(id("unrecorded-response")));
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn committed_token_reservation_releases_on_unregister_once() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let session = id("session-a");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        assert!(tracker.try_register(session.clone(), Instant::now()));
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.created_unbound_len(), 1);
+        assert!(reservation.commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        tracker.unregister(&session);
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+    }
+
+    #[test]
+    fn globally_untracked_live_session_still_binds_token_reservation() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions: 1,
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let occupied = id("globally-tracked");
+        let session = id("live-but-globally-untracked");
+        assert!(tracker.try_register(occupied.clone(), Instant::now()));
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        tracker.note_session_created(&id("other-real-created"));
+        assert_eq!(tracker.created_unbound_len(), 2);
+
+        // `LimitedSessionManager::create_session` treats global registration as
+        // best effort and still returns the live inner session in this case.
+        assert!(!tracker.try_register(session.clone(), Instant::now()));
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+
+        assert!(reservation.commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.token_binding_len(), 1);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        tracker.unregister(&occupied);
+        assert_eq!(tracker.active(), 0);
+    }
+
+    #[test]
+    fn duplicate_session_binding_keeps_first_owner_and_rolls_back_second() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 2,
+            ..Default::default()
+        }));
+        let session = id("duplicate");
+        let first = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        assert!(tracker.try_register(session.clone(), Instant::now()));
+        assert!(first.commit(session.clone()));
+        assert!(!tracker
+            .try_reserve_token("bob".to_owned())
+            .unwrap()
+            .unwrap()
+            .commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.active_for_token("bob"), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+    }
+
+    #[test]
+    fn close_before_token_binding_rolls_back_reservation() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let session = id("closed-before-bind");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        assert!(tracker.try_register(session.clone(), Instant::now()));
+
+        tracker.unregister(&session);
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+
+        assert!(!reservation.commit(session));
+        assert_eq!(tracker.active(), 0);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn reap_before_token_binding_rolls_back_reservation() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions: 10,
+            max_sessions_per_token: 1,
+            session_idle_timeout_secs: 1,
+            ..Default::default()
+        }));
+        let base = Instant::now();
+        let session = id("reaped-before-bind");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        assert!(tracker.try_register(session.clone(), base));
+
+        let expired = tracker.reap(base + Duration::from_secs(2));
+        assert_eq!(expired, vec![session.clone()]);
+        for expired_session in expired {
+            tracker.unregister(&expired_session);
+        }
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+
+        assert!(!reservation.commit(session));
+        assert_eq!(tracker.active(), 0);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn concurrent_same_token_reservations_never_exceed_cap() {
+        const CAP: usize = 4;
+        const WORKERS: usize = 16;
+
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: CAP,
+            ..Default::default()
+        }));
+        let attempted = Arc::new(Barrier::new(WORKERS + 1));
+        let release = Arc::new(Barrier::new(WORKERS + 1));
+        let successes = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::with_capacity(WORKERS);
+
+        for _ in 0..WORKERS {
+            let tracker = tracker.clone();
+            let attempted = attempted.clone();
+            let release = release.clone();
+            let successes = successes.clone();
+            workers.push(thread::spawn(move || {
+                let reservation = tracker.try_reserve_token("alice".to_owned()).ok().flatten();
+                if reservation.is_some() {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                }
+                attempted.wait();
+                release.wait();
+                drop(reservation);
+            }));
+        }
+
+        attempted.wait();
+        assert_eq!(successes.load(Ordering::SeqCst), CAP);
+        assert_eq!(tracker.active_for_token("alice"), CAP);
+        assert_eq!(tracker.pending_reservation_count(), CAP);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        release.wait();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn zero_disables_token_session_tracking() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 0,
+            ..Default::default()
+        }));
+        assert!(tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .is_none());
+        let disabled = id("disabled-created");
+        tracker.note_session_created(&disabled);
+        tracker.unregister(&disabled);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.created_unbound_len(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+
+        let enabled = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let no_pending = id("no-pending-created");
+        enabled.note_session_created(&no_pending);
+        enabled.unregister(&no_pending);
+        assert_eq!(enabled.pending_reservation_count(), 0);
+        assert_eq!(enabled.created_unbound_len(), 0);
+        assert_eq!(enabled.closed_before_bind_len(), 0);
+    }
+
+    #[test]
+    fn reaped_session_unregister_releases_token_slot() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions: 10,
+            max_sessions_per_token: 1,
+            session_idle_timeout_secs: 1,
+            ..Default::default()
+        }));
+        let base = Instant::now();
+        let session = id("idle-token-session");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        tracker.note_session_created(&session);
+        assert!(tracker.try_register(session.clone(), base));
+        assert!(reservation.commit(session.clone()));
+        for expired in tracker.reap(base + Duration::from_secs(2)) {
+            tracker.unregister(&expired);
+        }
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.active(), 0);
     }
 }

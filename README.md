@@ -568,8 +568,15 @@ generous values. Every numeric limit accepts `0` to disable it.
 | `--max-inflight-requests-per-token` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_TOKEN` | 16 | Per-token concurrency cap → **503** |
 | `--max-inflight-requests-per-router` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_ROUTER` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_ROUTER` | 4 | Per-router concurrency cap → **503** |
 | `--max-sessions` | `JMCP_MAX_SESSIONS` / `JMCP_SRX_MAX_SESSIONS` | 128 | Session count cap → **503** |
+| `--max-sessions-per-token` | `JMCP_MAX_SESSIONS_PER_TOKEN` / `JMCP_SRX_MAX_SESSIONS_PER_TOKEN` | 16 | Per-bearer-token session cap → **503** |
 | `--session-idle-timeout-secs` | `JMCP_SESSION_IDLE_TIMEOUT_SECS` / `JMCP_SRX_SESSION_IDLE_TIMEOUT_SECS` | 300 | Idle sessions reaped |
 | `--session-max-lifetime-secs` | `JMCP_SESSION_MAX_LIFETIME_SECS` / `JMCP_SRX_SESSION_MAX_LIFETIME_SECS` | 3600 | Old sessions reaped |
+
+Per-token session accounting uses the exact authenticated token name. Successful
+initialization binds the returned `Mcp-Session-Id`; explicit close and idle/lifetime
+reaping return the slot. Saturation returns
+`{"error":"overloaded","limit":"token_session_cap"}`. The cap is skipped in
+explicit no-auth mode because no token identity exists.
 
 Over-limit responses carry `Retry-After: 1`. Concurrency permits are released when
 the response stream ends. A multi-router call holds one router slot for each unique
@@ -582,8 +589,8 @@ cross-process device lease. A destructive call counts once while waiting for or
 holding that lease; the HTTP cap bounds both reads and destructive waiters, while the
 lease remains the authority that serializes destructive operations across processes.
 
-**Deferred (follow-ups on #131):** per-token session caps, a Prometheus `/metrics`
-endpoint, and RPS rate-limiting.
+**Deferred (follow-ups on #131):** a Prometheus `/metrics` endpoint and RPS
+rate-limiting.
 
 ## CLI
 

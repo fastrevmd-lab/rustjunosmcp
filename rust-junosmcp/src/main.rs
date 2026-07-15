@@ -232,6 +232,7 @@ async fn main() -> Result<()> {
                 max_inflight_requests_per_token: args.max_inflight_requests_per_token,
                 max_inflight_requests_per_router: args.max_inflight_requests_per_router,
                 max_sessions: args.max_sessions,
+                max_sessions_per_token: args.max_sessions_per_token,
                 session_idle_timeout_secs: args.session_idle_timeout_secs,
                 session_max_lifetime_secs: args.session_max_lifetime_secs,
             };
