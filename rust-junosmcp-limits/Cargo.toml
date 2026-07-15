@@ -14,6 +14,7 @@ http         = { workspace = true }
 http-body    = { workspace = true }
 rmcp         = { version = "2", features = ["server", "transport-streamable-http-server"] }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+serde_json    = { workspace = true }
 tokio        = { workspace = true }
 tokio-util   = { workspace = true }
 dashmap      = { workspace = true }

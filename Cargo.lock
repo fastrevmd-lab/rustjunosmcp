@@ -2519,6 +2519,7 @@ dependencies = [
  "http-body",
  "rmcp",
  "rust-junosmcp-auth",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tower",

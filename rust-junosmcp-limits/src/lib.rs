@@ -4,6 +4,7 @@
 mod concurrency;
 mod config;
 mod overload;
+mod router;
 mod session;
 
 pub use concurrency::{apply_body_limit, concurrency_middleware, ConcurrencyState};
