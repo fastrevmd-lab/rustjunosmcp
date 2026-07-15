@@ -22,5 +22,7 @@ tracing      = { workspace = true }
 futures      = "0.3"
 
 [dev-dependencies]
+rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+tempfile            = { workspace = true }
 tokio        = { workspace = true }
 tower        = { workspace = true }

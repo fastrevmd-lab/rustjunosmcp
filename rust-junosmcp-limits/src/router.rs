@@ -1,10 +1,5 @@
 //! Router-target extraction and per-router concurrency primitives.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "staged for Task 4 middleware integration")
-)]
-
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, Weak};
