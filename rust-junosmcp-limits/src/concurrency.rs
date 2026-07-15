@@ -415,10 +415,9 @@ mod tests {
                         let tracker = tracker.clone();
                         async move {
                             let session_id = format!("{}-session", caller.token_name);
-                            assert!(tracker.try_register(
-                                Arc::from(session_id.as_str()),
-                                std::time::Instant::now()
-                            ));
+                            let tracked_id = Arc::from(session_id.as_str());
+                            tracker.note_session_created(&tracked_id);
+                            assert!(tracker.try_register(tracked_id, std::time::Instant::now()));
                             Response::builder()
                                 .status(StatusCode::OK)
                                 .header("mcp-session-id", session_id)
@@ -539,10 +538,9 @@ mod tests {
                             timeout(TEST_TIMEOUT, release.notified())
                                 .await
                                 .expect("initialize handler was not released");
-                            assert!(tracker.try_register(
-                                Arc::from("alice-cancel-session"),
-                                std::time::Instant::now()
-                            ));
+                            let session_id = Arc::from("alice-cancel-session");
+                            tracker.note_session_created(&session_id);
+                            assert!(tracker.try_register(session_id, std::time::Instant::now()));
                             Response::builder()
                                 .status(StatusCode::OK)
                                 .header("mcp-session-id", "alice-cancel-session")

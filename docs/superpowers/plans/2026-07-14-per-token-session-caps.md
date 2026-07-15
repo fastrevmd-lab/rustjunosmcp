@@ -234,6 +234,7 @@ struct TokenSessionState {
     counts: HashMap<String, usize>,
     sessions: HashMap<SessionId, String>,
     pending_reservations: usize,
+    created_unbound: HashSet<SessionId>,
     closed_before_bind: HashSet<SessionId>,
 }
 
@@ -283,6 +284,7 @@ fn complete_pending_reservation(state: &mut TokenSessionState) {
     debug_assert!(state.pending_reservations > 0);
     state.pending_reservations -= 1;
     if state.pending_reservations == 0 {
+        state.created_unbound.clear();
         state.closed_before_bind.clear();
     }
 }
@@ -310,6 +312,11 @@ impl TokenSessionReservation {
             drop(state);
             return false;
         }
+        if !state.created_unbound.remove(&id) {
+            tracing::warn!(session_id = %id, token = %token, "token session was not recorded at creation");
+            drop(state);
+            return false;
+        }
         state.sessions.insert(id, token);
         SessionTracker::complete_pending_reservation(&mut state);
         self.token = None;
@@ -329,13 +336,13 @@ impl Drop for TokenSessionReservation {
 }
 ```
 
-The duplicate and closed-before-bind branches must drop their mutex guards
-before returning so `Drop` can reacquire the token-state mutex. Commit and
-unregister coordinate entirely under that mutex: commit-first creates a binding
-that unregister subsequently removes, while unregister-first records a
-transient closed ID that makes commit roll back. Commit intentionally does not
-consult global activity because #151 permits a live inner session whose
-best-effort global registration was rejected.
+The duplicate, closed-before-bind, and unrecorded-ID branches must drop their
+mutex guards before returning so `Drop` can reacquire the token-state mutex.
+Commit and unregister coordinate entirely under that mutex: commit-first
+creates a binding that unregister subsequently removes, while unregister-first
+moves a known-created ID to the transient closed set and makes commit roll back.
+Commit intentionally does not consult global activity because #151 permits a
+live inner session whose best-effort global registration was rejected.
 
 - [ ] **Step 5: Implement reservation, query, and unregister cleanup**
 
@@ -361,6 +368,13 @@ pub(crate) fn try_reserve_token(
     }))
 }
 
+pub(crate) fn note_session_created(&self, id: &SessionId) {
+    let mut state = self.token_state();
+    if state.pending_reservations > 0 {
+        state.created_unbound.insert(id.clone());
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn active_for_token(&self, token: &str) -> usize {
     self.token_state().counts.get(token).copied().unwrap_or(0)
@@ -378,15 +392,20 @@ Extend `unregister` independently of global activity removal:
 let mut state = self.token_state();
 if let Some(token) = state.sessions.remove(id) {
     Self::decrement_token(&mut state, &token);
-} else if state.pending_reservations > 0 {
+} else if state.created_unbound.remove(id) {
     state.closed_before_bind.insert(id.clone());
 }
 ```
 
 Every successful nonzero-cap reservation increments the token count and pending
-count atomically. Successful commit and reservation `Drop` use the same pending
-completion helper, which clears all transient closed IDs when the pending wave
-reaches zero. With cap zero, reservation and unregister cannot grow this state.
+count atomically. `LimitedSessionManager::create_session` must call
+`note_session_created` immediately after inner creation and before best-effort
+global `try_register`. Successful commit and reservation `Drop` use the same
+pending completion helper, which clears both transient sets when the pending
+wave reaches zero. Unknown/repeated unregister IDs do not grow state, and the
+combined transient cardinality is bounded by actual creation notes. With cap
+zero or no pending reservation, creation noting and unregister cannot grow this
+state.
 
 - [ ] **Step 6: Add and pass reap cleanup coverage**
 

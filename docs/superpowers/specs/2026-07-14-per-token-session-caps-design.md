@@ -100,6 +100,7 @@ TokenSessionState {
     counts: HashMap<String, usize>,
     sessions: HashMap<SessionId, String>,
     pending_reservations: usize,
+    created_unbound: HashSet<SessionId>,
     closed_before_bind: HashSet<SessionId>,
 }
 ```
@@ -119,14 +120,21 @@ to support structured logging.
 The reservation owns the tracker and token name. Until committed, dropping it
 decrements the token count and pending count with one shared completion helper,
 and removes a zero-valued token entry. When the last pending reservation
-completes, the helper clears every transient `closed_before_bind` ID. Tombstone
-lifetime is therefore bounded by the current pending-reservation wave. This
-covers:
+completes, the helper clears every transient `created_unbound` and
+`closed_before_bind` ID. Coordination lifetime is therefore bounded by the
+current pending-reservation wave. This covers:
 
 - malformed or non-initialize POST requests without a session header;
 - rmcp/service errors;
 - initialization responses without a session ID;
 - request cancellation or middleware future drop.
+
+After the inner session manager returns a newly created session ID,
+`LimitedSessionManager::create_session` immediately records that ID in
+`created_unbound` before attempting best-effort global registration. The hook
+records only while at least one token reservation is pending. This makes actual
+rmcp creation—not arbitrary close traffic—the authority for unbound IDs while
+retaining a single token-state mutex.
 
 ### Commit
 
@@ -140,14 +148,16 @@ Commit first preserves any existing `sessions` binding as the authoritative
 owner. It then checks and removes its session ID from `closed_before_bind`. A
 match means close or reap won before response binding: commit warns, explicitly
 releases the mutex guard, returns false, and reservation drop rolls back both
-the token and pending counts. Otherwise commit inserts the binding without
-changing the already-reserved token count, completes the pending reservation,
-and transfers token ownership to the session.
+the token and pending counts. Otherwise commit requires and removes the ID from
+`created_unbound`. A response ID that was not recorded at creation is warned
+and rolled back. A known-created ID is bound without changing the
+already-reserved token count, completes the pending reservation, and transfers
+token ownership to the session.
 
 Commit does not consult global `activity`. The separate global cap remains
-best-effort under #151: `LimitedSessionManager::create_session` can return a
-live inner session even when global `try_register` rejects tracking it. Such a
-live globally-untracked session must still bind to its reserved token slot.
+best-effort under #151: `LimitedSessionManager::create_session` records creation
+before global `try_register`, so a live inner session can still bind to its
+reserved token slot even when global tracking rejects it.
 
 All close-before-bind coordination uses only the token-state mutex. If commit
 binds first, a later unregister removes and decrements that binding. If
@@ -160,11 +170,12 @@ dependency.
 `SessionTracker::unregister` performs both existing global cleanup and token
 cleanup. If `sessions.remove(id)` yields a token name, it decrements that
 token's count exactly once and removes the count entry at zero. If no committed
-binding exists while `pending_reservations` is positive, it records the ID in
-`closed_before_bind`. The `HashSet` makes repeated IDs harmless; unrelated IDs
-are transient and cleared when the current pending wave reaches zero. With no
-pending reservation—including cap-zero and no-auth operation—unregister does
-not grow token state.
+binding exists, unregister moves the ID from `created_unbound` to
+`closed_before_bind`. Unknown IDs and repeated unregister calls make no state
+change. The combined coordination cardinality is therefore bounded by actual
+session IDs recorded at creation during a pending wave, not by arbitrary close
+traffic. With no pending reservation—including cap-zero and no-auth
+operation—the creation hook and unregister do not grow token state.
 
 The existing reaper calls `inner.close_session` and then `unregister`, so idle
 and lifetime eviction release token capacity without another code path.
@@ -190,10 +201,12 @@ Within `concurrency_middleware`:
    one session slot for `CallerCtx.token_name`.
 5. Continue existing per-router admission. Initialization normally carries no
    router target; any early body/read failure drops the reservation.
-6. Run rmcp.
+6. Run rmcp. If rmcp creates a session, the limited manager records the
+   returned ID as created-but-unbound before best-effort global registration.
 7. If the response is successful and contains a valid `Mcp-Session-Id`, commit
-   the token reservation unless close/reap recorded that ID during the pending
-   wave. Otherwise let the reservation drop and release.
+   the token reservation only when that exact created ID remains open. A
+   close/reap marker or unrecorded response ID rolls back. Otherwise let the
+   reservation drop and release.
 8. Attach request-concurrency permits to the response body as today. Session
    accounting is not tied to response-body lifetime; it persists until close or
    reap.
@@ -233,8 +246,12 @@ configured maximum. Existing overload bodies and content types are unchanged.
 - A live session rejected only by best-effort global tracking still binds its
   token reservation; hardening that global cap remains #151.
 - Explicit close, reaper close, and repeated unregister are idempotent.
-- The last pending completion clears all transient close-before-bind IDs.
-- Zero disables reservation work and unregister cannot grow token state.
+- Unknown unregister IDs never create pending coordination state.
+- The combined created/closed coordination cardinality is bounded by actual
+  session creation notes in the current pending wave.
+- The last pending completion clears all transient created and closed IDs.
+- Zero disables reservation work; creation noting and unregister cannot grow
+  token state.
 - The token map contains only names with a positive reserved/live count.
 
 ## Testing Strategy
@@ -249,8 +266,10 @@ configured maximum. Existing overload bodies and content types are unchanged.
   slot and that close/reap before response binding rejects a late commit.
 - A saturated-global-tracker test proves the still-live inner session binds and
   later unregister releases its token ownership even without global activity.
-- Pending/tombstone tests prove last-commit/drop cleanup, repeated/unrelated-ID
-  behavior, and no state growth when the cap is zero.
+- Pending-coordination tests prove the known-created transition, close/reap
+  rollback, last-commit/drop cleanup, rejection of unrecorded response IDs,
+  no growth across 10,000 arbitrary unregister IDs, and no state growth when
+  the cap is zero or no reservation is pending.
 - Middleware tests prove:
   - one live session for token A sheds A's second initialize at cap 1;
   - token B still initializes;
