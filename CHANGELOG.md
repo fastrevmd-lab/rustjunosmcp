@@ -6,6 +6,14 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **#147 - per-router HTTP concurrency limits.** Both streamable-HTTP endpoints
+  now cap concurrent work per exact router name at 4 by default (`0` disables),
+  with immediate `503` + `Retry-After: 1` load shedding. Multi-router calls hold
+  one slot per unique target, and destructive calls count once while waiting for
+  or holding the existing cross-process device lease.
+
 ### Fixed
 
 - **#130 - router-list scope disclosure.** `get_router_list` now returns the

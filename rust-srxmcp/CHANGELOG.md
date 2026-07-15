@@ -8,6 +8,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **#147 - per-router HTTP concurrency limits.** Both streamable-HTTP endpoints
+  now cap concurrent work per exact router name at 4 by default (`0` disables),
+  with immediate `503` + `Retry-After: 1` load shedding. Multi-router calls hold
+  one slot per unique target, and destructive calls count once while waiting for
+  or holding the existing cross-process device lease.
+
 ### Fixed
 - **#129 stage 2 - cross-process destructive-operation races.** Junos upgrades
   and destructive SRX IDP/AppID package actions now hold the same kernel-backed
