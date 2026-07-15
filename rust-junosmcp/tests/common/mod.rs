@@ -289,23 +289,30 @@ fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir
 }
 
 pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
+    spawn_with_auth_args(inv_path, tokens_path, &[])
+}
+
+pub fn spawn_with_auth_args(inv_path: &Path, tokens_path: &Path, extra: &[&str]) -> Server {
     let port = pick_port();
+    let port_s = port.to_string();
     let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
+    let mut argv = vec![
+        "-f",
+        inv_path.to_str().unwrap(),
+        "-t",
+        "streamable-http",
+        "-H",
+        "127.0.0.1",
+        "-p",
+        &port_s,
+        "--tokens-file",
+        tokens_path.to_str().unwrap(),
+        "--device-lease-dir",
+        device_lease_dir.path().to_str().unwrap(),
+    ];
+    argv.extend_from_slice(extra);
     let child = Command::new(binary_path())
-        .args([
-            "-f",
-            inv_path.to_str().unwrap(),
-            "-t",
-            "streamable-http",
-            "-H",
-            "127.0.0.1",
-            "-p",
-            &port.to_string(),
-            "--tokens-file",
-            tokens_path.to_str().unwrap(),
-            "--device-lease-dir",
-            device_lease_dir.path().to_str().unwrap(),
-        ])
+        .args(&argv)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -459,6 +466,17 @@ pub fn http_post(
         body: body_value,
         session_id: resp_session,
         www_authenticate: www_auth,
+    }
+}
+
+pub fn close_session(port: u16, bearer: &str, session_id: &str) -> u16 {
+    let request = ureq::delete(&format!("http://127.0.0.1:{port}/mcp"))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .set("Mcp-Session-Id", session_id);
+    match request.call() {
+        Ok(response) => response.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(error) => panic!("transport error: {error}"),
     }
 }
 

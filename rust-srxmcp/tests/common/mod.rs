@@ -97,22 +97,28 @@ fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir
 
 /// Spawn with bearer auth enabled (tokens file). Requires a device-mapping file.
 pub fn spawn(inv_path: &Path, tokens_path: &Path) -> Server {
+    spawn_with_auth_args(inv_path, tokens_path, &[])
+}
+
+pub fn spawn_with_auth_args(inv_path: &Path, tokens_path: &Path, extra: &[&str]) -> Server {
     let port = pick_port();
     let port_s = port.to_string();
     let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
+    let mut argv = vec![
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port_s,
+        "--device-mapping",
+        inv_path.to_str().unwrap(),
+        "--tokens-file",
+        tokens_path.to_str().unwrap(),
+        "--device-lease-dir",
+        device_lease_dir.path().to_str().unwrap(),
+    ];
+    argv.extend_from_slice(extra);
     let child = Command::new(binary_path())
-        .args([
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port_s,
-            "--device-mapping",
-            inv_path.to_str().unwrap(),
-            "--tokens-file",
-            tokens_path.to_str().unwrap(),
-            "--device-lease-dir",
-            device_lease_dir.path().to_str().unwrap(),
-        ])
+        .args(&argv)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -200,6 +206,17 @@ pub fn http_post(
     }
 }
 
+pub fn close_session(port: u16, bearer: &str, session_id: &str) -> u16 {
+    let request = ureq::delete(&format!("http://127.0.0.1:{port}/mcp"))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .set("Mcp-Session-Id", session_id);
+    match request.call() {
+        Ok(response) => response.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(error) => panic!("transport error: {error}"),
+    }
+}
+
 /// Parse the first non-empty `data:` line from an SSE stream as JSON (skips the
 /// rmcp 2.0 priming event).
 pub fn parse_first_sse_data(sse: &str) -> Option<Value> {
@@ -221,6 +238,30 @@ pub fn init_body() -> Value {
     json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
         "protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0.1"}
     }})
+}
+
+/// Send an `initialize` request followed by the required
+/// `notifications/initialized` notification, return the negotiated
+/// `Mcp-Session-Id`.
+pub fn initialize(port: u16, bearer: &str) -> String {
+    let response = http_post(port, Some(bearer), None, init_body());
+    assert_eq!(response.code, 200, "initialize failed: {:?}", response.body);
+    let session_id = response
+        .session_id
+        .expect("server did not return Mcp-Session-Id");
+    let initialized = http_post(
+        port,
+        Some(bearer),
+        Some(&session_id),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    assert!(
+        initialized.code == 200 || initialized.code == 202,
+        "initialized notification rejected: {} {:?}",
+        initialized.code,
+        initialized.body
+    );
+    session_id
 }
 
 /// POST an `initialize` with an explicit Host header; return the HTTP status.
