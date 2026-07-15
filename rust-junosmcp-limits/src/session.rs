@@ -7,7 +7,7 @@ use futures::Stream;
 use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage};
 use rmcp::transport::common::server_side_http::{ServerSseMessage, SessionId};
 use rmcp::transport::streamable_http_server::session::{RestoreOutcome, SessionManager};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -23,6 +23,8 @@ struct SessionMeta {
 struct TokenSessionState {
     counts: HashMap<String, usize>,
     sessions: HashMap<SessionId, String>,
+    pending_reservations: usize,
+    closed_before_bind: HashSet<SessionId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,17 +69,13 @@ impl TokenSessionReservation {
             drop(state);
             return false;
         }
-        // `unregister` releases its activity-map operation before taking this
-        // mutex. Keeping the mutex through this check and the binding insert
-        // therefore guarantees either-order cleanup without a lock inversion:
-        // an earlier unregister makes commit roll back, while a later one sees
-        // and removes the binding inserted below.
-        if !self.tracker.activity.contains_key(&id) {
+        if state.closed_before_bind.remove(&id) {
             tracing::warn!(session_id = %id, token = %token, "token session closed before binding");
             drop(state);
             return false;
         }
         state.sessions.insert(id, token);
+        SessionTracker::complete_pending_reservation(&mut state);
         self.token = None;
         true
     }
@@ -90,6 +88,7 @@ impl Drop for TokenSessionReservation {
         };
         let mut state = self.tracker.token_state();
         SessionTracker::decrement_token(&mut state, &token);
+        SessionTracker::complete_pending_reservation(&mut state);
     }
 }
 
@@ -127,6 +126,14 @@ impl SessionTracker {
         }
     }
 
+    fn complete_pending_reservation(state: &mut TokenSessionState) {
+        debug_assert!(state.pending_reservations > 0);
+        state.pending_reservations -= 1;
+        if state.pending_reservations == 0 {
+            state.closed_before_bind.clear();
+        }
+    }
+
     /// Current live session count.
     pub fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)
@@ -153,6 +160,7 @@ impl SessionTracker {
             });
         }
         state.counts.insert(token.clone(), current + 1);
+        state.pending_reservations += 1;
         drop(state);
         Ok(Some(TokenSessionReservation {
             tracker: self.clone(),
@@ -173,6 +181,16 @@ impl SessionTracker {
     #[cfg(test)]
     fn token_binding_len(&self) -> usize {
         self.token_state().sessions.len()
+    }
+
+    #[cfg(test)]
+    fn pending_reservation_count(&self) -> usize {
+        self.token_state().pending_reservations
+    }
+
+    #[cfg(test)]
+    fn closed_before_bind_len(&self) -> usize {
+        self.token_state().closed_before_bind.len()
     }
 
     /// Reserve a slot and record the session. Returns false if over cap
@@ -208,6 +226,8 @@ impl SessionTracker {
         let mut state = self.token_state();
         if let Some(token) = state.sessions.remove(id) {
             Self::decrement_token(&mut state, &token);
+        } else if state.pending_reservations > 0 {
+            state.closed_before_bind.insert(id.clone());
         }
     }
 
@@ -431,11 +451,21 @@ mod tests {
             .unwrap();
         assert_eq!(tracker.active_for_token("alice"), 1);
         assert_eq!(tracker.active_for_token("bob"), 1);
+        assert_eq!(tracker.pending_reservation_count(), 2);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+        let unrelated = id("repeated-unrelated-close");
+        tracker.unregister(&unrelated);
+        tracker.unregister(&unrelated);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
         drop(alice);
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
         drop(bob);
         assert_eq!(tracker.active_for_token("alice"), 0);
         assert_eq!(tracker.active_for_token("bob"), 0);
         assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
     }
 
     #[test]
@@ -450,12 +480,51 @@ mod tests {
             .try_reserve_token("alice".to_owned())
             .unwrap()
             .unwrap();
+        assert_eq!(tracker.pending_reservation_count(), 1);
         assert!(reservation.commit(session.clone()));
         assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
         tracker.unregister(&session);
         tracker.unregister(&session);
         assert_eq!(tracker.active_for_token("alice"), 0);
         assert_eq!(tracker.token_population_len(), 0);
+    }
+
+    #[test]
+    fn globally_untracked_live_session_still_binds_token_reservation() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions: 1,
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let occupied = id("globally-tracked");
+        let session = id("live-but-globally-untracked");
+        assert!(tracker.try_register(occupied.clone(), Instant::now()));
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+
+        // `LimitedSessionManager::create_session` treats global registration as
+        // best effort and still returns the live inner session in this case.
+        assert!(!tracker.try_register(session.clone(), Instant::now()));
+        tracker.unregister(&id("unrelated-close"));
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
+
+        assert!(reservation.commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.token_binding_len(), 1);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
+
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        tracker.unregister(&occupied);
+        assert_eq!(tracker.active(), 0);
     }
 
     #[test]
@@ -478,6 +547,8 @@ mod tests {
             .commit(session.clone()));
         assert_eq!(tracker.active_for_token("alice"), 1);
         assert_eq!(tracker.active_for_token("bob"), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
         tracker.unregister(&session);
         assert_eq!(tracker.active_for_token("alice"), 0);
     }
@@ -496,12 +567,16 @@ mod tests {
             .unwrap();
 
         tracker.unregister(&session);
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
 
         assert!(!reservation.commit(session));
         assert_eq!(tracker.active(), 0);
         assert_eq!(tracker.active_for_token("alice"), 0);
         assert_eq!(tracker.token_population_len(), 0);
         assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
     }
 
     #[test]
@@ -525,12 +600,16 @@ mod tests {
         for expired_session in expired {
             tracker.unregister(&expired_session);
         }
+        assert_eq!(tracker.pending_reservation_count(), 1);
+        assert_eq!(tracker.closed_before_bind_len(), 1);
 
         assert!(!reservation.commit(session));
         assert_eq!(tracker.active(), 0);
         assert_eq!(tracker.active_for_token("alice"), 0);
         assert_eq!(tracker.token_population_len(), 0);
         assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
     }
 
     #[test]
@@ -566,6 +645,8 @@ mod tests {
         attempted.wait();
         assert_eq!(successes.load(Ordering::SeqCst), CAP);
         assert_eq!(tracker.active_for_token("alice"), CAP);
+        assert_eq!(tracker.pending_reservation_count(), CAP);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
         release.wait();
 
         for worker in workers {
@@ -574,6 +655,8 @@ mod tests {
         assert_eq!(tracker.active_for_token("alice"), 0);
         assert_eq!(tracker.token_population_len(), 0);
         assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
     }
 
     #[test]
@@ -586,7 +669,11 @@ mod tests {
             .try_reserve_token("alice".to_owned())
             .unwrap()
             .is_none());
+        tracker.unregister(&id("unrelated-disabled-close"));
         assert_eq!(tracker.token_population_len(), 0);
+        assert_eq!(tracker.token_binding_len(), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+        assert_eq!(tracker.closed_before_bind_len(), 0);
     }
 
     #[test]

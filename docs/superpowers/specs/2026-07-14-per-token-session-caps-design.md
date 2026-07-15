@@ -99,22 +99,29 @@ mutex-protected token-accounting state:
 TokenSessionState {
     counts: HashMap<String, usize>,
     sessions: HashMap<SessionId, String>,
+    pending_reservations: usize,
+    closed_before_bind: HashSet<SessionId>,
 }
 ```
 
-The mutex makes count reservation, binding, and release atomic across both
-maps. These operations contain no await points and are short relative to HTTP
-or device work.
+The mutex makes count reservation, pending-wave coordination, binding, and
+release atomic across all token state. These operations contain no await points
+and are short relative to HTTP or device work.
 
 ### Reservation
 
 `SessionTracker::try_reserve_token`, called on an `Arc<SessionTracker>`, returns
 an owned `TokenSessionReservation` when the token is below its cap. The method
-increments the token count while holding the state mutex. At capacity it makes
-no state change and returns the current count to support structured logging.
+increments the token count and `pending_reservations` together while holding the
+state mutex. At capacity it makes no state change and returns the current count
+to support structured logging.
 
 The reservation owns the tracker and token name. Until committed, dropping it
-decrements the count and removes a zero-valued token entry. This covers:
+decrements the token count and pending count with one shared completion helper,
+and removes a zero-valued token entry. When the last pending reservation
+completes, the helper clears every transient `closed_before_bind` ID. Tombstone
+lifetime is therefore bounded by the current pending-reservation wave. This
+covers:
 
 - malformed or non-initialize POST requests without a session header;
 - rmcp/service errors;
@@ -129,29 +136,35 @@ header using the same exact string representation as rmcp and commits the
 reservation to that session ID under the token-state mutex. A malformed header
 is treated as an internal anomaly: warn and release the uncommitted reservation.
 
-Commit moves the reservation into the `sessions` map without changing the
-already-reserved count, but only while that session ID is still present in the
-authoritative global `activity` map. The token-state mutex remains held across
-the liveness check and binding insert. If close or reap already removed global
-activity, commit warns, explicitly releases the mutex guard, returns false, and
-reservation drop rolls back the token count. Session IDs are expected to be
-unique. A defensive duplicate binding, whether for the same or a different
-token, leaves the first binding authoritative, rolls back the new reservation
-count, and emits a warning rather than incrementing or reassigning.
+Commit first preserves any existing `sessions` binding as the authoritative
+owner. It then checks and removes its session ID from `closed_before_bind`. A
+match means close or reap won before response binding: commit warns, explicitly
+releases the mutex guard, returns false, and reservation drop rolls back both
+the token and pending counts. Otherwise commit inserts the binding without
+changing the already-reserved token count, completes the pending reservation,
+and transfers token ownership to the session.
 
-This ordering does not invert `unregister`: activity removal completes before
-`unregister` takes the token-state mutex. If commit observes a live session and
-inserts first, a concurrent unregister subsequently removes that binding. If
-unregister removes activity first, commit observes the session is absent and
-rolls back instead. Both orders reclaim the count and both token maps exactly
-once.
+Commit does not consult global `activity`. The separate global cap remains
+best-effort under #151: `LimitedSessionManager::create_session` can return a
+live inner session even when global `try_register` rejects tracking it. Such a
+live globally-untracked session must still bind to its reserved token slot.
+
+All close-before-bind coordination uses only the token-state mutex. If commit
+binds first, a later unregister removes and decrements that binding. If
+unregister wins first, it records the session ID and commit rolls back. Both
+orders reclaim ownership exactly once without a second lock or lock-order
+dependency.
 
 ### Release
 
 `SessionTracker::unregister` performs both existing global cleanup and token
 cleanup. If `sessions.remove(id)` yields a token name, it decrements that
-token's count exactly once and removes the count entry at zero. Repeated close
-or reap attempts are idempotent.
+token's count exactly once and removes the count entry at zero. If no committed
+binding exists while `pending_reservations` is positive, it records the ID in
+`closed_before_bind`. The `HashSet` makes repeated IDs harmless; unrelated IDs
+are transient and cleared when the current pending wave reaches zero. With no
+pending reservation—including cap-zero and no-auth operation—unregister does
+not grow token state.
 
 The existing reaper calls `inner.close_session` and then `unregister`, so idle
 and lifetime eviction release token capacity without another code path.
@@ -179,8 +192,8 @@ Within `concurrency_middleware`:
    router target; any early body/read failure drops the reservation.
 6. Run rmcp.
 7. If the response is successful and contains a valid `Mcp-Session-Id`, commit
-   the token reservation to that ID only if the global tracker still reports
-   it live. Otherwise let the reservation drop and release.
+   the token reservation unless close/reap recorded that ID during the pending
+   wave. Otherwise let the reservation drop and release.
 8. Attach request-concurrency permits to the response body as today. Session
    accounting is not tied to response-body lifetime; it persists until close or
    reap.
@@ -217,8 +230,11 @@ configured maximum. Existing overload bodies and content types are unchanged.
 - Cancellation before response binding must release exactly once.
 - Close or reap before response binding makes commit fail and roll back; close
   after binding removes the committed token ownership.
+- A live session rejected only by best-effort global tracking still binds its
+  token reservation; hardening that global cap remains #151.
 - Explicit close, reaper close, and repeated unregister are idempotent.
-- Zero disables both reservation work and token-accounting map growth.
+- The last pending completion clears all transient close-before-bind IDs.
+- Zero disables reservation work and unregister cannot grow token state.
 - The token map contains only names with a positive reserved/live count.
 
 ## Testing Strategy
@@ -231,6 +247,10 @@ configured maximum. Existing overload bodies and content types are unchanged.
   reclamation, including barrier-synchronized contention at the configured cap.
 - Close- and reaper-oriented tests prove expiration releases a committed token
   slot and that close/reap before response binding rejects a late commit.
+- A saturated-global-tracker test proves the still-live inner session binds and
+  later unregister releases its token ownership even without global activity.
+- Pending/tombstone tests prove last-commit/drop cleanup, repeated/unrelated-ID
+  behavior, and no state growth when the cap is zero.
 - Middleware tests prove:
   - one live session for token A sheds A's second initialize at cap 1;
   - token B still initializes;

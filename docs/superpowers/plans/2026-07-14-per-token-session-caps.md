@@ -226,13 +226,15 @@ Expected: compilation fails on missing token-session types and methods.
 - [ ] **Step 3: Add the token state and capacity result**
 
 ```rust
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct TokenSessionState {
     counts: HashMap<String, usize>,
     sessions: HashMap<SessionId, String>,
+    pending_reservations: usize,
+    closed_before_bind: HashSet<SessionId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -276,6 +278,14 @@ fn decrement_token(state: &mut TokenSessionState, token: &str) {
         state.counts.remove(token);
     }
 }
+
+fn complete_pending_reservation(state: &mut TokenSessionState) {
+    debug_assert!(state.pending_reservations > 0);
+    state.pending_reservations -= 1;
+    if state.pending_reservations == 0 {
+        state.closed_before_bind.clear();
+    }
+}
 ```
 
 - [ ] **Step 4: Implement the owned reservation**
@@ -295,17 +305,13 @@ impl TokenSessionReservation {
             drop(state);
             return false;
         }
-        // `unregister` releases its activity-map operation before taking this
-        // mutex. Keeping the mutex through this check and the binding insert
-        // therefore guarantees either-order cleanup without a lock inversion:
-        // an earlier unregister makes commit roll back, while a later one sees
-        // and removes the binding inserted below.
-        if !self.tracker.activity.contains_key(&id) {
+        if state.closed_before_bind.remove(&id) {
             tracing::warn!(session_id = %id, token = %token, "token session closed before binding");
             drop(state);
             return false;
         }
         state.sessions.insert(id, token);
+        SessionTracker::complete_pending_reservation(&mut state);
         self.token = None;
         true
     }
@@ -318,16 +324,18 @@ impl Drop for TokenSessionReservation {
         };
         let mut state = self.tracker.token_state();
         SessionTracker::decrement_token(&mut state, &token);
+        SessionTracker::complete_pending_reservation(&mut state);
     }
 }
 ```
 
-The duplicate and no-longer-live branches must drop their mutex guards before
-returning so `Drop` can reacquire the token-state mutex. `unregister` completes
-its activity-map removal before it takes that mutex: commit-first therefore
-inserts a binding that unregister subsequently removes, while unregister-first
-makes commit roll back without inserting. Neither order leaks a count or map
-entry, and no path holds the two locks in the opposite order.
+The duplicate and closed-before-bind branches must drop their mutex guards
+before returning so `Drop` can reacquire the token-state mutex. Commit and
+unregister coordinate entirely under that mutex: commit-first creates a binding
+that unregister subsequently removes, while unregister-first records a
+transient closed ID that makes commit roll back. Commit intentionally does not
+consult global activity because #151 permits a live inner session whose
+best-effort global registration was rejected.
 
 - [ ] **Step 5: Implement reservation, query, and unregister cleanup**
 
@@ -345,6 +353,7 @@ pub(crate) fn try_reserve_token(
         return Err(TokenSessionCapacity { current, max: self.max_sessions_per_token });
     }
     state.counts.insert(token.clone(), current + 1);
+    state.pending_reservations += 1;
     drop(state);
     Ok(Some(TokenSessionReservation {
         tracker: self.clone(),
@@ -369,8 +378,15 @@ Extend `unregister` independently of global activity removal:
 let mut state = self.token_state();
 if let Some(token) = state.sessions.remove(id) {
     Self::decrement_token(&mut state, &token);
+} else if state.pending_reservations > 0 {
+    state.closed_before_bind.insert(id.clone());
 }
 ```
+
+Every successful nonzero-cap reservation increments the token count and pending
+count atomically. Successful commit and reservation `Drop` use the same pending
+completion helper, which clears all transient closed IDs when the pending wave
+reaches zero. With cap zero, reservation and unregister cannot grow this state.
 
 - [ ] **Step 6: Add and pass reap cleanup coverage**
 
