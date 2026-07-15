@@ -16,6 +16,8 @@ pub struct LimitsConfig {
     pub max_inflight_requests_per_router: usize,
     /// Max concurrent MCP sessions. `0` disables.
     pub max_sessions: usize,
+    /// Max concurrent MCP sessions per bearer token. `0` disables.
+    pub max_sessions_per_token: usize,
     /// Idle timeout (seconds) after which a session is reaped. `0` disables.
     pub session_idle_timeout_secs: u64,
     /// Max session lifetime (seconds) after which it is reaped. `0` disables.
@@ -30,6 +32,7 @@ impl Default for LimitsConfig {
             max_inflight_requests_per_token: 16,
             max_inflight_requests_per_router: 4,
             max_sessions: 128,
+            max_sessions_per_token: 16,
             session_idle_timeout_secs: 300,
             session_max_lifetime_secs: 3600,
         }
@@ -57,6 +60,7 @@ impl LimitsConfig {
             max_inflight_requests_per_token = self.max_inflight_requests_per_token,
             max_inflight_requests_per_router = self.max_inflight_requests_per_router,
             max_sessions = self.max_sessions,
+            max_sessions_per_token = self.max_sessions_per_token,
             session_idle_timeout_secs = self.session_idle_timeout_secs,
             session_max_lifetime_secs = self.session_max_lifetime_secs,
             "http resource limits configured"
@@ -76,6 +80,7 @@ mod tests {
         assert_eq!(c.max_inflight_requests_per_token, 16);
         assert_eq!(c.max_inflight_requests_per_router, 4);
         assert_eq!(c.max_sessions, 128);
+        assert_eq!(c.max_sessions_per_token, 16);
         assert_eq!(c.idle_timeout(), Some(Duration::from_secs(300)));
         assert_eq!(c.max_lifetime(), Some(Duration::from_secs(3600)));
     }

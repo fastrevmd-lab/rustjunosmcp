@@ -97,6 +97,10 @@ pub struct Cli {
     #[arg(long, env = "JMCP_SRX_MAX_SESSIONS", default_value_t = 128)]
     pub max_sessions: usize,
 
+    /// Max concurrent MCP sessions per bearer token. 0 = unlimited.
+    #[arg(long, env = "JMCP_SRX_MAX_SESSIONS_PER_TOKEN", default_value_t = 16)]
+    pub max_sessions_per_token: usize,
+
     /// Session idle timeout in seconds. 0 = disabled.
     #[arg(
         long,
@@ -147,6 +151,13 @@ mod tests {
         assert!(cli.tls_key.is_none());
         assert!(!cli.allow_no_auth);
         assert!(!cli.allow_insecure_bind);
+        assert_eq!(cli.max_sessions_per_token, 16);
+
+        let disabled = Cli::parse_from(["rust-srxmcp", "--max-sessions-per-token", "0"]);
+        assert_eq!(disabled.max_sessions_per_token, 0);
+
+        let custom = Cli::parse_from(["rust-srxmcp", "--max-sessions-per-token", "9"]);
+        assert_eq!(custom.max_sessions_per_token, 9);
         assert_eq!(
             cli.device_lease_dir,
             std::path::PathBuf::from("/var/lib/jmcp/device-leases")
