@@ -125,7 +125,12 @@ pub async fn concurrency_middleware(
                     max = state.max_per_router,
                     "request shed"
                 );
-                return overload_response("router_concurrency");
+                let mut response = overload_response("router_concurrency");
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/json"),
+                );
+                return response;
             }
         }
     }
@@ -343,6 +348,12 @@ mod tests {
         .unwrap();
         assert_eq!(same.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(same.headers().get("retry-after").unwrap(), "1");
+        assert_eq!(
+            same.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/json"
+        );
         let body = axum::body::to_bytes(same.into_body(), usize::MAX)
             .await
             .unwrap();

@@ -2,6 +2,8 @@
 
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -65,6 +67,8 @@ fn collect_field_targets(value: &Value, targets: &mut BTreeSet<String>) {
 pub(crate) struct RouterLimiter {
     max: usize,
     semaphores: Arc<Mutex<HashMap<String, Weak<Semaphore>>>>,
+    #[cfg(test)]
+    registry_resolution_phases: Arc<AtomicUsize>,
 }
 
 impl RouterLimiter {
@@ -72,36 +76,47 @@ impl RouterLimiter {
         Self {
             max,
             semaphores: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            registry_resolution_phases: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    fn semaphore(&self, router: &str) -> Arc<Semaphore> {
+    fn resolve_semaphores(&self, routers: &[String]) -> Vec<Arc<Semaphore>> {
+        #[cfg(test)]
+        self.registry_resolution_phases
+            .fetch_add(1, Ordering::Relaxed);
         let mut semaphores = self
             .semaphores
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         semaphores.retain(|_, semaphore| semaphore.strong_count() > 0);
 
-        if let Some(semaphore) = semaphores.get(router).and_then(Weak::upgrade) {
-            return semaphore;
-        }
+        let mut resolved = Vec::with_capacity(routers.len());
+        for router in routers {
+            if let Some(semaphore) = semaphores.get(router).and_then(Weak::upgrade) {
+                resolved.push(semaphore);
+                continue;
+            }
 
-        let semaphore = Arc::new(Semaphore::new(self.max.max(1)));
-        semaphores.insert(router.to_owned(), Arc::downgrade(&semaphore));
-        semaphore
+            let semaphore = Arc::new(Semaphore::new(self.max.max(1)));
+            semaphores.insert(router.clone(), Arc::downgrade(&semaphore));
+            resolved.push(semaphore);
+        }
+        resolved
     }
 
     pub(crate) fn try_acquire(
         &self,
         routers: &[String],
     ) -> Result<Vec<OwnedSemaphorePermit>, String> {
-        if self.max == 0 {
+        if self.max == 0 || routers.is_empty() {
             return Ok(Vec::new());
         }
 
+        let semaphores = self.resolve_semaphores(routers);
         let mut permits = Vec::with_capacity(routers.len());
-        for router in routers {
-            match self.semaphore(router).try_acquire_owned() {
+        for (router, semaphore) in routers.iter().zip(semaphores) {
+            match semaphore.try_acquire_owned() {
                 Ok(permit) => permits.push(permit),
                 Err(_) => return Err(router.clone()),
             }
@@ -115,6 +130,11 @@ impl RouterLimiter {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len()
+    }
+
+    #[cfg(test)]
+    fn registry_resolution_phase_count(&self) -> usize {
+        self.registry_resolution_phases.load(Ordering::Relaxed)
     }
 }
 
@@ -169,6 +189,19 @@ mod tests {
         let replacement = limiter.try_acquire(&names(&["new"])).unwrap();
         assert_eq!(limiter.registry_len(), 1);
         drop(replacement);
+    }
+
+    #[test]
+    fn high_cardinality_batch_resolves_registry_once() {
+        let limiter = RouterLimiter::new(1);
+        let routers = (0..256)
+            .map(|index| format!("router-{index:03}"))
+            .collect::<Vec<_>>();
+
+        let permits = limiter.try_acquire(&routers).unwrap();
+
+        assert_eq!(permits.len(), routers.len());
+        assert_eq!(limiter.registry_resolution_phase_count(), 1);
     }
 
     #[test]
