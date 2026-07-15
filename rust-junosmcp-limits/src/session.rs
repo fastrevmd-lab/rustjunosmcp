@@ -7,8 +7,9 @@ use futures::Stream;
 use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage};
 use rmcp::transport::common::server_side_http::{ServerSseMessage, SessionId};
 use rmcp::transport::streamable_http_server::session::{RestoreOutcome, SessionManager};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::task::AbortOnDropHandle;
 
@@ -18,13 +19,84 @@ struct SessionMeta {
     last_active: Instant,
 }
 
+#[derive(Default)]
+struct TokenSessionState {
+    counts: HashMap<String, usize>,
+    sessions: HashMap<SessionId, String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+)]
+pub(crate) struct TokenSessionCapacity {
+    pub(crate) current: usize,
+    pub(crate) max: usize,
+}
+
 /// Tracks live sessions, enforces the count cap, and identifies stale sessions.
 pub struct SessionTracker {
     active: AtomicUsize,
     max_sessions: usize,
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+    )]
+    max_sessions_per_token: usize,
     idle_timeout: Option<Duration>,
     max_lifetime: Option<Duration>,
     activity: DashMap<SessionId, SessionMeta>,
+    token_sessions: Mutex<TokenSessionState>,
+}
+
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+)]
+pub(crate) struct TokenSessionReservation {
+    tracker: Arc<SessionTracker>,
+    token: Option<String>,
+}
+
+impl std::fmt::Debug for TokenSessionReservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenSessionReservation")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+)]
+impl TokenSessionReservation {
+    pub(crate) fn commit(mut self, id: SessionId) -> bool {
+        let token = self
+            .token
+            .as_ref()
+            .expect("uncommitted reservation")
+            .clone();
+        let mut state = self.tracker.token_state();
+        if state.sessions.contains_key(&id) {
+            tracing::warn!(session_id = %id, token = %token, "duplicate token session binding");
+            drop(state);
+            return false;
+        }
+        state.sessions.insert(id, token);
+        self.token = None;
+        true
+    }
+}
+
+impl Drop for TokenSessionReservation {
+    fn drop(&mut self) {
+        let Some(token) = self.token.take() else {
+            return;
+        };
+        let mut state = self.tracker.token_state();
+        SessionTracker::decrement_token(&mut state, &token);
+    }
 }
 
 impl SessionTracker {
@@ -33,9 +105,31 @@ impl SessionTracker {
         Self {
             active: AtomicUsize::new(0),
             max_sessions: cfg.max_sessions,
+            max_sessions_per_token: cfg.max_sessions_per_token,
             idle_timeout: cfg.idle_timeout(),
             max_lifetime: cfg.max_lifetime(),
             activity: DashMap::new(),
+            token_sessions: Mutex::new(TokenSessionState::default()),
+        }
+    }
+
+    fn token_state(&self) -> std::sync::MutexGuard<'_, TokenSessionState> {
+        self.token_sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn decrement_token(state: &mut TokenSessionState, token: &str) {
+        let remove = match state.counts.get_mut(token) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            Some(_) => true,
+            None => false,
+        };
+        if remove {
+            state.counts.remove(token);
         }
     }
 
@@ -47,6 +141,46 @@ impl SessionTracker {
     /// True when at or above the configured cap (`0` = never).
     pub fn at_capacity(&self) -> bool {
         self.max_sessions > 0 && self.active() >= self.max_sessions
+    }
+
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+    )]
+    pub(crate) fn try_reserve_token(
+        self: &Arc<Self>,
+        token: String,
+    ) -> Result<Option<TokenSessionReservation>, TokenSessionCapacity> {
+        if self.max_sessions_per_token == 0 {
+            return Ok(None);
+        }
+        let mut state = self.token_state();
+        let current = state.counts.get(&token).copied().unwrap_or(0);
+        if current >= self.max_sessions_per_token {
+            return Err(TokenSessionCapacity {
+                current,
+                max: self.max_sessions_per_token,
+            });
+        }
+        state.counts.insert(token.clone(), current + 1);
+        drop(state);
+        Ok(Some(TokenSessionReservation {
+            tracker: self.clone(),
+            token: Some(token),
+        }))
+    }
+
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "consumed by per-token middleware in Task 3")
+    )]
+    pub(crate) fn active_for_token(&self, token: &str) -> usize {
+        self.token_state().counts.get(token).copied().unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    fn token_population_len(&self) -> usize {
+        self.token_state().counts.len()
     }
 
     /// Reserve a slot and record the session. Returns false if over cap
@@ -78,6 +212,10 @@ impl SessionTracker {
     pub fn unregister(&self, id: &SessionId) {
         if self.activity.remove(id).is_some() {
             self.active.fetch_sub(1, Ordering::AcqRel);
+        }
+        let mut state = self.token_state();
+        if let Some(token) = state.sessions.remove(id) {
+            Self::decrement_token(&mut state, &token);
         }
     }
 
@@ -279,5 +417,108 @@ mod tests {
             assert!(t.try_register(id(&i.to_string()), now));
         }
         assert!(!t.at_capacity());
+    }
+
+    #[test]
+    fn token_reservations_enforce_isolation_and_drop_rollback() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let alice = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        let full = tracker.try_reserve_token("alice".to_owned()).unwrap_err();
+        assert_eq!(full, TokenSessionCapacity { current: 1, max: 1 });
+        let bob = tracker
+            .try_reserve_token("bob".to_owned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.active_for_token("bob"), 1);
+        drop(alice);
+        drop(bob);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.active_for_token("bob"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+    }
+
+    #[test]
+    fn committed_token_reservation_releases_on_unregister_once() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 1,
+            ..Default::default()
+        }));
+        let session = id("session-a");
+        let reservation = tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap();
+        assert!(reservation.commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        tracker.unregister(&session);
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.token_population_len(), 0);
+    }
+
+    #[test]
+    fn duplicate_session_binding_keeps_first_owner_and_rolls_back_second() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 2,
+            ..Default::default()
+        }));
+        let session = id("duplicate");
+        assert!(tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap()
+            .commit(session.clone()));
+        assert!(!tracker
+            .try_reserve_token("bob".to_owned())
+            .unwrap()
+            .unwrap()
+            .commit(session.clone()));
+        assert_eq!(tracker.active_for_token("alice"), 1);
+        assert_eq!(tracker.active_for_token("bob"), 0);
+        tracker.unregister(&session);
+        assert_eq!(tracker.active_for_token("alice"), 0);
+    }
+
+    #[test]
+    fn zero_disables_token_session_tracking() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions_per_token: 0,
+            ..Default::default()
+        }));
+        assert!(tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .is_none());
+        assert_eq!(tracker.token_population_len(), 0);
+    }
+
+    #[test]
+    fn reaped_session_unregister_releases_token_slot() {
+        let tracker = Arc::new(SessionTracker::new(&LimitsConfig {
+            max_sessions: 10,
+            max_sessions_per_token: 1,
+            session_idle_timeout_secs: 1,
+            ..Default::default()
+        }));
+        let base = Instant::now();
+        let session = id("idle-token-session");
+        assert!(tracker.try_register(session.clone(), base));
+        assert!(tracker
+            .try_reserve_token("alice".to_owned())
+            .unwrap()
+            .unwrap()
+            .commit(session.clone()));
+        for expired in tracker.reap(base + Duration::from_secs(2)) {
+            tracker.unregister(&expired);
+        }
+        assert_eq!(tracker.active_for_token("alice"), 0);
+        assert_eq!(tracker.active(), 0);
     }
 }
