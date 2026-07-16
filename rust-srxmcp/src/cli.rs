@@ -129,6 +129,10 @@ pub struct Cli {
     #[arg(long, env = "JMCP_SRX_AUDIT_LOG_FILE")]
     pub audit_log_file: Option<std::path::PathBuf>,
 
+    /// Also send structured audit events directly to journald.
+    #[arg(long, env = "JMCP_SRX_AUDIT_JOURNALD")]
+    pub audit_journald: bool,
+
     /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
     /// Fields: routers, host, name, basename, command, pfe_command.
     /// Transforms: keep, drop, hmac. Empty = disabled.
@@ -182,5 +186,14 @@ mod tests {
 
         let custom = Cli::parse_from(["rust-srxmcp", "--max-inflight-requests-per-router", "7"]);
         assert_eq!(custom.max_inflight_requests_per_router, 7);
+    }
+
+    #[test]
+    fn audit_journald_defaults_off_and_parses() {
+        let default_cli = Cli::parse_from(["rust-srxmcp"]);
+        assert!(!default_cli.audit_journald);
+
+        let enabled = Cli::parse_from(["rust-srxmcp", "--audit-journald"]);
+        assert!(enabled.audit_journald);
     }
 }

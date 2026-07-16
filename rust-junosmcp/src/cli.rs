@@ -146,6 +146,10 @@ pub struct Cli {
     #[arg(long, env = "JMCP_AUDIT_LOG_FILE")]
     pub audit_log_file: Option<std::path::PathBuf>,
 
+    /// Also send structured audit events directly to journald.
+    #[arg(long, env = "JMCP_AUDIT_JOURNALD")]
+    pub audit_journald: bool,
+
     /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
     /// Fields: routers, host, name, basename, command, pfe_command.
     /// Transforms: keep, drop, hmac. Empty = disabled.
@@ -332,5 +336,14 @@ mod tests {
             "*",
         ]);
         assert!(matches!(cli.command, Some(Command::Token { .. })));
+    }
+
+    #[test]
+    fn audit_journald_defaults_off_and_parses() {
+        let default_cli = Cli::parse_from(["rust-junosmcp"]);
+        assert!(!default_cli.audit_journald);
+
+        let enabled = Cli::parse_from(["rust-junosmcp", "--audit-journald"]);
+        assert!(enabled.audit_journald);
     }
 }

@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
         format: rust_junosmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
         redaction,
-        journald: false,
+        journald: args.audit_journald,
     };
     rust_junosmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
     cli_validate::validate(&args).map_err(|error| anyhow::anyhow!(error))?;
