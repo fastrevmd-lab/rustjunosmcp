@@ -163,7 +163,18 @@ pub async fn concurrency_middleware(
         }
     }
 
-    let resp = next.run(req).await;
+    let (mut resp, session_cap_rejected) = if session_creating {
+        crate::session::scope_session_cap_rejection(next.run(req)).await
+    } else {
+        (next.run(req).await, false)
+    };
+    if session_cap_rejected {
+        tracing::warn!(
+            limit = "session_cap",
+            "request shed after manager registration race"
+        );
+        resp = overload_response("session_cap");
+    }
     if let Some(reservation) = token_session_reservation {
         if resp.status().is_success() {
             match resp
@@ -303,7 +314,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use tokio::sync::Notify;
+    use tokio::sync::{Barrier, Notify};
     use tokio::time::timeout;
     use tower::ServiceExt as _; // oneshot
 
@@ -601,6 +612,102 @@ mod tests {
             .expect("replacement initialize did not finish")
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn marked_session_cap_response_is_isolated_and_releases_token_reservation() {
+        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let recorder_guard = metrics::set_default_local_recorder(&recorder);
+        let (state, tracker) = token_session_state(1);
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post({
+                    let barrier = barrier.clone();
+                    let calls = calls.clone();
+                    move |axum::Extension(caller): axum::Extension<CallerCtx>| {
+                        let barrier = barrier.clone();
+                        let calls = calls.clone();
+                        async move {
+                            let call = calls.fetch_add(1, Ordering::SeqCst);
+                            if call < 2 {
+                                barrier.wait().await;
+                            }
+                            if caller.token_name == "marked" {
+                                crate::session::mark_session_cap_rejected();
+                            }
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                concurrency_middleware,
+            ));
+
+        let marked_app = app.clone();
+        let marked = tokio::spawn(async move {
+            marked_app
+                .oneshot(initialize_request("marked"))
+                .await
+                .unwrap()
+        });
+        let plain_app = app.clone();
+        let plain = tokio::spawn(async move {
+            plain_app
+                .oneshot(initialize_request("plain"))
+                .await
+                .unwrap()
+        });
+        let marked = timeout(TEST_TIMEOUT, marked)
+            .await
+            .expect("marked initialize did not finish")
+            .unwrap();
+        let plain = timeout(TEST_TIMEOUT, plain)
+            .await
+            .expect("plain initialize did not finish")
+            .unwrap();
+
+        assert_eq!(marked.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(marked.headers().get("retry-after").unwrap(), "1");
+        assert!(marked.headers().get("mcp-session-id").is_none());
+        let body = axum::body::to_bytes(marked.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"error": "overloaded", "limit": "session_cap"})
+        );
+        assert_eq!(plain.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        drop(plain);
+
+        let later_plain = app.oneshot(initialize_request("plain")).await.unwrap();
+        assert_eq!(later_plain.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        drop(later_plain);
+        assert_eq!(tracker.active_for_token("marked"), 0);
+        assert_eq!(tracker.active_for_token("plain"), 0);
+        assert_eq!(tracker.pending_reservation_count(), 0);
+
+        drop(recorder_guard);
+        handle.run_upkeep();
+        let text = handle.render();
+        let client_rejections = text
+            .lines()
+            .filter(|line| {
+                line.starts_with("junosmcp_limit_hits_total{")
+                    && line.contains("limit=\"session_cap\"")
+                    && line.contains("event=\"request_rejected\"")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(client_rejections.len(), 1, "unexpected metrics:\n{text}");
+        assert!(client_rejections[0].ends_with(" 1"));
+        assert!(
+            !text.contains("event=\"session_registration_rejected\""),
+            "unexpected manager rejection metric:\n{text}"
+        );
     }
 
     #[tokio::test]

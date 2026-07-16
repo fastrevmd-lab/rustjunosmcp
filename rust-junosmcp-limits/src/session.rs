@@ -362,13 +362,6 @@ tokio::task_local! {
     static SESSION_CAP_REJECTED: Cell<bool>;
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by concurrency middleware in the next implementation step"
-    )
-)]
 pub(crate) async fn scope_session_cap_rejection<F>(future: F) -> (F::Output, bool)
 where
     F: Future,
