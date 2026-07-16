@@ -225,10 +225,20 @@ fn is_session_creating(req: &Request) -> bool {
     req.method() == axum::http::Method::POST && !req.headers().contains_key("mcp-session-id")
 }
 
+async fn observe_body_limit_response(req: Request, next: Next) -> Response {
+    let response = next.run(req).await;
+    if response.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        crate::prometheus::record_limit_hit("request_body", "request_rejected");
+    }
+    response
+}
+
 /// Apply the request-body size limit as the outermost concern. `0` disables.
 pub fn apply_body_limit(router: axum::Router, cfg: &LimitsConfig) -> axum::Router {
     if cfg.max_request_body_bytes > 0 {
-        router.layer(RequestBodyLimitLayer::new(cfg.max_request_body_bytes))
+        router
+            .layer(RequestBodyLimitLayer::new(cfg.max_request_body_bytes))
+            .layer(axum::middleware::from_fn(observe_body_limit_response))
     } else {
         router
     }
@@ -757,8 +767,11 @@ mod tests {
         assert_eq!(replayed, original);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn streamed_body_over_outer_limit_stays_413() {
+        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let cfg = LimitsConfig {
             max_request_body_bytes: 8,
             max_inflight_requests: 0,
@@ -774,6 +787,19 @@ mod tests {
             ),
         );
         let app = apply_body_limit(app, &cfg);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri("/mcp")
+                    .body(Body::from("ok"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
         let stream = futures::stream::iter([Ok::<_, Infallible>(Bytes::from_static(
             b"more-than-eight-bytes",
         ))]);
@@ -785,6 +811,16 @@ mod tests {
 
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        drop(_guard);
+        handle.run_upkeep();
+        let text = handle.render();
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("junosmcp_limit_hits_total{"))
+            .expect("request-body counter sample");
+        assert!(line.contains("limit=\"request_body\""));
+        assert!(line.contains("event=\"request_rejected\""));
+        assert!(line.ends_with(" 1"));
     }
 
     #[tokio::test]

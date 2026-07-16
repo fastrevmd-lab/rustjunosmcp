@@ -8,6 +8,12 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
+- **#149 - Prometheus HTTP metrics.** Streamable HTTP can now expose an
+  opt-in, unauthenticated `/metrics` route with bounded-label active-session,
+  resource-limit, tool-duration, and reaper metrics. The route shares the
+  configured listener/TLS but bypasses MCP auth and limits, so deployments must
+  protect it with network controls.
+
 - **#148 - per-token MCP session caps.** Streamable HTTP now limits each exact
   bearer-token name to 16 live sessions by default (`0` disables), with atomic
   initialize admission, stable `token_session_cap` 503 responses, token isolation,

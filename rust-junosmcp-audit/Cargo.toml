@@ -12,6 +12,7 @@ test-util = []
 
 [dependencies]
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+metrics             = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "registry"] }
 serde_json         = { workspace = true }
@@ -19,5 +20,6 @@ hmac               = { workspace = true }
 sha2               = { workspace = true }
 
 [dev-dependencies]
+metrics-exporter-prometheus = { workspace = true }
 tracing            = { workspace = true }
 tempfile           = "3"

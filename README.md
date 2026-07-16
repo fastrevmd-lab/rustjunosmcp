@@ -589,8 +589,13 @@ cross-process device lease. A destructive call counts once while waiting for or
 holding that lease; the HTTP cap bounds both reads and destructive waiters, while the
 lease remains the authority that serializes destructive operations across processes.
 
-**Deferred (follow-ups on #131):** a Prometheus `/metrics` endpoint and RPS
-rate-limiting.
+Prometheus export is opt-in with `--enable-metrics`
+(`JMCP_ENABLE_METRICS` / `JMCP_SRX_ENABLE_METRICS`). It mounts an
+unauthenticated `GET /metrics` beside `/mcp`; protect it with network controls.
+See [Prometheus metrics](docs/METRICS.md) for scrape configuration, metric
+names, labels, and PromQL examples.
+
+**Deferred (follow-up on #131):** per-token RPS rate-limiting (#150).
 
 ## CLI
 

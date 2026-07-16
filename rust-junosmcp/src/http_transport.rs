@@ -18,7 +18,8 @@ use rmcp::transport::streamable_http_server::{
 use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
 use rust_junosmcp_limits::{
-    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager, LimitsConfig,
+    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager,
+    LimitsConfig, PrometheusRuntime,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -42,12 +43,14 @@ fn build_http_config(
     cfg
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     handler: JmcpHandler,
     addr: SocketAddr,
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    enable_metrics: bool,
     limits: LimitsConfig,
     #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
@@ -56,6 +59,12 @@ pub async fn serve(
     let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
 
     limits.log_effective();
+
+    let metrics_runtime = if enable_metrics {
+        Some(PrometheusRuntime::install("junos").context("initializing Prometheus metrics")?)
+    } else {
+        None
+    };
 
     let session_mgr = LimitedSessionManager::new(LocalSessionManager::default(), &limits);
     let conc = ConcurrencyState::new(&limits, Some(session_mgr.tracker()));
@@ -82,6 +91,11 @@ pub async fn serve(
 
     // Body limit outermost: reject oversized bodies before buffering.
     let app = apply_body_limit(app, &limits);
+    let app = if let Some(runtime) = metrics_runtime.as_ref() {
+        app.merge(runtime.router())
+    } else {
+        app
+    };
 
     #[cfg(feature = "tls")]
     if let Some(cfg) = tls {

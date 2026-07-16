@@ -243,6 +243,7 @@ async fn main() -> Result<()> {
                 token_store,
                 args.allowed_host.clone(),
                 args.disable_host_check,
+                args.enable_metrics,
                 limits,
                 #[cfg(feature = "tls")]
                 tls_cfg,

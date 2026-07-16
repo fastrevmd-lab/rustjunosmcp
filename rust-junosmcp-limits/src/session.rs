@@ -19,6 +19,26 @@ struct SessionMeta {
     last_active: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReapReason {
+    Idle,
+    Lifetime,
+}
+
+impl ReapReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Lifetime => "lifetime",
+        }
+    }
+}
+
+struct ExpiredSession {
+    id: SessionId,
+    reason: ReapReason,
+}
+
 #[derive(Default)]
 struct TokenSessionState {
     counts: HashMap<String, usize>,
@@ -218,6 +238,7 @@ impl SessionTracker {
         let prev = self.active.fetch_add(1, Ordering::AcqRel);
         if self.max_sessions > 0 && prev >= self.max_sessions {
             self.active.fetch_sub(1, Ordering::AcqRel);
+            crate::prometheus::record_limit_hit("session_cap", "session_registration_rejected");
             return false;
         }
         self.activity.insert(
@@ -227,6 +248,7 @@ impl SessionTracker {
                 last_active: now,
             },
         );
+        crate::prometheus::increment_active_sessions();
         true
     }
 
@@ -239,8 +261,14 @@ impl SessionTracker {
 
     /// Drop a session from tracking and decrement the gauge.
     pub fn unregister(&self, id: &SessionId) {
-        if self.activity.remove(id).is_some() {
+        let _ = self.unregister_inner(id);
+    }
+
+    fn unregister_inner(&self, id: &SessionId) -> bool {
+        let removed = self.activity.remove(id).is_some();
+        if removed {
             self.active.fetch_sub(1, Ordering::AcqRel);
+            crate::prometheus::decrement_active_sessions();
         }
         let mut state = self.token_state();
         if let Some(token) = state.sessions.remove(id) {
@@ -248,21 +276,39 @@ impl SessionTracker {
         } else if state.created_unbound.remove(id) {
             state.closed_before_bind.insert(id.clone());
         }
+        removed
     }
 
     /// Session IDs that exceed the idle timeout or max lifetime as of `now`.
     pub fn reap(&self, now: Instant) -> Vec<SessionId> {
+        self.reap_with_reasons(now)
+            .into_iter()
+            .map(|expired| expired.id)
+            .collect()
+    }
+
+    fn reap_with_reasons(&self, now: Instant) -> Vec<ExpiredSession> {
         let mut expired = Vec::new();
-        for e in self.activity.iter() {
-            let m = e.value();
+        for entry in self.activity.iter() {
+            let meta = entry.value();
             let idle = self
                 .idle_timeout
-                .is_some_and(|t| now.duration_since(m.last_active) >= t);
-            let old = self
+                .is_some_and(|timeout| now.duration_since(meta.last_active) >= timeout);
+            let lifetime = self
                 .max_lifetime
-                .is_some_and(|t| now.duration_since(m.created_at) >= t);
-            if idle || old {
-                expired.push(e.key().clone());
+                .is_some_and(|timeout| now.duration_since(meta.created_at) >= timeout);
+            let reason = if lifetime {
+                Some(ReapReason::Lifetime)
+            } else if idle {
+                Some(ReapReason::Idle)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                expired.push(ExpiredSession {
+                    id: entry.key().clone(),
+                    reason,
+                });
             }
         }
         expired
@@ -271,6 +317,13 @@ impl SessionTracker {
 
 /// Interval between reaper sweeps.
 const REAP_PERIOD: Duration = Duration::from_secs(30);
+
+fn finish_reap(tracker: &SessionTracker, expired: ExpiredSession) {
+    if tracker.unregister_inner(&expired.id) {
+        crate::prometheus::record_session_reaped(expired.reason.as_str());
+        tracing::info!(session_id = %expired.id, "session reaped");
+    }
+}
 
 /// Wraps an rmcp `SessionManager`, adding a session cap and idle/lifetime reaper.
 pub struct LimitedSessionManager<S> {
@@ -292,10 +345,9 @@ impl<S: SessionManager> LimitedSessionManager<S> {
                 let mut tick = tokio::time::interval(REAP_PERIOD);
                 loop {
                     tick.tick().await;
-                    for id in tracker.reap(Instant::now()) {
-                        let _ = inner.close_session(&id).await;
-                        tracker.unregister(&id);
-                        tracing::info!(session_id = %id, "session reaped");
+                    for expired in tracker.reap_with_reasons(Instant::now()) {
+                        let _ = inner.close_session(&expired.id).await;
+                        finish_reap(&tracker, expired);
                     }
                 }
             }))
@@ -438,6 +490,107 @@ mod tests {
         let expired = t.reap(later);
         assert!(expired.contains(&id("idle")));
         assert!(!expired.contains(&id("fresh")));
+    }
+
+    #[test]
+    fn session_metrics_cover_active_cap_and_reap_reasons() {
+        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        metrics::with_local_recorder(&recorder, || {
+            let base = Instant::now();
+
+            let capped = SessionTracker::new(&LimitsConfig {
+                max_sessions: 1,
+                ..Default::default()
+            });
+            assert!(capped.try_register(id("tracked"), base));
+            assert!(!capped.try_register(id("race-loser"), base));
+            capped.unregister(&id("tracked"));
+            capped.unregister(&id("tracked"));
+
+            let idle = SessionTracker::new(&LimitsConfig {
+                max_sessions: 10,
+                session_idle_timeout_secs: 60,
+                session_max_lifetime_secs: 3600,
+                ..Default::default()
+            });
+            assert!(idle.try_register(id("idle"), base));
+            let expired = idle.reap_with_reasons(base + Duration::from_secs(120));
+            assert_eq!(expired[0].reason, ReapReason::Idle);
+            finish_reap(&idle, expired.into_iter().next().unwrap());
+
+            let lifetime = SessionTracker::new(&LimitsConfig {
+                max_sessions: 10,
+                session_idle_timeout_secs: 60,
+                session_max_lifetime_secs: 60,
+                ..Default::default()
+            });
+            assert!(lifetime.try_register(id("both"), base));
+            let expired = lifetime.reap_with_reasons(base + Duration::from_secs(120));
+            assert_eq!(expired[0].reason, ReapReason::Lifetime);
+            finish_reap(&lifetime, expired.into_iter().next().unwrap());
+        });
+
+        handle.run_upkeep();
+        let text = handle.render();
+        let active = text
+            .lines()
+            .find(|line| line.starts_with("junosmcp_active_sessions{"))
+            .expect("active-session gauge");
+        assert!(active.ends_with(" 0"));
+        assert!(text.lines().any(|line| {
+            line.starts_with("junosmcp_limit_hits_total{")
+                && line.contains("limit=\"session_cap\"")
+                && line.contains("event=\"session_registration_rejected\"")
+                && line.ends_with(" 1")
+        }));
+        assert!(text.lines().any(|line| {
+            line.starts_with("junosmcp_sessions_reaped_total{")
+                && line.contains("reason=\"idle\"")
+                && line.ends_with(" 1")
+        }));
+        assert!(text.lines().any(|line| {
+            line.starts_with("junosmcp_sessions_reaped_total{")
+                && line.contains("reason=\"lifetime\"")
+                && line.ends_with(" 1")
+        }));
+    }
+
+    #[test]
+    fn reaper_finalizer_does_not_count_session_removed_by_explicit_close() {
+        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        metrics::with_local_recorder(&recorder, || {
+            let base = Instant::now();
+            let tracker = SessionTracker::new(&LimitsConfig {
+                max_sessions: 10,
+                session_idle_timeout_secs: 60,
+                ..Default::default()
+            });
+            let session = id("concurrently-closed");
+            assert!(tracker.try_register(session.clone(), base));
+
+            let mut expired = tracker.reap_with_reasons(base + Duration::from_secs(120));
+            assert_eq!(expired.len(), 1);
+            let expired = expired.pop().unwrap();
+
+            tracker.unregister(&session);
+            assert_eq!(tracker.active(), 0);
+            finish_reap(&tracker, expired);
+            assert_eq!(tracker.active(), 0);
+        });
+
+        handle.run_upkeep();
+        let text = handle.render();
+        let active = text
+            .lines()
+            .find(|line| line.starts_with("junosmcp_active_sessions{"))
+            .expect("active-session gauge");
+        assert!(active.ends_with(" 0"));
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.starts_with("junosmcp_sessions_reaped_total{")),
+            "unexpected reaper counter in:\n{text}"
+        );
     }
 
     #[test]
