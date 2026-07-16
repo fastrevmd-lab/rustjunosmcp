@@ -27,7 +27,7 @@ described under [Native field mapping](#native-field-mapping).
 | `result` | enum | Outcome: `ok` (success), `error` (failure), `denied` (authorization rejected), or `unsettled` (client disconnect). |
 | `duration_ms` | u64 | Elapsed time from handler entry to drop (milliseconds). |
 | `error_kind` | string | Stable error category when `result=error` (e.g., `"timeout"`, `"lease_busy"`, `"transport"`). Empty otherwise. See [Error kinds](#error-kinds) for the full vocabulary. |
-| `error` | string | Bounded error message when `result=error` (max 512 chars, truncated with `…`). Empty otherwise. |
+| `error` | string | Bounded error message when `result=error`; values longer than 512 bytes are cut at a UTF-8 boundary no later than byte 512, then suffixed with `…`. Empty otherwise. |
 | `reason` | string | Denial reason when `result=denied` (see below). Empty otherwise. |
 | `metadata` | string | Space-separated `key=value` pairs of allowlisted, non-secret tool-specific fields (e.g., `command_count=5 dry_run=true`). Empty if none. |
 
@@ -340,7 +340,8 @@ The following capabilities are planned but not yet implemented:
   per tool (for example, `command_count`, `dry_run`, and `config_bytes`) and
   excludes secret material.
 - **Canonical bounded errors** — the `AuditScope` `error` field is truncated at
-  512 characters to prevent unbounded log growth from pathological failures.
+  a UTF-8 boundary no later than 512 bytes, then an ellipsis (`…`) is appended,
+  to prevent unbounded log growth from pathological failures.
 - **Canonical caller attribution** — each `AuditScope` completion event records
   the bearer-token name or `"stdio"`, enabling per-caller audit trails even
   when multiple tokens share the same scope.
