@@ -2655,6 +2655,8 @@ name = "rust-junosmcp-audit"
 version = "0.1.0"
 dependencies = [
  "hmac 0.12.1",
+ "metrics",
+ "metrics-exporter-prometheus",
  "rust-junosmcp-auth",
  "serde_json",
  "sha2 0.10.9",

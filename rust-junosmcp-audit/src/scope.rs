@@ -82,7 +82,8 @@ impl AuditScope {
 
 impl Drop for AuditScope {
     fn drop(&mut self) {
-        let duration_ms = self.started.elapsed().as_millis() as u64;
+        let elapsed = self.started.elapsed();
+        let duration_ms = elapsed.as_millis() as u64;
         let router_count = self.routers.len() as u64;
         let (routers, metadata) =
             crate::redact::render(crate::redact::active(), &self.routers, &self.metadata);
@@ -100,6 +101,13 @@ impl Drop for AuditScope {
             AuditOutcome::Denied { reason } => ("denied", "", String::new(), *reason),
             AuditOutcome::Unsettled => ("unsettled", "", String::new(), ""),
         };
+
+        metrics::histogram!(
+            "junosmcp_tool_duration_seconds",
+            "tool" => self.tool,
+            "result" => result
+        )
+        .record(elapsed.as_secs_f64());
 
         tracing::info!(
             target: "audit",
@@ -189,6 +197,80 @@ mod tests {
         });
         assert!(out.contains("caller=stdio"));
         assert!(out.contains("authorization=no_auth"));
+    }
+
+    #[test]
+    fn tool_duration_metrics_cover_all_results_without_sensitive_labels() {
+        use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+
+        let recorder = PrometheusBuilder::new()
+            .with_recommended_naming(false)
+            .add_global_label("server", "junos")
+            .set_buckets_for_metric(
+                Matcher::Full("junosmcp_tool_duration_seconds".to_owned()),
+                &[0.01, 1.0, 1800.0],
+            )
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let caller = ctx("secret-token-name");
+
+        metrics::with_local_recorder(&recorder, || {
+            let mut ok = AuditScope::new(
+                Some(&caller),
+                "get_router_list",
+                "read",
+                vec!["secret-router".into()],
+            );
+            ok.succeed();
+
+            let mut error = AuditScope::new(
+                Some(&caller),
+                "get_router_list",
+                "read",
+                vec!["secret-router".into()],
+            );
+            error.fail("secret-error-text");
+
+            let mut denied = AuditScope::new(
+                Some(&caller),
+                "get_router_list",
+                "read",
+                vec!["secret-router".into()],
+            );
+            denied.deny("tool_scope");
+
+            let _unsettled = AuditScope::new(
+                Some(&caller),
+                "get_router_list",
+                "read",
+                vec!["secret-router".into()],
+            );
+        });
+
+        handle.run_upkeep();
+        let text = handle.render();
+        for result in ["ok", "error", "denied", "unsettled"] {
+            assert!(
+                text.lines().any(|line| {
+                    line.starts_with("junosmcp_tool_duration_seconds_bucket{")
+                        && line.contains("server=\"junos\"")
+                        && line.contains("tool=\"get_router_list\"")
+                        && line.contains(&format!("result=\"{result}\""))
+                }),
+                "missing {result} in:\n{text}"
+            );
+        }
+        for forbidden in [
+            "secret-token-name",
+            "secret-router",
+            "secret-error-text",
+            "caller=",
+            "router=",
+            "error=",
+        ] {
+            assert!(!text.contains(forbidden), "leaked {forbidden} in:\n{text}");
+        }
     }
 
     #[test]
