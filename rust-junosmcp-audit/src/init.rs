@@ -126,8 +126,7 @@ pub fn init_tracing(cfg: &AuditConfig) -> io::Result<()> {
         .and_then(|p| FileHandle::open(p).ok())
         .map(audit_file_layer);
     let journald_layer =
-        make_journald_layer_with(cfg.journald, tracing_journald::layer)?
-            .map(audit_journald_layer);
+        make_journald_layer_with(cfg.journald, tracing_journald::layer)?.map(audit_journald_layer);
 
     let _ = tracing_subscriber::registry()
         .with(env)
@@ -173,13 +172,11 @@ mod tests {
 
     #[test]
     fn disabled_journald_does_not_call_factory() {
-        let layer = make_journald_layer_with(
-            false,
-            || -> std::io::Result<tracing_journald::Layer> {
+        let layer =
+            make_journald_layer_with(false, || -> std::io::Result<tracing_journald::Layer> {
                 panic!("disabled journald must not construct a socket")
-            },
-        )
-        .expect("disabled journald is infallible");
+            })
+            .expect("disabled journald is infallible");
 
         assert!(layer.is_none());
     }
