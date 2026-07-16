@@ -178,8 +178,7 @@ async fn main() -> Result<()> {
             while hup.recv().await.is_some() {
                 tracing::info!("SIGHUP: reloading token store and inventory");
                 // Reload inventory FIRST so the token store sees current routers.
-                match rust_junosmcp_core::tools::reload_devices::handle(
-                    rust_junosmcp_core::tools::ReloadDevicesArgs::default(),
+                match rust_junosmcp_core::tools::reload_devices::reload_current_from_disk(
                     dm.clone(),
                 )
                 .await
