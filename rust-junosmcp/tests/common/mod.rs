@@ -448,6 +448,7 @@ pub struct PostResult {
     pub code: u16,
     pub body: Value,
     pub session_id: Option<String>,
+    pub retry_after: Option<String>,
     pub www_authenticate: Option<String>,
 }
 
@@ -465,21 +466,24 @@ pub fn http_post(
     if let Some(sid) = session_id {
         req = req.set("Mcp-Session-Id", sid);
     }
-    let (code, resp_session, content_type, www_auth, text) = match req.send_json(body) {
+    let (code, resp_session, retry_after, content_type, www_auth, text) = match req.send_json(body)
+    {
         Ok(resp) => {
             let code = resp.status();
             let sid = resp.header("Mcp-Session-Id").map(str::to_string);
+            let retry_after = resp.header("Retry-After").map(str::to_string);
             let ct = resp.header("Content-Type").unwrap_or("").to_string();
             let wa = resp.header("WWW-Authenticate").map(str::to_string);
             let text = resp.into_string().unwrap_or_default();
-            (code, sid, ct, wa, text)
+            (code, sid, retry_after, ct, wa, text)
         }
         Err(ureq::Error::Status(code, resp)) => {
             let sid = resp.header("Mcp-Session-Id").map(str::to_string);
+            let retry_after = resp.header("Retry-After").map(str::to_string);
             let ct = resp.header("Content-Type").unwrap_or("").to_string();
             let wa = resp.header("WWW-Authenticate").map(str::to_string);
             let text = resp.into_string().unwrap_or_default();
-            (code, sid, ct, wa, text)
+            (code, sid, retry_after, ct, wa, text)
         }
         Err(e) => panic!("transport error: {e}"),
     };
@@ -494,6 +498,7 @@ pub fn http_post(
         code,
         body: body_value,
         session_id: resp_session,
+        retry_after,
         www_authenticate: www_auth,
     }
 }

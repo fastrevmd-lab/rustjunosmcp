@@ -21,6 +21,31 @@ fn oversized_body_returns_413() {
 }
 
 #[test]
+fn global_session_cap_returns_stable_503_and_releases_on_close() {
+    let server = spawn_with_args(&["--max-sessions", "1"]);
+    let first = initialize(server.port, &server.token);
+
+    let shed = http_post(server.port, Some(&server.token), None, init_body());
+    assert_eq!(shed.code, 503);
+    assert_eq!(shed.retry_after.as_deref(), Some("1"));
+    assert!(shed.session_id.is_none());
+    assert_eq!(
+        shed.body,
+        serde_json::json!({"error": "overloaded", "limit": "session_cap"})
+    );
+
+    assert!(matches!(
+        close_session(server.port, &server.token, &first),
+        200 | 202 | 204
+    ));
+    let replacement = initialize(server.port, &server.token);
+    assert!(matches!(
+        close_session(server.port, &server.token, &replacement),
+        200 | 202 | 204
+    ));
+}
+
+#[test]
 fn token_session_cap_isolated_by_token_and_released_on_close() {
     let inv = write_inv(
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
