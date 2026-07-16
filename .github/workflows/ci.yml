@@ -46,7 +46,7 @@ jobs:
         run: |
           cargo build -p rust-junosmcp --no-default-features --locked
           cargo build -p rust-junosmcp --no-default-features --features tls --locked
-          cargo test -p rust-junosmcp --no-default-features --bin rust-junosmcp --locked
+          cargo test -p rust-junosmcp --no-default-features --locked
 
       - name: Unit + smoke tests
         working-directory: RustJunosMCP

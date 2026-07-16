@@ -16,6 +16,39 @@ srx = ["dep:rust-junosmcp-srx-core"]
 name = "rust-junosmcp"
 path = "src/main.rs"
 
+# These migrated suites exercise SRX-only tools and must not be selected for
+# Junos-only builds. Keeping the requirement on each target also makes Cargo's
+# feature boundary visible to CI and downstream contributors.
+[[test]]
+name = "srx_audit"
+path = "tests/srx_audit.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_limits"
+path = "tests/srx_http_limits.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_metrics"
+path = "tests/srx_http_metrics.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_smoke"
+path = "tests/srx_http_smoke.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_tls"
+path = "tests/srx_http_tls.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_live_smoke"
+path = "tests/srx_live_smoke.rs"
+required-features = ["srx"]
+
 [dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
