@@ -697,6 +697,9 @@ impl JmcpHandler {
         result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
+    // Keep the legacy staging alias in this description for exact v0.3.6 SRX
+    // schema compatibility. It remains functional during the 0.8.0 migration
+    // window; operator documentation names the canonical JMCP_* replacement.
     #[tool(
         name = "collect_jtac_support_bundle",
         description = "Collects a JTAC-ready diagnostic bundle for the named router. \
@@ -708,7 +711,7 @@ impl JmcpHandler {
                        Per-type values capture the universal baseline (get-configuration, \
                        get-software-information, get-system-uptime-information, \
                        get-system-alarm-information) plus type-specific RPCs, and assemble \
-                       the tarball on the MCP host under JMCP_SUPPORT_BUNDLE_STAGING_DIR (default \
+                       the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default \
                        /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). \
                        The response's bundle.location field is 'device' or 'lxc_staging'. \
                        Caller-supplied request_id is a validated correlation label used only \
