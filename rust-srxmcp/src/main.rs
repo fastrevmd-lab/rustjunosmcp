@@ -208,6 +208,7 @@ async fn main() -> Result<()> {
             token_store,
             args.allowed_host.clone(),
             args.disable_host_check,
+            args.enable_metrics,
             limits,
             tls_config,
         )
@@ -222,6 +223,7 @@ async fn main() -> Result<()> {
             token_store,
             args.allowed_host.clone(),
             args.disable_host_check,
+            args.enable_metrics,
             limits,
         )
         .await

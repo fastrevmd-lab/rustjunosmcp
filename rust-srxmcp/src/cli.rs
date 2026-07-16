@@ -69,6 +69,10 @@ pub struct Cli {
     #[arg(long)]
     pub disable_host_check: bool,
 
+    /// Expose unauthenticated Prometheus metrics at /metrics.
+    #[arg(long, env = "JMCP_SRX_ENABLE_METRICS")]
+    pub enable_metrics: bool,
+
     /// Max request body bytes before HTTP 413 (streamable-http). 0 = unlimited.
     #[arg(long, env = "JMCP_SRX_MAX_REQUEST_BODY_BYTES", default_value_t = 10 * 1024 * 1024)]
     pub max_request_body_bytes: usize,
@@ -151,7 +155,11 @@ mod tests {
         assert!(cli.tls_key.is_none());
         assert!(!cli.allow_no_auth);
         assert!(!cli.allow_insecure_bind);
+        assert!(!cli.enable_metrics);
         assert_eq!(cli.max_sessions_per_token, 16);
+
+        let metrics = Cli::parse_from(["rust-srxmcp", "--enable-metrics"]);
+        assert!(metrics.enable_metrics);
 
         let disabled = Cli::parse_from(["rust-srxmcp", "--max-sessions-per-token", "0"]);
         assert_eq!(disabled.max_sessions_per_token, 0);

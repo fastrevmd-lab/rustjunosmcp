@@ -11,7 +11,8 @@ use rmcp::transport::streamable_http_server::{
 use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
 use rust_junosmcp_limits::{
-    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager, LimitsConfig,
+    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager,
+    LimitsConfig, PrometheusRuntime,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -41,6 +42,7 @@ pub async fn serve(
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    enable_metrics: bool,
     limits: LimitsConfig,
 ) -> Result<()> {
     serve_inner(
@@ -49,6 +51,7 @@ pub async fn serve(
         token_store,
         allowed_hosts,
         disable_host_check,
+        enable_metrics,
         limits,
         #[cfg(feature = "tls")]
         None,
@@ -57,12 +60,14 @@ pub async fn serve(
 }
 
 #[cfg(feature = "tls")]
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_with_tls(
     handler: JmcpSrxHandler,
     addr: SocketAddr,
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    enable_metrics: bool,
     limits: LimitsConfig,
     tls: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
@@ -72,24 +77,33 @@ pub async fn serve_with_tls(
         token_store,
         allowed_hosts,
         disable_host_check,
+        enable_metrics,
         limits,
         tls,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_inner(
     handler: JmcpSrxHandler,
     addr: SocketAddr,
     token_store: Option<Arc<ArcSwap<TokenStore>>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
+    enable_metrics: bool,
     limits: LimitsConfig,
     #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
     let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
 
     limits.log_effective();
+
+    let metrics_runtime = if enable_metrics {
+        Some(PrometheusRuntime::install("srx").context("initializing Prometheus metrics")?)
+    } else {
+        None
+    };
 
     let session_mgr = LimitedSessionManager::new(LocalSessionManager::default(), &limits);
     let conc = ConcurrencyState::new(&limits, Some(session_mgr.tracker()));
@@ -116,6 +130,11 @@ async fn serve_inner(
 
     // Body limit outermost: reject oversized bodies before buffering.
     let app = apply_body_limit(app, &limits);
+    let app = if let Some(runtime) = metrics_runtime.as_ref() {
+        app.merge(runtime.router())
+    } else {
+        app
+    };
 
     #[cfg(feature = "tls")]
     if let Some(config) = tls {
