@@ -8,7 +8,7 @@ authors.workspace    = true
 description = "MCP server for Juniper Junos devices, built on rustEZ."
 
 [features]
-default = ["tls"]
+default = ["tls", "srx"]
 tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
 srx = ["dep:rust-junosmcp-srx-core"]
 

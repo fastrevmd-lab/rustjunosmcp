@@ -145,6 +145,14 @@ async fn main() -> Result<()> {
         device_leases,
     };
     let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg, upgrade_cfg);
+    #[cfg(feature = "srx")]
+    let handler = handler.with_srx_runtime(
+        token_store.is_some() && matches!(args.transport, Transport::StreamableHttp),
+        rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig::new(
+            args.support_bundle_staging_dir.clone(),
+            args.support_bundle_staging_max_bytes,
+        ),
+    );
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see

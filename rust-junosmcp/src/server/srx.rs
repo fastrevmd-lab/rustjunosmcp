@@ -1,32 +1,20 @@
-//! `JmcpSrxHandler` — rmcp `#[tool]` registry root for `rust-srxmcp`.
+//! SRX-specific rmcp adapters composed into the unified [`JmcpHandler`].
+
+use super::{caller_ctx, mint_request_id, JmcpHandler};
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{
-    CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
-};
-use rmcp::{tool, tool_handler, tool_router, ServerHandler};
+use rmcp::model::{CallToolResult, ContentBlock, Extensions};
+use rmcp::{tool, tool_router};
 use rust_junosmcp_audit::AuditScope;
+#[cfg(test)]
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager};
 use rust_junosmcp_srx_core::workflows::signature_package::{
-    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore,
+    confirmation_token_for_request, ConfirmationBinding,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use std::sync::Arc;
 use tokio::time::Instant;
-
-/// Resolve the authenticated bearer token context for authorization and audit
-/// attribution. Walks the same `Parts` → `Extensions` chain documented in
-/// `rust-junosmcp/src/server.rs::caller_ctx` — rmcp inserts the whole
-/// `http::request::Parts` into the per-request `Extensions`, and our auth
-/// layer attaches `CallerCtx` to `Parts.extensions`. Returns `None` under
-/// stdio (no HTTP frame) so audit lines still emit with `caller="unknown"`.
-fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
-    extensions.get::<http::request::Parts>().and_then(|parts| {
-        parts
-            .extensions
-            .get::<rust_junosmcp_auth::caller::CallerCtx>()
-    })
-}
 
 #[derive(Debug, thiserror::Error)]
 enum ScopeError {
@@ -42,52 +30,8 @@ enum ScopeError {
     RouterNotInScope { token: String, tool: &'static str },
 }
 
-/// Mint a short per-request id used in audit lines. Format
-/// `req-<nanos>` — nanosecond resolution since UNIX epoch is enough to keep
-/// concurrent calls distinct in the same log stream.
-fn mint_request_id() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("req-{nanos}")
-}
-
-#[derive(Clone)]
-pub struct JmcpSrxHandler {
-    started: Arc<Instant>,
-    device_manager: Arc<DeviceManager>,
-    authorization_required: bool,
-    device_leases: Arc<DeviceLeaseManager>,
-    confirmation_store: ConfirmationStore,
-}
-
-impl JmcpSrxHandler {
-    pub fn new(
-        started: Arc<Instant>,
-        device_manager: Arc<DeviceManager>,
-        device_leases: Arc<DeviceLeaseManager>,
-    ) -> Self {
-        Self::new_with_authorization(started, device_manager, device_leases, false)
-    }
-
-    pub fn new_with_authorization(
-        started: Arc<Instant>,
-        device_manager: Arc<DeviceManager>,
-        device_leases: Arc<DeviceLeaseManager>,
-        authorization_required: bool,
-    ) -> Self {
-        Self {
-            started,
-            device_manager,
-            authorization_required,
-            device_leases,
-            confirmation_store: ConfirmationStore::default(),
-        }
-    }
-
-    /// Pure tool body — used by the rmcp adapter below and by integration
-    /// tests via `srxmcp_status_test`.
+impl JmcpHandler {
+    /// Pure tool body used by the rmcp adapter below and unit tests.
     fn srxmcp_status_body(&self, _args: SrxmcpStatusArgs) -> SrxmcpStatusResponse {
         let uptime_seconds = Instant::now()
             .saturating_duration_since(*self.started)
@@ -99,19 +43,13 @@ impl JmcpSrxHandler {
         }
     }
 
-    /// Test-only entry point so integration tests can drive the tool body
-    /// without constructing an rmcp request envelope.
-    pub fn srxmcp_status_test(&self, args: SrxmcpStatusArgs) -> SrxmcpStatusResponse {
-        self.srxmcp_status_body(args)
-    }
-
-    fn scope_to_call_result(e: ScopeError) -> Result<CallToolResult, rmcp::ErrorData> {
+    fn srx_scope_to_call_result(e: ScopeError) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(CallToolResult::error(vec![ContentBlock::text(
             e.to_string(),
         )]))
     }
 
-    fn check_tool_scope(
+    fn check_srx_tool_scope(
         &self,
         ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
@@ -127,7 +65,7 @@ impl JmcpSrxHandler {
         Ok(())
     }
 
-    fn check_router_scope(
+    fn check_srx_router_scope(
         &self,
         ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
@@ -157,15 +95,15 @@ impl JmcpSrxHandler {
         if self.authorization_required && ctx.is_none() {
             return Err(ScopeError::MissingCallerContext);
         }
-        self.check_tool_scope(ctx, tool)?;
+        self.check_srx_tool_scope(ctx, tool)?;
         if let Some(router) = router {
-            self.check_router_scope(ctx, tool, router)?;
+            self.check_srx_router_scope(ctx, tool, router)?;
         }
         Ok(ctx)
     }
 
     fn device_identity(&self, router: &str) -> Result<String, rust_junosmcp_core::JmcpError> {
-        let inventory = self.device_manager.inventory();
+        let inventory = self.dm.inventory();
         let entry = inventory.get(router)?;
         Ok(format!(
             "{}|{}|{}|{}",
@@ -262,8 +200,8 @@ mod server_tools_const_tests {
     }
 }
 
-#[tool_router]
-impl JmcpSrxHandler {
+#[tool_router(router = srx_tool_router, vis = "pub(crate)")]
+impl JmcpHandler {
     #[tool(
         name = "srxmcp_status",
         description = "Diagnostic — returns this server's version, endpoint name, and uptime in seconds."
@@ -282,7 +220,7 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let resp = self.srxmcp_status_body(args);
         let result = serde_json::to_string_pretty(&resp).map_err(|e| {
@@ -323,10 +261,10 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let resp = rust_junosmcp_srx_core::workflows::cluster_status::run(&mut device, args)
@@ -380,10 +318,10 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let resp = rust_junosmcp_srx_core::workflows::services_status::run(&mut device, args)
@@ -438,10 +376,10 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let resp = rust_junosmcp_srx_core::workflows::license::run(&mut device, args)
@@ -493,10 +431,10 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let resp = rust_junosmcp_srx_core::workflows::vpn_lifecycle::run(&mut device, args)
@@ -565,7 +503,7 @@ impl JmcpSrxHandler {
                     ScopeError::RouterNotInScope { .. } => "router_scope",
                     ScopeError::ToolNotInScope { .. } => "tool_scope",
                 });
-                return Self::scope_to_call_result(e);
+                return Self::srx_scope_to_call_result(e);
             }
         };
         let caller = ctx.map(|c| c.token_name.as_str());
@@ -585,7 +523,7 @@ impl JmcpSrxHandler {
         }
 
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let result = rust_junosmcp_srx_core::workflows::idp_package::run(
@@ -652,7 +590,7 @@ impl JmcpSrxHandler {
                     ScopeError::RouterNotInScope { .. } => "router_scope",
                     ScopeError::ToolNotInScope { .. } => "tool_scope",
                 });
-                return Self::scope_to_call_result(e);
+                return Self::srx_scope_to_call_result(e);
             }
         };
         let caller = ctx.map(|c| c.token_name.as_str());
@@ -672,7 +610,7 @@ impl JmcpSrxHandler {
         }
 
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let result = rust_junosmcp_srx_core::workflows::appid_package::run(
@@ -732,10 +670,10 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
         let resp = rust_junosmcp_srx_core::workflows::cluster_health::run(&mut device, args)
@@ -803,20 +741,20 @@ impl JmcpSrxHandler {
                 ScopeError::RouterNotInScope { .. } => "router_scope",
                 ScopeError::ToolNotInScope { .. } => "tool_scope",
             });
-            return Self::scope_to_call_result(e);
+            return Self::srx_scope_to_call_result(e);
         }
         rust_junosmcp_srx_core::workflows::support_bundle::validate_path_inputs(&args)
             .map_err(|e| rmcp::ErrorData::invalid_params(e.to_string(), None))?;
         let mut device =
-            self.device_manager.open(&args.router).await.map_err(|e| {
+            self.dm.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let staging =
-            rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig::default(
-            );
-        let result =
-            rust_junosmcp_srx_core::workflows::support_bundle::run(&mut device, args, &staging)
-                .await;
+        let result = rust_junosmcp_srx_core::workflows::support_bundle::run(
+            &mut device,
+            args,
+            &self.support_bundle_staging,
+        )
+        .await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -837,26 +775,6 @@ impl JmcpSrxHandler {
     }
 }
 
-#[tool_handler(router = Self::tool_router())]
-impl ServerHandler for JmcpSrxHandler {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "srxmcp-server",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(
-                "Juniper SRX-specific MCP server. Phase 1B tools: \
-                 srxmcp_status, get_chassis_cluster_status, check_srx_feature_license, \
-                 get_srx_security_services_status, vpn_lifecycle_report. \
-                 Phase 2 destructive tools: manage_idp_security_package, \
-                 manage_appid_signature_package. \
-                 Phase 3 diagnostics tools: validate_chassis_cluster_health, \
-                 collect_jtac_support_bundle.",
-            )
-    }
-}
-
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SrxmcpStatusArgs {}
 
@@ -873,17 +791,27 @@ mod scope_tests {
     use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
 
-    fn make_handler(authorization_required: bool) -> JmcpSrxHandler {
+    fn make_handler(authorization_required: bool) -> JmcpHandler {
         let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
-        let device_manager = Arc::new(DeviceManager::new(inventory));
+        let dm = Arc::new(DeviceManager::new(inventory.clone()));
+        let policy = Arc::new(rust_junosmcp_core::Policy::build(&inventory).unwrap());
+        let transfer_cfg = rust_junosmcp_core::TransferConfig {
+            staging_dir: std::path::PathBuf::from("/tmp/staging"),
+            known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
+            scp_runner: Arc::new(rust_junosmcp_core::OpenSshScpRunner),
+            transfer_locks: Arc::new(
+                rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
+            ),
+            accept_new_host_keys: false,
+        };
         let lease_dir = tempfile::tempdir().unwrap();
         let device_leases = Arc::new(DeviceLeaseManager::for_directory(lease_dir.path()).unwrap());
-        JmcpSrxHandler::new_with_authorization(
-            Arc::new(Instant::now()),
-            device_manager,
+        let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
+            transfer_cfg: transfer_cfg.clone(),
             device_leases,
-            authorization_required,
-        )
+        };
+        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
+            .with_srx_runtime(authorization_required, Default::default())
     }
 
     #[test]
@@ -921,9 +849,9 @@ mod scope_tests {
         };
 
         for tool in SRX_SERVER_TOOLS {
-            assert!(handler.check_tool_scope(Some(&ctx), tool).is_ok());
+            assert!(handler.check_srx_tool_scope(Some(&ctx), tool).is_ok());
             assert!(handler
-                .check_router_scope(Some(&ctx), tool, "srx-01")
+                .check_srx_router_scope(Some(&ctx), tool, "srx-01")
                 .is_ok());
         }
     }
@@ -958,7 +886,8 @@ mod scope_tests {
             )
             .unwrap();
         let token = plan["confirmation_token"].as_str().unwrap();
-        assert!(handler
+        let cloned_handler = handler.clone();
+        assert!(cloned_handler
             .validate_confirmation_request(
                 true,
                 Some(token),

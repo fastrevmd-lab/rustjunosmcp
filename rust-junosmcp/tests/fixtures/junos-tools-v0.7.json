@@ -1,0 +1,721 @@
+{
+  "add_device": {
+    "name": "add_device",
+    "description": "Add a Junos device to the in-memory inventory and persist to devices.json. Required fields: device_name, device_ip, username, auth (ssh_key or password). port defaults to 22. With clients that advertise elicitation, missing fields are prompted; otherwise the call returns MissingArguments.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "AuthConfig": {
+          "description": "Authentication config for a Junos device. Tagged enum mirrors the Python\nrepo's `auth.type` discriminator.",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "password": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "password"
+                }
+              },
+              "required": [
+                "type",
+                "password"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "private_key_path": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "ssh_key"
+                }
+              },
+              "required": [
+                "type",
+                "private_key_path"
+              ]
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "properties": {
+        "device_name": {
+          "description": "Device name/identifier in the inventory map.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "device_ip": {
+          "description": "Device IP address or hostname.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "device_port": {
+          "description": "SSH port. Default 22.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "username": {
+          "description": "Username.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "auth": {
+          "description": "Auth config (tagged enum: ssh_key | password).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
+    }
+  },
+  "commit_check_config": {
+    "name": "commit_check_config",
+    "description": "Validate a candidate configuration on a Junos router without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "config_text"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "type": "string"
+        },
+        "config_text": {
+          "description": "The configuration text to validate.",
+          "type": "string"
+        },
+        "config_format": {
+          "description": "Format: set, text, or xml.",
+          "type": "string",
+          "default": "set"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "discard_candidate": {
+    "name": "discard_candidate",
+    "description": "Discard uncommitted candidate configuration changes on a Junos router (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified').",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "The target router. Accepts `router` or `router_name`.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "execute_junos_command": {
+    "name": "execute_junos_command",
+    "description": "Execute a Junos command on the router. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "command"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "The name of the router.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The command to execute on the router.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Command timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        },
+        "max_lines": {
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max_bytes": {
+          "description": "Hard byte cap on returned output.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "tail": {
+          "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "execute_junos_command_batch": {
+    "name": "execute_junos_command_batch",
+    "description": "Run N operational CLI commands across M routers, parallel across routers, sequential per router. Returns a per-router array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "routers",
+        "commands"
+      ],
+      "type": "object",
+      "properties": {
+        "routers": {
+          "description": "Routers to execute against. Must be non-empty. Accepts a list, or a\nsingle router name; the keys `router` / `router_name` are also accepted.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commands": {
+          "description": "Operational CLI commands to run sequentially per router. Must be non-empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "command_timeout": {
+          "description": "Per-command timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        },
+        "batch_timeout": {
+          "description": "Optional whole-batch wall-clock ceiling in seconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "max_concurrent_routers": {
+          "description": "Maximum number of routers in flight concurrently.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 16
+        },
+        "max_lines": {
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max_bytes": {
+          "description": "Hard byte cap on returned output.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "tail": {
+          "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "execute_junos_pfe_command": {
+    "name": "execute_junos_pfe_command",
+    "description": "Execute a single PFE-shell command on one router via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "fpc_target",
+        "pfe_command"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "The name of the router.",
+          "type": "string"
+        },
+        "fpc_target": {
+          "description": "FPC target, e.g. `fpc0`.",
+          "type": "string"
+        },
+        "pfe_command": {
+          "description": "PFE command to execute (no surrounding quotes).",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Per-command timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        },
+        "max_lines": {
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max_bytes": {
+          "description": "Hard byte cap on returned output.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "tail": {
+          "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "fetch_file": {
+    "name": "fetch_file",
+    "description": "Download a file from a Junos device's /var/tmp/<basename> to the host staging directory, with sha256 verification. Mirror of transfer_file.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "remote_path"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "Source router name (must exist in inventory and use ssh_key auth).",
+          "type": "string"
+        },
+        "remote_path": {
+          "description": "Basename of the file under the device's /var/tmp/. Must not contain\n'/', '\\\\', or '..'. Same allowlist as transfer_file.",
+          "type": "string"
+        },
+        "local_name": {
+          "description": "Optional override for the local basename written under the staging\ndirectory. Defaults to `remote_path`. Same allowlist applies.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "force": {
+          "description": "Overwrite if local dest exists with different sha256. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "verify": {
+          "description": "Post-fetch sha256 verification (local vs remote). Default true.",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout": {
+          "description": "Per-call timeout in seconds. Default 600.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 600
+        }
+      }
+    }
+  },
+  "gather_device_facts": {
+    "name": "gather_device_facts",
+    "description": "Gather Junos device facts from the router",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "get_junos_config": {
+    "name": "get_junos_config",
+    "description": "Get the configuration of the router",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "get_router_list": {
+    "name": "get_router_list",
+    "description": "Get the Junos routers visible to this caller. Returns [] when the caller's router scope has no current inventory matches.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object"
+    }
+  },
+  "junos_config_diff": {
+    "name": "junos_config_diff",
+    "description": "Get the configuration diff against a rollback version",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "type": "string"
+        },
+        "version": {
+          "description": "Rollback version to compare against (1-49).",
+          "type": "integer",
+          "format": "int64",
+          "default": 1
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "list_staged_files": {
+    "name": "list_staged_files",
+    "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when router_name is supplied",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "router_name": {
+          "description": "Optional router name. If present, also lists the device's /var/tmp/.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "description": "Per-call timeout in seconds. Default 30.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 30
+        }
+      },
+      "type": "object"
+    }
+  },
+  "load_and_commit_config": {
+    "name": "load_and_commit_config",
+    "description": "Load and commit configuration on a Junos router",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "config_text"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "type": "string"
+        },
+        "config_text": {
+          "description": "The configuration text to load.",
+          "type": "string"
+        },
+        "config_format": {
+          "description": "Format: set, text, or xml.",
+          "type": "string",
+          "default": "set"
+        },
+        "commit_comment": {
+          "description": "Commit comment recorded in the device commit log.",
+          "type": "string",
+          "default": "Configuration loaded via MCP"
+        },
+        "confirm_timeout_mins": {
+          "description": "If set, uses confirmed commit with auto-rollback after N minutes.\nThe router will automatically revert if not confirmed within this window.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "reload_devices": {
+    "name": "reload_devices",
+    "description": "Reload the inventory. With no args, re-reads the current --device-mapping. With file_name, swaps to a new inventory file. Reports added/removed/changed device names.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "file_name": {
+          "description": "Optional path to a different inventory file. If omitted, re-reads\nthe current --device-mapping.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  "render_and_apply_j2_template": {
+    "name": "render_and_apply_j2_template",
+    "description": "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more routers; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "template_content",
+        "vars_content"
+      ],
+      "type": "object",
+      "properties": {
+        "template_content": {
+          "description": "Jinja2 template content as a string (inline; no file path).\nCapped at 64 KiB.",
+          "type": "string"
+        },
+        "vars_content": {
+          "description": "Vars as a JSON object string. Must deserialize to a top-level JSON\nobject. Capped at 64 KiB. YAML is **not** accepted as of v0.5.2\n(RJMCP-SEC-002).",
+          "type": "string"
+        },
+        "router_name": {
+          "description": "Single router to apply to. Mutually exclusive with `router_names`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "router_names": {
+          "description": "Multiple routers to apply to. Mutually exclusive with `router_name`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "apply_config": {
+          "description": "If false (default), only renders and returns the rendered string.",
+          "type": "boolean",
+          "default": false
+        },
+        "commit_comment": {
+          "description": "Commit comment recorded in the device commit log when applied.",
+          "type": "string",
+          "default": "Configuration loaded via MCP"
+        },
+        "dry_run": {
+          "description": "If true, runs lock + load + diff + rollback (no commit). Implies apply_config=true.",
+          "type": "boolean",
+          "default": false
+        },
+        "config_format": {
+          "description": "Override format detection ('set', 'text', 'xml'). Auto-detected if omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds (per-router).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "transfer_file": {
+    "name": "transfer_file",
+    "description": "Push a local file from the staging dir to /var/tmp/ on a Junos device via SCP. Idempotent on matching SHA-256.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "source_path"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "Target router name (must exist in inventory and use ssh_key auth).",
+          "type": "string"
+        },
+        "source_path": {
+          "description": "Basename of the file under the staging dir. Must not contain '/', '\\\\', or '..'.",
+          "type": "string"
+        },
+        "force": {
+          "description": "Overwrite if dest exists with different sha256. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "verify": {
+          "description": "Post-transfer sha256 verification. Default true.",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout": {
+          "description": "Per-call timeout in seconds. Default 600.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 600
+        }
+      }
+    }
+  },
+  "upgrade_junos": {
+    "name": "upgrade_junos",
+    "description": "DESTRUCTIVE: installs a new Junos image and REBOOTS the device. Outage ~5-7 min. Requires confirm=true to proceed; first call with confirm=false returns a ConfirmationRequired error containing the upgrade plan (current version, target version, image, free disk, estimated outage). v1 supports standalone devices only; chassis clusters are refused.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "source_path",
+        "target_version"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "Target router (must exist in inventory and use ssh_key auth).",
+          "type": "string"
+        },
+        "source_path": {
+          "description": "Basename of the staged image under the staging dir. Validated\nagainst the same ASCII allowlist as transfer_file.",
+          "type": "string"
+        },
+        "target_version": {
+          "description": "Expected target version string, e.g. \"25.4R1.12\". Post-install\n`show version` must match exactly or the call fails with\nUpgradePostVerifyMismatch.",
+          "type": "string"
+        },
+        "confirm": {
+          "description": "REQUIRED to perform the destructive upgrade. Defaults to false.\nWhen false the tool runs read-only pre-flight and returns the\nupgrade plan as a ConfirmationRequired error.",
+          "type": "boolean",
+          "default": false
+        },
+        "timeout": {
+          "description": "Per-call outer timeout in seconds. Default 900 (15 min).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 900
+        },
+        "reboot_wait_secs": {
+          "description": "Wall-clock budget for NETCONF to reopen after install + reboot.\nDefault 480 (8 min).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 480
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,375 @@
+{
+  "check_srx_feature_license": {
+    "name": "check_srx_feature_license",
+    "description": "Check whether a named SRX security feature (IDP, AppID, UTM Antivirus, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid license installed on the device. Returns state=not_configured when no matching license record is present (including the expected lab case where only eval/trial licenses are installed).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "SrxLicensedFeature": {
+          "description": "The set of SRX security features that require a Junos license.\n\nEach variant has a hard-coded list of case-insensitive substring patterns\nmatched against the `<name>` field of `<feature-summary>` elements returned\nby `<get-license-summary-information/>`.",
+          "type": "string",
+          "enum": [
+            "idp",
+            "app_id",
+            "utm_antivirus",
+            "web_filtering",
+            "anti_spam",
+            "sec_intel",
+            "atp_cloud",
+            "ssl_proxy"
+          ]
+        }
+      },
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "feature": {
+          "$ref": "#/$defs/SrxLicensedFeature"
+        },
+        "include_raw": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "router",
+        "feature"
+      ]
+    }
+  },
+  "collect_jtac_support_bundle": {
+    "name": "collect_jtac_support_bundle",
+    "description": "Collects a JTAC-ready diagnostic bundle for the named router. problem_type accepts a closed enum value (chassis_cluster, vpn, traffic_loss, idp_appid, routing, generic) OR an array of values for multi-symptom cases. The 'generic' value short-circuits and runs `request support information | save /var/tmp/srxmcp-<rid>.tgz` on the device — fetch via the rust-junosmcp `fetch_file` tool. Per-type values capture the universal baseline (get-configuration, get-software-information, get-system-uptime-information, get-system-alarm-information) plus type-specific RPCs, and assemble the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). The response's bundle.location field is 'device' or 'lxc_staging'. Caller-supplied request_id is a validated correlation label used only in response metadata and audit logs. Filesystem paths always use a separate server-minted srxmcp-<uuid> returned as filesystem_id. Concurrent calls against the same router serialize on an in-process per-router semaphore and surface contention as [code=bundle_per_router_contention].",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "ProblemTypeArg": {
+          "description": "Accept `problem_type` as either a single value or an array per the\ndesign doc spec.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProblemType"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProblemType"
+              }
+            }
+          ]
+        },
+        "ProblemType": {
+          "description": "Closed set of problem categories. Multi-select is handled by the caller\n(orchestrator accepts `Vec<ProblemType>` and unions the additional\nartefact lists).",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "chassis_cluster",
+                "vpn",
+                "traffic_loss",
+                "idp_appid",
+                "routing"
+              ]
+            },
+            {
+              "description": "Catch-all — uses `request support information | save` directly.\nShort-circuits other selections when present in a multi-select array.",
+              "type": "string",
+              "const": "generic"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "problem_type": {
+          "$ref": "#/$defs/ProblemTypeArg"
+        },
+        "request_id": {
+          "description": "Optional correlation label. Limited to 1..=64 ASCII letters, digits,\n`_`, `.`, and `-`; never used in a filesystem path.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "include_logs": {
+          "type": "boolean",
+          "default": true
+        },
+        "redact": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_log_bytes_per_file": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10485760
+        },
+        "max_log_files": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "timeout": {
+          "description": "Outer per-call budget (seconds). Default 1800, cap 3600. The\ncaller's MCP framework enforces this; the workflow records the\nelapsed time for the audit log.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1800
+        }
+      },
+      "required": [
+        "router",
+        "problem_type"
+      ]
+    }
+  },
+  "get_chassis_cluster_status": {
+    "name": "get_chassis_cluster_status",
+    "description": "Chassis-cluster topology + health snapshot. Returns state=not_configured for standalone SRX devices.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "include_raw": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "get_srx_security_services_status": {
+    "name": "get_srx_security_services_status",
+    "description": "Reports the health and version of up to five SRX security services (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. Each sub-service is independently classified as active or not_configured. The overall state is not_configured only when all five sub-services are absent.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "include_raw": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  },
+  "manage_appid_signature_package": {
+    "name": "manage_appid_signature_package",
+    "description": "DESTRUCTIVE on the `download_and_install` and `uninstall` actions: updates or removes the AppID application signature package on an SRX device. Three actions: `check_server` (read-only — returns installed + latest version from signatures.juniper.net), `download_and_install` (downloads and installs the latest or a pinned `version`), and `uninstall` (removes the currently-installed application package and protocol bundle). Destructive verbs use a two-call confirmation protocol: call 1 with `confirm=false` returns `[code=confirmation_required]` carrying a `plan` and short-lived `confirmation_token`; call 2 supplies both `confirm=true` and that caller-bound, one-time token. `download_and_install` short-circuits with `status=already_at_target` when every node already runs the requested version.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "AppidAction": {
+          "type": "string",
+          "enum": [
+            "check_server",
+            "download_and_install",
+            "uninstall"
+          ]
+        }
+      },
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/AppidAction"
+        },
+        "version": {
+          "description": "Pin to a specific package version. Only meaningful for\n`download_and_install`; ignored otherwise.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "confirm": {
+          "description": "Required for destructive actions (`download_and_install`, `uninstall`).",
+          "type": "boolean",
+          "default": false
+        },
+        "confirmation_token": {
+          "description": "Opaque, short-lived artifact returned by the preview call. A bare\n`confirm=true` is never sufficient to authorize a destructive action.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "description": "Per-call outer budget in seconds. Default 600s, cap 1800s.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "include_raw": {
+          "description": "Append raw RPC replies to the response for debugging.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "router",
+        "action"
+      ]
+    }
+  },
+  "manage_idp_security_package": {
+    "name": "manage_idp_security_package",
+    "description": "DESTRUCTIVE on the `download_and_install` and `rollback` actions: updates / reverts the IDP signature package on an SRX device. Three actions: `check_server` (read-only — returns installed + latest version from signatures.juniper.net), `download_and_install` (downloads and installs the latest or a pinned `version`), and `rollback` (reverts to the device's preserved previous package). Destructive verbs use a two-call confirmation protocol: call 1 with `confirm=false` returns `[code=confirmation_required]` carrying a `plan` and short-lived `confirmation_token`; call 2 supplies both `confirm=true` and that token. Tokens are caller-bound and one-time. `download_and_install` short-circuits with `status=already_at_target` when every node already runs the requested version.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "IdpAction": {
+          "type": "string",
+          "enum": [
+            "check_server",
+            "download_and_install",
+            "rollback"
+          ]
+        }
+      },
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/IdpAction"
+        },
+        "version": {
+          "description": "Pin to a specific package version (e.g. `\"3714\"`). Only meaningful\nfor `download_and_install`; ignored otherwise.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "confirm": {
+          "description": "Required for destructive actions (`download_and_install`, `rollback`).\nIgnored for `check_server`.",
+          "type": "boolean",
+          "default": false
+        },
+        "confirmation_token": {
+          "description": "Opaque, short-lived artifact returned by the preview call. A bare\n`confirm=true` is never sufficient to authorize a destructive action.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "description": "Per-call outer budget in seconds (download poll + install poll combined).\nDefault 600s (10 min), cap 1800s (30 min).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "include_raw": {
+          "description": "Append raw RPC replies to the response for debugging.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "router",
+        "action"
+      ]
+    }
+  },
+  "srxmcp_status": {
+    "name": "srxmcp_status",
+    "description": "Diagnostic — returns this server's version, endpoint name, and uptime in seconds.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object"
+    }
+  },
+  "validate_chassis_cluster_health": {
+    "name": "validate_chassis_cluster_health",
+    "description": "Runs 8 chassis-cluster diagnostic RPCs (cluster status, interfaces, information, data-plane / control-plane statistics, per-RE software, alarms, uptime) and emits an ordered findings list with a rolled-up verdict (pass / warn / fail). Standalone SRX devices short-circuit to state=not_configured. Each Finding has check_id (red_led, disabled_secondary, control_link_failure, major_alarm, minor_alarm, recent_reboot, version_skew), severity, message, and optional structured detail. Verdict precedence: fail > warn > pass. Pass-through cluster_status snapshot is included when the cluster RPC succeeded. include_raw=true appends concatenated raw RPC XML.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "include_raw": {
+          "type": "boolean",
+          "default": false
+        },
+        "request_id": {
+          "description": "Caller-supplied correlation token. If absent, `run()` mints\n`srxmcp-<uuid-v4>` and returns it in the response.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    }
+  },
+  "vpn_lifecycle_report": {
+    "name": "vpn_lifecycle_report",
+    "description": "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, and correlations when VPN is configured (even if no SAs are currently up). Returns state=not_configured only when both IKE and IPsec RPCs report that the security stanza is absent. Optionally filter by `peer` (substring match against both IKE remote address and IPsec gateway) and/or `tunnel` (substring match against IPsec remote gateway — the brief-style IPsec RPC does not surface the st0 interface name).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "type": "string"
+        },
+        "peer": {
+          "description": "Filter IKE and IPsec SAs to those whose remote address contains this substring.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tunnel": {
+          "description": "Filter IPsec SAs to those whose **remote gateway** address contains this\nsubstring. The brief-style IPsec RPC does not surface the st0 interface\nname, so this is effectively a second peer-substring filter; it remains\ndistinct from `peer` so that callers can express tunnel-vs-IKE-only\nintent independently.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "include_raw": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

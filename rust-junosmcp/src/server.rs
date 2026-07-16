@@ -4,6 +4,7 @@
 //! struct, calls into `rust_junosmcp_core::tools::<name>::handle`, and converts
 //! the `Result<serde_json::Value, JmcpError>` into the appropriate rmcp content.
 
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
@@ -25,6 +26,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+#[cfg(feature = "srx")]
+mod srx;
+
 /// Look up the per-request `CallerCtx` (inserted by the auth middleware on
 /// the streamable-http path). Returns `None` under stdio.
 ///
@@ -39,7 +43,9 @@ use std::sync::Arc;
 ///   scope checks become a no-op (preserves original behavior).
 /// - **streamable-http:** rmcp inserted `Parts`; auth middleware put `CallerCtx`
 ///   into `req.extensions` which became `parts.extensions` → returns `Some(&ctx)`.
-fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
+pub(super) fn caller_ctx(
+    extensions: &Extensions,
+) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
     extensions.get::<http::request::Parts>().and_then(|parts| {
         parts
             .extensions
@@ -47,7 +53,7 @@ fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::caller::Ca
     })
 }
 
-fn mint_request_id() -> String {
+pub(super) fn mint_request_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -69,10 +75,23 @@ pub enum ScopeError {
 
 #[derive(Clone)]
 pub struct JmcpHandler {
-    dm: Arc<DeviceManager>,
+    pub(super) dm: Arc<DeviceManager>,
     policy: Arc<arc_swap::ArcSwap<Policy>>,
     transfer_cfg: rust_junosmcp_core::TransferConfig,
     upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
+    tool_router: ToolRouter<Self>,
+    #[cfg(feature = "srx")]
+    pub(super) started: Arc<tokio::time::Instant>,
+    #[cfg(feature = "srx")]
+    pub(super) authorization_required: bool,
+    #[cfg(feature = "srx")]
+    pub(super) device_leases: Arc<rust_junosmcp_core::DeviceLeaseManager>,
+    #[cfg(feature = "srx")]
+    pub(super) confirmation_store:
+        rust_junosmcp_srx_core::workflows::signature_package::ConfirmationStore,
+    #[cfg(feature = "srx")]
+    pub(super) support_bundle_staging:
+        rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig,
 }
 
 impl JmcpHandler {
@@ -82,12 +101,40 @@ impl JmcpHandler {
         transfer_cfg: rust_junosmcp_core::TransferConfig,
         upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
     ) -> Self {
+        let tool_router = Self::junos_tool_router();
+        #[cfg(feature = "srx")]
+        let tool_router = tool_router + Self::srx_tool_router();
+        #[cfg(feature = "srx")]
+        let device_leases = upgrade_cfg.device_leases.clone();
+
         Self {
             dm,
             policy: Arc::new(arc_swap::ArcSwap::from(policy)),
             transfer_cfg,
             upgrade_cfg,
+            tool_router,
+            #[cfg(feature = "srx")]
+            started: Arc::new(tokio::time::Instant::now()),
+            #[cfg(feature = "srx")]
+            authorization_required: false,
+            #[cfg(feature = "srx")]
+            device_leases,
+            #[cfg(feature = "srx")]
+            confirmation_store: Default::default(),
+            #[cfg(feature = "srx")]
+            support_bundle_staging: Default::default(),
         }
+    }
+
+    #[cfg(feature = "srx")]
+    pub fn with_srx_runtime(
+        mut self,
+        authorization_required: bool,
+        support_bundle_staging: rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig,
+    ) -> Self {
+        self.authorization_required = authorization_required;
+        self.support_bundle_staging = support_bundle_staging;
+        self
     }
 
     pub fn transfer_config(&self) -> &rust_junosmcp_core::TransferConfig {
@@ -229,7 +276,7 @@ mod server_tools_const_tests {
     }
 }
 
-#[tool_router]
+#[tool_router(router = junos_tool_router, vis = "pub(crate)")]
 impl JmcpHandler {
     #[tool(
         name = "get_router_list",
@@ -932,7 +979,7 @@ impl JmcpHandler {
     }
 }
 
-#[tool_handler(router = Self::tool_router())]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -941,8 +988,9 @@ impl ServerHandler for JmcpHandler {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Junos MCP server (Rust port). Use get_router_list to enumerate \
-                 available routers, then run operational commands or load config.",
+                "Junos and SRX MCP server. Use get_router_list to enumerate \
+                 visible routers, then select generic Junos primitives or \
+                 SRX-specific operational workflows.",
             )
     }
 }
@@ -983,6 +1031,73 @@ mod scope_tests {
             device_leases: test_device_leases(),
         };
         JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
+    }
+
+    fn normalized_tools(
+        tools: Vec<rmcp::model::Tool>,
+    ) -> std::collections::BTreeMap<String, serde_json::Value> {
+        tools
+            .into_iter()
+            .map(|tool| {
+                let name = tool.name.to_string();
+                (name, serde_json::to_value(tool).unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn junos_schemas_match_pre_merge_baseline() {
+        let expected: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/junos-tools-v0.7.json")).unwrap();
+        assert_eq!(
+            normalized_tools(JmcpHandler::junos_tool_router().list_all()),
+            expected
+        );
+    }
+
+    #[cfg(feature = "srx")]
+    #[test]
+    fn srx_schemas_match_pre_merge_baseline() {
+        let expected: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/srx-tools-v0.3.6.json")).unwrap();
+        assert_eq!(
+            normalized_tools(JmcpHandler::srx_tool_router().list_all()),
+            expected
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "srx")]
+    fn combined_router_has_exact_endpoint_union() {
+        let handler = make_handler();
+        let names: std::collections::HashSet<String> = handler
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let expected: std::collections::HashSet<String> = rust_junosmcp_auth::file::KNOWN_TOOLS
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        assert_eq!(names, expected);
+        assert_eq!(names.len(), 26);
+    }
+
+    #[test]
+    #[cfg(not(feature = "srx"))]
+    fn junos_only_router_has_seventeen_tools() {
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 17);
+    }
+
+    #[test]
+    #[cfg(feature = "srx")]
+    fn junos_and_srx_share_the_same_device_lease_manager() {
+        let handler = make_handler();
+        assert!(Arc::ptr_eq(
+            &handler.device_leases,
+            &handler.upgrade_cfg.device_leases,
+        ));
     }
 
     #[test]
