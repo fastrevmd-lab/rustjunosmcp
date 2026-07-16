@@ -32,6 +32,12 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **#151 - strict global MCP session caps.** Concurrent initialize requests can
+  no longer leave live sessions beyond the tracked global cap. A race loser is
+  closed without cancellation leaks and receives the existing `session_cap`
+  `503` with `Retry-After: 1`; ordinary session-manager failures remain `500`.
+  Direct Rust users that explicitly name `LimitedSessionManager`'s associated
+  error now receive `LimitedSessionManagerError<E>`.
 - **#130 - router-list scope disclosure.** `get_router_list` now returns the
   intersection of the current inventory and the authenticated caller's router
   scope. Wildcard and local stdio callers retain the full sorted list; stale or

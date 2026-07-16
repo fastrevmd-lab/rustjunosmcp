@@ -68,6 +68,12 @@ Fixed values:
 - result: ok, error, denied, or unsettled
 - reason: idle or lifetime
 
+A concurrent initialize that reaches the manager race backstop records both
+`limit="session_cap", event="session_registration_rejected"` for the atomic
+manager decision and `limit="session_cap", event="request_rejected"` for the
+503 returned to the client. An initialize rejected by the middleware fast path
+records only the client-facing `request_rejected` event.
+
 Counter and histogram label series appear after their first event. The active
 session gauge is initialized to zero. The tool histogram has buckets from
 0.01 seconds through 1800 seconds.

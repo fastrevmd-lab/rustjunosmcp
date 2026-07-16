@@ -33,6 +33,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   or holding the existing cross-process device lease.
 
 ### Fixed
+
+- **#151 - strict global MCP session caps.** Concurrent initialize requests can
+  no longer leave live sessions beyond the tracked global cap. A race loser is
+  closed without cancellation leaks and receives the existing `session_cap`
+  `503` with `Retry-After: 1`; ordinary session-manager failures remain `500`.
 - **#129 stage 2 - cross-process destructive-operation races.** Junos upgrades
   and destructive SRX IDP/AppID package actions now hold the same kernel-backed
   per-device file lease across locked preflight and execution. Lease waits are

@@ -573,6 +573,13 @@ generous values. Every numeric limit accepts `0` to disable it.
 | `--session-idle-timeout-secs` | `JMCP_SESSION_IDLE_TIMEOUT_SECS` / `JMCP_SRX_SESSION_IDLE_TIMEOUT_SECS` | 300 | Idle sessions reaped |
 | `--session-max-lifetime-secs` | `JMCP_SESSION_MAX_LIFETIME_SECS` / `JMCP_SRX_SESSION_MAX_LIFETIME_SECS` | 3600 | Old sessions reaped |
 
+The global session cap is enforced atomically during session creation. The
+middleware rejects obvious saturation early, while the shared session manager
+closes any concurrently created session that loses the final slot race before
+returning the same `session_cap` 503 contract. Rejected initialization never
+returns an `Mcp-Session-Id`, and closing or reaping an admitted session returns
+its slot.
+
 Per-token session accounting uses the exact authenticated token name. Successful
 initialization binds the returned `Mcp-Session-Id`; explicit close and idle/lifetime
 reaping return the slot. Saturation returns
