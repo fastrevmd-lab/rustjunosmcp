@@ -188,6 +188,8 @@ The native layer derives standard journal fields from each tracing event:
 | `PRIORITY` | Derived from the tracing level: `INFO` becomes `5` (`NOTICE`) and `WARN` becomes `4` (`WARNING`). |
 | `SYSLOG_IDENTIFIER` | `rust-junosmcp` or `rust-srxmcp` |
 | `MESSAGE` | The event message. The canonical `AuditScope` message is `audit`; auxiliary messages vary by workflow. |
+| `CODE_FILE` | Rust source file containing the tracing emission callsite, when supplied by tracing metadata. |
+| `CODE_LINE` | Rust source line of the tracing emission callsite, when supplied by tracing metadata. |
 
 The following native fields are the stable mapping for the canonical
 `AuditScope` schema:
@@ -333,9 +335,21 @@ The following capabilities are planned but not yet implemented:
 
 ## Security & Privacy
 
-- **No secrets in audit logs** — credentials, private keys, and passwords are never logged. The `metadata` field is allowlisted per tool (e.g., `command_count`, `dry_run`, `config_bytes`) and excludes all secret material.
-- **Error messages are bounded** — the `error` field is truncated at 512 characters to prevent unbounded log growth from pathological failures.
-- **Caller attribution** — every event records the bearer-token name or `"stdio"`, enabling per-caller audit trails even when multiple tokens share the same scope.
+- **Canonical secret exclusion** — `AuditScope` does not intentionally log
+  credentials, private keys, or passwords. Its `metadata` field is allowlisted
+  per tool (for example, `command_count`, `dry_run`, and `config_bytes`) and
+  excludes secret material.
+- **Canonical bounded errors** — the `AuditScope` `error` field is truncated at
+  512 characters to prevent unbounded log growth from pathological failures.
+- **Canonical caller attribution** — each `AuditScope` completion event records
+  the bearer-token name or `"stdio"`, enabling per-caller audit trails even
+  when multiple tokens share the same scope.
+- **Auxiliary privacy boundary** — auxiliary AppID/IDP preflight and package
+  events and support-bundle events may omit caller attribution. They may also
+  carry direct, unbounded producer-rendered fields such as `err`,
+  `error_detail`, and `location`; those fields can be sensitive and bypass both
+  `AuditScope`'s `bounded_error` and its redaction policy. Restrict journal and
+  audit-file access and apply appropriate downstream SIEM controls.
 
 ## Example Queries
 
