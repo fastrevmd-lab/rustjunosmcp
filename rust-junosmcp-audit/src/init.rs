@@ -1,8 +1,8 @@
-//! Configurable tracing/audit sink: stderr (text or JSON) plus an optional
-//! dedicated JSON audit file. Replaces the binaries' previous `init_tracing`.
+//! Configurable tracing/audit sinks: stderr (text or JSON), an optional
+//! dedicated JSON audit file, and an optional native journald target.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tracing_subscriber::filter::filter_fn;
@@ -37,6 +37,8 @@ pub struct AuditConfig {
     pub audit_log_file: Option<PathBuf>,
     /// When set, per-field redaction is applied to emitted audit events.
     pub redaction: Option<crate::redact::AuditRedaction>,
+    /// When true, `target="audit"` events are also sent to journald natively.
+    pub journald: bool,
 }
 
 /// A cloneable append writer over a shared file handle.
@@ -66,6 +68,10 @@ impl<'a> MakeWriter<'a> for FileHandle {
     }
 }
 
+fn is_audit(meta: &tracing::Metadata<'_>) -> bool {
+    meta.target() == "audit"
+}
+
 /// A JSON fmt layer filtered to `target == "audit"`, writing to `handle`.
 pub fn audit_file_layer<S>(handle: FileHandle) -> impl Layer<S>
 where
@@ -74,11 +80,37 @@ where
     tracing_subscriber::fmt::layer()
         .json()
         .with_writer(handle)
-        .with_filter(filter_fn(|meta| meta.target() == "audit"))
+        .with_filter(filter_fn(is_audit))
+}
+
+fn audit_journald_layer<S>(layer: tracing_journald::Layer) -> impl Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    layer
+        .with_field_prefix(Some("AUDIT".to_owned()))
+        .with_filter(filter_fn(is_audit))
+}
+
+fn make_journald_layer_with<F>(
+    enabled: bool,
+    factory: F,
+) -> io::Result<Option<tracing_journald::Layer>>
+where
+    F: FnOnce() -> io::Result<tracing_journald::Layer>,
+{
+    if enabled {
+        factory().map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 /// Initialize the global subscriber. Idempotent (`try_init`).
-pub fn init_tracing(cfg: &AuditConfig) {
+///
+/// Returns an error only when the explicitly enabled journald layer cannot be
+/// constructed. An already-installed global subscriber remains a no-op.
+pub fn init_tracing(cfg: &AuditConfig) -> io::Result<()> {
     let env = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let stderr = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let stderr = match cfg.format {
@@ -93,16 +125,22 @@ pub fn init_tracing(cfg: &AuditConfig) {
         .as_ref()
         .and_then(|p| FileHandle::open(p).ok())
         .map(audit_file_layer);
+    let journald_layer =
+        make_journald_layer_with(cfg.journald, tracing_journald::layer)?
+            .map(audit_journald_layer);
 
     let _ = tracing_subscriber::registry()
         .with(env)
         .with(stderr)
-        .with(file_layer) // Option<Layer> is itself a Layer (no-op when None)
+        .with(file_layer)
+        .with(journald_layer)
         .try_init();
 
     if let Some(redaction) = cfg.redaction.clone() {
         crate::redact::install(redaction);
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -131,5 +169,35 @@ mod tests {
             !body.contains("ignored"),
             "non-audit events must not hit the audit file"
         );
+    }
+
+    #[test]
+    fn disabled_journald_does_not_call_factory() {
+        let layer = make_journald_layer_with(
+            false,
+            || -> std::io::Result<tracing_journald::Layer> {
+                panic!("disabled journald must not construct a socket")
+            },
+        )
+        .expect("disabled journald is infallible");
+
+        assert!(layer.is_none());
+    }
+
+    #[test]
+    fn enabled_journald_propagates_factory_error() {
+        let result = make_journald_layer_with(true, || {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "journal unavailable",
+            ))
+        });
+
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("enabled journald must propagate construction failure"),
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.to_string(), "journal unavailable");
     }
 }

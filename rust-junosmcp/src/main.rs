@@ -34,8 +34,9 @@ async fn main() -> Result<()> {
         format: rust_junosmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
         redaction,
+        journald: false,
     };
-    rust_junosmcp_audit::init_tracing(&audit_cfg);
+    rust_junosmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
 
     if let Some(Command::Token { action }) = args.command {
         return token_cmd::run(action);
