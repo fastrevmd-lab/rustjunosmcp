@@ -8,6 +8,13 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
+- **#150 - optional per-token request-rate limiting.** Both streamable-HTTP
+  endpoints can enforce a continuously refilled token bucket for each exact
+  authenticated token name using configurable whole-number RPS and burst
+  knobs. The limiter is disabled by default; exhaustion returns stable `429`
+  JSON with `Retry-After`, runs before existing concurrency/session gates, and
+  exports the bounded `token_rate` limit metric without caller labels.
+
 - **#153 - native journald audit sink.** Both binaries can opt into direct,
   structured journald fan-out with `--audit-journald`; only `target="audit"`
   events are routed, fields use a stable `AUDIT_` namespace, and an unavailable

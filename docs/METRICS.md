@@ -62,7 +62,7 @@ No Authorization header is required for the metrics route.
 Fixed values:
 
 - server: junos or srx
-- limit: request_body, global_concurrency, token_concurrency,
+- limit: request_body, token_rate, global_concurrency, token_concurrency,
   router_concurrency, session_cap, or token_session_cap
 - event: request_rejected or session_registration_rejected
 - result: ok, error, denied, or unsettled
@@ -78,8 +78,8 @@ Counter and histogram label series appear after their first event. The active
 session gauge is initialized to zero. The tool histogram has buckets from
 0.01 seconds through 1800 seconds.
 
-Queue time is not exported because the current concurrency gates reject
-immediately instead of queueing.
+Queue time is not exported because request-rate and concurrency gates reject
+immediately instead of queueing (`429` and `503`, respectively).
 
 ## Example PromQL
 

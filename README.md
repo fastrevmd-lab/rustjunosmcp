@@ -559,14 +559,18 @@ kill -HUP <pid>
 
 ## Resource limits (streamable-HTTP)
 
-Both endpoints enforce configurable DoS guardrails, enabled by default with
-generous values. Every numeric limit accepts `0` to disable it.
+Both endpoints enforce configurable DoS guardrails. Most limits are enabled by
+default with generous values; the optional per-token request-rate limiter is
+disabled until both of its knobs are positive. A zero value disables an
+individual limit, subject to the rate/burst pair rule below.
 
 | Flag | Env (junos / srx) | Default | Effect |
 |------|-------------------|---------|--------|
 | `--max-request-body-bytes` | `JMCP_MAX_REQUEST_BODY_BYTES` / `JMCP_SRX_MAX_REQUEST_BODY_BYTES` | 10 MiB | Reject larger bodies with **413** before buffering |
 | `--max-inflight-requests` | `JMCP_MAX_INFLIGHT_REQUESTS` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS` | 64 | Global concurrency cap; over-limit → **503** |
 | `--max-inflight-requests-per-token` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_TOKEN` | 16 | Per-token concurrency cap → **503** |
+| `--max-requests-per-second-per-token` | `JMCP_MAX_REQUESTS_PER_SECOND_PER_TOKEN` / `JMCP_SRX_MAX_REQUESTS_PER_SECOND_PER_TOKEN` | 0 | Per-token refill rate; pair with burst (`0/0` disables) |
+| `--max-request-burst-per-token` | `JMCP_MAX_REQUEST_BURST_PER_TOKEN` / `JMCP_SRX_MAX_REQUEST_BURST_PER_TOKEN` | 0 | Per-token immediate burst; pair with rate (`0/0` disables) |
 | `--max-inflight-requests-per-router` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_ROUTER` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_ROUTER` | 4 | Per-router concurrency cap → **503** |
 | `--max-sessions` | `JMCP_MAX_SESSIONS` / `JMCP_SRX_MAX_SESSIONS` | 128 | Session count cap → **503** |
 | `--max-sessions-per-token` | `JMCP_MAX_SESSIONS_PER_TOKEN` / `JMCP_SRX_MAX_SESSIONS_PER_TOKEN` | 16 | Per-bearer-token session cap → **503** |
@@ -597,13 +601,25 @@ cross-process device lease. A destructive call counts once while waiting for or
 holding that lease; the HTTP cap bounds both reads and destructive waiters, while the
 lease remains the authority that serializes destructive operations across processes.
 
+Per-token request-rate limiting is an opt-in token bucket keyed by the exact
+authenticated token name. Set both the requests-per-second rate and burst to
+positive values to enable it; leave both at `0` to disable it. Supplying only
+one positive value fails startup. Each authenticated `/mcp` HTTP request costs
+one token. An exhausted bucket returns **429**, `Retry-After: 1`, and
+`{"error":"rate_limited","limit":"token_rate"}` before concurrency or session
+capacity is acquired. Explicit no-auth mode skips this per-token control.
+
+Use the RPS limiter to absorb bursts of many cheap, short calls. Use concurrency
+limits to bound simultaneous expensive NETCONF/SSH work and slow response
+streams. They are independent and can be enabled together; rate checks run
+first, while concurrency/session exhaustion retains the existing **503**
+contract.
+
 Prometheus export is opt-in with `--enable-metrics`
 (`JMCP_ENABLE_METRICS` / `JMCP_SRX_ENABLE_METRICS`). It mounts an
 unauthenticated `GET /metrics` beside `/mcp`; protect it with network controls.
 See [Prometheus metrics](docs/METRICS.md) for scrape configuration, metric
 names, labels, and PromQL examples.
-
-**Deferred (follow-up on #131):** per-token RPS rate-limiting (#150).
 
 ## CLI
 
