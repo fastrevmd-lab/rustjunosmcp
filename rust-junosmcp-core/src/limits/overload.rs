@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 const RETRY_AFTER_SECS: u64 = 1;
 
 pub(crate) fn rate_limited_response(retry_after_secs: u64) -> Response {
-    crate::prometheus::record_limit_hit("token_rate", "request_rejected");
+    crate::limits::prometheus::record_limit_hit("token_rate", "request_rejected");
     (
         StatusCode::TOO_MANY_REQUESTS,
         [
@@ -33,7 +33,7 @@ pub fn overload_response(limit_kind: &'static str) -> Response {
             | "session_cap"
             | "token_session_cap"
     ) {
-        crate::prometheus::record_limit_hit(limit_kind, "request_rejected");
+        crate::limits::prometheus::record_limit_hit(limit_kind, "request_rejected");
     }
     let body = format!(r#"{{"error":"overloaded","limit":"{limit_kind}"}}"#);
     (
@@ -51,7 +51,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn rate_limited_response_has_stable_contract_and_metric() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         let response = metrics::with_local_recorder(&recorder, || rate_limited_response(3));
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn overload_response_counts_each_fixed_limit_kind() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         metrics::with_local_recorder(&recorder, || {
             for limit in [
                 "global_concurrency",
@@ -117,7 +117,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn unknown_limit_preserves_response_without_metric_series() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         let response =
             metrics::with_local_recorder(&recorder, || overload_response("future_limit_kind"));
 

@@ -1,7 +1,7 @@
 //! Session count cap + idle/lifetime reaper layered over any rmcp
 //! `SessionManager` (default `LocalSessionManager`).
 
-use crate::config::LimitsConfig;
+use crate::limits::config::LimitsConfig;
 use dashmap::DashMap;
 use futures::Stream;
 use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage};
@@ -241,7 +241,10 @@ impl SessionTracker {
         let prev = self.active.fetch_add(1, Ordering::AcqRel);
         if self.max_sessions > 0 && prev >= self.max_sessions {
             self.active.fetch_sub(1, Ordering::AcqRel);
-            crate::prometheus::record_limit_hit("session_cap", "session_registration_rejected");
+            crate::limits::prometheus::record_limit_hit(
+                "session_cap",
+                "session_registration_rejected",
+            );
             return false;
         }
         self.activity.insert(
@@ -251,7 +254,7 @@ impl SessionTracker {
                 last_active: now,
             },
         );
-        crate::prometheus::increment_active_sessions();
+        crate::limits::prometheus::increment_active_sessions();
         true
     }
 
@@ -271,7 +274,7 @@ impl SessionTracker {
         let removed = self.activity.remove(id).is_some();
         if removed {
             self.active.fetch_sub(1, Ordering::AcqRel);
-            crate::prometheus::decrement_active_sessions();
+            crate::limits::prometheus::decrement_active_sessions();
         }
         let mut state = self.token_state();
         if let Some(token) = state.sessions.remove(id) {
@@ -323,7 +326,7 @@ const REAP_PERIOD: Duration = Duration::from_secs(30);
 
 fn finish_reap(tracker: &SessionTracker, expired: ExpiredSession) {
     if tracker.unregister_inner(&expired.id) {
-        crate::prometheus::record_session_reaped(expired.reason.as_str());
+        crate::limits::prometheus::record_session_reaped(expired.reason.as_str());
         tracing::info!(session_id = %expired.id, "session reaped");
     }
 }
@@ -989,7 +992,7 @@ mod tests {
 
     #[test]
     fn session_metrics_cover_active_cap_and_reap_reasons() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         metrics::with_local_recorder(&recorder, || {
             let base = Instant::now();
 
@@ -1052,7 +1055,7 @@ mod tests {
 
     #[test]
     fn reaper_finalizer_does_not_count_session_removed_by_explicit_close() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         metrics::with_local_recorder(&recorder, || {
             let base = Instant::now();
             let tracker = SessionTracker::new(&LimitsConfig {

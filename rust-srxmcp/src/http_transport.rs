@@ -10,7 +10,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
-use rust_junosmcp_limits::{
+use rust_junosmcp_core::limits::{
     apply_body_limit, apply_token_rate_limit, concurrency_middleware, ConcurrencyState,
     LimitedSessionManager, LimitsConfig, PrometheusRuntime,
 };

@@ -1,7 +1,7 @@
 //! Per-authenticated-token request-rate limiting.
 
-use crate::config::LimitsConfig;
-use crate::overload::rate_limited_response;
+use crate::limits::config::LimitsConfig;
+use crate::limits::overload::rate_limited_response;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -349,13 +349,13 @@ mod tests {
                 }
             }
         };
-        let concurrency = crate::ConcurrencyState::new(&config, None);
+        let concurrency = crate::limits::ConcurrencyState::new(&config, None);
         let app =
             Router::new()
                 .route("/", post(handler))
                 .layer(axum::middleware::from_fn_with_state(
                     concurrency,
-                    crate::concurrency_middleware,
+                    crate::limits::concurrency_middleware,
                 ));
         let app = apply_token_rate_limit(app, &config);
 

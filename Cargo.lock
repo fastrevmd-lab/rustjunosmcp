@@ -2632,7 +2632,6 @@ dependencies = [
  "rust-junosmcp-audit",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
- "rust-junosmcp-limits",
  "rustls",
  "rustls-pki-types",
  "schemars",
@@ -2693,10 +2692,20 @@ version = "0.8.0"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "axum",
  "chrono",
+ "dashmap",
+ "futures",
  "globset",
+ "http",
+ "http-body",
+ "http-body-util",
  "libc",
+ "metrics",
+ "metrics-exporter-prometheus",
  "minijinja",
+ "rmcp",
+ "rust-junosmcp-auth",
  "rustez",
  "schemars",
  "serde",
@@ -2706,32 +2715,10 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rust-junosmcp-limits"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dashmap",
- "futures",
- "http",
- "http-body",
- "http-body-util",
- "metrics",
- "metrics-exporter-prometheus",
- "rmcp",
- "rust-junosmcp-auth",
- "rust-junosmcp-core",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2772,7 +2759,6 @@ dependencies = [
  "rust-junosmcp-audit",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
- "rust-junosmcp-limits",
  "rust-junosmcp-srx-core",
  "rustls",
  "rustls-pki-types",

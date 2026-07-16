@@ -4,9 +4,9 @@
 //! polled, so a permit held only across the response future would release too
 //! early.
 
-use crate::config::LimitsConfig;
-use crate::overload::overload_response;
-use crate::router::{extract_router_targets, RouterLimiter};
+use crate::limits::config::LimitsConfig;
+use crate::limits::overload::overload_response;
+use crate::limits::router::{extract_router_targets, RouterLimiter};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
@@ -36,12 +36,15 @@ pub struct ConcurrencyState {
     max_per_token: usize,
     per_router: RouterLimiter,
     max_per_router: usize,
-    sessions: Option<Arc<crate::session::SessionTracker>>,
+    sessions: Option<Arc<crate::limits::session::SessionTracker>>,
 }
 
 impl ConcurrencyState {
     /// Build from config. `sessions` enables the `session_cap` early-shed.
-    pub fn new(cfg: &LimitsConfig, sessions: Option<Arc<crate::session::SessionTracker>>) -> Self {
+    pub fn new(
+        cfg: &LimitsConfig,
+        sessions: Option<Arc<crate::limits::session::SessionTracker>>,
+    ) -> Self {
         let global_permits = if cfg.max_inflight_requests > 0 {
             cfg.max_inflight_requests
         } else {
@@ -164,7 +167,7 @@ pub async fn concurrency_middleware(
     }
 
     let (mut resp, session_cap_rejected) = if session_creating {
-        crate::session::scope_session_cap_rejection(next.run(req)).await
+        crate::limits::session::scope_session_cap_rejection(next.run(req)).await
     } else {
         (next.run(req).await, false)
     };
@@ -239,7 +242,7 @@ fn is_session_creating(req: &Request) -> bool {
 async fn observe_body_limit_response(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
     if response.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        crate::prometheus::record_limit_hit("request_body", "request_rejected");
+        crate::limits::prometheus::record_limit_hit("request_body", "request_rejected");
     }
     response
 }
@@ -301,6 +304,7 @@ impl HttpBody for GuardedBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DeviceLeaseManager;
     use axum::body::Body;
     use axum::body::Bytes;
     use axum::http::{Request, StatusCode};
@@ -308,7 +312,6 @@ mod tests {
     use axum::Router;
     use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
-    use rust_junosmcp_core::DeviceLeaseManager;
     use serde_json::{json, Value};
     use std::convert::Infallible;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -351,7 +354,12 @@ mod tests {
         request
     }
 
-    fn token_session_state(max: usize) -> (ConcurrencyState, Arc<crate::session::SessionTracker>) {
+    fn token_session_state(
+        max: usize,
+    ) -> (
+        ConcurrencyState,
+        Arc<crate::limits::session::SessionTracker>,
+    ) {
         let cfg = LimitsConfig {
             max_inflight_requests: 0,
             max_inflight_requests_per_token: 0,
@@ -360,7 +368,7 @@ mod tests {
             max_sessions_per_token: max,
             ..Default::default()
         };
-        let tracker = Arc::new(crate::session::SessionTracker::new(&cfg));
+        let tracker = Arc::new(crate::limits::session::SessionTracker::new(&cfg));
         (ConcurrencyState::new(&cfg, Some(tracker.clone())), tracker)
     }
 
@@ -616,7 +624,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn marked_session_cap_response_is_isolated_and_releases_token_reservation() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         let recorder_guard = metrics::set_default_local_recorder(&recorder);
         let (state, tracker) = token_session_state(1);
         let barrier = Arc::new(Barrier::new(2));
@@ -636,7 +644,7 @@ mod tests {
                                 barrier.wait().await;
                             }
                             if caller.token_name == "marked" {
-                                crate::session::mark_session_cap_rejected();
+                                crate::limits::session::mark_session_cap_rejected();
                             }
                             StatusCode::INTERNAL_SERVER_ERROR
                         }
@@ -876,7 +884,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn streamed_body_over_outer_limit_stays_413() {
-        let (recorder, handle) = crate::prometheus::test_recorder("junos");
+        let (recorder, handle) = crate::limits::prometheus::test_recorder("junos");
         let _guard = metrics::set_default_local_recorder(&recorder);
 
         let cfg = LimitsConfig {
