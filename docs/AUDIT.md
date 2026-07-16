@@ -289,7 +289,7 @@ The following capabilities are planned but not yet implemented:
 
 ```bash
 journalctl -u rust-junosmcp.service --since "1 hour ago" --output=json \
-  | jq -r 'select(.TARGET == "audit") | select(.fields.result == "denied")'
+  | jq -r 'select(.TARGET == "audit") | select(.AUDIT_RESULT == "denied")'
 ```
 
 ### Top 10 slowest successful commands
