@@ -1,5 +1,5 @@
 [Unit]
-Description=Rust Junos MCP server
+Description=Rust Junos and SRX MCP server
 After=network-online.target
 Wants=network-online.target
 
@@ -18,6 +18,8 @@ ExecStart=/usr/local/bin/rust-junosmcp \
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
+Environment=JMCP_SUPPORT_BUNDLE_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles
+Environment=JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES=524288000
 UMask=0077
 StateDirectory=jmcp
 StateDirectoryMode=0750
