@@ -1,4 +1,4 @@
-//! Streamable-http integration smoke for rust-srxmcp: auth (RFC 6750 401s),
+//! Streamable-http integration smoke for the unified server's SRX tools: auth (RFC 6750 401s),
 //! rmcp 2.0 Host allowlist (#97), and the tool-surface tripwire. All tests
 //! exercise the transport/auth layers only — no device is contacted.
 
@@ -6,6 +6,7 @@ mod common;
 use common::*;
 use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
 use serde_json::json;
+use std::collections::HashSet;
 
 fn add_token(path: &std::path::Path, name: &str, routers: ScopeSet, tools: ScopeSet) -> String {
     TokenStoreFile::add(path, name, routers, tools)
@@ -161,7 +162,7 @@ fn disable_host_check_allows_any_host() {
 }
 
 #[test]
-fn lists_nine_tools() {
+fn lists_all_known_tools() {
     ensure_built();
     let inv = placeholder_inv();
     let s = spawn_no_auth(inv.path(), &[]);
@@ -189,15 +190,17 @@ fn lists_nine_tools() {
         .pointer("/result/tools")
         .and_then(|t| t.as_array())
         .expect("tools array");
-    assert_eq!(
-        tools.len(),
-        9,
-        "srx tool surface must be 9: {:?}",
-        tools
-            .iter()
-            .filter_map(|t| t.get("name"))
-            .collect::<Vec<_>>()
-    );
+    let names: HashSet<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+    let expected: HashSet<&str> = rust_junosmcp_auth::file::KNOWN_TOOLS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(names, expected);
+    assert_eq!(tools.len(), 26);
+    assert_eq!(names.len(), 26);
 }
 
 #[test]

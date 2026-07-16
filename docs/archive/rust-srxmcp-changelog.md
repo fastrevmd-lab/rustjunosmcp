@@ -1,5 +1,9 @@
 # Changelog — rust-srxmcp
 
+> Historical changelog for the former standalone `rust-srxmcp` binary.
+> Version 0.8.0 merged this server into `rust-junosmcp`; current changes are
+> recorded in the repository root `CHANGELOG.md`.
+
 All notable changes to the `rust-srxmcp` crate are recorded in this file.
 The generic `rust-junosmcp` binary has its own changelog and version line
 (`v0.6.x` at the time of this writing).

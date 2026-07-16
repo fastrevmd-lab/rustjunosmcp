@@ -72,10 +72,10 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
     let scrape = http_get(server.port, "/metrics", None, None);
     assert!(scrape
         .body
-        .contains("junosmcp_active_sessions{server=\"srx\"} 1"));
+        .contains("junosmcp_active_sessions{server=\"junos\"} 1"));
     assert!(scrape.body.lines().any(|line| {
         line.starts_with("junosmcp_tool_duration_seconds_bucket{")
-            && line.contains("server=\"srx\"")
+            && line.contains("server=\"junos\"")
             && line.contains("tool=\"srxmcp_status\"")
             && line.contains("result=\"ok\"")
     }));
@@ -109,5 +109,5 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
     let closed = http_get(server.port, "/metrics", None, None);
     assert!(closed
         .body
-        .contains("junosmcp_active_sessions{server=\"srx\"} 0"));
+        .contains("junosmcp_active_sessions{server=\"junos\"} 0"));
 }

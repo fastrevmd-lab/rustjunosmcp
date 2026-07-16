@@ -1,10 +1,10 @@
 //! Live smoke against the LXC 601 deployment.
 //!
 //! Required env:
-//!   `JMCP_SRX_LIVE_URL`   e.g. `http://192.168.1.194:30032/mcp`
-//!   `JMCP_SRX_LIVE_TOKEN` bearer token
+//!   `JMCP_LIVE_URL`   e.g. `http://192.168.1.194:30030/mcp`
+//!   `JMCP_LIVE_TOKEN` bearer token
 //!
-//! Run: `cargo test --test live_smoke -p rust-srxmcp -- --ignored`.
+//! Run: `cargo test -p rust-junosmcp --test srx_live_smoke -- --ignored`.
 
 #![cfg(test)]
 
@@ -13,8 +13,8 @@ use common::parse_first_sse_data;
 use serde_json::{json, Value};
 
 fn endpoint() -> (String, String) {
-    let url = std::env::var("JMCP_SRX_LIVE_URL").expect("JMCP_SRX_LIVE_URL required");
-    let tok = std::env::var("JMCP_SRX_LIVE_TOKEN").expect("JMCP_SRX_LIVE_TOKEN required");
+    let url = std::env::var("JMCP_LIVE_URL").expect("JMCP_LIVE_URL required");
+    let tok = std::env::var("JMCP_LIVE_TOKEN").expect("JMCP_LIVE_TOKEN required");
     (url, tok)
 }
 

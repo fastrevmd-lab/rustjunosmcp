@@ -814,6 +814,16 @@ mod scope_tests {
             .with_srx_runtime(authorization_required, Default::default())
     }
 
+    #[tokio::test]
+    async fn srxmcp_status_preserves_shape() {
+        let handler = make_handler(false);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let response = handler.srxmcp_status_body(SrxmcpStatusArgs::default());
+        assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(response.endpoint, "srxmcp");
+        assert!(response.uptime_seconds < 60);
+    }
+
     #[test]
     fn missing_caller_context_preserves_explicit_no_auth_mode() {
         let handler = make_handler(false);

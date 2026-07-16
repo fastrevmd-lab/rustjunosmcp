@@ -1,4 +1,4 @@
-//! Real rustls handshake coverage for the SRX streamable-HTTP endpoint.
+//! Real rustls handshake coverage for the unified streamable-HTTP endpoint.
 
 #![cfg(feature = "tls")]
 
@@ -26,6 +26,8 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
     let device_lease_dir = tempfile::tempdir().expect("create device lease directory");
     let mut child = Command::new(binary_path())
         .args([
+            "--transport",
+            "streamable-http",
             "--host",
             "127.0.0.1",
             "--port",
