@@ -21,6 +21,8 @@ tokio-util   = { workspace = true }
 dashmap      = { workspace = true }
 tracing      = { workspace = true }
 futures      = "0.3"
+metrics                     = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 
 [dev-dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }

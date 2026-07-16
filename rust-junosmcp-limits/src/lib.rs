@@ -4,10 +4,12 @@
 mod concurrency;
 mod config;
 mod overload;
+mod prometheus;
 mod router;
 mod session;
 
 pub use concurrency::{apply_body_limit, concurrency_middleware, ConcurrencyState};
 pub use config::LimitsConfig;
 pub use overload::overload_response;
+pub use prometheus::PrometheusRuntime;
 pub use session::{LimitedSessionManager, SessionTracker};
