@@ -17,11 +17,17 @@ pub enum CliRefusal {
     TlsPairIncomplete { cert: bool, key: bool },
     #[error("--inventory-readonly and --allow-password-auth-add are mutually exclusive")]
     InventoryFlagConflict,
+    #[error("--enable-metrics requires --transport streamable-http")]
+    MetricsRequireHttp,
 }
 
 pub fn validate(cli: &Cli) -> Result<(), CliRefusal> {
     if cli.inventory_readonly && cli.allow_password_auth_add {
         return Err(CliRefusal::InventoryFlagConflict);
+    }
+
+    if cli.transport == Transport::Stdio && cli.enable_metrics {
+        return Err(CliRefusal::MetricsRequireHttp);
     }
 
     if cli.transport == Transport::Stdio {
@@ -73,6 +79,21 @@ mod tests {
     fn stdio_always_ok() {
         assert!(validate(&parse(&[])).is_ok());
         assert!(validate(&parse(&["-t", "stdio", "-H", "10.0.0.1"])).is_ok());
+    }
+
+    #[test]
+    fn metrics_refused_for_stdio_and_allowed_for_http() {
+        assert_eq!(
+            validate(&parse(&["--enable-metrics"])),
+            Err(CliRefusal::MetricsRequireHttp)
+        );
+        assert!(validate(&parse(&[
+            "-t",
+            "streamable-http",
+            "--allow-no-auth",
+            "--enable-metrics",
+        ]))
+        .is_ok());
     }
 
     #[test]

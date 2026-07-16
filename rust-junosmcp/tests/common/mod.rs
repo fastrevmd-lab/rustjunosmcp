@@ -399,6 +399,35 @@ pub fn spawn_with_args(extra: &[&str]) -> ServerWithToken {
     }
 }
 
+pub struct GetResult {
+    pub code: u16,
+    pub content_type: String,
+    pub body: String,
+}
+
+pub fn http_get(port: u16, path: &str, bearer: Option<&str>, host: Option<&str>) -> GetResult {
+    let mut request = ureq::get(&format!("http://127.0.0.1:{port}{path}"));
+    if let Some(bearer) = bearer {
+        request = request.set("Authorization", &format!("Bearer {bearer}"));
+    }
+    if let Some(host) = host {
+        request = request.set("Host", host);
+    }
+    let response = match request.call() {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => panic!("transport error: {error}"),
+    };
+    let code = response.status();
+    let content_type = response.header("Content-Type").unwrap_or("").to_owned();
+    let body = response.into_string().unwrap_or_default();
+    GetResult {
+        code,
+        content_type,
+        body,
+    }
+}
+
 /// POST raw body bytes and return just the HTTP status code (for testing
 /// body-limit rejections before the JSON-RPC layer).
 pub fn http_post_raw(port: u16, _bearer: &str, _session_id: Option<&str>, body: &str) -> u16 {
