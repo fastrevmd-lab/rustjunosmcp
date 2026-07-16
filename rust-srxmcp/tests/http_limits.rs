@@ -87,3 +87,41 @@ fn token_session_cap_isolated_by_token_and_released_on_close() {
         200 | 202 | 204
     ));
 }
+
+#[test]
+fn per_token_rate_limit_returns_stable_429() {
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let tokens = write_tokens(r#"{"version":1,"tokens":[]}"#);
+    let alice = TokenStoreFile::add(
+        tokens.path(),
+        "alice",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+    )
+    .unwrap();
+    let server = spawn_with_auth_args(
+        inv.path(),
+        tokens.path(),
+        &[
+            "--max-requests-per-second-per-token",
+            "1",
+            "--max-request-burst-per-token",
+            "1",
+        ],
+    );
+
+    let admitted = http_post(server.port, Some(alice.expose()), None, init_body());
+    assert_eq!(admitted.code, 200);
+    assert!(admitted.session_id.is_some());
+
+    let limited = http_post(server.port, Some(alice.expose()), None, init_body());
+    assert_eq!(limited.code, 429);
+    assert_eq!(limited.retry_after.as_deref(), Some("1"));
+    assert!(limited.session_id.is_none());
+    assert_eq!(
+        limited.body,
+        serde_json::json!({"error": "rate_limited", "limit": "token_rate"})
+    );
+}

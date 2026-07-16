@@ -11,8 +11,8 @@ use rmcp::transport::streamable_http_server::{
 use rust_junosmcp_auth::tower::{auth_layer, AuthState};
 use rust_junosmcp_auth::TokenStore;
 use rust_junosmcp_limits::{
-    apply_body_limit, concurrency_middleware, ConcurrencyState, LimitedSessionManager,
-    LimitsConfig, PrometheusRuntime,
+    apply_body_limit, apply_token_rate_limit, concurrency_middleware, ConcurrencyState,
+    LimitedSessionManager, LimitsConfig, PrometheusRuntime,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -115,13 +115,17 @@ async fn serve_inner(
     let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 
-    // Innermost added layer: concurrency (needs CallerCtx from auth, which runs first).
+    // Innermost added layer: concurrency (auth and rate run first in request order).
     let app = rmcp_router.layer(axum::middleware::from_fn_with_state(
         conc,
         concurrency_middleware,
     ));
 
-    // Auth runs before concurrency so CallerCtx is present.
+    // Rate limiting wraps concurrency but remains inside auth, so CallerCtx exists
+    // and an over-rate request acquires no concurrency/session capacity.
+    let app = apply_token_rate_limit(app, &limits);
+
+    // Auth runs before rate limiting and concurrency so CallerCtx is present.
     let app = if let Some(store) = token_store {
         app.layer(axum::middleware::from_fn_with_state(
             AuthState { store },
