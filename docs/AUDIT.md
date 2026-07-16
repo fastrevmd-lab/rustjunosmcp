@@ -1,10 +1,19 @@
 # Audit Event Schema
 
-`rust-junosmcp` and `rust-srxmcp` emit structured audit logs for every MCP tool invocation. Each event records the caller, tool, target routers, authorization decision, outcome, and duration. Events are written to stderr (or an optional append-only JSON file) and are machine-parseable for SIEM ingestion.
+`rust-junosmcp` and `rust-srxmcp` emit a canonical structured `AuditScope`
+completion event for every MCP tool invocation. That event records the caller,
+tool, target routers, authorization decision, outcome, and duration. Selected
+SRX workflows also emit auxiliary audit events for package preflights, package
+lifecycle phases, and support-bundle progress. Events are written to stderr
+(or an optional append-only JSON file) and are machine-parseable for SIEM
+ingestion.
 
-## Schema
+## Canonical AuditScope schema
 
-Every audit event has `target="audit"` and the following fields (in order):
+The canonical tool-completion event has `target="audit"`, tracing level `INFO`,
+message `audit`, and the following fields (in order). This table is the stable
+`AuditScope` schema; auxiliary SRX audit events use workflow-specific fields as
+described under [Native field mapping](#native-field-mapping).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -171,12 +180,20 @@ the formatted stderr `MESSAGE`, and once as the native entry with indexed
 
 #### Native field mapping
 
-| Journal field | Audit value |
-|---------------|-------------|
+The native layer derives standard journal fields from each tracing event:
+
+| Journal field | Value |
+|---------------|-------|
 | `TARGET` | `audit` |
-| `PRIORITY` | `5` (`NOTICE`; audit events use tracing `INFO`) |
+| `PRIORITY` | Derived from the tracing level: `INFO` becomes `5` (`NOTICE`) and `WARN` becomes `4` (`WARNING`). |
 | `SYSLOG_IDENTIFIER` | `rust-junosmcp` or `rust-srxmcp` |
-| `MESSAGE` | `audit` |
+| `MESSAGE` | The event message. The canonical `AuditScope` message is `audit`; auxiliary messages vary by workflow. |
+
+The following native fields are the stable mapping for the canonical
+`AuditScope` schema:
+
+| Journal field | Canonical AuditScope value |
+|---------------|----------------------------|
 | `AUDIT_CORRELATION_ID` | `correlation_id` |
 | `AUDIT_CALLER` | `caller` |
 | `AUDIT_TOOL` | `tool` |
@@ -191,10 +208,25 @@ the formatted stderr `MESSAGE`, and once as the native entry with indexed
 | `AUDIT_REASON` | `reason` |
 | `AUDIT_METADATA` | `metadata` |
 
-The journal stores values as byte strings, but every field remains separately
-indexed; consumers do not parse the JSON formatter's nested `fields` object.
-Redaction is applied before fan-out, so native values match the redacted stderr
-and file values.
+Every structured field on any exact-`audit` event is preserved as a separate
+native journal field. `tracing-journald` prefixes user fields with `AUDIT_`,
+replaces dots with underscores, removes unsupported name characters, and
+uppercases the result. For example, `request_id`, `service`, and `event` become
+`AUDIT_REQUEST_ID`, `AUDIT_SERVICE`, and `AUDIT_EVENT`. The journal stores
+values as byte strings; consumers do not parse the JSON formatter's nested
+`fields` object. Redaction is applied before fan-out, so native values match
+the redacted stderr and file values.
+
+Current auxiliary SRX producers include the following representative events.
+This is an operator guide, not a stable or exhaustive auxiliary schema; these
+workflow-specific fields and messages may evolve independently of the
+canonical `AuditScope` table above.
+
+| Producer family | Tracing level / journal priority | Representative messages | Representative native fields |
+|-----------------|----------------------------------|-------------------------|------------------------------|
+| AppID and IDP package lifecycle | `INFO` / `5` (`NOTICE`) | `audit` | `AUDIT_SERVICE`, `AUDIT_PHASE`, `AUDIT_CURRENT_VERSION`, `AUDIT_TARGET_VERSION`, `AUDIT_ERROR_CODE`, `AUDIT_ERROR_DETAIL`, plus `AUDIT_REQUEST_ID` or `AUDIT_CORRELATION_ID` |
+| AppID and IDP package preflight | `WARN` / `4` (`WARNING`) | `commit-confirmed window open; proceeding because sig-package install is op-mode` and corresponding uninstall/rollback variants | `AUDIT_EVENT=sigpkg_commit_confirmed_window_active`, `AUDIT_ROUTER` |
+| JTAC support-bundle lifecycle | `INFO` / `5` (`NOTICE`) for start/success; `WARN` / `4` (`WARNING`) for failure | `bundle.start`, `bundle.ok`, `bundle.err` | `AUDIT_REQUEST_ID`, `AUDIT_FILESYSTEM_ID`, `AUDIT_ROUTER`, `AUDIT_PROBLEM_TYPES`, `AUDIT_ELAPSED_SECS`, `AUDIT_BYTES`, `AUDIT_LOCATION`, `AUDIT_ERR` as applicable |
 
 Query native Junos and SRX audit entries with:
 
