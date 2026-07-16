@@ -214,8 +214,11 @@ replaces dots with underscores, removes unsupported name characters, and
 uppercases the result. For example, `request_id`, `service`, and `event` become
 `AUDIT_REQUEST_ID`, `AUDIT_SERVICE`, and `AUDIT_EVENT`. The journal stores
 values as byte strings; consumers do not parse the JSON formatter's nested
-`fields` object. Redaction is applied before fan-out, so native values match
-the redacted stderr and file values.
+`fields` object. For canonical `AuditScope` events, its redaction policy is
+applied before fan-out, so native fields match the already-redacted stderr and
+file values. Auxiliary SRX producers emit directly to tracing: their fields are
+forwarded as emitted and are not transformed by the `AuditScope` `routers` or
+`metadata` redaction settings.
 
 Current auxiliary SRX producers include the following representative events.
 This is an operator guide, not a stable or exhaustive auxiliary schema; these
@@ -268,7 +271,11 @@ The tradeoff: `copytruncate` has an inherent small race — audit lines written 
 
 ### Field redaction
 
-By default every audit field is emitted in cleartext. For deployments that treat device identifiers as sensitive, an optional per-field transform can `keep`, `drop`, or `hmac` a **closed set** of fields. Redaction is **off by default** — with no configuration the output is byte-for-byte unchanged.
+Canonical `AuditScope` fields are emitted in cleartext by default. For
+deployments that treat device identifiers as sensitive, an optional per-field
+transform can `keep`, `drop`, or `hmac` a **closed set** of canonical fields.
+Redaction is **off by default** — with no configuration the canonical output is
+byte-for-byte unchanged.
 
 | Flag | Env (junos / srx) | Meaning |
 |------|-------------------|---------|
@@ -277,9 +284,22 @@ By default every audit field is emitted in cleartext. For deployments that treat
 
 **Transforms:** `keep` (cleartext), `drop` (omit the field), `hmac` (emit `hmac:<hex>` = HMAC-SHA256 of the value under the key file's bytes). HMAC is deterministic, so a SIEM can still group events by a redacted identifier without learning it; it is keyed, so low-entropy values (IPs/hostnames) are not brute-force-reversible.
 
-**Redactable fields (only these; anything else is a startup error):** `routers`, `host`, `name`, `basename`, `command`, `pfe_command`. The `routers` field is transformed per router name and re-joined (`hmac:<h1>,hmac:<h2>`); `router_count` stays cleartext. `caller` and all structural fields (`result`, `duration_ms`, `error`, etc.) are never redactable.
+**Redactable canonical fields (only these; anything else is a startup error):**
+`routers`, `host`, `name`, `basename`, `command`, `pfe_command`. The `routers`
+field is transformed per router name and re-joined
+(`hmac:<h1>,hmac:<h2>`); `router_count` stays cleartext. `caller` and all
+structural fields (`result`, `duration_ms`, `error`, etc.) are never
+redactable.
 
-**Example** — HMAC the router names on every line and drop the device IP recorded by `add_device`:
+**Auxiliary-event limitation:** `--audit-redact` is an `AuditScope` rendering
+policy, not a subscriber-wide tracing filter. Auxiliary SRX fields such as
+`router`, `location`, `error_detail`, and `err` do not pass through it; stderr,
+the JSON file, and native journald receive those values as the producer emitted
+them. Operators must treat auxiliary fields as potentially sensitive and apply
+appropriate journal/file access controls or downstream SIEM transformations.
+
+**Example** — HMAC the canonical `AuditScope` router names and drop the device
+IP recorded in its `add_device` metadata:
 
 ```
 rust-junosmcp \
@@ -290,7 +310,9 @@ rust-junosmcp \
 
 **Startup validation:** an unknown field, an unknown transform, a malformed entry, `hmac` without a key file, or an unreadable/empty key file all abort startup with a clear message — redaction never silently downgrades.
 
-**Limitation:** the free-text `error` field is bounded and secret-free by construction but may legitimately contain an identifier (e.g. `router 'r1' not found`). It is **not** field-redactable.
+**Canonical limitation:** the free-text `error` field is bounded and
+secret-free by construction but may legitimately contain an identifier (e.g.
+`router 'r1' not found`). It is **not** field-redactable.
 
 ### SIEM / forwarding
 
@@ -307,7 +329,7 @@ The following capabilities are planned but not yet implemented:
 
 1. **Direct RFC 5424 syslog sink** — native journald is implemented via `--audit-journald`, while direct RFC 5424 formatting and remote transport remain unimplemented and can be provided by the host's journald/rsyslog/SIEM integration.
 2. **Built-in log rotation** — the server does not manage file rotation in-process; retention is handled by the shipped `logrotate` fragment (see [Rotation & retention](#rotation--retention)). In-process size/age rotation with `SIGHUP`-reopen support remains out of scope by design.
-3. **Per-field encryption** — sensitive metadata fields can be dropped or replaced with a keyed HMAC fingerprint via [Field redaction](#field-redaction). *Reversible* envelope encryption (recover the original from logs with a key) remains out of scope.
+3. **Per-field encryption** — sensitive canonical `AuditScope` metadata fields can be dropped or replaced with a keyed HMAC fingerprint via [Field redaction](#field-redaction). *Reversible* envelope encryption (recover the original from logs with a key) remains out of scope.
 
 ## Security & Privacy
 
