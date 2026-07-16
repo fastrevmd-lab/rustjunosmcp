@@ -97,6 +97,9 @@ async fn serve_inner(
 ) -> Result<()> {
     let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
 
+    limits
+        .validate()
+        .context("validating HTTP resource limits")?;
     limits.log_effective();
 
     let metrics_runtime = if enable_metrics {

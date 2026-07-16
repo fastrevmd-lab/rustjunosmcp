@@ -89,6 +89,22 @@ pub struct Cli {
     )]
     pub max_inflight_requests_per_token: usize,
 
+    /// Max requests per second per bearer token. Set with burst; 0/0 = disabled.
+    #[arg(
+        long,
+        env = "JMCP_SRX_MAX_REQUESTS_PER_SECOND_PER_TOKEN",
+        default_value_t = 0
+    )]
+    pub max_requests_per_second_per_token: u64,
+
+    /// Max immediate request burst per bearer token. Set with rate; 0/0 = disabled.
+    #[arg(
+        long,
+        env = "JMCP_SRX_MAX_REQUEST_BURST_PER_TOKEN",
+        default_value_t = 0
+    )]
+    pub max_request_burst_per_token: u64,
+
     /// Max concurrent in-flight requests per target router. 0 = unlimited.
     #[arg(
         long,
@@ -186,6 +202,23 @@ mod tests {
 
         let custom = Cli::parse_from(["rust-srxmcp", "--max-inflight-requests-per-router", "7"]);
         assert_eq!(custom.max_inflight_requests_per_router, 7);
+    }
+
+    #[test]
+    fn per_token_rate_limit_defaults_and_parses() {
+        let default_cli = Cli::parse_from(["rust-srxmcp"]);
+        assert_eq!(default_cli.max_requests_per_second_per_token, 0);
+        assert_eq!(default_cli.max_request_burst_per_token, 0);
+
+        let custom = Cli::parse_from([
+            "rust-srxmcp",
+            "--max-requests-per-second-per-token",
+            "7",
+            "--max-request-burst-per-token",
+            "11",
+        ]);
+        assert_eq!(custom.max_requests_per_second_per_token, 7);
+        assert_eq!(custom.max_request_burst_per_token, 11);
     }
 
     #[test]
