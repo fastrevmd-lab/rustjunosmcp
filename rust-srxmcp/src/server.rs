@@ -7,7 +7,7 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager};
-use rust_srxmcp_core::workflows::signature_package::{
+use rust_junosmcp_srx_core::workflows::signature_package::{
     confirmation_token_for_request, ConfirmationBinding, ConfirmationStore,
 };
 use serde::{Deserialize, Serialize};
@@ -173,19 +173,23 @@ impl JmcpSrxHandler {
         ))
     }
 
-    fn signature_error_to_rmcp(e: rust_srxmcp_core::SrxError) -> rmcp::ErrorData {
+    fn signature_error_to_rmcp(e: rust_junosmcp_srx_core::SrxError) -> rmcp::ErrorData {
         match e {
-            rust_srxmcp_core::SrxError::InvalidInput(_) => {
+            rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                 rmcp::ErrorData::invalid_params(e.to_string(), None)
             }
-            rust_srxmcp_core::SrxError::SignaturePackageConfirmationRequired { .. }
-            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenRequired { .. }
-            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenInvalid { .. }
-            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationPlanDrift { .. }
-            | rust_srxmcp_core::SrxError::SignaturePackageConfirmationCapacityExceeded { .. } => {
-                rmcp::ErrorData::invalid_request(e.to_string(), None)
+            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationRequired { .. }
+            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired {
+                ..
             }
-            rust_srxmcp_core::SrxError::Transport(
+            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenInvalid {
+                ..
+            }
+            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationPlanDrift { .. }
+            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationCapacityExceeded {
+                ..
+            } => rmcp::ErrorData::invalid_request(e.to_string(), None),
+            rust_junosmcp_srx_core::SrxError::Transport(
                 rust_junosmcp_core::JmcpError::DeviceLeaseBusy { .. },
             ) => rmcp::ErrorData::invalid_request(e.to_string(), None),
             _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -199,7 +203,7 @@ impl JmcpSrxHandler {
         caller: Option<&str>,
         router: &str,
         device_identity: &str,
-    ) -> Result<(), rust_srxmcp_core::SrxError> {
+    ) -> Result<(), rust_junosmcp_srx_core::SrxError> {
         if let Some(token) = confirmation_token_for_request(confirm, token, router)? {
             let binding = ConfirmationBinding::new(caller, router, device_identity);
             self.confirmation_store
@@ -298,7 +302,7 @@ impl JmcpSrxHandler {
     )]
     async fn get_chassis_cluster_status(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::ClusterStatusArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::ClusterStatusArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -325,10 +329,10 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::cluster_status::run(&mut device, args)
+        let resp = rust_junosmcp_srx_core::workflows::cluster_status::run(&mut device, args)
             .await
             .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                     rmcp::ErrorData::invalid_params(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -355,7 +359,7 @@ impl JmcpSrxHandler {
     )]
     async fn get_srx_security_services_status(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::ServicesStatusArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::ServicesStatusArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -382,10 +386,10 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::services_status::run(&mut device, args)
+        let resp = rust_junosmcp_srx_core::workflows::services_status::run(&mut device, args)
             .await
             .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                     rmcp::ErrorData::invalid_params(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -413,7 +417,7 @@ impl JmcpSrxHandler {
     )]
     async fn check_srx_feature_license(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::LicenseArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::LicenseArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -440,10 +444,10 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::license::run(&mut device, args)
+        let resp = rust_junosmcp_srx_core::workflows::license::run(&mut device, args)
             .await
             .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                     rmcp::ErrorData::invalid_params(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -471,7 +475,7 @@ impl JmcpSrxHandler {
     )]
     async fn vpn_lifecycle_report(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::VpnLifecycleArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::VpnLifecycleArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -495,10 +499,10 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::vpn_lifecycle::run(&mut device, args)
+        let resp = rust_junosmcp_srx_core::workflows::vpn_lifecycle::run(&mut device, args)
             .await
             .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                     rmcp::ErrorData::invalid_params(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -533,7 +537,7 @@ impl JmcpSrxHandler {
     )]
     async fn manage_idp_security_package(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::IdpPackageArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::IdpPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx_opt = caller_ctx(&extensions);
@@ -569,7 +573,7 @@ impl JmcpSrxHandler {
         let device_identity = self.device_identity(&args.router).map_err(|e| {
             rmcp::ErrorData::invalid_params(format!("resolving device identity: {e}"), None)
         })?;
-        if args.action != rust_srxmcp_core::IdpAction::CheckServer {
+        if args.action != rust_junosmcp_srx_core::IdpAction::CheckServer {
             self.validate_confirmation_request(
                 args.confirm,
                 args.confirmation_token.as_deref(),
@@ -584,7 +588,7 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let result = rust_srxmcp_core::workflows::idp_package::run(
+        let result = rust_junosmcp_srx_core::workflows::idp_package::run(
             &mut device,
             &self.device_leases,
             &self.confirmation_store,
@@ -623,7 +627,7 @@ impl JmcpSrxHandler {
     )]
     async fn manage_appid_signature_package(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::AppidPackageArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::AppidPackageArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx_opt = caller_ctx(&extensions);
@@ -656,7 +660,7 @@ impl JmcpSrxHandler {
         let device_identity = self.device_identity(&args.router).map_err(|e| {
             rmcp::ErrorData::invalid_params(format!("resolving device identity: {e}"), None)
         })?;
-        if args.action != rust_srxmcp_core::AppidAction::CheckServer {
+        if args.action != rust_junosmcp_srx_core::AppidAction::CheckServer {
             self.validate_confirmation_request(
                 args.confirm,
                 args.confirmation_token.as_deref(),
@@ -671,7 +675,7 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let result = rust_srxmcp_core::workflows::appid_package::run(
+        let result = rust_junosmcp_srx_core::workflows::appid_package::run(
             &mut device,
             &self.device_leases,
             &self.confirmation_store,
@@ -707,7 +711,7 @@ impl JmcpSrxHandler {
     )]
     async fn validate_chassis_cluster_health(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::ClusterHealthArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::ClusterHealthArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -734,10 +738,10 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let resp = rust_srxmcp_core::workflows::cluster_health::run(&mut device, args)
+        let resp = rust_junosmcp_srx_core::workflows::cluster_health::run(&mut device, args)
             .await
             .map_err(|e| match e {
-                rust_srxmcp_core::SrxError::InvalidInput(_) => {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                     rmcp::ErrorData::invalid_params(e.to_string(), None)
                 }
                 _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -778,7 +782,7 @@ impl JmcpSrxHandler {
     )]
     async fn collect_jtac_support_bundle(
         &self,
-        Parameters(args): Parameters<rust_srxmcp_core::SupportBundleArgs>,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::SupportBundleArgs>,
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
@@ -801,22 +805,23 @@ impl JmcpSrxHandler {
             });
             return Self::scope_to_call_result(e);
         }
-        rust_srxmcp_core::workflows::support_bundle::validate_path_inputs(&args)
+        rust_junosmcp_srx_core::workflows::support_bundle::validate_path_inputs(&args)
             .map_err(|e| rmcp::ErrorData::invalid_params(e.to_string(), None))?;
         let mut device =
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
-        let result = rust_srxmcp_core::workflows::support_bundle::run(&mut device, args).await;
+        let result =
+            rust_junosmcp_srx_core::workflows::support_bundle::run(&mut device, args).await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
         }
         let resp = result.map_err(|e| match e {
-            rust_srxmcp_core::SrxError::InvalidInput(_) => {
+            rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                 rmcp::ErrorData::invalid_params(e.to_string(), None)
             }
-            rust_srxmcp_core::SrxError::BundlePerRouterContention { .. } => {
+            rust_junosmcp_srx_core::SrxError::BundlePerRouterContention { .. } => {
                 rmcp::ErrorData::invalid_request(e.to_string(), None)
             }
             _ => rmcp::ErrorData::internal_error(e.to_string(), None),
@@ -931,7 +936,7 @@ mod scope_tests {
         );
         assert!(matches!(
             missing,
-            Err(rust_srxmcp_core::SrxError::SignaturePackageConfirmationTokenRequired { .. })
+            Err(rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired { .. })
         ));
 
         let binding =

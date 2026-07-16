@@ -1,6 +1,6 @@
-//! Core workflows + shared types for `rust-srxmcp`.
+//! SRX workflows and shared types for `rust-junosmcp`.
 //!
-//! This crate is consumed by the `rust-srxmcp` binary. It owns the typed
+//! This crate is consumed by the unified `rust-junosmcp` binary. It owns the typed
 //! tool response envelope (`SrxToolResponse<T>`), absence semantics
 //! (`SrxState`), the multi-RE XML helper, the `SrxError` taxonomy, and
 //! one `workflows::<tool>` module per Phase 1B tool.

@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-audit"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "hmac 0.12.1",
  "metrics",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arc-swap",
  "axum",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2735,38 +2735,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-srxmcp"
-version = "0.3.6"
-dependencies = [
- "anyhow",
- "arc-swap",
- "axum",
- "axum-server",
- "clap",
- "http",
- "rcgen",
- "rmcp",
- "rust-junosmcp-audit",
- "rust-junosmcp-auth",
- "rust-junosmcp-core",
- "rust-junosmcp-limits",
- "rust-srxmcp-core",
- "rustls",
- "rustls-pki-types",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "ureq",
-]
-
-[[package]]
-name = "rust-srxmcp-core"
-version = "0.3.6"
+name = "rust-junosmcp-srx-core"
+version = "0.8.0"
 dependencies = [
  "base64ct",
  "pretty_assertions",
@@ -2785,6 +2755,36 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rust-srxmcp"
+version = "0.3.6"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "axum",
+ "axum-server",
+ "clap",
+ "http",
+ "rcgen",
+ "rmcp",
+ "rust-junosmcp-audit",
+ "rust-junosmcp-auth",
+ "rust-junosmcp-core",
+ "rust-junosmcp-limits",
+ "rust-junosmcp-srx-core",
+ "rustls",
+ "rustls-pki-types",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "ureq",
 ]
 
 [[package]]
