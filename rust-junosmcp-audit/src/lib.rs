@@ -1,4 +1,4 @@
-//! Caller-attributed audit events for rust-junosmcp / rust-srxmcp.
+//! Caller-attributed audit events for the unified rust-junosmcp server.
 
 mod init;
 mod redact;

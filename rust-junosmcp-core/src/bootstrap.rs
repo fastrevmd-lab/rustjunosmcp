@@ -1,9 +1,8 @@
-//! Process bootstrap helpers shared by `rust-junosmcp` and `rust-srxmcp`.
+//! Process bootstrap helpers for `rust-junosmcp`.
 //!
 //! These are byte-for-byte extractions of code that used to live inline in
-//! the rust-junosmcp binary's `main.rs`. The function bodies are unchanged;
-//! only the call sites move into helper-call form so the same setup logic
-//! is reused by both binaries.
+//! the rust-junosmcp binary's `main.rs` so startup concerns stay reusable and
+//! testable.
 
 use tracing_subscriber::EnvFilter;
 

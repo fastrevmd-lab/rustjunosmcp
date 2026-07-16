@@ -1,7 +1,7 @@
 # Audit Event Schema
 
-`rust-junosmcp` and `rust-srxmcp` emit a canonical structured `AuditScope`
-completion event for every MCP tool invocation. That event records the caller,
+`rust-junosmcp` emits a canonical structured `AuditScope` completion event for
+every Junos and SRX MCP tool invocation. That event records the caller,
 tool, target routers, authorization decision, outcome, and duration. Selected
 SRX workflows also emit auxiliary audit events for package preflights, package
 lifecycle phases, and support-bundle progress. Events are written to stderr
@@ -57,7 +57,8 @@ described under [Native field mapping](#native-field-mapping).
 
 When `result=error`, `error_kind` carries a stable category derived from the failing error variant (`JmcpError::audit_kind` / `SrxError::audit_kind`). The strings are a closed vocabulary — the mapping is an exhaustive match, so adding a new error variant forces a deliberate classification at compile time. Use these to alert on error *classes* (e.g. "> 10 `lease_busy` in 5 min") rather than parsing free-text `error`.
 
-Emitted by both servers (SRX inherits every Junos kind via its `Transport` variant):
+Emitted by the base Junos tools and inherited by SRX workflows through their
+`Transport` variant:
 
 | Kind | Meaning |
 |------|---------|
@@ -85,7 +86,7 @@ Emitted by both servers (SRX inherits every Junos kind via its `Transport` varia
 | `transport` | NETCONF/SSH transport-layer error. |
 | `io` | Filesystem / I/O error (including inventory file read/write). |
 
-SRX-only kinds (`rust-srxmcp`):
+SRX workflow kinds:
 
 | Kind | Meaning |
 |------|---------|
@@ -139,9 +140,7 @@ When `--audit-format json` is set, events are emitted as line-delimited JSON. Th
 
 ## Configuration
 
-Both binaries support identical audit configuration:
-
-### `rust-junosmcp`
+The unified `rust-junosmcp` binary uses one audit configuration for every tool:
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
@@ -149,21 +148,13 @@ Both binaries support identical audit configuration:
 | `--audit-log-file` | `JMCP_AUDIT_LOG_FILE` | (none) | Optional file path to append JSON events to (in addition to stderr). |
 | `--audit-journald` | `JMCP_AUDIT_JOURNALD` | `false` | Also send `target="audit"` events directly to journald as native structured fields. Startup fails if journald is unavailable. |
 
-### `rust-srxmcp`
-
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--audit-format` | `JMCP_SRX_AUDIT_FORMAT` | `text` | Output format: `text` or `json`. |
-| `--audit-log-file` | `JMCP_SRX_AUDIT_LOG_FILE` | (none) | Optional file path to append JSON events to (in addition to stderr). |
-| `--audit-journald` | `JMCP_SRX_AUDIT_JOURNALD` | `false` | Also send `target="audit"` events directly to journald as native structured fields. Startup fails if journald is unavailable. |
-
 ## Retention & Forwarding
 
 ### journald
 
 By default, services running under systemd write their normal text/JSON stderr
-stream into the journal. Set `--audit-journald` (or the binary-specific
-environment variable above) to add a second, native journal record for every
+stream into the journal. Set `--audit-journald` (or `JMCP_AUDIT_JOURNALD`) to
+add a second, native journal record for every
 `target="audit"` event. The native target is disabled by default and does not
 replace stderr or `--audit-log-file`.
 
@@ -186,7 +177,7 @@ The native layer derives standard journal fields from each tracing event:
 |---------------|-------|
 | `TARGET` | `audit` |
 | `PRIORITY` | Derived from the tracing level: `INFO` becomes `5` (`NOTICE`) and `WARN` becomes `4` (`WARNING`). |
-| `SYSLOG_IDENTIFIER` | `rust-junosmcp` or `rust-srxmcp` |
+| `SYSLOG_IDENTIFIER` | `rust-junosmcp` |
 | `MESSAGE` | The event message. The canonical `AuditScope` message is `audit`; auxiliary messages vary by workflow. |
 | `CODE_FILE` | Rust source file containing the tracing emission callsite, when supplied by tracing metadata. |
 | `CODE_LINE` | Rust source line of the tracing emission callsite, when supplied by tracing metadata. |
@@ -237,7 +228,6 @@ Query native Junos and SRX audit entries with:
 
 ```bash
 journalctl -t rust-junosmcp TARGET=audit
-journalctl -t rust-srxmcp TARGET=audit
 journalctl -t rust-junosmcp -o json | jq 'select(.TARGET == "audit")'
 ```
 
@@ -251,10 +241,10 @@ When `--audit-log-file` is set, JSON events are appended to the specified file. 
 
 #### Rotation & retention
 
-A ready-to-install fragment ships at [`packaging/logrotate/rust-junosmcp-audit`](../packaging/logrotate/rust-junosmcp-audit). Install it as `/etc/logrotate.d/rust-junosmcp-audit` (owned `root:root`, mode `0644`). It rotates the audit files daily, caps them at 100 MB, keeps 14 compressed generations, and matches the packaged systemd layout (`jmcp:jmcp`, files under `/var/lib/jmcp`). Tune `rotate`/`maxsize`/`daily` to your retention policy.
+A ready-to-install fragment ships at [`packaging/logrotate/rust-junosmcp-audit`](../packaging/logrotate/rust-junosmcp-audit). Install it as `/etc/logrotate.d/rust-junosmcp-audit` (owned `root:root`, mode `0644`). It rotates `/var/lib/jmcp/audit.jsonl` daily, caps it at 100 MB, keeps 14 compressed generations, and matches the packaged systemd layout (`jmcp:jmcp`, files under `/var/lib/jmcp`). Tune `rotate`/`maxsize`/`daily` to your retention policy.
 
 ```
-/var/lib/jmcp/audit.jsonl /var/lib/jmcp/srx-audit.jsonl {
+/var/lib/jmcp/audit.jsonl {
     daily
     rotate 14
     maxsize 100M
@@ -279,10 +269,10 @@ transform can `keep`, `drop`, or `hmac` a **closed set** of canonical fields.
 Redaction is **off by default** — with no configuration the canonical output is
 byte-for-byte unchanged.
 
-| Flag | Env (junos / srx) | Meaning |
+| Flag | Environment variable | Meaning |
 |------|-------------------|---------|
-| `--audit-redact` | `JMCP_AUDIT_REDACT` / `JMCP_SRX_AUDIT_REDACT` | Comma-separated `field=transform` map. Empty = disabled. |
-| `--audit-hmac-key-file` | `JMCP_AUDIT_HMAC_KEY_FILE` / `JMCP_SRX_AUDIT_HMAC_KEY_FILE` | Path to a file holding the HMAC key. Required if any field uses `hmac`. The key value is never a flag or env value. |
+| `--audit-redact` | `JMCP_AUDIT_REDACT` | Comma-separated `field=transform` map. Empty = disabled. |
+| `--audit-hmac-key-file` | `JMCP_AUDIT_HMAC_KEY_FILE` | Path to a file holding the HMAC key. Required if any field uses `hmac`. The key value is never a flag or env value. |
 
 **Transforms:** `keep` (cleartext), `drop` (omit the field), `hmac` (emit `hmac:<hex>` = HMAC-SHA256 of the value under the key file's bytes). HMAC is deterministic, so a SIEM can still group events by a redacted identifier without learning it; it is keyed, so low-entropy values (IPs/hostnames) are not brute-force-reversible.
 

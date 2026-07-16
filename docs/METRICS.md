@@ -1,14 +1,13 @@
 # Prometheus metrics
 
-Prometheus metrics are opt-in on the streamable-HTTP servers.
+Prometheus metrics are opt-in on the unified streamable-HTTP server.
 
 | Binary | Flag | Environment variable | Default target |
 | --- | --- | --- | --- |
 | rust-junosmcp | --enable-metrics | JMCP_ENABLE_METRICS | 127.0.0.1:30030 |
-| rust-srxmcp | --enable-metrics | JMCP_SRX_ENABLE_METRICS | 127.0.0.1:30032 |
 
 When disabled, GET /metrics returns 404 Not Found because the route is not
-registered. Junos refuses --enable-metrics with --transport stdio.
+registered. The server refuses --enable-metrics with --transport stdio.
 
 ## Security
 
@@ -28,10 +27,6 @@ scrape_configs:
     static_configs:
       - targets: ["127.0.0.1:30030"]
 
-  - job_name: rust-srxmcp
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["127.0.0.1:30032"]
 ```
 
 For a listener using the server's TLS certificate:
@@ -61,7 +56,7 @@ No Authorization header is required for the metrics route.
 
 Fixed values:
 
-- server: junos or srx
+- server: junos (for the unified Junos/SRX process)
 - limit: request_body, token_rate, global_concurrency, token_concurrency,
   router_concurrency, session_cap, or token_session_cap
 - event: request_rejected or session_registration_rejected

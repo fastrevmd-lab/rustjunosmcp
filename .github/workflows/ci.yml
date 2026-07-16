@@ -31,15 +31,22 @@ jobs:
 
       - name: Format check (our packages)
         working-directory: RustJunosMCP
-        run: cargo fmt -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-srxmcp-core -p rust-srxmcp -- --check
+        run: cargo fmt -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core -p rust-junosmcp-audit -- --check
 
       - name: Clippy (our packages)
         working-directory: RustJunosMCP
-        run: cargo clippy -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-srxmcp-core -p rust-srxmcp --all-targets -- -D warnings
+        run: cargo clippy -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core -p rust-junosmcp-audit --all-targets -- -D warnings
 
       - name: Build
         working-directory: RustJunosMCP
         run: cargo build --workspace
+
+      - name: Junos-only feature builds
+        working-directory: RustJunosMCP
+        run: |
+          cargo build -p rust-junosmcp --no-default-features --locked
+          cargo build -p rust-junosmcp --no-default-features --features tls --locked
+          cargo test -p rust-junosmcp --no-default-features --bin rust-junosmcp --locked
 
       - name: Unit + smoke tests
         working-directory: RustJunosMCP

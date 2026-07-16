@@ -26,7 +26,8 @@ integration:
 
 e2e:
     cargo run -p rust-junosmcp -- --help >/dev/null
-    cargo run -p rust-srxmcp -- --help >/dev/null
+    cargo run -p rust-junosmcp --no-default-features -- --help >/dev/null
+    cargo run -p rust-junosmcp --no-default-features --features tls -- --help >/dev/null
 
 security:
     trivy fs --scanners vuln,misconfig,secret --exit-code 1 .

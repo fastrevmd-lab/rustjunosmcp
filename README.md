@@ -7,15 +7,19 @@
 
 <h1 align="center">rust-junosmcp</h1>
 
-<p align="center"><strong>MCP server for Juniper Junos devices, in Rust</strong><br>
+<p align="center"><strong>One MCP server for Juniper Junos and SRX devices, in Rust</strong><br>
 <em>a mechub project — sovereign network-security automation</em></p>
 
 > **Unofficial / community project.** This repository is an independent, community-driven project. It is not affiliated with, endorsed by, sponsored by, or supported by Hewlett Packard Enterprise or Juniper Networks. "HPE", "Juniper", "SRX", "JUNOS", "Security Director" and "Juniper Mist" are trademarks of their respective owners and are used here only to describe what this software interoperates with. Please direct support and licensing questions about those products to the respective vendors.
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server for Juniper Junos
-devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
-on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
-instead of PyEZ.
+and SRX devices, written in Rust. The single `rust-junosmcp` process exposes
+the core Junos tools and, by default, the SRX security workflows through one
+tool registry and endpoint. It is drop-in compatible with
+[Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server) on the
+inventory format and core tool surface, but built on async Rust
+([rustEZ](https://github.com/fastrevmd-lab/rustEZ) +
+[rustnetconf](https://github.com/fastrevmd-lab/rustnetconf)) instead of PyEZ.
 
 ## Beyond Juniper/junos-mcp-server
 
@@ -25,7 +29,7 @@ Drop-in on `devices.json` and the core tools — plus a lot the Python/PyEZ serv
 - **Device lifecycle** — staged `upgrade_junos` (image → install → reboot → verify), SCP `transfer_file`/`fetch_file`, PFE commands.
 - **Scale & UX** — parallel session-pooled batch (~1.7× faster), `| last N`/`| count` + `max_lines`/`max_bytes` output caps, `router`/`router_name` aliases, Jinja2 templates.
 - **Transport & auth** — streamable-HTTP with per-token router/tool scopes, TLS, and a `Host` allowlist; upstream is stdio-only.
-- **SRX tools** (`rust-srxmcp`) — IDP & Application-ID **signature-package updates** (check/download/install/rollback), chassis-cluster health, license & security-services status, JTAC bundle with secret redaction.
+- **SRX tools** (enabled by the default `srx` feature) — IDP & Application-ID **signature-package updates** (check/download/install/rollback), chassis-cluster health, license & security-services status, JTAC bundle with secret redaction.
 
 ## Performance
 
@@ -280,13 +284,13 @@ before deploying. The same warnings apply.
 
 ## Audit logging
 
-Both `rust-junosmcp` and `rust-srxmcp` emit structured audit events for every tool invocation. Each event records the caller, tool, target routers, authorization decision, outcome, and duration. See [`docs/AUDIT.md`](docs/AUDIT.md) for the full schema and forwarding guidance.
+`rust-junosmcp` emits structured audit events for every Junos and SRX tool invocation. Each event records the caller, tool, target routers, authorization decision, outcome, and duration. See [`docs/AUDIT.md`](docs/AUDIT.md) for the full schema and forwarding guidance.
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
-| `--audit-format` | `JMCP_AUDIT_FORMAT` (junos) / `JMCP_SRX_AUDIT_FORMAT` (srx) | `text` | Output format: `text` or `json`. |
-| `--audit-log-file` | `JMCP_AUDIT_LOG_FILE` (junos) / `JMCP_SRX_AUDIT_LOG_FILE` (srx) | (none) | Optional file path to append JSON events to (in addition to stderr). |
-| `--audit-journald` | `JMCP_AUDIT_JOURNALD` (junos) / `JMCP_SRX_AUDIT_JOURNALD` (srx) | `false` | Optional native journald fan-out for structured audit fields; fails startup when explicitly enabled but unavailable. |
+| `--audit-format` | `JMCP_AUDIT_FORMAT` | `text` | Output format: `text` or `json`. |
+| `--audit-log-file` | `JMCP_AUDIT_LOG_FILE` | (none) | Optional file path to append JSON events to (in addition to stderr). |
+| `--audit-journald` | `JMCP_AUDIT_JOURNALD` | `false` | Optional native journald fan-out for structured audit fields; fails startup when explicitly enabled but unavailable. |
 
 ## Quick start (local)
 
@@ -294,8 +298,14 @@ Both `rust-junosmcp` and `rust-srxmcp` emit structured audit events for every to
 git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
-# Build (rustez pulled from crates.io automatically).
+# Build the default 26-tool Junos/SRX server with TLS.
 cargo build --release
+
+# Optional: build the 17-tool Junos-only server without TLS.
+cargo build --release --no-default-features
+
+# Optional: build Junos-only with TLS.
+cargo build --release --no-default-features --features tls
 
 # Configure devices.
 cp devices-template.json devices.json
@@ -306,6 +316,9 @@ $EDITOR devices.json   # set ip / username / auth
 ```
 
 ## Claude Desktop config
+
+One registration exposes every tool enabled in the built binary (26 with the
+default `srx` feature, or 17 in a Junos-only build):
 
 ```json
 {
@@ -329,7 +342,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.7, 0.7.0).
+# Pull the prebuilt image (tags: latest, 0.8, 0.8.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -375,13 +388,13 @@ accepts requests, so a broken custom image is not advertised as transfer-ready.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.7 .
+docker build -t rust-junosmcp:0.8 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.7
+  rust-junosmcp:0.8
 ```
 
 ## LXC (Proxmox)
@@ -391,9 +404,9 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
-# installer copies both binaries and units from its extracted package root.
-pct push 115 dist/rust-junosmcp_0.7.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.7.0_amd64/install.sh"
+# installer copies the unified binary and unit from its extracted package root.
+pct push 115 dist/rust-junosmcp_0.8.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.8.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.
@@ -403,15 +416,19 @@ pct exec 115 -- runuser -u jmcp -- /usr/local/bin/rust-junosmcp token add \
   --routers '*' \
   --tools '*'
 
-# Start the authenticated loopback HTTP endpoints. Enable either or both.
-pct exec 115 -- systemctl enable --now rust-junosmcp rust-srxmcp
+# Start the authenticated unified loopback HTTP endpoint.
+pct exec 115 -- systemctl enable --now rust-junosmcp
 ```
 
 The installer is idempotent: rerunning it upgrades binaries and units without
 overwriting `devices.json`, `tokens.json`, or `known_hosts`. It validates the
-complete archive before changing system state. The packaged endpoints listen on
-`127.0.0.1:30030/mcp` (Junos) and `127.0.0.1:30032/mcp` (SRX) and require bearer
+complete archive before changing system state. The packaged server exposes all
+enabled Junos and SRX tools at `127.0.0.1:30030/mcp` and requires bearer
 authentication. Use an SSH tunnel or a TLS reverse proxy for remote clients.
+
+Upgrading from a split-server release removes the retired `rust-srxmcp`
+executable, unit, and enabled-service link. It deliberately preserves existing
+support bundles under `/var/lib/jmcp/srx-staging/bundles`.
 
 ## Remote transport + auth
 
@@ -557,25 +574,45 @@ kill -HUP <pid>
 | `--tokens-file --allow-insecure-bind` | non-loopback, no TLS | OK — tokens are checked; you are asserting external transport security |
 | `--tokens-file --tls-cert cert.pem --tls-key key.pem` | any | OK |
 
+### Canonical environment variables
+
+The unified server uses one `JMCP_*` namespace. Command-line values take
+precedence over environment values.
+
+| Purpose | Canonical environment variable |
+|---|---|
+| Listener | `JMCP_HTTP_HOST`, `JMCP_HTTP_PORT` |
+| Inventory and tokens | `JMCP_DEVICES_PATH`, `JMCP_TOKENS_PATH` |
+| TLS | `JMCP_TLS_CERT`, `JMCP_TLS_KEY` |
+| Destructive-operation leases | `JMCP_DEVICE_LEASE_DIR` |
+| Support-bundle staging | `JMCP_SUPPORT_BUNDLE_STAGING_DIR`, `JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES` |
+| Audit | `JMCP_AUDIT_FORMAT`, `JMCP_AUDIT_LOG_FILE`, `JMCP_AUDIT_JOURNALD`, `JMCP_AUDIT_REDACT`, `JMCP_AUDIT_HMAC_KEY_FILE` |
+| Metrics | `JMCP_ENABLE_METRICS` |
+
+For migration, legacy `JMCP_SRX_*` aliases are accepted with a warning in
+`0.8.0` only when neither the corresponding command-line option nor canonical
+variable is set. `JMCP_SRX_HTTP_PORT` is always ignored: the retired second
+listener no longer exists. Move deployments to the canonical names now.
+
 ## Resource limits (streamable-HTTP)
 
-Both endpoints enforce configurable DoS guardrails. Most limits are enabled by
+The unified endpoint enforces configurable DoS guardrails. Most limits are enabled by
 default with generous values; the optional per-token request-rate limiter is
 disabled until both of its knobs are positive. A zero value disables an
 individual limit, subject to the rate/burst pair rule below.
 
-| Flag | Env (junos / srx) | Default | Effect |
+| Flag | Environment variable | Default | Effect |
 |------|-------------------|---------|--------|
-| `--max-request-body-bytes` | `JMCP_MAX_REQUEST_BODY_BYTES` / `JMCP_SRX_MAX_REQUEST_BODY_BYTES` | 10 MiB | Reject larger bodies with **413** before buffering |
-| `--max-inflight-requests` | `JMCP_MAX_INFLIGHT_REQUESTS` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS` | 64 | Global concurrency cap; over-limit → **503** |
-| `--max-inflight-requests-per-token` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_TOKEN` | 16 | Per-token concurrency cap → **503** |
-| `--max-requests-per-second-per-token` | `JMCP_MAX_REQUESTS_PER_SECOND_PER_TOKEN` / `JMCP_SRX_MAX_REQUESTS_PER_SECOND_PER_TOKEN` | 0 | Per-token refill rate; pair with burst (`0/0` disables) |
-| `--max-request-burst-per-token` | `JMCP_MAX_REQUEST_BURST_PER_TOKEN` / `JMCP_SRX_MAX_REQUEST_BURST_PER_TOKEN` | 0 | Per-token immediate burst; pair with rate (`0/0` disables) |
-| `--max-inflight-requests-per-router` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_ROUTER` / `JMCP_SRX_MAX_INFLIGHT_REQUESTS_PER_ROUTER` | 4 | Per-router concurrency cap → **503** |
-| `--max-sessions` | `JMCP_MAX_SESSIONS` / `JMCP_SRX_MAX_SESSIONS` | 128 | Session count cap → **503** |
-| `--max-sessions-per-token` | `JMCP_MAX_SESSIONS_PER_TOKEN` / `JMCP_SRX_MAX_SESSIONS_PER_TOKEN` | 16 | Per-bearer-token session cap → **503** |
-| `--session-idle-timeout-secs` | `JMCP_SESSION_IDLE_TIMEOUT_SECS` / `JMCP_SRX_SESSION_IDLE_TIMEOUT_SECS` | 300 | Idle sessions reaped |
-| `--session-max-lifetime-secs` | `JMCP_SESSION_MAX_LIFETIME_SECS` / `JMCP_SRX_SESSION_MAX_LIFETIME_SECS` | 3600 | Old sessions reaped |
+| `--max-request-body-bytes` | `JMCP_MAX_REQUEST_BODY_BYTES` | 10 MiB | Reject larger bodies with **413** before buffering |
+| `--max-inflight-requests` | `JMCP_MAX_INFLIGHT_REQUESTS` | 64 | Global concurrency cap; over-limit → **503** |
+| `--max-inflight-requests-per-token` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN` | 16 | Per-token concurrency cap → **503** |
+| `--max-requests-per-second-per-token` | `JMCP_MAX_REQUESTS_PER_SECOND_PER_TOKEN` | 0 | Per-token refill rate; pair with burst (`0/0` disables) |
+| `--max-request-burst-per-token` | `JMCP_MAX_REQUEST_BURST_PER_TOKEN` | 0 | Per-token immediate burst; pair with rate (`0/0` disables) |
+| `--max-inflight-requests-per-router` | `JMCP_MAX_INFLIGHT_REQUESTS_PER_ROUTER` | 4 | Per-router concurrency cap → **503** |
+| `--max-sessions` | `JMCP_MAX_SESSIONS` | 128 | Session count cap → **503** |
+| `--max-sessions-per-token` | `JMCP_MAX_SESSIONS_PER_TOKEN` | 16 | Per-bearer-token session cap → **503** |
+| `--session-idle-timeout-secs` | `JMCP_SESSION_IDLE_TIMEOUT_SECS` | 300 | Idle sessions reaped |
+| `--session-max-lifetime-secs` | `JMCP_SESSION_MAX_LIFETIME_SECS` | 3600 | Old sessions reaped |
 
 The global session cap is enforced atomically during session creation. The
 middleware rejects obvious saturation early, while the shared session manager
@@ -616,7 +653,7 @@ first, while concurrency/session exhaustion retains the existing **503**
 contract.
 
 Prometheus export is opt-in with `--enable-metrics`
-(`JMCP_ENABLE_METRICS` / `JMCP_SRX_ENABLE_METRICS`). It mounts an
+(`JMCP_ENABLE_METRICS`). It mounts an
 unauthenticated `GET /metrics` beside `/mcp`; protect it with network controls.
 See [Prometheus metrics](docs/METRICS.md) for scrape configuration, metric
 names, labels, and PromQL examples.

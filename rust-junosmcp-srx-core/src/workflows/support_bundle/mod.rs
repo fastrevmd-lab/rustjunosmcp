@@ -18,7 +18,7 @@
 //! `request support information | save /var/tmp/srxmcp-<rid>.tgz` for the
 //! `generic` problem_type and a device-side `file-archive` chain for the
 //! per-type paths. Both paths instead assemble the tarball **on the LXC**
-//! side under `JMCP_SRX_STAGING_DIR/<router>/srxmcp-<rid>.tgz`:
+//! side under `JMCP_SUPPORT_BUNDLE_STAGING_DIR/<router>/srxmcp-<rid>.tgz`:
 //!
 //! * **`generic` path**: `request support information` is issued (without
 //!   the `| save` pipe) via the NETCONF `command` RPC; the full
@@ -185,7 +185,7 @@ pub fn validate_path_inputs(args: &SupportBundleArgs) -> Result<(), SrxError> {
 
 /// Where the assembled tarball lives. `Device` → on the SRX under
 /// `/var/tmp`, fetched via the `rust-junosmcp` `fetch_file` chain.
-/// `LxcStaging` → on LXC 601 under `JMCP_SRX_STAGING_DIR`, accessible
+/// `LxcStaging` → on the MCP host under `JMCP_SUPPORT_BUNDLE_STAGING_DIR`, accessible
 /// directly to operators with shell access.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

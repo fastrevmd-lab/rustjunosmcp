@@ -45,11 +45,7 @@ const SRX_TOOLS: &[&str] = &[
 #[test]
 fn lists_expected_tools() {
     // Build first so the binary exists.
-    let status = Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .expect("cargo build");
-    assert!(status.success(), "cargo build failed");
+    common::ensure_built();
 
     // Empty inventory file is enough for `tools/list`.
     let inv = tempfile::NamedTempFile::new().unwrap();
@@ -166,11 +162,7 @@ fn srx_status_allows_stdio_even_when_a_token_file_is_loaded() {
 
 #[test]
 fn denied_command_returns_tool_error() {
-    let status = std::process::Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .expect("cargo build");
-    assert!(status.success(), "cargo build failed");
+    common::ensure_built();
 
     // Inventory with a deny rule and one (unreachable) device. The deny
     // short-circuits before any connection attempt, so unreachability is fine.

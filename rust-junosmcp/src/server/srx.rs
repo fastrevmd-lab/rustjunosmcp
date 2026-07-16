@@ -708,7 +708,7 @@ impl JmcpHandler {
                        Per-type values capture the universal baseline (get-configuration, \
                        get-software-information, get-system-uptime-information, \
                        get-system-alarm-information) plus type-specific RPCs, and assemble \
-                       the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default \
+                       the tarball on the MCP host under JMCP_SUPPORT_BUNDLE_STAGING_DIR (default \
                        /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). \
                        The response's bundle.location field is 'device' or 'lxc_staging'. \
                        Caller-supplied request_id is a validated correlation label used only \

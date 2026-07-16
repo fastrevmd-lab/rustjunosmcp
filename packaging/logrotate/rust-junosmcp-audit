@@ -1,8 +1,8 @@
-# logrotate fragment for the rust-junosmcp / rust-srxmcp JSON audit sink.
+# logrotate fragment for the rust-junosmcp JSON audit sink.
 #
 # Install as /etc/logrotate.d/rust-junosmcp-audit (root:root, mode 0644).
-# Enable the sink by passing --audit-log-file (or JMCP_AUDIT_LOG_FILE /
-# JMCP_SRX_AUDIT_LOG_FILE). The paths below match the packaged systemd units,
+# Enable the sink by passing --audit-log-file (or JMCP_AUDIT_LOG_FILE). The
+# path below matches the packaged systemd unit,
 # which run as jmcp:jmcp with StateDirectory=jmcp (/var/lib/jmcp writable under
 # ProtectSystem=strict). Adjust paths/retention to your policy.
 #
@@ -21,7 +21,7 @@
 #   negligible; if zero-loss is required, forward lines to a SIEM in real time
 #   (Vector/Filebeat tailing the file) rather than relying on the rotated files.
 
-/var/lib/jmcp/audit.jsonl /var/lib/jmcp/srx-audit.jsonl {
+/var/lib/jmcp/audit.jsonl {
     daily
     rotate 14
     maxsize 100M

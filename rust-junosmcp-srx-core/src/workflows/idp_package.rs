@@ -580,8 +580,8 @@ pub enum IdpPackageResponse {
 /// Single entry point used by the MCP handler. Matches on `args.action` and
 /// fans out to the per-verb implementations.
 ///
-/// * `device_leases` — kernel-backed per-router leases shared across the Junos
-///   and SRX processes. Ignored by `check_server`; required for destructive
+/// * `device_leases` — kernel-backed per-router leases shared across server
+///   processes and Junos/SRX workflows. Ignored by `check_server`; required for destructive
 ///   verbs to enforce lock-first preflight and execution.
 /// * `caller` — `token_name` of the authenticated bearer token, or `None`
 ///   under stdio. Surfaces in audit lines.
