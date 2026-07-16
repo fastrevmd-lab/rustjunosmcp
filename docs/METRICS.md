@@ -7,8 +7,8 @@ Prometheus metrics are opt-in on the streamable-HTTP servers.
 | rust-junosmcp | --enable-metrics | JMCP_ENABLE_METRICS | 127.0.0.1:30030 |
 | rust-srxmcp | --enable-metrics | JMCP_SRX_ENABLE_METRICS | 127.0.0.1:30032 |
 
-When disabled, GET /metrics is not registered. Junos refuses
---enable-metrics with --transport stdio.
+When disabled, GET /metrics returns 404 Not Found because the route is not
+registered. Junos refuses --enable-metrics with --transport stdio.
 
 ## Security
 
