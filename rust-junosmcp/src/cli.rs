@@ -74,6 +74,24 @@ pub struct Cli {
     #[arg(long, default_value = "/var/lib/jmcp/device-leases")]
     pub device_lease_dir: PathBuf,
 
+    /// Directory used to stage collected SRX support bundles.
+    #[cfg(feature = "srx")]
+    #[arg(
+        long,
+        default_value =
+            rust_junosmcp_srx_core::workflows::support_bundle::DEFAULT_STAGING_DIR
+    )]
+    pub support_bundle_staging_dir: PathBuf,
+
+    /// Maximum bytes retained in the SRX support-bundle staging area.
+    #[cfg(feature = "srx")]
+    #[arg(
+        long,
+        default_value_t =
+            rust_junosmcp_srx_core::workflows::support_bundle::DEFAULT_STAGING_MAX_BYTES
+    )]
+    pub support_bundle_staging_max_bytes: u64,
+
     /// Accept and pin new device host keys on first contact (TOFU,
     /// `StrictHostKeyChecking=accept-new`). Off by default — the server
     /// uses `StrictHostKeyChecking=yes` and requires a pre-populated
@@ -95,82 +113,70 @@ pub struct Cli {
     pub disable_host_check: bool,
 
     /// Expose unauthenticated Prometheus metrics at /metrics (streamable-http only).
-    #[arg(long, env = "JMCP_ENABLE_METRICS")]
+    #[arg(long)]
     pub enable_metrics: bool,
 
     /// Max request body bytes before HTTP 413 (streamable-http). 0 = unlimited.
-    #[arg(long, env = "JMCP_MAX_REQUEST_BODY_BYTES", default_value_t = 10 * 1024 * 1024)]
+    #[arg(long, default_value_t = 10 * 1024 * 1024)]
     pub max_request_body_bytes: usize,
 
     /// Max concurrent in-flight requests across all callers. 0 = unlimited.
-    #[arg(long, env = "JMCP_MAX_INFLIGHT_REQUESTS", default_value_t = 64)]
+    #[arg(long, default_value_t = 64)]
     pub max_inflight_requests: usize,
 
     /// Max concurrent in-flight requests per bearer token. 0 = unlimited.
-    #[arg(
-        long,
-        env = "JMCP_MAX_INFLIGHT_REQUESTS_PER_TOKEN",
-        default_value_t = 16
-    )]
+    #[arg(long, default_value_t = 16)]
     pub max_inflight_requests_per_token: usize,
 
     /// Max requests per second per bearer token. Set with burst; 0/0 = disabled.
-    #[arg(
-        long,
-        env = "JMCP_MAX_REQUESTS_PER_SECOND_PER_TOKEN",
-        default_value_t = 0
-    )]
+    #[arg(long, default_value_t = 0)]
     pub max_requests_per_second_per_token: u64,
 
     /// Max immediate request burst per bearer token. Set with rate; 0/0 = disabled.
-    #[arg(long, env = "JMCP_MAX_REQUEST_BURST_PER_TOKEN", default_value_t = 0)]
+    #[arg(long, default_value_t = 0)]
     pub max_request_burst_per_token: u64,
 
     /// Max concurrent in-flight requests per target router. 0 = unlimited.
-    #[arg(
-        long,
-        env = "JMCP_MAX_INFLIGHT_REQUESTS_PER_ROUTER",
-        default_value_t = 4
-    )]
+    #[arg(long, default_value_t = 4)]
     pub max_inflight_requests_per_router: usize,
 
     /// Max concurrent MCP sessions. 0 = unlimited.
-    #[arg(long, env = "JMCP_MAX_SESSIONS", default_value_t = 128)]
+    #[arg(long, default_value_t = 128)]
     pub max_sessions: usize,
 
     /// Max concurrent MCP sessions per bearer token. 0 = unlimited.
-    #[arg(long, env = "JMCP_MAX_SESSIONS_PER_TOKEN", default_value_t = 16)]
+    #[arg(long, default_value_t = 16)]
     pub max_sessions_per_token: usize,
 
     /// Session idle timeout in seconds. 0 = disabled.
-    #[arg(long, env = "JMCP_SESSION_IDLE_TIMEOUT_SECS", default_value_t = 300)]
+    #[arg(long, default_value_t = 300)]
     pub session_idle_timeout_secs: u64,
 
     /// Session max lifetime in seconds. 0 = disabled.
-    #[arg(long, env = "JMCP_SESSION_MAX_LIFETIME_SECS", default_value_t = 3600)]
+    #[arg(long, default_value_t = 3600)]
     pub session_max_lifetime_secs: u64,
 
     /// Audit/log output format for stderr: text or json.
-    #[arg(long, env = "JMCP_AUDIT_FORMAT", default_value = "text")]
+    #[arg(long, default_value = "text")]
     pub audit_format: String,
 
     /// Optional file to append JSON audit lines to (in addition to stderr).
-    #[arg(long, env = "JMCP_AUDIT_LOG_FILE")]
+    #[arg(long)]
     pub audit_log_file: Option<std::path::PathBuf>,
 
     /// Also send structured audit events directly to journald.
-    #[arg(long, env = "JMCP_AUDIT_JOURNALD")]
+    #[arg(long)]
     pub audit_journald: bool,
 
     /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
     /// Fields: routers, host, name, basename, command, pfe_command.
     /// Transforms: keep, drop, hmac. Empty = disabled.
-    #[arg(long, env = "JMCP_AUDIT_REDACT", default_value = "")]
+    #[arg(long, default_value = "")]
     pub audit_redact: String,
 
     /// File containing the HMAC key used by any `=hmac` redaction. Required
     /// when audit-redact requests hmac. Path only; the key is never a flag/env value.
-    #[arg(long, env = "JMCP_AUDIT_HMAC_KEY_FILE")]
+    #[arg(long)]
     pub audit_hmac_key_file: Option<std::path::PathBuf>,
 }
 

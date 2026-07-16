@@ -1,5 +1,6 @@
 mod cli;
 mod cli_validate;
+mod env_compat;
 mod http_transport;
 mod server;
 #[cfg(feature = "tls")]
@@ -7,8 +8,7 @@ mod tls;
 mod token_cmd;
 
 use anyhow::{Context, Result};
-use clap::Parser;
-use cli::{Cli, Command, Transport};
+use cli::{Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_auth::file::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, OpenSshScpRunner, Policy, TransferConfig};
@@ -17,7 +17,10 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
+    let env_compat::ParsedCli {
+        cli: args,
+        warnings,
+    } = env_compat::parse();
 
     let redaction = if args.audit_redact.trim().is_empty() {
         None
@@ -37,6 +40,7 @@ async fn main() -> Result<()> {
         journald: args.audit_journald,
     };
     rust_junosmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    env_compat::emit_warnings(&warnings);
 
     if let Some(Command::Token { action }) = args.command {
         return token_cmd::run(action);

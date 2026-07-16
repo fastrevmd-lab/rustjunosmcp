@@ -10,6 +10,7 @@ description = "MCP server for Juniper Junos devices, built on rustEZ."
 [features]
 default = ["tls"]
 tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
+srx = ["dep:rust-junosmcp-srx-core"]
 
 [[bin]]
 name = "rust-junosmcp"
@@ -19,6 +20,7 @@ path = "src/main.rs"
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
 rust-junosmcp-audit = { path = "../rust-junosmcp-audit" }
+rust-junosmcp-srx-core = { path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
 serde              = { workspace = true }
@@ -28,7 +30,7 @@ tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
 sha2               = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive"] }
 rmcp = { version = "2", features = [
     "server",
     "macros",

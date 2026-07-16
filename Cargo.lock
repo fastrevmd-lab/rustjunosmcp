@@ -2632,6 +2632,7 @@ dependencies = [
  "rust-junosmcp-audit",
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
+ "rust-junosmcp-srx-core",
  "rustls",
  "rustls-pki-types",
  "schemars",
