@@ -9,7 +9,7 @@
 //! * [`redact`] — XML-element-name-based redaction (PSKs, secrets, SNMP
 //!   community, HMAC keys, RADIUS/TACACS shared-secrets) applied when
 //!   `redact=true`.
-//! * [`staging`] — LXC-side staging dir + env-var resolution +
+//! * [`staging`] — explicit LXC-side staging configuration +
 //!   on-device tarball path helpers + LRU eviction stub.
 //!
 //! ## Implementation note (deviation from design doc)
@@ -51,8 +51,8 @@ pub use redact::{
 };
 pub use staging::{
     bundle_manifest_path, bundle_tarball_path, device_log_tarball_path, device_tarball_path,
-    enforce_staging_cap, router_staging_dir, staging_dir_from_env, staging_max_bytes_from_env,
-    validate_path_component, PreparedBundlePaths, DEFAULT_STAGING_DIR, DEFAULT_STAGING_MAX_BYTES,
+    enforce_staging_cap, router_staging_dir, validate_path_component, PreparedBundlePaths,
+    SupportBundleStagingConfig, DEFAULT_STAGING_DIR, DEFAULT_STAGING_MAX_BYTES,
 };
 
 use crate::{SrxError, SrxToolResponse};
@@ -234,6 +234,7 @@ pub struct SupportBundleData {
 pub async fn run(
     device: &mut PooledDevice,
     mut args: SupportBundleArgs,
+    staging: &SupportBundleStagingConfig,
 ) -> Result<SrxToolResponse<SupportBundleData>, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
@@ -281,7 +282,7 @@ pub async fn run(
     // Generic short-circuit: any presence of Generic in the set means we
     // skip everything else and run `request support information`.
     let result = if problem_types.contains(&ProblemType::Generic) {
-        collect_generic(device, &router, &request_id, &filesystem_id, &args).await
+        collect_generic(device, &router, &request_id, &filesystem_id, &args, staging).await
     } else {
         collect_per_type(
             device,
@@ -290,6 +291,7 @@ pub async fn run(
             &filesystem_id,
             &args,
             &problem_types,
+            staging,
         )
         .await
     };
@@ -334,8 +336,9 @@ async fn collect_generic(
     request_id: &str,
     filesystem_id: &str,
     args: &SupportBundleArgs,
+    staging: &SupportBundleStagingConfig,
 ) -> Result<SupportBundleData, SrxError> {
-    let mut paths = PreparedBundlePaths::prepare(router, filesystem_id)?;
+    let mut paths = PreparedBundlePaths::prepare(staging, router, filesystem_id)?;
     let scratch = paths.scratch_dir().to_path_buf();
 
     let mut exec = device
@@ -401,6 +404,7 @@ async fn collect_generic(
         artefacts,
         &problem_types,
         redacted,
+        staging,
     )
 }
 
@@ -413,8 +417,9 @@ async fn collect_per_type(
     filesystem_id: &str,
     args: &SupportBundleArgs,
     problem_types: &BTreeSet<ProblemType>,
+    staging: &SupportBundleStagingConfig,
 ) -> Result<SupportBundleData, SrxError> {
-    let mut paths = PreparedBundlePaths::prepare(router, filesystem_id)?;
+    let mut paths = PreparedBundlePaths::prepare(staging, router, filesystem_id)?;
     let scratch = paths.scratch_dir().to_path_buf();
     let rpc_dir = scratch.join("rpc");
     std::fs::create_dir_all(&rpc_dir)
@@ -639,6 +644,7 @@ async fn collect_per_type(
         artefacts,
         problem_types,
         any_redacted,
+        staging,
     )
 }
 
@@ -657,6 +663,7 @@ fn finalize_lxc_bundle(
     artefacts: Vec<CapturedArtefact>,
     problem_types: &BTreeSet<ProblemType>,
     any_redacted: bool,
+    staging: &SupportBundleStagingConfig,
 ) -> Result<SupportBundleData, SrxError> {
     paths.ensure_confined()?;
     let scratch = paths.scratch_dir().to_path_buf();
@@ -703,8 +710,7 @@ fn finalize_lxc_bundle(
     }
 
     // Enforce staging cap (LRU eviction) — stub today.
-    let cap = staging_max_bytes_from_env();
-    let _ = enforce_staging_cap(cap);
+    let _ = enforce_staging_cap(staging.max_bytes());
 
     let tarball_bytes = std::fs::metadata(&tarball_path)
         .map(|m| m.len())
@@ -915,6 +921,7 @@ mod tests {
     #[test]
     fn finalize_lxc_bundle_produces_nonempty_tarball() {
         let tmp = tempfile::tempdir().expect("tmp dir");
+        let staging = SupportBundleStagingConfig::new(tmp.path().to_path_buf(), 123_456);
         let router = "vSRX-finalize-unit";
         let request_id = "srxmcp-unit-0001";
         let filesystem_id = "srxmcp-12345678-1234-1234-1234-123456789abc";
@@ -946,6 +953,7 @@ mod tests {
             artefacts,
             &problem_types,
             false,
+            &staging,
         )
         .expect("finalize");
 

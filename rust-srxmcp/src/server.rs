@@ -811,8 +811,12 @@ impl JmcpSrxHandler {
             self.device_manager.open(&args.router).await.map_err(|e| {
                 rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
             })?;
+        let staging =
+            rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig::default(
+            );
         let result =
-            rust_junosmcp_srx_core::workflows::support_bundle::run(&mut device, args).await;
+            rust_junosmcp_srx_core::workflows::support_bundle::run(&mut device, args, &staging)
+                .await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),

@@ -5,28 +5,46 @@ use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
-/// Default staging directory if `JMCP_SRX_STAGING_DIR` is unset.
+/// Packaged default support-bundle staging directory.
 pub const DEFAULT_STAGING_DIR: &str = "/var/lib/jmcp/srx-staging/bundles";
 
-/// Default staging cap if `JMCP_SRX_STAGING_MAX_BYTES` is unset (500 MiB).
+/// Packaged default support-bundle staging cap (500 MiB).
 pub const DEFAULT_STAGING_MAX_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Maximum byte length for any caller- or inventory-derived path component.
 pub const MAX_PATH_COMPONENT_BYTES: usize = 64;
 
-/// Resolves the effective staging directory from the environment.
-pub fn staging_dir_from_env() -> PathBuf {
-    std::env::var("JMCP_SRX_STAGING_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_STAGING_DIR))
+/// Process-level support-bundle staging policy, resolved once during bootstrap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupportBundleStagingConfig {
+    directory: PathBuf,
+    max_bytes: u64,
 }
 
-/// Resolves the effective staging cap from the environment.
-pub fn staging_max_bytes_from_env() -> u64 {
-    std::env::var("JMCP_SRX_STAGING_MAX_BYTES")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_STAGING_MAX_BYTES)
+impl SupportBundleStagingConfig {
+    pub fn new(directory: PathBuf, max_bytes: u64) -> Self {
+        Self {
+            directory,
+            max_bytes,
+        }
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
+    }
+}
+
+impl Default for SupportBundleStagingConfig {
+    fn default() -> Self {
+        Self::new(
+            PathBuf::from(DEFAULT_STAGING_DIR),
+            DEFAULT_STAGING_MAX_BYTES,
+        )
+    }
 }
 
 fn invalid_component(kind: &str) -> SrxError {
@@ -65,20 +83,31 @@ fn bundle_filename(filesystem_id: &str, extension: &str) -> Result<String, SrxEr
     Ok(format!("srxmcp-{stem}.{extension}"))
 }
 
-/// Per-router subdirectory path under [`staging_dir_from_env`].
-pub fn router_staging_dir(router: &str) -> Result<PathBuf, SrxError> {
+/// Per-router subdirectory path under the configured staging root.
+pub fn router_staging_dir(
+    config: &SupportBundleStagingConfig,
+    router: &str,
+) -> Result<PathBuf, SrxError> {
     validate_path_component("router", router)?;
-    Ok(staging_dir_from_env().join(router))
+    Ok(config.directory().join(router))
 }
 
 /// Canonical on-LXC path for a bundle tarball.
-pub fn bundle_tarball_path(router: &str, filesystem_id: &str) -> Result<PathBuf, SrxError> {
-    Ok(router_staging_dir(router)?.join(bundle_filename(filesystem_id, "tgz")?))
+pub fn bundle_tarball_path(
+    config: &SupportBundleStagingConfig,
+    router: &str,
+    filesystem_id: &str,
+) -> Result<PathBuf, SrxError> {
+    Ok(router_staging_dir(config, router)?.join(bundle_filename(filesystem_id, "tgz")?))
 }
 
 /// Canonical on-LXC path for a bundle sidecar manifest.
-pub fn bundle_manifest_path(router: &str, filesystem_id: &str) -> Result<PathBuf, SrxError> {
-    Ok(router_staging_dir(router)?.join(bundle_filename(filesystem_id, "json")?))
+pub fn bundle_manifest_path(
+    config: &SupportBundleStagingConfig,
+    router: &str,
+    filesystem_id: &str,
+) -> Result<PathBuf, SrxError> {
+    Ok(router_staging_dir(config, router)?.join(bundle_filename(filesystem_id, "json")?))
 }
 
 /// Canonical on-device staging path for a tarball.
@@ -194,8 +223,12 @@ pub struct PreparedBundlePaths {
 }
 
 impl PreparedBundlePaths {
-    pub fn prepare(router: &str, filesystem_id: &str) -> Result<Self, SrxError> {
-        Self::prepare_under(&staging_dir_from_env(), router, filesystem_id)
+    pub fn prepare(
+        config: &SupportBundleStagingConfig,
+        router: &str,
+        filesystem_id: &str,
+    ) -> Result<Self, SrxError> {
+        Self::prepare_under(config.directory(), router, filesystem_id)
     }
 
     pub(crate) fn prepare_under(
@@ -322,6 +355,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_config_controls_all_host_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let config = SupportBundleStagingConfig::new(root.path().to_path_buf(), 123_456);
+
+        assert_eq!(config.directory(), root.path());
+        assert_eq!(config.max_bytes(), 123_456);
+        assert_eq!(
+            bundle_tarball_path(&config, "srx-01", "srxmcp-request-1").unwrap(),
+            root.path().join("srx-01/srxmcp-request-1.tgz")
+        );
+    }
+
+    #[test]
+    fn packaged_defaults_are_stable() {
+        let config = SupportBundleStagingConfig::default();
+        assert_eq!(
+            config.directory(),
+            Path::new("/var/lib/jmcp/srx-staging/bundles")
+        );
+        assert_eq!(config.max_bytes(), 500 * 1024 * 1024);
+    }
+
+    #[test]
     fn default_staging_dir_matches_packaged_systemd_write_path() {
         assert!(DEFAULT_STAGING_DIR.starts_with("/var/lib/jmcp/"));
     }
@@ -359,18 +415,19 @@ mod tests {
 
     #[test]
     fn path_builders_use_one_prefix_and_reject_bad_inputs() {
+        let config = SupportBundleStagingConfig::default();
         let minted = "srxmcp-a783d1a5";
-        assert!(bundle_tarball_path("vSRX-test10", minted)
+        assert!(bundle_tarball_path(&config, "vSRX-test10", minted)
             .unwrap()
             .ends_with("srxmcp-a783d1a5.tgz"));
-        assert!(bundle_manifest_path("vSRX-test10", "deadbeef")
+        assert!(bundle_manifest_path(&config, "vSRX-test10", "deadbeef")
             .unwrap()
             .ends_with("srxmcp-deadbeef.json"));
         assert_eq!(
             device_tarball_path(minted).unwrap(),
             "/var/tmp/srxmcp-a783d1a5.tgz"
         );
-        assert!(bundle_tarball_path("../router", minted).is_err());
+        assert!(bundle_tarball_path(&config, "../router", minted).is_err());
         assert!(device_tarball_path("../../escape").is_err());
     }
 
