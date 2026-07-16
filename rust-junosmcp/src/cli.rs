@@ -11,7 +11,18 @@ pub enum Transport {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "rust-junosmcp", version, about = "Junos MCP server (Rust)")]
+#[cfg_attr(
+    feature = "srx",
+    command(
+        name = "rust-junosmcp",
+        version,
+        about = "Junos and SRX MCP server (Rust)"
+    )
+)]
+#[cfg_attr(
+    not(feature = "srx"),
+    command(name = "rust-junosmcp", version, about = "Junos MCP server (Rust)")
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -235,7 +246,19 @@ pub enum TokenAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn help_describes_the_compiled_feature_surface() {
+        let about = Cli::command().get_about().unwrap().to_string();
+        #[cfg(feature = "srx")]
+        assert!(about.contains("Junos and SRX"), "about: {about}");
+        #[cfg(not(feature = "srx"))]
+        assert!(
+            about.contains("Junos") && !about.contains("SRX"),
+            "about: {about}"
+        );
+    }
 
     #[test]
     fn defaults() {

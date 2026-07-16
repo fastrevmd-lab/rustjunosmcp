@@ -982,16 +982,20 @@ impl JmcpHandler {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
+        #[cfg(feature = "srx")]
+        let instructions = "Junos and SRX MCP server. Use get_router_list to enumerate \
+             visible routers, then select generic Junos primitives or \
+             SRX-specific operational workflows.";
+        #[cfg(not(feature = "srx"))]
+        let instructions = "Junos MCP server. Use get_router_list to enumerate visible \
+             routers, then select a Junos operational primitive.";
+
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
                 "jmcp-server",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(
-                "Junos and SRX MCP server. Use get_router_list to enumerate \
-                 visible routers, then select generic Junos primitives or \
-                 SRX-specific operational workflows.",
-            )
+            .with_instructions(instructions)
     }
 }
 
@@ -1088,6 +1092,21 @@ mod scope_tests {
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_seventeen_tools() {
         assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 17);
+    }
+
+    #[test]
+    fn server_instructions_describe_the_compiled_feature_surface() {
+        let instructions = make_handler().get_info().instructions.unwrap();
+        #[cfg(feature = "srx")]
+        assert!(
+            instructions.contains("Junos and SRX"),
+            "instructions: {instructions}"
+        );
+        #[cfg(not(feature = "srx"))]
+        assert!(
+            instructions.contains("Junos") && !instructions.contains("SRX"),
+            "instructions: {instructions}"
+        );
     }
 
     #[test]
