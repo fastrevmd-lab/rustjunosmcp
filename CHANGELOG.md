@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-16
+
 ### Added
 
 - **#150 - optional per-token request-rate limiting.** The streamable-HTTP

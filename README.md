@@ -46,19 +46,21 @@ Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
 on sequential commands to the same router. The batch tool runs routers in
 parallel with a configurable concurrency cap.
 
-> ## v0.7.0 released
+> ## v0.8.0 released
 >
-> Two new non-destructive candidate-safety tools and a hardened HTTP
-> transport. `commit_check_config` validates a candidate (`commit check`)
-> and discards it without ever activating config; `discard_candidate`
-> recovers a candidate left dirty via `rollback 0`. `junos_config_diff`
-> now returns an actionable hint when the on-box config won't parse for
-> the current mode. Security: `rmcp` 0.8.5 → 2.0.0 (closes
-> RUSTSEC-2026-0189 DNS-rebinding; adds a `Host` allowlist — off-loopback
-> deployments must pass `--allowed-host`) and `quick-xml` 0.36 → 0.41
-> (closes RUSTSEC-2026-0194/-0195 DoS). Tool surface 15 → 17.
+> One `rust-junosmcp` binary and endpoint now serve Junos and SRX. Default
+> builds expose the complete 26-tool surface; Junos-only deployments retain
+> the 17-tool surface with `--no-default-features`. This release also adds
+> per-router concurrency limits, per-token session and request-rate limits,
+> Prometheus metrics, native journald audit output, stricter global session
+> admission, scoped router-list results, and container SCP support.
 >
-> See the [v0.7.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.7.0).
+> Upgrades retire the standalone `rust-srxmcp` binary, service, and port 30032
+> while preserving support bundles. Deprecated `JMCP_SRX_*` aliases remain for
+> this release only; `JMCP_SRX_HTTP_PORT` is ignored because there is one
+> listener.
+>
+> See the [v0.8.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.8.0).
 
 ## Feature scope
 
@@ -132,6 +134,22 @@ parallel with a configurable concurrency cap.
 - **`commit_check_config`** — validate a candidate config (`commit check`) without committing — loads, diffs, checks, then discards. Never activates config. Own token scope (least-privilege).
 - **`discard_candidate`** — discard uncommitted candidate changes (`rollback 0`) to recover a candidate left dirty ("configuration database modified"). Never changes the running config. Own token scope (least-privilege).
 - Tool count: 15 → 17.
+
+### v0.8 (released)
+
+- **Unified Junos/SRX server** — one binary, endpoint, process, inventory,
+  device manager, lease manager, auth surface, and SIGHUP reload path. Default
+  builds expose 26 tools; `--no-default-features` retains the 17-tool
+  Junos-only surface.
+- **Operational controls** — per-router concurrency, per-token session and RPS
+  limits, strict global session admission, bounded Prometheus metrics, and
+  optional native journald audit fan-out.
+- **Security and packaging** — scoped router-list results, cross-process
+  destructive-operation leases, container SCP support, non-root image runtime,
+  process healthchecks, and package upgrade coverage.
+- **Split-service migration** — upgrades remove `rust-srxmcp`, its systemd unit,
+  and port 30032 while preserving support bundles. Deprecated `JMCP_SRX_*`
+  aliases are accepted for v0.8.0 only.
 
 ## Blocklist guardrails (v0.2)
 
