@@ -8,14 +8,14 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
-- **#150 - optional per-token request-rate limiting.** Both streamable-HTTP
-  endpoints can enforce a continuously refilled token bucket for each exact
+- **#150 - optional per-token request-rate limiting.** The streamable-HTTP
+  endpoint can enforce a continuously refilled token bucket for each exact
   authenticated token name using configurable whole-number RPS and burst
   knobs. The limiter is disabled by default; exhaustion returns stable `429`
   JSON with `Retry-After`, runs before existing concurrency/session gates, and
   exports the bounded `token_rate` limit metric without caller labels.
 
-- **#153 - native journald audit sink.** Both binaries can opt into direct,
+- **#153 - native journald audit sink.** The server can opt into direct,
   structured journald fan-out with `--audit-journald`; only `target="audit"`
   events are routed, fields use a stable `AUDIT_` namespace, and an unavailable
   journal fails startup instead of silently dropping the configured sink.
@@ -31,11 +31,39 @@ All notable user-facing changes are recorded here. Format loosely follows
   initialize admission, stable `token_session_cap` 503 responses, token isolation,
   and capacity returned on close or reap.
 
-- **#147 - per-router HTTP concurrency limits.** Both streamable-HTTP endpoints
-  now cap concurrent work per exact router name at 4 by default (`0` disables),
+- **#147 - per-router HTTP concurrency limits.** The streamable-HTTP endpoint
+  now caps concurrent work per exact router name at 4 by default (`0` disables),
   with immediate `503` + `Retry-After: 1` load shedding. Multi-router calls hold
   one slot per unique target, and destructive calls count once while waiting for
   or holding the existing cross-process device lease.
+
+### Changed
+
+- **#163 - one Junos and SRX server.** `rust-junosmcp` now registers the
+  complete 26-tool Junos/SRX surface on one MCP endpoint. The default feature
+  set includes `tls` and `srx`; Junos-only builds remain available with
+  `--no-default-features` (or `--no-default-features --features tls`).
+- The SRX workflow crate is now `rust-junosmcp-srx-core`, HTTP resource limits
+  live in `rust-junosmcp-core`, and every surviving workspace package is
+  version `0.8.0`.
+- Runtime configuration uses one canonical `JMCP_*` environment namespace.
+  Package upgrades remove the retired executable, service unit, and enabled
+  service link while preserving existing support bundles below
+  `/var/lib/jmcp/srx-staging/bundles`.
+
+### Deprecated
+
+- Existing `JMCP_SRX_*` environment names are accepted as fallbacks for the
+  `0.8.0` release only and emit migration warnings. Explicit command-line or
+  canonical `JMCP_*` values take precedence. `JMCP_SRX_HTTP_PORT` is ignored
+  because there is no second listener.
+
+### Removed
+
+- The standalone `rust-srxmcp` executable, `rust-srxmcp.service`, and legacy
+  `127.0.0.1:30032/mcp` endpoint. Clients now register only
+  `rust-junosmcp` at the configured listener (packaged default:
+  `127.0.0.1:30030/mcp`).
 
 ### Fixed
 

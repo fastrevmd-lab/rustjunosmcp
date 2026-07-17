@@ -31,10 +31,20 @@ pub fn binary_path() -> PathBuf {
 
 /// Build the binary if it isn't already built. Cargo no-ops when up-to-date.
 pub fn ensure_built() {
-    let status = Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .expect("cargo build");
+    let mut command = Command::new("cargo");
+    command.args(["build", "-p", "rust-junosmcp", "--no-default-features"]);
+    let features = [
+        cfg!(feature = "tls").then_some("tls"),
+        cfg!(feature = "srx").then_some("srx"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",");
+    if !features.is_empty() {
+        command.args(["--features", &features]);
+    }
+    let status = command.status().expect("cargo build");
     assert!(status.success(), "cargo build failed");
 }
 

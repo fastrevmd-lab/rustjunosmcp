@@ -2,11 +2,16 @@
 
 ## Purpose and architecture
 
-This Rust workspace implements Junos and SRX MCP servers. `rust-junosmcp-core/`
-owns device I/O and base tools, `rust-junosmcp-auth/` owns remote auth,
-`rust-junosmcp/` is the Junos server, and the `rust-srxmcp*` crates add SRX
-security operations. Inventory mutation, file transfer, configuration load and
-commit, upgrades, support bundles, and package lifecycle tools are high risk.
+This Rust workspace implements one Junos and SRX MCP server:
+
+- `rust-junosmcp/` is the unified Junos/SRX MCP server.
+- `rust-junosmcp-core/` owns device I/O, base tools, and HTTP limits.
+- `rust-junosmcp-srx-core/` owns optional SRX workflows.
+- `rust-junosmcp-auth/` is the auth security boundary.
+- `rust-junosmcp-audit/` is the audit/compliance boundary.
+
+Inventory mutation, file transfer, configuration load and commit, upgrades,
+support bundles, and package lifecycle tools are high risk.
 
 ## Setup and development
 

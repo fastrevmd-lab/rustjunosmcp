@@ -1,25 +1,59 @@
 [package]
 name        = "rust-junosmcp"
-version     = "0.7.0"
+version     = "0.8.0"
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
 authors.workspace    = true
-description = "MCP server for Juniper Junos devices, built on rustEZ."
+description = "Unified MCP server for Juniper Junos and SRX devices, built on rustEZ."
 
 [features]
-default = ["tls"]
+default = ["tls", "srx"]
 tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
+srx = ["dep:rust-junosmcp-srx-core"]
 
 [[bin]]
 name = "rust-junosmcp"
 path = "src/main.rs"
 
+# These migrated suites exercise SRX-only tools and must not be selected for
+# Junos-only builds. Keeping the requirement on each target also makes Cargo's
+# feature boundary visible to CI and downstream contributors.
+[[test]]
+name = "srx_audit"
+path = "tests/srx_audit.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_limits"
+path = "tests/srx_http_limits.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_metrics"
+path = "tests/srx_http_metrics.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_smoke"
+path = "tests/srx_http_smoke.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_http_tls"
+path = "tests/srx_http_tls.rs"
+required-features = ["srx"]
+
+[[test]]
+name = "srx_live_smoke"
+path = "tests/srx_live_smoke.rs"
+required-features = ["srx"]
+
 [dependencies]
 rust-junosmcp-core = { path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
-rust-junosmcp-limits = { path = "../rust-junosmcp-limits" }
 rust-junosmcp-audit = { path = "../rust-junosmcp-audit" }
+rust-junosmcp-srx-core = { path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
 serde              = { workspace = true }
@@ -29,7 +63,7 @@ tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 thiserror          = { workspace = true }
 sha2               = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive"] }
 rmcp = { version = "2", features = [
     "server",
     "macros",

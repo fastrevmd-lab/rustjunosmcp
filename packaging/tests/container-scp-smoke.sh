@@ -38,7 +38,8 @@ for expected in \
     '"--known-hosts-file"' \
     '"/var/lib/jmcp/known_hosts"' \
     '"--device-lease-dir"' \
-    '"/var/lib/jmcp/device-leases"'; do
+    '"/var/lib/jmcp/device-leases"' \
+    '"Healthcheck":{"Test":["CMD-SHELL","kill -0 1"]'; do
     [[ "$image_config" == *"$expected"* ]] || {
         echo "application image config missing: $expected" >&2
         exit 1
@@ -48,6 +49,14 @@ done
 echo ">> Building isolated OpenSSH/SCP fixture"
 docker build --tag "$FIXTURE_IMAGE" \
     "$ROOT/packaging/tests/fixtures/scp-server"
+
+fixture_image_config="$(docker image inspect --format '{{json .Config}}' "$FIXTURE_IMAGE")"
+# The image metadata must retain this command literally; do not expand $(...).
+# shellcheck disable=SC2016
+[[ "$fixture_image_config" == *'"Healthcheck":{"Test":["CMD-SHELL","test -s /run/sshd.pid && kill -0 \"$(cat /run/sshd.pid)\""]'* ]] || {
+    echo "SCP fixture image config missing healthcheck" >&2
+    exit 1
+}
 
 ssh-keygen -q -t ed25519 -N '' -f "$WORK/client_key"
 printf '%s\n' 'container upload payload' >"$WORK/upload.bin"

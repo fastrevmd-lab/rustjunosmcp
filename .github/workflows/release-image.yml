@@ -1,8 +1,7 @@
 name: Release image
 
-# Build and publish the rust-junosmcp container image to GHCR on every
-# junos version tag (v1.2.3). srxmcp-v* tags are intentionally NOT matched —
-# this Dockerfile builds only the rust-junosmcp binary.
+# Build and publish the default-feature Junos/SRX rust-junosmcp image to GHCR
+# on every version tag (v1.2.3).
 on:
   push:
     tags:

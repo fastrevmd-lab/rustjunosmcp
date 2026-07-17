@@ -3,7 +3,7 @@
 use crate::store::{ScopeSet, TokenEntry, TokenStore};
 use std::path::Path;
 
-/// Generic Junos endpoint tool names. The server crate has a drift test that
+/// Generic Junos tool names. The server crate has a drift test that
 /// compares its `#[tool]` surface against this registry.
 pub const JUNOS_TOOLS: &[&str] = &[
     "add_device",
@@ -25,8 +25,8 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "upgrade_junos",
 ];
 
-/// SRX endpoint tool names. Kept separate so each endpoint can enforce drift
-/// checks while both binaries continue to share one token file.
+/// SRX workflow tool names. Kept separate so the unified registry can enforce
+/// per-domain drift checks while using one token file.
 pub const SRX_TOOLS: &[&str] = &[
     "check_srx_feature_license",
     "collect_jtac_support_bundle",

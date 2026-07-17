@@ -25,19 +25,16 @@ target_path() {
 
 required_files=(
     usr/local/bin/rust-junosmcp
-    usr/local/bin/rust-srxmcp
     etc/jmcp/devices.json.example
     etc/systemd/system/rust-junosmcp.service
-    etc/systemd/system/rust-srxmcp.service
 )
 
 # Validate the complete payload before creating users, directories, or files.
 for relative in "${required_files[@]}"; do
     [[ -s "$PACKAGE_ROOT/$relative" ]] || fail "package payload is missing $relative"
 done
-for relative in usr/local/bin/rust-junosmcp usr/local/bin/rust-srxmcp; do
-    [[ -x "$PACKAGE_ROOT/$relative" ]] || fail "package binary is not executable: $relative"
-done
+[[ -x "$PACKAGE_ROOT/usr/local/bin/rust-junosmcp" ]] \
+    || fail "package binary is not executable: usr/local/bin/rust-junosmcp"
 
 [[ "$INSTALL_ROOT" == /* ]] || fail "JMCP_INSTALL_ROOT must be an absolute path"
 if [[ "$INSTALL_ROOT" != "/" && "$SKIP_USER_SETUP" != "1" ]]; then
@@ -63,15 +60,32 @@ JUNOS_STAGING_DIR="$STATE_DIR/staging"
 SRX_STAGING_DIR="$STATE_DIR/srx-staging/bundles"
 DEVICE_LEASE_DIR="$STATE_DIR/device-leases"
 
+remove_legacy_runtime() {
+    local legacy_binary legacy_unit
+    legacy_binary="$(target_path /usr/local/bin/rust-srxmcp)"
+    legacy_unit="$(target_path /etc/systemd/system/rust-srxmcp.service)"
+
+    if [[ "$INSTALL_ROOT" == "/" && -e "$legacy_unit" ]]; then
+        command -v systemctl >/dev/null 2>&1 \
+            || fail "systemctl is required to retire rust-srxmcp.service"
+        if systemctl is-active --quiet rust-srxmcp.service; then
+            systemctl stop rust-srxmcp.service
+        fi
+        systemctl disable rust-srxmcp.service >/dev/null
+    fi
+
+    rm -f "$legacy_binary" "$legacy_unit"
+}
+
 install -d -m 0755 "$BIN_DIR" "$UNIT_DIR"
 install -d -m 0750 "$CONFIG_DIR" "$STATE_DIR" "$JUNOS_STAGING_DIR" "$SRX_STAGING_DIR"
 install -d -m 0700 "$DEVICE_LEASE_DIR"
 
+remove_legacy_runtime
+
 install -m 0755 "$PACKAGE_ROOT/usr/local/bin/rust-junosmcp" "$BIN_DIR/rust-junosmcp"
-install -m 0755 "$PACKAGE_ROOT/usr/local/bin/rust-srxmcp" "$BIN_DIR/rust-srxmcp"
 install -m 0644 "$PACKAGE_ROOT/etc/jmcp/devices.json.example" "$CONFIG_DIR/devices.json.example"
 install -m 0644 "$PACKAGE_ROOT/etc/systemd/system/rust-junosmcp.service" "$UNIT_DIR/rust-junosmcp.service"
-install -m 0644 "$PACKAGE_ROOT/etc/systemd/system/rust-srxmcp.service" "$UNIT_DIR/rust-srxmcp.service"
 
 if [[ ! -e "$CONFIG_DIR/devices.json" ]]; then
     install -m 0600 "$PACKAGE_ROOT/etc/jmcp/devices.json.example" "$CONFIG_DIR/devices.json"
@@ -100,6 +114,5 @@ if [[ "$INSTALL_ROOT" == "/" && "$SKIP_SYSTEMD_RELOAD" != "1" ]]; then
 fi
 
 echo ">> RustJunosMCP package installed."
-echo ">> Edit $CONFIG_DIR/devices.json and mint a bearer token before enabling services."
-echo ">> Junos endpoint: http://127.0.0.1:30030/mcp"
-echo ">> SRX endpoint:   http://127.0.0.1:30032/mcp"
+echo ">> Edit $CONFIG_DIR/devices.json and mint a bearer token before enabling the service."
+echo ">> Junos/SRX endpoint: http://127.0.0.1:30030/mcp"

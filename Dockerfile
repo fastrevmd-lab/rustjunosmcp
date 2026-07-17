@@ -23,12 +23,16 @@ RUN apt-get update \
         --no-create-home --shell /usr/sbin/nologin jmcp \
     && install -d -m 0750 -o 65532 -g 65532 \
         /etc/jmcp /etc/jmcp/keys /var/lib/jmcp /var/lib/jmcp/staging \
+        /var/lib/jmcp/srx-staging/bundles \
     && install -d -m 0700 -o 65532 -g 65532 /var/lib/jmcp/device-leases \
     && install -m 0600 -o 65532 -g 65532 /dev/null /var/lib/jmcp/known_hosts
 
 COPY --from=builder --chown=65532:65532 \
     /src/target/release/rust-junosmcp /usr/local/bin/rust-junosmcp
-ENV RUST_LOG=info
+ENV RUST_LOG=info \
+    JMCP_SUPPORT_BUNDLE_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles \
+    JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES=524288000
 VOLUME ["/var/lib/jmcp"]
 USER 65532:65532
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD kill -0 1
 ENTRYPOINT ["/usr/local/bin/rust-junosmcp", "-f", "/etc/jmcp/devices.json", "--staging-dir", "/var/lib/jmcp/staging", "--known-hosts-file", "/var/lib/jmcp/known_hosts", "--device-lease-dir", "/var/lib/jmcp/device-leases"]

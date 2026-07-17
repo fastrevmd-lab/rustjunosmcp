@@ -1,14 +1,15 @@
 //! Spawn the `rust-junosmcp` binary, send MCP `initialize` + `tools/list` over
-//! stdin, parse responses on stdout, assert we advertise the 17 tools.
+//! stdin, parse responses on stdout, and assert the exact configured tool set.
 
 mod common;
 use common::binary_path;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const EXPECTED_TOOLS: &[&str] = &[
+const JUNOS_TOOLS: &[&str] = &[
     "get_router_list",
     "gather_device_facts",
     "execute_junos_command",
@@ -28,14 +29,23 @@ const EXPECTED_TOOLS: &[&str] = &[
     "upgrade_junos",
 ];
 
+#[cfg(feature = "srx")]
+const SRX_TOOLS: &[&str] = &[
+    "srxmcp_status",
+    "get_chassis_cluster_status",
+    "get_srx_security_services_status",
+    "check_srx_feature_license",
+    "vpn_lifecycle_report",
+    "manage_idp_security_package",
+    "manage_appid_signature_package",
+    "validate_chassis_cluster_health",
+    "collect_jtac_support_bundle",
+];
+
 #[test]
-fn lists_seventeen_tools() {
+fn lists_expected_tools() {
     // Build first so the binary exists.
-    let status = Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .expect("cargo build");
-    assert!(status.success(), "cargo build failed");
+    common::ensure_built();
 
     // Empty inventory file is enough for `tools/list`.
     let inv = tempfile::NamedTempFile::new().unwrap();
@@ -118,30 +128,41 @@ fn lists_seventeen_tools() {
         .expect("missing /result/tools")
         .as_array()
         .unwrap();
-    let names: Vec<&str> = tools
+    let names: HashSet<&str> = tools
         .iter()
         .map(|t| t.get("name").and_then(Value::as_str).unwrap())
         .collect();
-    for expected in EXPECTED_TOOLS {
-        assert!(
-            names.contains(expected),
-            "missing tool {expected}; got {names:?}"
-        );
-    }
-    assert_eq!(
-        names.len(),
-        EXPECTED_TOOLS.len(),
-        "extra/missing tools: got {names:?}"
-    );
+    let expected: HashSet<&str> = JUNOS_TOOLS.iter().copied().collect();
+    #[cfg(feature = "srx")]
+    let expected = expected
+        .into_iter()
+        .chain(SRX_TOOLS.iter().copied())
+        .collect();
+    assert_eq!(names, expected);
+    #[cfg(feature = "srx")]
+    assert_eq!(names.len(), 26);
+    #[cfg(not(feature = "srx"))]
+    assert_eq!(names.len(), 17);
+}
+
+#[cfg(feature = "srx")]
+#[test]
+fn srx_status_allows_stdio_even_when_a_token_file_is_loaded() {
+    let inventory = common::write_inv("{}");
+    let tokens = common::write_tokens(r#"{"version":1,"tokens":[]}"#);
+    let mut server = common::spawn_stdio_server_with_args(&[
+        "--device-mapping",
+        inventory.path().to_str().unwrap(),
+        "--tokens-file",
+        tokens.path().to_str().unwrap(),
+    ]);
+    let result = common::call_tool(&mut server, "srxmcp_status", json!({}));
+    assert_eq!(result["endpoint"], "srxmcp");
 }
 
 #[test]
 fn denied_command_returns_tool_error() {
-    let status = std::process::Command::new("cargo")
-        .args(["build", "-p", "rust-junosmcp"])
-        .status()
-        .expect("cargo build");
-    assert!(status.success(), "cargo build failed");
+    common::ensure_built();
 
     // Inventory with a deny rule and one (unreachable) device. The deny
     // short-circuits before any connection attempt, so unreachability is fine.

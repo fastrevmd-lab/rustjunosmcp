@@ -6,10 +6,6 @@ and should not be duplicated as implementation checklists here.
 
 ## Review Findings Tracked As Issues
 
-- [x] [#123](https://github.com/fastrevmd-lab/RustJunosMCP/issues/123)
-  Enforce router and tool scopes in `rust-srxmcp` (critical).
-- [x] [#124](https://github.com/fastrevmd-lab/RustJunosMCP/issues/124)
-  Make the `rust-srxmcp` remote transport fail closed (critical).
 - [x] [#125](https://github.com/fastrevmd-lab/RustJunosMCP/issues/125)
   Validate support-bundle request IDs before path construction (critical).
 - [x] [#126](https://github.com/fastrevmd-lab/RustJunosMCP/issues/126)
@@ -50,7 +46,7 @@ and should not be duplicated as implementation checklists here.
   is retryable and which failures can leave device-side state behind.
 - [ ] Perform a documentation truth pass:
   - Correct stale SRX version, tool-count, and generic Junos port statements.
-  - Document the actual token and inventory reload behavior for both binaries.
+  - Document the actual token and inventory reload behavior for the unified server.
   - Remove obsolete v0.1/v0.2 packaging caveats and the stale `rmcp 0.x` comment.
   - Add a supported deployment and feature matrix for stdio, HTTP, TLS,
     container, LXC, Junos, and SRX modes.

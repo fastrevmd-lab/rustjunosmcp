@@ -16,6 +16,24 @@ pub async fn handle(
         return Err(JmcpError::InventoryReadonly);
     }
 
+    reload(args, dm).await
+}
+
+/// Re-read the already-configured inventory path from trusted process code.
+///
+/// Unlike the MCP-facing [`handle`], this operation is allowed when inventory
+/// mutation is disabled because it cannot select another path or write data.
+/// It exists for process control paths such as SIGHUP configuration refresh.
+pub async fn reload_current_from_disk(
+    dm: Arc<DeviceManager>,
+) -> Result<serde_json::Value, JmcpError> {
+    reload(ReloadDevicesArgs::default(), dm).await
+}
+
+async fn reload(
+    args: ReloadDevicesArgs,
+    dm: Arc<DeviceManager>,
+) -> Result<serde_json::Value, JmcpError> {
     let lock = dm.write_lock();
     let _guard = lock.lock().await;
 
@@ -244,6 +262,25 @@ mod tests {
         let dm = dm_at(f.path(), true);
         let r = handle(ReloadDevicesArgs::default(), dm).await;
         assert!(matches!(r, Err(JmcpError::InventoryReadonly)));
+    }
+
+    #[tokio::test]
+    async fn trusted_current_path_reload_works_when_inventory_is_readonly() {
+        let f = write_file(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = dm_at(f.path(), true);
+
+        std::fs::write(
+            f.path(),
+            r#"{"r2":{"ip":"127.0.0.2","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+
+        let result = reload_current_from_disk(dm.clone()).await.unwrap();
+        assert_eq!(result["new_router_count"], 1);
+        assert!(dm.inventory().get("r2").is_ok());
+        assert!(dm.inventory().get("r1").is_err());
     }
 
     #[tokio::test]

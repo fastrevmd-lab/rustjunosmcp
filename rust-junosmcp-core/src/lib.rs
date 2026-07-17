@@ -10,6 +10,7 @@ pub mod device_manager;
 pub mod error;
 pub mod helpers;
 pub mod inventory;
+pub mod limits;
 pub mod output;
 pub mod policy;
 pub mod tools;

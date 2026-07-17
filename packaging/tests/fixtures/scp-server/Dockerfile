@@ -12,4 +12,5 @@ COPY entrypoint.sh /usr/local/bin/scp-fixture-entrypoint
 RUN chmod 0755 /usr/local/bin/scp-fixture-entrypoint
 
 EXPOSE 22
+HEALTHCHECK --interval=2s --timeout=1s --start-period=2s --retries=15 CMD test -s /run/sshd.pid && kill -0 "$(cat /run/sshd.pid)"
 ENTRYPOINT ["/usr/local/bin/scp-fixture-entrypoint"]

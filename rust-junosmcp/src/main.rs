@@ -1,5 +1,6 @@
 mod cli;
 mod cli_validate;
+mod env_compat;
 mod http_transport;
 mod server;
 #[cfg(feature = "tls")]
@@ -7,8 +8,7 @@ mod tls;
 mod token_cmd;
 
 use anyhow::{Context, Result};
-use clap::Parser;
-use cli::{Cli, Command, Transport};
+use cli::{Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_auth::file::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, OpenSshScpRunner, Policy, TransferConfig};
@@ -17,7 +17,10 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
+    let env_compat::ParsedCli {
+        cli: args,
+        warnings,
+    } = env_compat::parse();
 
     let redaction = if args.audit_redact.trim().is_empty() {
         None
@@ -37,6 +40,7 @@ async fn main() -> Result<()> {
         journald: args.audit_journald,
     };
     rust_junosmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    env_compat::emit_warnings(&warnings);
 
     if let Some(Command::Token { action }) = args.command {
         return token_cmd::run(action);
@@ -141,6 +145,14 @@ async fn main() -> Result<()> {
         device_leases,
     };
     let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg, upgrade_cfg);
+    #[cfg(feature = "srx")]
+    let handler = handler.with_srx_runtime(
+        token_store.is_some() && matches!(args.transport, Transport::StreamableHttp),
+        rust_junosmcp_srx_core::workflows::support_bundle::SupportBundleStagingConfig::new(
+            args.support_bundle_staging_dir.clone(),
+            args.support_bundle_staging_max_bytes,
+        ),
+    );
 
     // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
     // tokens file and atomically swap the ArcSwap so subsequent requests see
@@ -166,8 +178,7 @@ async fn main() -> Result<()> {
             while hup.recv().await.is_some() {
                 tracing::info!("SIGHUP: reloading token store and inventory");
                 // Reload inventory FIRST so the token store sees current routers.
-                match rust_junosmcp_core::tools::reload_devices::handle(
-                    rust_junosmcp_core::tools::ReloadDevicesArgs::default(),
+                match rust_junosmcp_core::tools::reload_devices::reload_current_from_disk(
                     dm.clone(),
                 )
                 .await
@@ -227,7 +238,7 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let limits = rust_junosmcp_limits::LimitsConfig {
+            let limits = rust_junosmcp_core::limits::LimitsConfig {
                 max_request_body_bytes: args.max_request_body_bytes,
                 max_inflight_requests: args.max_inflight_requests,
                 max_inflight_requests_per_token: args.max_inflight_requests_per_token,

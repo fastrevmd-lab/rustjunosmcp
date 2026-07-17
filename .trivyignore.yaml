@@ -1,0 +1,13 @@
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "packaging/tests/fixtures/scp-server/Dockerfile"
+    statement: >-
+      This isolated test-only image must start sshd as root so it can create
+      host keys, bind port 22, and prepare the unprivileged fixture account.
+  - id: AVD-DS-0004
+    paths:
+      - "packaging/tests/fixtures/scp-server/Dockerfile"
+    statement: >-
+      Exposing SSH is the sole purpose of this isolated SCP compatibility
+      fixture; it is never published or used as the application image.

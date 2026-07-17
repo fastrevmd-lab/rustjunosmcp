@@ -24,16 +24,16 @@ PACKAGE_ROOT="${package_roots[0]}"
 for relative in \
     install.sh \
     usr/local/bin/rust-junosmcp \
-    usr/local/bin/rust-srxmcp \
     etc/jmcp/devices.json.example \
-    etc/systemd/system/rust-junosmcp.service \
-    etc/systemd/system/rust-srxmcp.service; do
+    etc/systemd/system/rust-junosmcp.service; do
     [[ -s "$PACKAGE_ROOT/$relative" ]] || { echo "missing package file: $relative" >&2; exit 1; }
 done
+[[ ! -e "$PACKAGE_ROOT/usr/local/bin/rust-srxmcp" ]]
+[[ ! -e "$PACKAGE_ROOT/etc/systemd/system/rust-srxmcp.service" ]]
 
 # A corrupt package must fail before creating any target state.
 cp -a "$PACKAGE_ROOT" "$WORK/bad-package"
-rm "$WORK/bad-package/usr/local/bin/rust-srxmcp"
+rm "$WORK/bad-package/usr/local/bin/rust-junosmcp"
 if JMCP_INSTALL_ROOT="$WORK/bad-root" \
     JMCP_INSTALL_SKIP_USER=1 \
     JMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
@@ -44,6 +44,12 @@ fi
 [[ ! -e "$WORK/bad-root" ]] || { echo "failed preflight changed target state" >&2; exit 1; }
 
 ROOTFS="$WORK/rootfs"
+mkdir -p "$ROOTFS/usr/local/bin" "$ROOTFS/etc/systemd/system"
+printf '%s\n' legacy-binary >"$ROOTFS/usr/local/bin/rust-srxmcp"
+printf '%s\n' legacy-unit >"$ROOTFS/etc/systemd/system/rust-srxmcp.service"
+mkdir -p "$ROOTFS/var/lib/jmcp/srx-staging/bundles"
+printf '%s\n' preserve-me >"$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
+
 run_installer() {
     JMCP_INSTALL_ROOT="$ROOTFS" \
         JMCP_INSTALL_SKIP_USER=1 \
@@ -52,6 +58,9 @@ run_installer() {
 }
 
 run_installer
+[[ ! -e "$ROOTFS/usr/local/bin/rust-srxmcp" ]]
+[[ ! -e "$ROOTFS/etc/systemd/system/rust-srxmcp.service" ]]
+grep -Fqx preserve-me "$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
 printf '%s\n' '{"preserved":"devices"}' >"$ROOTFS/etc/jmcp/devices.json"
 printf '%s\n' '{ "version": 1, "tokens": [] }' >"$ROOTFS/etc/jmcp/tokens.json"
 printf '%s\n' 'preserved-known-host' >"$ROOTFS/etc/jmcp/known_hosts"
@@ -59,6 +68,9 @@ devices_before="$(sha256sum "$ROOTFS/etc/jmcp/devices.json")"
 tokens_before="$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")"
 known_hosts_before="$(sha256sum "$ROOTFS/etc/jmcp/known_hosts")"
 run_installer
+[[ ! -e "$ROOTFS/usr/local/bin/rust-srxmcp" ]]
+[[ ! -e "$ROOTFS/etc/systemd/system/rust-srxmcp.service" ]]
+grep -Fqx preserve-me "$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
 [[ "$devices_before" == "$(sha256sum "$ROOTFS/etc/jmcp/devices.json")" ]]
 [[ "$tokens_before" == "$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")" ]]
 [[ "$known_hosts_before" == "$(sha256sum "$ROOTFS/etc/jmcp/known_hosts")" ]]
@@ -72,17 +84,16 @@ run_installer
 [[ "$(stat -c '%a' "$ROOTFS/var/lib/jmcp/device-leases")" == "700" ]]
 
 JUNOS_UNIT="$ROOTFS/etc/systemd/system/rust-junosmcp.service"
-SRX_UNIT="$ROOTFS/etc/systemd/system/rust-srxmcp.service"
 grep -Fq -- '--transport streamable-http' "$JUNOS_UNIT"
 grep -Fq -- '--tokens-file /etc/jmcp/tokens.json' "$JUNOS_UNIT"
 grep -Fq -- '--host 127.0.0.1' "$JUNOS_UNIT"
 grep -Fq -- '--device-lease-dir /var/lib/jmcp/device-leases' "$JUNOS_UNIT"
-grep -Fq 'JMCP_SRX_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles' "$SRX_UNIT"
-grep -Fq 'JMCP_DEVICE_LEASE_DIR=/var/lib/jmcp/device-leases' "$SRX_UNIT"
+grep -Fq 'JMCP_SUPPORT_BUNDLE_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles' "$JUNOS_UNIT"
+grep -Fq 'JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES=524288000' "$JUNOS_UNIT"
 printf '%s\n' 'jmcp:x:998:998:RustJunosMCP:/var/lib/jmcp:/usr/sbin/nologin' >"$ROOTFS/etc/passwd"
 printf '%s\n' 'jmcp:x:998:' >"$ROOTFS/etc/group"
 systemd-analyze verify --recursive-errors=no --root="$ROOTFS" \
-    rust-junosmcp.service rust-srxmcp.service
+    rust-junosmcp.service
 
 # Start the installed binary and perform an authenticated MCP initialize.
 cat >"$ROOTFS/etc/jmcp/devices.json" <<'JSON'
@@ -143,5 +154,32 @@ if [[ "$HTTP_STATUS" != "200" ]] || ! grep -Fq '"result"' "$WORK/body"; then
     echo "MCP initialize failed with HTTP $HTTP_STATUS" >&2
     exit 1
 fi
+
+SESSION_ID="$(awk -F ': *' 'tolower($1) == "mcp-session-id" {print $2}' "$WORK/headers" | tr -d '\r' | tail -n 1)"
+[[ -n "$SESSION_ID" ]] || { echo "initialize did not return Mcp-Session-Id" >&2; exit 1; }
+
+INITIALIZED_STATUS="$(curl -sS \
+    -o "$WORK/initialized-body" \
+    -w '%{http_code}' \
+    -H "Authorization: Bearer $SECRET" \
+    -H "Mcp-Session-Id: $SESSION_ID" \
+    -H 'Accept: application/json, text/event-stream' \
+    -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    "http://127.0.0.1:$PORT/mcp")"
+[[ "$INITIALIZED_STATUS" == "200" || "$INITIALIZED_STATUS" == "202" ]]
+
+TOOLS_STATUS="$(curl -sS \
+    -o "$WORK/tools-body" \
+    -w '%{http_code}' \
+    -H "Authorization: Bearer $SECRET" \
+    -H "Mcp-Session-Id: $SESSION_ID" \
+    -H 'Accept: application/json, text/event-stream' \
+    -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+    "http://127.0.0.1:$PORT/mcp")"
+[[ "$TOOLS_STATUS" == "200" ]]
+grep -Fq '"name":"get_router_list"' "$WORK/tools-body"
+grep -Fq '"name":"srxmcp_status"' "$WORK/tools-body"
 
 echo ">> Package layout, idempotence, units, and MCP endpoint passed"

@@ -1,6 +1,6 @@
 [package]
 name        = "rust-junosmcp-core"
-version     = "0.7.0"
+version     = "0.8.0"
 edition.workspace     = true
 license.workspace     = true
 repository.workspace  = true
@@ -24,6 +24,20 @@ minijinja    = { workspace = true }
 arc-swap     = { workspace = true }
 tempfile     = { workspace = true }
 sha2         = { workspace = true }
+axum         = { workspace = true }
+tower-http   = { workspace = true, features = ["limit"] }
+http         = { workspace = true }
+http-body    = { workspace = true }
+http-body-util = { workspace = true }
+rmcp         = { version = "2", features = ["server", "transport-streamable-http-server"] }
+rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+dashmap      = { workspace = true }
+futures      = "0.3"
+metrics                     = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+
+[dev-dependencies]
+tower        = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

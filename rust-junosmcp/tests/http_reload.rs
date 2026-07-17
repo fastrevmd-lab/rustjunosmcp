@@ -7,6 +7,8 @@
 
 mod common;
 use common::*;
+#[cfg(feature = "srx")]
+use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -104,5 +106,106 @@ fn sighup_reloads_token_store() {
         last_code, 401,
         "revoked token should be 401 within 5s of SIGHUP reload (body: {})",
         last_body
+    );
+}
+
+#[cfg(feature = "srx")]
+#[test]
+fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let inv = dir.path().join("inv.json");
+    std::fs::write(
+        &inv,
+        r#"{"r1":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    )
+    .unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret =
+        TokenStoreFile::add(&tokens, "all", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+
+    // This matches the packaged service's inventory policy.
+    let server = spawn_with_auth_args(&inv, &tokens, &["--inventory-readonly"]);
+    let session = initialize(server.port, secret.expose());
+
+    let router_list = |id| {
+        http_post(
+            server.port,
+            Some(secret.expose()),
+            Some(&session),
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+                "name":"get_router_list","arguments":{}
+            }}),
+        )
+    };
+    let before = router_list(2);
+    assert!(
+        before.body.to_string().contains("r1"),
+        "body: {}",
+        before.body
+    );
+    assert!(
+        !before.body.to_string().contains("r2"),
+        "body: {}",
+        before.body
+    );
+
+    std::fs::write(
+        &inv,
+        r#"{"r2":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    )
+    .unwrap();
+    let rc = unsafe { libc::kill(server.child.id() as i32, libc::SIGHUP) };
+    assert_eq!(rc, 0, "kill(SIGHUP) failed");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let after = loop {
+        let response = router_list(3);
+        let body = response.body.to_string();
+        if body.contains("r2") && !body.contains("r1") {
+            break response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "inventory was not refreshed within 5s: {}",
+            response.body
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(after.code, 200, "body: {}", after.body);
+
+    // The SRX adapter must see the same refreshed DeviceManager. A connection
+    // error is expected for the local closed port; an unknown-router error is
+    // evidence that SRX retained stale inventory.
+    let srx = http_post(
+        server.port,
+        Some(secret.expose()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
+            "name":"check_srx_feature_license",
+            "arguments":{"router":"r2","feature":"idp"}
+        }}),
+    );
+    let srx_body = srx.body.to_string();
+    assert!(srx_body.contains("opening device"), "body: {srx_body}");
+    assert!(
+        !srx_body.contains("not found in device mapping"),
+        "SRX used stale inventory: {srx_body}"
+    );
+
+    // SIGHUP is a trusted re-read only; the externally callable mutation tool
+    // remains denied under the packaged read-only policy.
+    let external_reload = http_post(
+        server.port,
+        Some(secret.expose()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
+            "name":"reload_devices","arguments":{}
+        }}),
+    );
+    assert!(
+        external_reload.body.to_string().contains("read-only"),
+        "body: {}",
+        external_reload.body
     );
 }

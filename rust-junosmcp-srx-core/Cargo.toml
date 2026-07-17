@@ -1,0 +1,30 @@
+[package]
+name        = "rust-junosmcp-srx-core"
+version     = "0.8.0"
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+description = "SRX-specific workflow core for rust-junosmcp."
+
+[dependencies]
+rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+rustez             = { workspace = true }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+schemars           = { workspace = true }
+quick-xml          = "0.41"
+roxmltree          = "0.20"
+time               = { version = "0.3", features = ["serde", "parsing", "formatting", "macros"] }
+tokio              = { workspace = true, features = ["macros", "rt", "time"] }
+uuid               = { version = "1", features = ["v4"] }
+sha2               = "0.10"
+rand                = { workspace = true }
+base64ct            = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions  = "1"
+tempfile            = { workspace = true }
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
