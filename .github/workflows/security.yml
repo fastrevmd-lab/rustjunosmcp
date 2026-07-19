@@ -8,6 +8,9 @@ on:
 
 permissions:
   contents: read
+  # rustsec/audit-check publishes its findings as a check run. Without this the
+  # action fails with "Resource not accessible by integration" on push events.
+  checks: write
 
 concurrency:
   group: security-${{ github.workflow }}-${{ github.ref }}

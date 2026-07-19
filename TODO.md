@@ -6,25 +6,48 @@ and should not be duplicated as implementation checklists here.
 
 ## Review Findings Tracked As Issues
 
-- [x] [#125](https://github.com/fastrevmd-lab/RustJunosMCP/issues/125)
+- [x] [#125](https://github.com/fastrevmd-lab/rustjunosmcp/issues/125)
   Validate support-bundle request IDs before path construction (critical).
-- [x] [#126](https://github.com/fastrevmd-lab/RustJunosMCP/issues/126)
+- [x] [#126](https://github.com/fastrevmd-lab/rustjunosmcp/issues/126)
   Guarantee candidate cleanup and surface cleanup failures (high).
-- [x] [#127](https://github.com/fastrevmd-lab/RustJunosMCP/issues/127)
+- [x] [#127](https://github.com/fastrevmd-lab/rustjunosmcp/issues/127)
   Make the published container support SCP file tools (high).
-- [x] [#128](https://github.com/fastrevmd-lab/RustJunosMCP/issues/128)
+- [x] [#128](https://github.com/fastrevmd-lab/rustjunosmcp/issues/128)
   Repair and test LXC and systemd packaging (high).
-- [x] [#129](https://github.com/fastrevmd-lab/RustJunosMCP/issues/129)
+- [x] [#129](https://github.com/fastrevmd-lab/rustjunosmcp/issues/129)
   Bind destructive confirmations to server-issued plans (high).
-- [x] [#130](https://github.com/fastrevmd-lab/RustJunosMCP/issues/130)
+- [x] [#130](https://github.com/fastrevmd-lab/rustjunosmcp/issues/130)
   Filter `get_router_list` by caller router scope (medium).
-- [ ] [#131](https://github.com/fastrevmd-lab/RustJunosMCP/issues/131)
+- [x] [#131](https://github.com/fastrevmd-lab/rustjunosmcp/issues/131)
   Add HTTP resource and session limits (medium).
-- [ ] [#132](https://github.com/fastrevmd-lab/RustJunosMCP/issues/132)
+- [x] [#132](https://github.com/fastrevmd-lab/rustjunosmcp/issues/132)
   Complete caller-attributed audit coverage (medium).
-- [ ] [#133](https://github.com/fastrevmd-lab/RustJunosMCP/issues/133)
+- [x] [#133](https://github.com/fastrevmd-lab/rustjunosmcp/issues/133)
   Update `anyhow` to 1.0.103 for RUSTSEC-2026-0190
   (minor/informational).
+
+Post-0.8.0 hardening issues, all closed and shipped in `0.8.0`:
+[#147](https://github.com/fastrevmd-lab/rustjunosmcp/issues/147) per-router
+in-flight limits, [#148](https://github.com/fastrevmd-lab/rustjunosmcp/issues/148)
+per-token session caps,
+[#149](https://github.com/fastrevmd-lab/rustjunosmcp/issues/149) Prometheus
+`/metrics`, [#150](https://github.com/fastrevmd-lab/rustjunosmcp/issues/150)
+per-token RPS rate limiting,
+[#151](https://github.com/fastrevmd-lab/rustjunosmcp/issues/151) session-cap
+overshoot race, [#153](https://github.com/fastrevmd-lab/rustjunosmcp/issues/153)
+native journald audit sink,
+[#154](https://github.com/fastrevmd-lab/rustjunosmcp/issues/154) audit log
+rotation, [#155](https://github.com/fastrevmd-lab/rustjunosmcp/issues/155)
+`error_kind` taxonomy,
+[#156](https://github.com/fastrevmd-lab/rustjunosmcp/issues/156) per-field audit
+redaction, and
+[#163](https://github.com/fastrevmd-lab/rustjunosmcp/issues/163) the unified
+Junos/SRX server.
+
+The one open tracking issue is
+[#110](https://github.com/fastrevmd-lab/rustjunosmcp/issues/110): `russh`
+0.61.2 pulls prerelease (`-rc`) crypto into the SSH transport. Revisit when
+0.61.x stabilizes.
 
 ## Now: Protocol And Product Quality
 
@@ -53,10 +76,13 @@ and should not be duplicated as implementation checklists here.
 - [ ] Declare and test the minimum supported Rust version with
   `workspace.package.rust-version`; add missing crate descriptions, keywords,
   categories, and documentation links before publishing crates.
-- [ ] Add dependency policy tooling such as `cargo-deny` for advisories, yanked
-  crates, duplicate versions, licenses, sources, and accidental git dependencies.
-  Resolve the currently yanked transitive AES release when its dependency chain
-  permits a focused update.
+- [ ] Finish dependency policy tooling. The `security` workflow (#168) already
+  runs `cargo-audit` for advisories and yanked crates plus `cargo-deny check
+  bans sources` for duplicate versions, sources, and accidental git
+  dependencies. Still missing: a checked-in `deny.toml` (the action currently
+  runs on defaults, so the policy is implicit and unreviewable) and a `licenses`
+  check. Resolve the currently yanked transitive AES release (`aes 0.9.0`) when
+  its dependency chain permits a focused update.
 
 ## Next 1-3 Months: Operations And Safety
 
