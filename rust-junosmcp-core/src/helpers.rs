@@ -52,9 +52,10 @@ pub fn validate_input_length(field_name: &str, value: &str) -> Result<(), JmcpEr
     Ok(())
 }
 
-/// Clamp an LLM-provided rollback version to the Junos-supported range 1..=49.
+/// Validate an LLM-provided rollback version to the Junos-supported range 0..=49.
+/// 0 = candidate vs committed (what is staged now); N>=1 = committed vs Nth-previous.
 pub fn validate_rollback_version(v: i64) -> Result<u32, JmcpError> {
-    if (1..=49).contains(&v) {
+    if (0..=49).contains(&v) {
         Ok(v as u32)
     } else {
         Err(JmcpError::BadRollbackVersion(v))
@@ -96,9 +97,8 @@ mod tests {
     }
 
     #[test]
-    fn rollback_version_rejects_zero() {
-        let r = validate_rollback_version(0);
-        assert!(matches!(r, Err(JmcpError::BadRollbackVersion(0))));
+    fn rollback_version_accepts_zero() {
+        assert_eq!(validate_rollback_version(0).unwrap(), 0);
     }
 
     #[test]

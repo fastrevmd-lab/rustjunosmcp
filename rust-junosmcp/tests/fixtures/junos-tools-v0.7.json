@@ -456,7 +456,7 @@
           "type": "string"
         },
         "version": {
-          "description": "Rollback version to compare against (1-49).",
+          "description": "Rollback version to compare against (0-49). 0 = candidate vs committed (what is staged now); N>=1 = committed vs the Nth-previous commit.",
           "type": "integer",
           "format": "int64",
           "default": 1

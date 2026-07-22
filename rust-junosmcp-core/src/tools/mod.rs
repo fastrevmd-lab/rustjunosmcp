@@ -110,7 +110,7 @@ pub struct GetConfigArgs {
 pub struct ConfigDiffArgs {
     #[serde(alias = "router")]
     pub router_name: String,
-    /// Rollback version to compare against (1-49).
+    /// Rollback version to compare against (0-49). 0 = candidate vs committed (what is staged now); N>=1 = committed vs the Nth-previous commit.
     #[serde(default = "default_version")]
     pub version: i64,
     /// Connection timeout in seconds.

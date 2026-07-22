@@ -192,7 +192,7 @@ pub async fn run(
     };
     let cluster_snapshot = cluster_status_resp.and_then(|r| match r.state {
         crate::SrxState::Active => r.data,
-        crate::SrxState::NotConfigured => None,
+        crate::SrxState::NotConfigured | crate::SrxState::Error => None,
     });
 
     // Run all 7 checks in declaration order. Each check is tolerant of
