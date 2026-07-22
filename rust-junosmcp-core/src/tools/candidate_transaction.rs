@@ -152,6 +152,26 @@ async fn execute<B: CandidateBackend>(
     cleanup_timeout: Duration,
     ct: &CancellationToken,
 ) -> Execution {
+    // discard_candidate recovers a candidate left dirty. Junos <lock> of the
+    // candidate fails with "configuration database modified" when uncommitted
+    // changes exist — the exact state discard must clear — so discard must NOT
+    // lock. It reverts the SHARED candidate directly with rollback 0
+    // (equivalent to the CLI `configure; rollback 0; exit`) and opens no
+    // private database, so the shared dirty changes are the ones cleared (#176).
+    if matches!(request.mode, CandidateMode::Discard) {
+        return match run_step(deadline, operation_timeout, ct, backend.rollback()).await {
+            Ok(()) => Execution {
+                result: Ok(CandidateResult::Discarded),
+                reusable: true, // clean session: never locked, candidate reverted
+            },
+            Err(error) => Execution {
+                // Uncertain remote state (or dropped RPC): close the session.
+                result: Err(error),
+                reusable: false,
+            },
+        };
+    }
+
     let lock = run_step(deadline, operation_timeout, ct, backend.lock()).await;
     if let Err(primary) = lock {
         if matches!(primary, JmcpError::Cancelled | JmcpError::Timeout(_)) {
@@ -208,10 +228,6 @@ async fn primary_operation<B: CandidateBackend>(
     ct: &CancellationToken,
     committed: &mut bool,
 ) -> Result<CandidateResult, JmcpError> {
-    if matches!(request.mode, CandidateMode::Discard) {
-        return Ok(CandidateResult::Discarded);
-    }
-
     let payload = request.payload.ok_or_else(|| {
         JmcpError::Validation("candidate transaction requires a configuration payload".into())
     })?;
@@ -259,7 +275,9 @@ async fn primary_operation<B: CandidateBackend>(
                 }),
             }
         }
-        CandidateMode::Discard => unreachable!("discard returned before payload handling"),
+        CandidateMode::Discard => {
+            unreachable!("Discard is fully handled in execute() before primary_operation")
+        }
     }
 }
 
@@ -518,9 +536,12 @@ mod tests {
             backend.close_tainted_session();
         }
         let mut next = FakeBackend::new(state);
+        // Use dry_run as the probe: discard no longer locks, so it would not
+        // verify that the lock is available. dry_run locks/unlocks like other
+        // locking operations.
         let result = run_fake(
             &mut next,
-            discard_request(),
+            dry_run_request(),
             Duration::from_secs(1),
             Duration::from_millis(50),
             &CancellationToken::new(),
@@ -690,5 +711,71 @@ mod tests {
             .events
             .ends_with(&[Op::Rollback, Op::Unlock]));
         assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
+    }
+
+    #[tokio::test]
+    async fn discard_reverts_dirty_candidate_without_locking() {
+        let state = Arc::new(Mutex::new(DeviceState {
+            dirty: true,
+            ..Default::default()
+        }));
+        let mut backend = FakeBackend::new(state.clone());
+        let execution = run_fake(
+            &mut backend,
+            discard_request(),
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &CancellationToken::new(),
+        )
+        .await;
+
+        assert!(matches!(execution.result, Ok(CandidateResult::Discarded)));
+        assert!(execution.reusable);
+        let events = state.lock().unwrap().events.clone();
+        assert_eq!(events, vec![Op::Rollback]);
+        assert!(!events.contains(&Op::Lock));
+        assert!(!events.contains(&Op::Unlock));
+        assert!(!state.lock().unwrap().dirty);
+    }
+
+    #[tokio::test]
+    async fn discard_succeeds_even_when_lock_would_fail() {
+        // Regression guard for #176: prove discard works when lock would fail
+        // (dirty candidate causes "configuration database modified" from lock).
+        let state = Arc::new(Mutex::new(DeviceState {
+            dirty: true,
+            ..Default::default()
+        }));
+        let mut backend = FakeBackend::new(state.clone()).failing(&[Op::Lock]);
+        let execution = run_fake(
+            &mut backend,
+            discard_request(),
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &CancellationToken::new(),
+        )
+        .await;
+
+        assert!(matches!(execution.result, Ok(CandidateResult::Discarded)));
+        let events = state.lock().unwrap().events.clone();
+        assert!(!events.contains(&Op::Lock), "discard must not call lock");
+        assert!(!state.lock().unwrap().dirty);
+    }
+
+    #[tokio::test]
+    async fn discard_rollback_failure_taints_session() {
+        let state = Arc::new(Mutex::new(DeviceState::default()));
+        let mut backend = FakeBackend::new(state.clone()).failing(&[Op::Rollback]);
+        let execution = run_fake(
+            &mut backend,
+            discard_request(),
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &CancellationToken::new(),
+        )
+        .await;
+
+        assert!(execution.result.is_err());
+        assert!(!execution.reusable);
     }
 }

@@ -1,6 +1,7 @@
 //! `discard_candidate` — discard uncommitted candidate config (rollback 0),
 //! returning the candidate to the running config. Never changes the running
-//! config. Recovers a candidate left dirty ("configuration database modified").
+//! config. Operates lock-free on the shared candidate to recover a candidate
+//! left dirty ("configuration database modified").
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
