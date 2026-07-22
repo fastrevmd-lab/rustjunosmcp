@@ -46,21 +46,23 @@ Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
 on sequential commands to the same router. The batch tool runs routers in
 parallel with a configurable concurrency cap.
 
-> ## v0.8.0 released
+> ## v0.9.0 released
 >
-> One `rust-junosmcp` binary and endpoint now serve Junos and SRX. Default
-> builds expose the complete 26-tool surface; Junos-only deployments retain
-> the 17-tool surface with `--no-default-features`. This release also adds
-> per-router concurrency limits, per-token session and request-rate limits,
-> Prometheus metrics, native journald audit output, stricter global session
-> admission, scoped router-list results, and container SCP support.
+> Adds the **`rollback_config`** tool — load a Junos rollback archive
+> (rollback N) into the candidate and preview or commit it — bringing the
+> surface to 27 tools (18 Junos-only with `--no-default-features`). Also:
+> server-side `| match` / `| except` filtering (the `<command>` RPC silently
+> dropped them, a false negative for audits), `junos_config_diff` support for
+> `rollback 0` ("what is staged now?"), a three-way `commit_check_config`
+> `outcome` that never mistakes a multi-RE chassis-cluster parse failure for an
+> invalid config, a `discard_candidate` that recovers a dirty candidate, and
+> SRX services-status that reports a broken health check as `error` rather than
+> `not_configured`.
 >
-> Upgrades retire the standalone `rust-srxmcp` binary, service, and port 30032
-> while preserving support bundles. Deprecated `JMCP_SRX_*` aliases remain for
-> this release only; `JMCP_SRX_HTTP_PORT` is ignored because there is one
-> listener.
+> Security: the SSH transport moves off prerelease RustCrypto — `russh 0.62`
+> drops the `-rc` crypto crates in the lock from 13 to 3.
 >
-> See the [v0.8.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.8.0).
+> See the [v0.9.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.9.0).
 
 ## Feature scope
 
@@ -150,6 +152,25 @@ parallel with a configurable concurrency cap.
 - **Split-service migration** — upgrades remove `rust-srxmcp`, its systemd unit,
   and port 30032 while preserving support bundles. Deprecated `JMCP_SRX_*`
   aliases are accepted for v0.8.0 only.
+
+### v0.9 (released)
+
+- **`rollback_config` tool** — load a Junos rollback archive (rollback N, 0–49)
+  into the candidate and preview (default) or commit it, with confirmed-commit
+  support. Tool count: 26 → 27 (17 → 18 Junos-only).
+- **Correct pipe filtering** — `| match` / `| except` are applied server-side;
+  the `<command>` RPC silently dropped them, so filtered config queries had
+  returned the full config (a silent audit false negative).
+- **Safer config verbs** — `junos_config_diff` accepts `rollback 0`
+  (candidate vs running); `commit_check_config` reports a three-way `outcome`
+  (`valid` / `invalid` / `check_failed`) so an inconclusive multi-RE cluster
+  check is never read as an invalid config; `discard_candidate` recovers a
+  dirty candidate lock-free.
+- **Clearer diagnostics** — SRX services-status reports a failed health-check
+  RPC as `error`, not `not_configured`; router-resolution failures log whether
+  a name is unknown or out-of-scope (client response unchanged).
+- **Security** — SSH transport off prerelease RustCrypto (russh 0.62; `-rc`
+  crypto crates 13 → 3).
 
 ## Blocklist guardrails (v0.2)
 
@@ -316,10 +337,10 @@ before deploying. The same warnings apply.
 git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
-# Build the default 26-tool Junos/SRX server with TLS.
+# Build the default 27-tool Junos/SRX server with TLS.
 cargo build --release
 
-# Optional: build the 17-tool Junos-only server without TLS.
+# Optional: build the 18-tool Junos-only server without TLS.
 cargo build --release --no-default-features
 
 # Optional: build Junos-only with TLS.
@@ -335,8 +356,8 @@ $EDITOR devices.json   # set ip / username / auth
 
 ## Claude Desktop config
 
-One registration exposes every tool enabled in the built binary (26 with the
-default `srx` feature, or 17 in a Junos-only build):
+One registration exposes every tool enabled in the built binary (27 with the
+default `srx` feature, or 18 in a Junos-only build):
 
 ```json
 {
@@ -360,7 +381,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.8, 0.8.0).
+# Pull the prebuilt image (tags: latest, 0.9, 0.9.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -406,13 +427,13 @@ accepts requests, so a broken custom image is not advertised as transfer-ready.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.8 .
+docker build -t rust-junosmcp:0.9 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.8
+  rust-junosmcp:0.9
 ```
 
 ## LXC (Proxmox)
@@ -423,8 +444,8 @@ docker run --rm -i \
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
 # installer copies the unified binary and unit from its extracted package root.
-pct push 115 dist/rust-junosmcp_0.8.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.8.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.9.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.9.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.

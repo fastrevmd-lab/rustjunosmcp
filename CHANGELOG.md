@@ -6,6 +6,70 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-22
+
+### Added
+
+- **#178 — `rollback_config` tool.** A new MCP tool loads a Junos rollback
+  archive (rollback N, `0`–`49`) into the candidate and optionally commits it.
+  `commit=false` (default) is a safe, stateless preview — it loads the archive,
+  returns the `show | compare` diff, then discards the candidate; `commit=true`
+  commits, with confirmed-commit (auto-rollback after `confirm_timeout_mins`).
+  Because rollback restores an already-committed archive rather than
+  caller-supplied text, the config blocklist is not re-applied — the tool scope
+  is the control. This brings the Junos surface to 18 tools (27 with SRX).
+
+### Changed
+
+- **#174 / #179 — `junos_config_diff` accepts `rollback 0`.** The version range
+  widened to `0`–`49`; `0` compares the candidate against the running config
+  (“what is staged right now?”). The default stays `1` (running vs previous
+  commit).
+
+- **#173 — `get_srx_security_services_status` separates check failures from
+  absence.** A failed or unsupported RPC, an unparseable reply, or a missing
+  RE payload is now reported as a new `error` state instead of
+  `not_configured`, so a broken health check is no longer read as “this feature
+  is not deployed.” Only a genuine device rpc-error tagged `not-configured`
+  stays `not_configured`.
+
+- **#180 — `commit_check_config` distinguishes “invalid” from “could not
+  validate.”** The response now carries an `outcome` of `valid`, `invalid`, or
+  `check_failed`. Parse/transport failures — including the malformed multi-RE
+  reply Junos returns on chassis clusters — are `check_failed` (inconclusive,
+  with a `hint`), never `invalid`. Classification uses structured NETCONF
+  error-tag matching; no failure path can surface as `valid`.
+
+### Fixed
+
+- **#177 — `| match` / `| except` pipe filters are honored.** The operational
+  `<command>` RPC silently drops these filters, so a filtered
+  `show configuration | … | match X` returned the *entire* configuration — a
+  silent false negative for audits. They are now applied server-side
+  (unanchored, case-sensitive regex, with a literal fallback), alongside the
+  existing `| count` / `| last` handling.
+
+- **#176 — `discard_candidate` recovers a dirty candidate.** It no longer locks
+  the candidate first (Junos rejects locking a modified candidate with
+  “configuration database modified”); it issues `rollback 0` directly on the
+  shared candidate — the exact dirty state its description documents recovering.
+
+- **#175 — unknown-router vs out-of-scope is distinguishable in server logs.**
+  A failed router request now logs, server-side, whether the name is absent
+  from the inventory or filtered out by the caller’s token scope. The
+  client-visible response is unchanged (still indistinguishable, to avoid
+  leaking inventory to unauthorized callers).
+
+### Security
+
+- **#110 — shed prerelease crypto from the SSH transport.** Bumped
+  `rustez` / `rustnetconf` to 0.13.1, pulling **russh 0.62.4**, which moves the
+  RustCrypto SSH stack (ed25519-dalek, curve25519-dalek, elliptic-curve, ecdsa,
+  p256/p384/p521, ssh-cipher/-encoding) from prerelease (`-rc`) to stable
+  released crates. Prerelease crypto crates in the lock drop from 13 to 3
+  (residual `argon2` / `blake2` / `ssh-key`, gated on upstream `ssh-key 0.7`
+  stabilizing). Also clears the transitively-yanked `aes 0.9.0`.
+
 ## [0.8.0] — 2026-07-16
 
 ### Added

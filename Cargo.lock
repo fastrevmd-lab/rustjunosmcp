@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-audit"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "hmac 0.12.1",
  "metrics",
@@ -2684,7 +2684,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "axum",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2742,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-srx-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64ct",
  "pretty_assertions",
