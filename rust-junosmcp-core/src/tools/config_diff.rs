@@ -1,4 +1,4 @@
-//! `junos_config_diff` — compare running config against rollback N (1..=49).
+//! `junos_config_diff` — compare running config against rollback N (0..=49).
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_version_zero_before_connecting() {
+    async fn accepts_version_zero() {
         let r = handle(
             ConfigDiffArgs {
                 router_name: "r1".into(),
@@ -76,7 +76,8 @@ mod tests {
             dm(),
         )
         .await;
-        assert!(matches!(r, Err(JmcpError::BadRollbackVersion(0))));
+        // version 0 is now valid, so the error will be transport/timeout, NOT BadRollbackVersion
+        assert!(!matches!(r, Err(JmcpError::BadRollbackVersion(_))));
     }
 
     #[tokio::test]

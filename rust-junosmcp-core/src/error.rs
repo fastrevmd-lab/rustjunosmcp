@@ -26,7 +26,7 @@ pub enum JmcpError {
     #[error("invalid pfe_command: {0}")]
     BadPfeCommand(String),
 
-    #[error("rollback version {0} out of range (1..=49)")]
+    #[error("rollback version {0} out of range (0..=49)")]
     BadRollbackVersion(i64),
 
     #[error("invalid source_path [code=bad_source_path]: {0}")]
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn bad_rollback_version_shows_value_and_range() {
         let e = JmcpError::BadRollbackVersion(99);
-        assert_eq!(e.to_string(), "rollback version 99 out of range (1..=49)");
+        assert_eq!(e.to_string(), "rollback version 99 out of range (0..=49)");
     }
 
     #[test]
