@@ -115,7 +115,7 @@ pub async fn cluster_topology(
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
     let parsed = crate::workflows::cluster_status::parse(&reply)?;
     match parsed.state {
-        crate::SrxState::NotConfigured => Ok(Topology::Standalone),
+        crate::SrxState::NotConfigured | crate::SrxState::Error => Ok(Topology::Standalone),
         crate::SrxState::Active => {
             if let Some(data) = parsed.data {
                 for rg in &data.redundancy_groups {

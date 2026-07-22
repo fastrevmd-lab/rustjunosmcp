@@ -8,6 +8,7 @@ use serde::Serialize;
 pub enum SrxState {
     Active,
     NotConfigured,
+    Error,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

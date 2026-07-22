@@ -95,6 +95,14 @@ impl<T: JsonSchema + Serialize + PartialEq + Eq> SubServiceStatus<T> {
             reason: Some(reason.into()),
         }
     }
+
+    fn error(reason: impl Into<String>) -> Self {
+        Self {
+            state: crate::SrxState::Error,
+            data: None,
+            reason: Some(reason.into()),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
@@ -183,6 +191,12 @@ pub async fn run(
         })
         .collect();
 
+    // Determine if ALL five sub-services across all nodes are genuinely absent
+    // (NotConfigured). An Error state does NOT count as absent — it means the
+    // check failed, not that the feature is genuinely not configured. We only
+    // flip the top-level response to not_configured when every sub-service is
+    // confirmed NotConfigured; any Error or Active keeps the response Active
+    // (with per-sub-service states surfacing the mix).
     let all_absent = nodes.iter().all(|n| {
         matches!(n.idp.state, crate::SrxState::NotConfigured)
             && matches!(n.appid.state, crate::SrxState::NotConfigured)
@@ -227,11 +241,11 @@ async fn capture(exec: &mut rustez::rpc::RpcExecutor<'_>, rpc: &str) -> SubCall 
 
 /// Materialise a `SubServiceStatus<T>` for one RE node from a captured sub-RPC.
 ///
-/// * If the sub-RPC itself failed, every node gets the same `not_configured`
-///   reason.
+/// * If the sub-RPC itself failed (transport/RPC error), every node gets the
+///   same `error` state — this is a check failure, not genuine absence.
 /// * If the sub-RPC succeeded but produced no payload for this index
-///   (mismatched RE counts across sub-RPCs), surface that as `not_configured`
-///   rather than panicking.
+///   (mismatched RE counts across sub-RPCs), surface that as `error` — this is
+///   a check inconsistency, not a missing config statement.
 /// * Otherwise hand the per-node XML to the supplied parser.
 fn per_node<T: JsonSchema + Serialize + PartialEq + Eq>(
     sub: &SubCall,
@@ -239,10 +253,10 @@ fn per_node<T: JsonSchema + Serialize + PartialEq + Eq>(
     parse: impl Fn(&str) -> SubServiceStatus<T>,
 ) -> SubServiceStatus<T> {
     match &sub.result {
-        Err(reason) => SubServiceStatus::not_configured(reason.clone()),
+        Err(reason) => SubServiceStatus::error(reason.clone()),
         Ok(nodes) => match nodes.get(index) {
             Some(node) => parse(&node.inner_xml),
-            None => SubServiceStatus::not_configured("no payload for this RE node"),
+            None => SubServiceStatus::error("no payload for this RE node"),
         },
     }
 }
@@ -257,16 +271,22 @@ fn per_node<T: JsonSchema + Serialize + PartialEq + Eq>(
 ///
 /// Returns `Active` whenever the `<idp-security-package-information>` root
 /// element is present, even when versions are `"N/A"`. Returns
-/// `NotConfigured` only on `<rpc-error>` or missing root element.
+/// `NotConfigured` only when rpc-error has error-tag=not-configured or the
+/// root element is absent. Returns `Error` for unparseable XML or rpc-errors
+/// with other error-tags (e.g. operation-failed).
 pub fn parse_idp(xml: &str) -> SubServiceStatus<IdpInfo> {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return SubServiceStatus::not_configured(format!("xml parse error: {e}")),
+        Err(e) => return SubServiceStatus::error(format!("xml parse error: {e}")),
     };
 
-    // Check for rpc-error first.
-    if let Some(reason) = rpc_error_reason(&doc) {
-        return SubServiceStatus::not_configured(reason);
+    // Check for rpc-error first and route based on error-tag.
+    if let Some((error_tag, reason)) = rpc_error_parts(&doc) {
+        return if error_tag == "not-configured" {
+            SubServiceStatus::not_configured(reason)
+        } else {
+            SubServiceStatus::error(reason)
+        };
     }
 
     let root = doc.root_element();
@@ -291,11 +311,15 @@ pub fn parse_idp(xml: &str) -> SubServiceStatus<IdpInfo> {
 pub fn parse_appid(xml: &str) -> SubServiceStatus<AppIdInfo> {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return SubServiceStatus::not_configured(format!("xml parse error: {e}")),
+        Err(e) => return SubServiceStatus::error(format!("xml parse error: {e}")),
     };
 
-    if let Some(reason) = rpc_error_reason(&doc) {
-        return SubServiceStatus::not_configured(reason);
+    if let Some((error_tag, reason)) = rpc_error_parts(&doc) {
+        return if error_tag == "not-configured" {
+            SubServiceStatus::not_configured(reason)
+        } else {
+            SubServiceStatus::error(reason)
+        };
     }
 
     let root = doc.root_element();
@@ -317,11 +341,15 @@ pub fn parse_appid(xml: &str) -> SubServiceStatus<AppIdInfo> {
 pub fn parse_utm_av(xml: &str) -> SubServiceStatus<UtmAvInfo> {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return SubServiceStatus::not_configured(format!("xml parse error: {e}")),
+        Err(e) => return SubServiceStatus::error(format!("xml parse error: {e}")),
     };
 
-    if let Some(reason) = rpc_error_reason(&doc) {
-        return SubServiceStatus::not_configured(reason);
+    if let Some((error_tag, reason)) = rpc_error_parts(&doc) {
+        return if error_tag == "not-configured" {
+            SubServiceStatus::not_configured(reason)
+        } else {
+            SubServiceStatus::error(reason)
+        };
     }
 
     // Walk for anti-virus-scan-engine-type anywhere in the document.
@@ -341,17 +369,22 @@ pub fn parse_utm_av(xml: &str) -> SubServiceStatus<UtmAvInfo> {
 
 /// Parse `get-secintel-feed-summary` reply body.
 ///
-/// On vSRX 24.4 this RPC returns a syntax `rpc-error`; we treat any
-/// `rpc-error` as `not_configured`. If/when the RPC succeeds, we collect
-/// feed names from `<feed-name>` elements inside `<secintel-feed>` items.
+/// On vSRX 24.4 this RPC returns a syntax `rpc-error` (error-tag=operation-failed),
+/// which is now correctly reported as `Error` state rather than `NotConfigured`.
+/// If/when the RPC succeeds, we collect feed names from `<feed-name>` elements
+/// inside `<secintel-feed>` items.
 pub fn parse_secintel(xml: &str) -> SubServiceStatus<SecIntelInfo> {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return SubServiceStatus::not_configured(format!("xml parse error: {e}")),
+        Err(e) => return SubServiceStatus::error(format!("xml parse error: {e}")),
     };
 
-    if let Some(reason) = rpc_error_reason(&doc) {
-        return SubServiceStatus::not_configured(reason);
+    if let Some((error_tag, reason)) = rpc_error_parts(&doc) {
+        return if error_tag == "not-configured" {
+            SubServiceStatus::not_configured(reason)
+        } else {
+            SubServiceStatus::error(reason)
+        };
     }
 
     // Collect feed names if any are present.
@@ -383,11 +416,15 @@ pub fn parse_secintel(xml: &str) -> SubServiceStatus<SecIntelInfo> {
 pub fn parse_atp(xml: &str) -> SubServiceStatus<AtpCloudInfo> {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
-        Err(e) => return SubServiceStatus::not_configured(format!("xml parse error: {e}")),
+        Err(e) => return SubServiceStatus::error(format!("xml parse error: {e}")),
     };
 
-    if let Some(reason) = rpc_error_reason(&doc) {
-        return SubServiceStatus::not_configured(reason);
+    if let Some((error_tag, reason)) = rpc_error_parts(&doc) {
+        return if error_tag == "not-configured" {
+            SubServiceStatus::not_configured(reason)
+        } else {
+            SubServiceStatus::error(reason)
+        };
     }
 
     // <aamw-errors> present → not enrolled.
@@ -419,9 +456,13 @@ pub fn parse_atp(xml: &str) -> SubServiceStatus<AtpCloudInfo> {
 
 // ── XML helpers ───────────────────────────────────────────────────────────────
 
-/// Return an error description if the document's root is an `<rpc-error>` or
-/// contains one as a top-level child.
-fn rpc_error_reason(doc: &roxmltree::Document<'_>) -> Option<String> {
+/// Extract the error-tag and reason from an rpc-error.
+///
+/// Returns `Some((error_tag, reason_string))` if an rpc-error is present.
+/// The error_tag determines how callers should route the error:
+/// - `"not-configured"` → genuine absence → `SubServiceStatus::not_configured`
+/// - anything else (e.g. `"operation-failed"`) → check failure → `SubServiceStatus::error`
+fn rpc_error_parts(doc: &roxmltree::Document<'_>) -> Option<(String, String)> {
     let root = doc.root_element();
 
     // Match only `rpc-error` (the NETCONF standard tag name). A broader
@@ -437,6 +478,14 @@ fn rpc_error_reason(doc: &roxmltree::Document<'_>) -> Option<String> {
 
     let err = err_node?;
 
+    // Extract error-tag first (used for routing).
+    let error_tag = err
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-tag")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default();
+
     // Prefer <error-message> text; fall back to tag/bad-element.
     let msg = err
         .descendants()
@@ -450,12 +499,14 @@ fn rpc_error_reason(doc: &roxmltree::Document<'_>) -> Option<String> {
         .and_then(|n| n.text())
         .map(|t| t.trim().to_string());
 
-    Some(match (msg, bad) {
+    let reason = match (msg, bad) {
         (Some(m), Some(b)) => format!("rpc-error: {m} (bad-element: {b})"),
         (Some(m), None) => format!("rpc-error: {m}"),
         (None, Some(b)) => format!("rpc-error: bad-element={b}"),
         (None, None) => "rpc-error (unknown)".into(),
-    })
+    };
+
+    Some((error_tag, reason))
 }
 
 /// Find the first descendant element with the given local name.
@@ -557,10 +608,36 @@ mod tests {
     // ── SecIntel ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn secintel_not_configured() {
+    fn secintel_rpc_operation_failed_is_error() {
+        // The fixture contains an rpc-error with error-tag=operation-failed
+        // (syntax error), which is a check failure, not genuine absence.
         let r = parse_secintel(&fixture("secintel_not_configured.xml"));
-        assert_eq!(r.state, SrxState::NotConfigured);
-        assert!(r.reason.is_some(), "reason must be set");
+        assert_eq!(r.state, SrxState::Error);
+        assert!(
+            r.reason.as_deref().unwrap_or("").contains("syntax error"),
+            "reason: {:?}",
+            r.reason
+        );
+    }
+
+    #[test]
+    fn secintel_inline_operation_failed_is_error() {
+        // Real-world case from issue #173: operation-failed with syntax error
+        // should be Error, not NotConfigured.
+        let xml = r#"<nc:rpc-error xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+<nc:error-type>protocol</nc:error-type>
+<nc:error-tag>operation-failed</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>syntax error</nc:error-message>
+<nc:error-info><nc:bad-element>get-secintel-feed-summary</nc:bad-element></nc:error-info>
+</nc:rpc-error>"#;
+        let r = parse_secintel(xml);
+        assert_eq!(r.state, SrxState::Error);
+        assert!(
+            r.reason.as_deref().unwrap_or("").contains("syntax error"),
+            "reason: {:?}",
+            r.reason
+        );
     }
 
     // ── ATP/AAMW ──────────────────────────────────────────────────────────────
@@ -591,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn appid_rpc_error_is_not_configured() {
+    fn appid_rpc_operation_failed_is_error() {
         let xml = r#"<nc:rpc-error xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
 <nc:error-type>protocol</nc:error-type>
 <nc:error-tag>operation-failed</nc:error-tag>
@@ -600,7 +677,12 @@ mod tests {
 <nc:error-info><nc:bad-element>get-appid-package-version</nc:bad-element></nc:error-info>
 </nc:rpc-error>"#;
         let r = parse_appid(xml);
-        assert_eq!(r.state, SrxState::NotConfigured);
+        assert_eq!(r.state, SrxState::Error);
+        assert!(
+            r.reason.as_deref().unwrap_or("").contains("syntax error"),
+            "reason: {:?}",
+            r.reason
+        );
     }
 
     #[test]
@@ -631,25 +713,25 @@ mod tests {
     // ── per_node / SubCall degradation (bug #70) ─────────────────────────────
 
     #[test]
-    fn per_node_err_yields_not_configured_with_reason() {
+    fn per_node_err_yields_error_with_reason() {
         let sub = SubCall {
             raw: String::new(),
             result: Err("rpc error: syntax error".into()),
         };
         let r = per_node(&sub, 0, parse_idp);
-        assert_eq!(r.state, SrxState::NotConfigured);
+        assert_eq!(r.state, SrxState::Error);
         assert_eq!(r.reason.as_deref(), Some("rpc error: syntax error"));
         assert!(r.data.is_none());
     }
 
     #[test]
-    fn per_node_ok_but_missing_index_yields_not_configured() {
+    fn per_node_ok_but_missing_index_yields_error() {
         let sub = SubCall {
             raw: "<x/>".into(),
             result: Ok(vec![]),
         };
         let r = per_node(&sub, 0, parse_idp);
-        assert_eq!(r.state, SrxState::NotConfigured);
+        assert_eq!(r.state, SrxState::Error);
         assert_eq!(r.reason.as_deref(), Some("no payload for this RE node"));
     }
 
