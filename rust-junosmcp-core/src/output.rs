@@ -1,6 +1,6 @@
-//! Post-process operational-command output: honor the trailing `| count` /
-//! `| last N` pipe modifiers that rustez drops in NETCONF translation (#105),
-//! then apply optional size caps (#106). Pure — no I/O.
+//! Post-process operational-command output: honor the `| match`, `| except`,
+//! `| count`, and `| last N` pipe modifiers that rustez drops in NETCONF
+//! translation (#105, #177), then apply optional size caps (#106). Pure — no I/O.
 
 /// See module docs. Order: honor pipe modifiers → byte cap → line cap.
 /// Returns `raw` unchanged when nothing applies.
@@ -16,49 +16,134 @@ pub fn process_output(
     apply_line_cap(byte_capped, max_lines, tail)
 }
 
-/// Apply the trailing `| count` / `| last N` modifiers rustez drops. Splits on
-/// the Junos pipe boundary `" | "` (space-pipe-space) so a `|` inside a
-/// `match`/`except` regex argument (`| match "up|count"`, `| match up|count`)
-/// is NOT mistaken for a modifier. Only the trailing run of recognized
-/// modifiers is honored; anything else (match, except, display, no-more, …) is
-/// left to rustez. Modifiers in the trailing run are applied left-to-right.
+/// Apply the `| match`, `| except`, `| count`, and `| last N` modifiers rustez
+/// drops. Splits on the Junos pipe boundary `" | "` (space-pipe-space) so a `|`
+/// inside a `match`/`except` regex argument (`| match "up|count"`, `| match
+/// up|count`) is NOT mistaken for a modifier. All filter modifiers are applied
+/// server-side over the FULL pipe chain, left-to-right. Non-filter modifiers
+/// (`display *`, `no-more`, `trim`, `hold`, unrecognized) are left untouched
+/// (the device honors format modifiers; pager directives are irrelevant over
+/// NETCONF). (#105, #177)
 fn apply_pipe_modifiers(command: &str, raw: String) -> String {
-    let segments: Vec<&str> = command.split(" | ").collect();
+    /// Quote-aware pipe splitter. Splits on " | " (space-pipe-space) ONLY when
+    /// not inside single or double quotes. Returns trimmed segments.
+    fn split_pipes(s: &str) -> Vec<String> {
+        let mut segments = Vec::new();
+        let mut current = String::new();
+        let mut in_double = false;
+        let mut in_single = false;
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            let ch = chars[i];
+
+            // Inside a quote, a backslash escapes the next char (including a
+            // quote), so it cannot toggle quote state or be seen as a boundary.
+            if (in_double || in_single) && ch == '\\' && i + 1 < chars.len() {
+                current.push(ch);
+                current.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+
+            // Toggle quote state
+            if ch == '"' && !in_single {
+                in_double = !in_double;
+                current.push(ch);
+                i += 1;
+            } else if ch == '\'' && !in_double {
+                in_single = !in_single;
+                current.push(ch);
+                i += 1;
+            } else if !in_double && !in_single && i + 2 < chars.len() {
+                // Check for " | " boundary at quote-depth zero
+                if ch == ' ' && chars[i + 1] == '|' && chars[i + 2] == ' ' {
+                    segments.push(current.trim().to_string());
+                    current.clear();
+                    i += 3; // skip " | "
+                } else {
+                    current.push(ch);
+                    i += 1;
+                }
+            } else {
+                current.push(ch);
+                i += 1;
+            }
+        }
+
+        if !current.is_empty() {
+            segments.push(current.trim().to_string());
+        }
+
+        segments
+    }
+
+    /// Strip one surrounding pair of double OR single quotes, if present.
+    /// Guards against panic for one-char patterns like `"` or `'`.
+    fn strip_quotes(s: &str) -> &str {
+        let trimmed = s.trim();
+        if trimmed.len() >= 2 {
+            let first = trimmed.chars().next();
+            let last = trimmed.chars().last();
+            if first == last && (first == Some('"') || first == Some('\'')) {
+                return &trimmed[1..trimmed.len() - 1];
+            }
+        }
+        trimmed
+    }
+
+    /// Panic-free line filter: compiles regex or falls back to literal contains.
+    enum LineFilter {
+        Re(regex::Regex),
+        Literal(String),
+    }
+
+    impl LineFilter {
+        fn compile(pat: &str) -> Self {
+            match regex::Regex::new(pat) {
+                Ok(re) => LineFilter::Re(re),
+                Err(_) => LineFilter::Literal(pat.to_string()),
+            }
+        }
+
+        fn is_match(&self, line: &str) -> bool {
+            match self {
+                LineFilter::Re(re) => re.is_match(line),
+                LineFilter::Literal(lit) => line.contains(lit.as_str()),
+            }
+        }
+    }
+
+    /// Extract first whitespace-delimited word and remainder (trimmed).
+    fn split_first_word(s: &str) -> (String, String) {
+        let trimmed = s.trim();
+        if let Some(pos) = trimmed.find(|c: char| c.is_whitespace()) {
+            let word = trimmed[..pos].to_string();
+            let rest = trimmed[pos..].trim().to_string();
+            (word, rest)
+        } else {
+            (trimmed.to_string(), String::new())
+        }
+    }
+
+    let segments = split_pipes(command);
     if segments.len() < 2 {
         return raw; // no pipe modifiers (the command itself is segment 0)
     }
     let modifiers = &segments[1..];
 
-    fn is_recognized(seg: &str) -> bool {
-        let lower = seg.trim().to_ascii_lowercase();
-        lower == "count"
-            || lower
-                .strip_prefix("last")
-                .and_then(|r| r.trim().parse::<usize>().ok())
-                .is_some()
-    }
-
-    // Start of the maximal trailing run where every segment is recognized.
-    let mut first_honored = modifiers.len();
-    for i in (0..modifiers.len()).rev() {
-        if is_recognized(modifiers[i]) {
-            first_honored = i;
-        } else {
-            break;
-        }
-    }
-
     let mut out = raw;
-    for seg in &modifiers[first_honored..] {
-        let lower = seg.trim().to_ascii_lowercase();
-        if lower == "count" {
-            // NOTE: assumes rustez DROPPED `| count` (so `out` is the full
-            // output). If a future rustez honors it, this would re-count a
-            // one-line `Count:` result — revisit if rustez changes (#105).
+    for seg in modifiers {
+        let lower = seg.to_ascii_lowercase();
+        let (first_word, remainder) = split_first_word(&lower);
+
+        if first_word == "count" {
+            // Count current lines (may already be filtered by prior match/except).
             let n = out.lines().count();
             out = format!("Count: {n} lines\n");
-        } else if let Some(rest) = lower.strip_prefix("last") {
-            if let Ok(n) = rest.trim().parse::<usize>() {
+        } else if first_word == "last" {
+            if let Ok(n) = remainder.trim().parse::<usize>() {
                 let lines: Vec<&str> = out.lines().collect();
                 let start = lines.len().saturating_sub(n);
                 out = lines[start..].join("\n");
@@ -66,7 +151,38 @@ fn apply_pipe_modifiers(command: &str, raw: String) -> String {
                     out.push('\n');
                 }
             }
+        } else if first_word == "match" {
+            if remainder.is_empty() {
+                // Bare `| match` with no pattern — malformed, leave out unchanged.
+                continue;
+            }
+            // Extract pattern from the ORIGINAL seg (not lowercased) to preserve case.
+            let (_, orig_pat_str) = split_first_word(seg);
+            let pat = strip_quotes(&orig_pat_str);
+            let filter = LineFilter::compile(pat);
+            let matched: Vec<&str> = out.lines().filter(|line| filter.is_match(line)).collect();
+            out = if matched.is_empty() {
+                String::new()
+            } else {
+                matched.join("\n") + "\n"
+            };
+        } else if first_word == "except" {
+            if remainder.is_empty() {
+                // Bare `| except` with no pattern — malformed, leave out unchanged.
+                continue;
+            }
+            // Extract pattern from the ORIGINAL seg (not lowercased) to preserve case.
+            let (_, orig_pat_str) = split_first_word(seg);
+            let pat = strip_quotes(&orig_pat_str);
+            let filter = LineFilter::compile(pat);
+            let kept: Vec<&str> = out.lines().filter(|line| !filter.is_match(line)).collect();
+            out = if kept.is_empty() {
+                String::new()
+            } else {
+                kept.join("\n") + "\n"
+            };
         }
+        // Anything else (display *, no-more, trim, hold, unrecognized) → leave out unchanged.
     }
     out
 }
@@ -157,14 +273,6 @@ mod tests {
     }
 
     #[test]
-    fn last_pipe_after_match_applies_to_already_filtered_text() {
-        // rustez already applied `| match`; raw is the matched text. We only apply `last`.
-        let raw = "m1\nm2\nm3\nm4".to_string();
-        let out = process_output("show x | match m | last 2", raw, none(), none(), false);
-        assert_eq!(out.lines().collect::<Vec<_>>(), vec!["m3", "m4"]);
-    }
-
-    #[test]
     fn last_pipe_unparseable_n_is_ignored() {
         let raw = "a\nb".to_string();
         assert_eq!(
@@ -232,50 +340,208 @@ mod tests {
         assert_eq!(body, vec!["11", "12", "13", "14", "15"]);
     }
 
+    // NEW tests proving the fix for #177 — match/except server-side filtering
+
+    #[test]
+    fn match_filters_lines_server_side() {
+        let raw = "ge-0/0/0\nlo0\nlo0.0\nfxp0".to_string();
+        let out = process_output("show x | match lo0", raw, none(), none(), false);
+        assert_eq!(out, "lo0\nlo0.0\n");
+    }
+
+    #[test]
+    fn except_filters_lines_server_side() {
+        let raw = "ge-0/0/0\nfxp0\nlo0".to_string();
+        let out = process_output("show x | except fxp", raw, none(), none(), false);
+        assert_eq!(out, "ge-0/0/0\nlo0\n");
+    }
+
+    #[test]
+    fn match_anchored_regex() {
+        let raw =
+            "set system host-name a\nset interfaces ge-0/0/0\nset system services".to_string();
+        let out = process_output(
+            "show config | display set | match \"^set system\"",
+            raw,
+            none(),
+            none(),
+            false,
+        );
+        assert_eq!(out, "set system host-name a\nset system services\n");
+    }
+
+    #[test]
+    fn match_alternation() {
+        let raw = "ok line\nerr here\nwarn there\nfine".to_string();
+        let out = process_output("show log | match \"err|warn\"", raw, none(), none(), false);
+        assert_eq!(out, "err here\nwarn there\n");
+    }
+
+    #[test]
+    fn match_then_count() {
+        let raw = "ge0\nlo0\nlo1\nfxp0".to_string();
+        let out = process_output("show x | match lo | count", raw, none(), none(), false);
+        assert_eq!(out, "Count: 2 lines\n");
+    }
+
+    #[test]
+    fn except_then_last() {
+        let raw = "foo1\nbar1\nfoo2\nbar2\nfoo3\nbar3".to_string();
+        let out = process_output("show x | except foo | last 2", raw, none(), none(), false);
+        assert_eq!(out, "bar2\nbar3\n");
+    }
+
+    #[test]
+    fn match_invalid_regex_falls_back_to_literal() {
+        let raw = "a(b\ncd\ne(f".to_string();
+        let out = process_output("show x | match \"(\"", raw, none(), none(), false);
+        assert_eq!(out, "a(b\ne(f\n");
+    }
+
+    #[test]
+    fn match_quoted_pattern_strips_quotes() {
+        let raw = "host name\nhostname\nhost-name".to_string();
+        let out = process_output("show x | match \"host name\"", raw, none(), none(), false);
+        assert_eq!(out, "host name\n");
+    }
+
+    // UPDATED tests — correcting the assumption that device already applied match/except
+
     #[test]
     fn quoted_match_alternation_not_mistaken_for_count() {
+        // Interior `count` in `match "err|count|warn"` is NOT a count modifier.
+        // Now filters: raw has no err/count/warn → empty result (not "Count: 3 lines\n").
         let raw = "l1\nl2\nl3".to_string();
         assert_eq!(
             process_output(
                 "show log | match \"err|count|warn\"",
-                raw.clone(),
+                raw,
                 None,
                 None,
                 false
             ),
-            raw
+            ""
         );
     }
 
     #[test]
     fn unquoted_match_alternation_ending_in_count_not_honored() {
+        // `match up|count` on raw with no "up" or "count" → empty (not Count line).
         let raw = "l1\nl2\nl3".to_string();
         assert_eq!(
-            process_output("show int | match up|count", raw.clone(), None, None, false),
-            raw
+            process_output("show int | match up|count", raw, None, None, false),
+            ""
         );
     }
 
     #[test]
     fn interior_last_in_regex_ignored() {
+        // `match "a|last5|b"` on raw with no a/last5/b → empty (proves interior last5 isn't a modifier).
         let raw = "l1\nl2\nl3\nl4\nl5".to_string();
         assert_eq!(
-            process_output(
-                "show x | match \"a|last5|b\"",
-                raw.clone(),
-                None,
-                None,
-                false
-            ),
-            raw
+            process_output("show x | match \"a|last5|b\"", raw, None, None, false),
+            ""
         );
     }
 
     #[test]
     fn trailing_last_after_match_still_honored() {
-        // `| match` applied upstream by rustez; we honor the trailing `| last 2`.
-        let raw = "m1\nm2\nm3\nm4".to_string();
+        // Match filters first, then `last 2` on the filtered set.
+        let raw = "up1\ndown\nup2\nup3\ndown2".to_string();
         let out = process_output("show x | match up | last 2", raw, None, None, false);
+        assert_eq!(out.lines().collect::<Vec<_>>(), vec!["up2", "up3"]);
+    }
+
+    #[test]
+    fn last_pipe_after_match_applies_to_already_filtered_text() {
+        // All lines contain 'm', so match keeps all; last 2 → m3, m4.
+        let raw = "m1\nm2\nm3\nm4".to_string();
+        let out = process_output("show x | match m | last 2", raw, none(), none(), false);
         assert_eq!(out.lines().collect::<Vec<_>>(), vec!["m3", "m4"]);
+    }
+
+    // Code review fixes — quote-aware splitting, panic-free fallback, bare keywords
+
+    #[test]
+    fn quoted_spaced_alternation_not_split() {
+        // Pattern contains " | " (space-pipe-space) inside quotes → must NOT split.
+        let raw = "aaa\nbbb".to_string();
+        let out = process_output(r#"show x | match "foo | count""#, raw, None, None, false);
+        // No line contains "foo " or " count" → empty, NOT a Count line.
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn escaped_quote_inside_quotes_does_not_split_boundary() {
+        // A backslash-escaped quote must not close the quote state, so the
+        // interior " | " stays part of the pattern and is not split off (which
+        // would misparse `count` as a modifier — a #177 false negative).
+        let raw = "aaa\nbbb".to_string();
+        let out = process_output(r#"show x | match "foo\" | count""#, raw, None, None, false);
+        // Pattern is the literal-ish `foo\" | count`; no line matches → empty,
+        // and crucially NOT a "Count:" line.
+        assert_eq!(out, "");
+        assert!(!out.starts_with("Count:"));
+    }
+
+    #[test]
+    fn quoted_spaced_alternation_matches_correctly() {
+        // Pattern `foo | count` inside quotes alternates "foo " or " count".
+        let raw = "aaa\nfoo | count here\nbbb".to_string();
+        let out = process_output(r#"show x | match "foo | count""#, raw, None, None, false);
+        assert_eq!(out, "foo | count here\n");
+    }
+
+    #[test]
+    fn lone_quote_pattern_does_not_panic() {
+        // Pattern that is a single quote character, properly quoted: match '"'
+        // Tests that strip_quotes doesn't panic on a 3-char string (quote, char, quote).
+        // Also test a single-quote inside doubles.
+        let raw = r#"line with "
+line without"#
+            .to_string();
+        let out = process_output(r#"show x | match '"'"#, raw, None, None, false);
+        // Pattern is `"` after stripping outer single quotes.
+        assert_eq!(out, "line with \"\n");
+    }
+
+    #[test]
+    fn match_tab_separated_works() {
+        // `match\tlo` (TAB separator) should be recognized.
+        let raw = "ge-0/0/0\nlo0\nfxp0".to_string();
+        let out = process_output("show x | match\tlo", raw, None, None, false);
+        assert_eq!(out, "lo0\n");
+    }
+
+    #[test]
+    fn bare_match_keyword_is_noop_no_panic() {
+        // Bare `| match` with no pattern → malformed, leave output unchanged.
+        let raw = "a\nb\nc".to_string();
+        let out = process_output("show x | match", raw.clone(), None, None, false);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn bare_except_keyword_is_noop_no_panic() {
+        // Bare `| except` with no pattern → malformed, leave output unchanged.
+        let raw = "a\nb\nc".to_string();
+        let out = process_output("show x | except", raw.clone(), None, None, false);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn match_is_case_sensitive() {
+        // `match Lo0` does NOT match line `lo0` (Junos is case-sensitive).
+        let raw = "lo0\nLo0".to_string();
+        let out = process_output("show x | match Lo0", raw, None, None, false);
+        assert_eq!(out, "Lo0\n");
+    }
+
+    #[test]
+    fn match_is_unanchored() {
+        // `match 0/0` matches mid-line occurrence like `ge-0/0/0 up`.
+        let raw = "ge-0/0/0 up\nge-0/0/1 down".to_string();
+        let out = process_output("show x | match 0/0", raw, None, None, false);
+        assert_eq!(out, "ge-0/0/0 up\nge-0/0/1 down\n");
     }
 }

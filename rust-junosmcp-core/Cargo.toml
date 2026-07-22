@@ -19,6 +19,7 @@ tracing-subscriber = { workspace = true }
 schemars     = { workspace = true }
 rustez       = { workspace = true }
 globset      = { workspace = true }
+regex        = { workspace = true }
 async-trait  = { workspace = true }
 minijinja    = { workspace = true }
 arc-swap     = { workspace = true }

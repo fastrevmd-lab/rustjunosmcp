@@ -22,6 +22,7 @@ schemars     = "1.0"
 anyhow       = "1"
 rustez       = "0.12.1"
 globset      = "0.4"
+regex        = "1"
 metrics                     = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 
