@@ -1,12 +1,17 @@
 //! `commit_check_config` — lock candidate, load, diff, run commit-check
 //! (validate only), roll back the candidate, unlock. NEVER commits.
-//! Returns `{success, diff, error?}` (+ `checked_only: true` on success).
+//! Returns `{success, outcome, diff, error?, hint?}` where `outcome` is
+//! `valid` (passed), `invalid` (device rejected — do not commit), or
+//! `check_failed` (could not validate, e.g. multi-RE cluster reply parse
+//! failure — inconclusive, not a rejection).
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{build_config_payload, excerpt, validate_input_length};
 use crate::policy::{Decision, Policy};
-use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
+use crate::tools::candidate_transaction::{
+    self, CandidateMode, CandidateRequest, CandidateResult, CheckOutcome,
+};
 use crate::tools::CommitCheckArgs;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -78,13 +83,18 @@ pub async fn handle_with_cancel(
     )
     .await?
     {
-        CandidateResult::CommitCheck { diff, error: None } => {
-            Ok(json!({ "success": true, "diff": diff, "checked_only": true }))
-        }
-        CandidateResult::CommitCheck {
-            diff,
-            error: Some(error),
-        } => Ok(json!({ "success": false, "diff": diff, "error": error })),
+        CandidateResult::CommitCheck { diff, outcome } => Ok(match outcome {
+            CheckOutcome::Valid => json!({
+                "success": true, "outcome": "valid", "diff": diff, "checked_only": true
+            }),
+            CheckOutcome::Invalid(error) => json!({
+                "success": false, "outcome": "invalid", "diff": diff, "error": error
+            }),
+            CheckOutcome::CheckFailed(error) => json!({
+                "success": false, "outcome": "check_failed", "diff": diff, "error": error,
+                "hint": "commit-check could not reach a verdict (for example the known multi-RE reply parsing limitation on chassis clusters). This is NOT a statement that the configuration is invalid, but it is also NOT a validation pass — do not commit until the configuration has been independently validated (e.g. on a standalone RE)."
+            }),
+        }),
         _ => unreachable!("commit-check transaction returned the wrong result kind"),
     }
 }
@@ -95,6 +105,12 @@ mod tests {
     use crate::inventory::Inventory;
     use crate::policy::Policy;
     use std::io::Write;
+
+    // NOTE: The CheckOutcome → JSON mapping (lines 86-97) is exercised via
+    // integration tests with live devices. Unit-testing it would require
+    // mocking the entire candidate transaction chain, which is over-engineered.
+    // The classifier tests in candidate_transaction.rs pin the CheckOutcome
+    // logic; integration tests verify the JSON contract end-to-end.
 
     fn inv_with(json: &str) -> Arc<Inventory> {
         let mut f = tempfile::NamedTempFile::new().unwrap();

@@ -4,6 +4,8 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use async_trait::async_trait;
 use rustez::{ConfigManager, ConfigPayload};
+use rustnetconf::error::{NetconfError, RpcError};
+use rustnetconf::types::ErrorTag;
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -26,10 +28,21 @@ pub(crate) struct CandidateRequest {
     pub(crate) mode: CandidateMode,
 }
 
+/// Outcome of a commit-check. Distinguishes a genuine device rejection
+/// (`Invalid`) from an inconclusive check that could not complete
+/// (`CheckFailed`, e.g. the malformed multi-RE reply on chassis clusters that
+/// rustnetconf cannot parse). Conflating them is a safety bug (#180).
+#[derive(Debug)]
+pub(crate) enum CheckOutcome {
+    Valid,
+    Invalid(String),
+    CheckFailed(String),
+}
+
 #[derive(Debug)]
 pub(crate) enum CandidateResult {
     DryRun { diff: String },
-    CommitCheck { diff: String, error: Option<String> },
+    CommitCheck { diff: String, outcome: CheckOutcome },
     Committed { diff: String },
     CommitFailed { diff: String, error: String },
     Discarded,
@@ -204,7 +217,8 @@ async fn execute<B: CandidateBackend>(
     let reported_primary = match &outcome {
         Ok(CandidateResult::Committed { .. }) => Some("commit succeeded".into()),
         Ok(CandidateResult::CommitCheck {
-            error: Some(error), ..
+            outcome: CheckOutcome::Invalid(error) | CheckOutcome::CheckFailed(error),
+            ..
         })
         | Ok(CandidateResult::CommitFailed { error, .. }) => Some(error.clone()),
         _ => None,
@@ -237,15 +251,15 @@ async fn primary_operation<B: CandidateBackend>(
     match request.mode {
         CandidateMode::DryRun => Ok(CandidateResult::DryRun { diff }),
         CandidateMode::CommitCheck => {
-            let error =
+            let outcome =
                 match run_step(deadline, operation_timeout, ct, backend.commit_check()).await {
-                    Ok(()) => None,
+                    Ok(()) => CheckOutcome::Valid,
                     Err(error @ (JmcpError::Cancelled | JmcpError::Timeout(_))) => {
                         return Err(error);
                     }
-                    Err(error) => Some(error.to_string()),
+                    Err(error) => classify_check_error(error),
                 };
-            Ok(CandidateResult::CommitCheck { diff, error })
+            Ok(CandidateResult::CommitCheck { diff, outcome })
         }
         CandidateMode::CommitWithComment(comment) => {
             ensure_active(deadline, operation_timeout, ct)?;
@@ -358,6 +372,53 @@ where
             result.map_err(|_| JmcpError::Timeout(operation_timeout))?
         }
     }
+}
+
+/// Classify a commit-check error. Only a device `<rpc-error>` carrying a
+/// config-content error tag is `Invalid` (the config was genuinely rejected).
+/// A parse/transport failure — including the unparseable multi-RE cluster
+/// reply — or an environmental rpc-error (access/lock/resource denial,
+/// unsupported op, unknown tag) is `CheckFailed`: the check could not reach a
+/// verdict. Unknown → CheckFailed. Never report an inconclusive check as an
+/// invalid config, and never report a genuine rejection as a validation pass
+/// (#180).
+fn classify_check_error(error: JmcpError) -> CheckOutcome {
+    let JmcpError::Rustez(ref boxed) = error else {
+        return CheckOutcome::CheckFailed(error.to_string());
+    };
+    let rustez::RustEzError::Netconf(NetconfError::Rpc(rpc)) = boxed.as_ref() else {
+        return CheckOutcome::CheckFailed(error.to_string());
+    };
+    match rpc {
+        RpcError::ServerError { tag, .. } if is_config_rejection(tag) => {
+            CheckOutcome::Invalid(error.to_string())
+        }
+        // Environmental rpc-errors, parse failures (incl. the multi-RE cluster
+        // reply), timeouts, framing, etc. — the check did not reach a verdict.
+        _ => CheckOutcome::CheckFailed(error.to_string()),
+    }
+}
+
+/// True for NETCONF error tags that represent the device rejecting the
+/// configuration CONTENT (a real commit-check "invalid" verdict), as opposed
+/// to environmental/protocol failures.
+fn is_config_rejection(tag: &ErrorTag) -> bool {
+    matches!(
+        tag,
+        ErrorTag::OperationFailed
+            | ErrorTag::InvalidValue
+            | ErrorTag::MissingElement
+            | ErrorTag::BadElement
+            | ErrorTag::UnknownElement
+            | ErrorTag::MissingAttribute
+            | ErrorTag::BadAttribute
+            | ErrorTag::UnknownAttribute
+            | ErrorTag::DataMissing
+            | ErrorTag::DataExists
+    )
+    // Everything else (AccessDenied, LockDenied, ResourceDenied,
+    // OperationNotSupported, InUse, TooBig, MalformedMessage, RollbackFailed,
+    // UnknownNamespace, Other) → not a config verdict → CheckFailed.
 }
 
 #[cfg(test)]
@@ -587,8 +648,15 @@ mod tests {
 
         match &execution.result {
             Ok(CandidateResult::CommitCheck {
-                error: Some(error), ..
-            }) => assert!(error.contains("injected Check failure")),
+                outcome: CheckOutcome::CheckFailed(error),
+                ..
+            }) => {
+                // The injected error ("injected Check failure") contains neither
+                // "failed to parse RPC response" nor "server error", so
+                // classify_check_error correctly returns CheckFailed (conservative
+                // default, treating the injected failure as inconclusive).
+                assert!(error.contains("injected Check failure"))
+            }
             other => panic!("unexpected result: {other:?}"),
         }
         assert!(state
@@ -777,5 +845,71 @@ mod tests {
 
         assert!(execution.result.is_err());
         assert!(!execution.reusable);
+    }
+
+    fn rustez_rpc_error(rpc: RpcError) -> JmcpError {
+        JmcpError::Rustez(Box::new(rustez::RustEzError::Netconf(NetconfError::Rpc(
+            rpc,
+        ))))
+    }
+
+    fn server_error(tag: ErrorTag, message: &str) -> JmcpError {
+        rustez_rpc_error(RpcError::ServerError {
+            error_type: None,
+            tag,
+            severity: None,
+            app_tag: None,
+            path: None,
+            message: message.into(),
+            info: None,
+        })
+    }
+
+    #[test]
+    fn classify_parse_error_is_check_failed() {
+        // The real multi-RE cluster failure type.
+        let error = rustez_rpc_error(RpcError::ParseError(
+            "XML parse error: ill-formed document: expected `</routing-engine>`, but `</nc:rpc-reply>` was found".into()
+        ));
+        match classify_check_error(error) {
+            CheckOutcome::CheckFailed(msg) => {
+                assert!(msg.contains("failed to parse RPC response"));
+            }
+            other => panic!("expected CheckFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_config_rejection_is_invalid() {
+        let error = server_error(ErrorTag::OperationFailed, "syntax error");
+        match classify_check_error(error) {
+            CheckOutcome::Invalid(msg) => {
+                assert!(msg.contains("syntax error"));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_environmental_server_error_is_check_failed() {
+        // Regression guard: env errors (AccessDenied) are NOT config rejections.
+        let error = server_error(ErrorTag::AccessDenied, "permission denied");
+        match classify_check_error(error) {
+            CheckOutcome::CheckFailed(msg) => {
+                assert!(msg.contains("permission denied"));
+            }
+            other => panic!("expected CheckFailed (not Invalid), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_non_rustez_error_is_check_failed() {
+        let error = JmcpError::Validation("boom".into());
+        match classify_check_error(error) {
+            CheckOutcome::CheckFailed(msg) => {
+                assert!(msg.contains("boom"));
+            }
+            other => panic!("expected CheckFailed, got {other:?}"),
+        }
     }
 }
