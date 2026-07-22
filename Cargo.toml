@@ -48,3 +48,4 @@ ureq             = "2"
 minijinja        = { version = "2", default-features = false, features = ["builtins", "loader", "serde"] }
 dashmap          = "6"
 http-body        = "1"
+rustnetconf      = "0.12"
