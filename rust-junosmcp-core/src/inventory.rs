@@ -722,6 +722,13 @@ impl Inventory {
     pub fn is_empty(&self) -> bool {
         self.devices.is_empty()
     }
+
+    /// True if `name` is a device in the current inventory. Used server-side to
+    /// classify a failed router request (unknown name vs out-of-scope) for
+    /// observability logging without leaking inventory to the caller (#175).
+    pub fn contains_router(&self, name: &str) -> bool {
+        self.devices.contains_key(name)
+    }
 }
 
 #[cfg(test)]
@@ -765,6 +772,26 @@ mod accessor_tests {
         }"#,
         );
         assert_eq!(inv.names(), vec!["a".to_string(), "z".to_string()]);
+    }
+
+    #[test]
+    fn contains_router_returns_true_for_present() {
+        let inv = build(
+            r#"{
+            "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        assert!(inv.contains_router("r1"));
+    }
+
+    #[test]
+    fn contains_router_returns_false_for_absent() {
+        let inv = build(
+            r#"{
+            "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+        );
+        assert!(!inv.contains_router("nope"));
     }
 }
 

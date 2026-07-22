@@ -73,6 +73,31 @@ pub enum ScopeError {
     },
 }
 
+/// Server-side classification of a router request, for observability logging
+/// only (#175). Never affects the client-visible response.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RouterAccess {
+    /// In scope (or no caller ctx) and present in inventory — proceeds.
+    Allowed,
+    /// In scope (or no caller ctx) but absent from inventory — will fail
+    /// downstream as UnknownRouter. Logged so a typo/missing entry is
+    /// distinguishable from a scope denial.
+    AllowedUnknown,
+    /// Out of the caller's token scope; the router exists in inventory.
+    DeniedInScopePresent,
+    /// Out of scope AND absent from inventory.
+    DeniedUnknown,
+}
+
+pub(super) fn classify_router_access(allows: bool, in_inventory: bool) -> RouterAccess {
+    match (allows, in_inventory) {
+        (true, true) => RouterAccess::Allowed,
+        (true, false) => RouterAccess::AllowedUnknown,
+        (false, true) => RouterAccess::DeniedInScopePresent,
+        (false, false) => RouterAccess::DeniedUnknown,
+    }
+}
+
 #[derive(Clone)]
 pub struct JmcpHandler {
     pub(super) dm: Arc<DeviceManager>,
@@ -195,6 +220,31 @@ impl JmcpHandler {
         tool: &'static str,
         router: &str,
     ) -> Result<(), ScopeError> {
+        let in_inventory = self.dm.inventory().contains_router(router);
+        let allows = ctx.map(|c| c.routers.allows(router)).unwrap_or(true);
+        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("<none>");
+        match classify_router_access(allows, in_inventory) {
+            RouterAccess::Allowed => {}
+            RouterAccess::AllowedUnknown => {
+                tracing::info!(
+                    token,
+                    router,
+                    tool,
+                    "router request for name absent from devices.json (unknown router)"
+                );
+            }
+            RouterAccess::DeniedInScopePresent => {
+                tracing::warn!(token, router, tool, "router request denied by token scope");
+            }
+            RouterAccess::DeniedUnknown => {
+                tracing::warn!(
+                    token,
+                    router,
+                    tool,
+                    "router request denied: name absent from devices.json and out of token scope"
+                );
+            }
+        }
         if let Some(ctx) = ctx {
             if !ctx.routers.allows(router) {
                 return Err(ScopeError::RouterNotInScope {
@@ -1303,5 +1353,14 @@ mod scope_tests {
             }
         }
         assert_eq!(first_fail, Some("r2"));
+    }
+
+    #[test]
+    fn classify_router_access_truth_table() {
+        use RouterAccess::*;
+        assert_eq!(classify_router_access(true, true), Allowed);
+        assert_eq!(classify_router_access(true, false), AllowedUnknown);
+        assert_eq!(classify_router_access(false, true), DeniedInScopePresent);
+        assert_eq!(classify_router_access(false, false), DeniedUnknown);
     }
 }

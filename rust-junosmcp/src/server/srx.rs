@@ -71,6 +71,31 @@ impl JmcpHandler {
         tool: &'static str,
         router: &str,
     ) -> Result<(), ScopeError> {
+        let in_inventory = self.dm.inventory().contains_router(router);
+        let allows = ctx.map(|c| c.routers.allows(router)).unwrap_or(true);
+        let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("<none>");
+        match super::classify_router_access(allows, in_inventory) {
+            super::RouterAccess::Allowed => {}
+            super::RouterAccess::AllowedUnknown => {
+                tracing::info!(
+                    token,
+                    router,
+                    tool,
+                    "router request for name absent from devices.json (unknown router)"
+                );
+            }
+            super::RouterAccess::DeniedInScopePresent => {
+                tracing::warn!(token, router, tool, "router request denied by token scope");
+            }
+            super::RouterAccess::DeniedUnknown => {
+                tracing::warn!(
+                    token,
+                    router,
+                    tool,
+                    "router request denied: name absent from devices.json and out of token scope"
+                );
+            }
+        }
         if let Some(ctx) = ctx {
             if !ctx.routers.allows(router) {
                 return Err(ScopeError::RouterNotInScope {
