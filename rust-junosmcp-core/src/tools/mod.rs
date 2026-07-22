@@ -18,6 +18,7 @@ pub mod list_staged_files;
 pub mod load_commit;
 pub mod pfe;
 pub mod reload_devices;
+pub mod rollback_config;
 pub mod router_list;
 pub mod template;
 pub mod transfer_file;
@@ -142,6 +143,7 @@ pub struct LoadCommitArgs {
     /// If set, uses confirmed commit with auto-rollback after N minutes.
     /// The router will automatically revert if not confirmed within this window.
     #[serde(default)]
+    #[schemars(range(min = 1, max = 71_582_788))]
     pub confirm_timeout_mins: Option<u32>,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
@@ -167,6 +169,33 @@ pub struct DiscardCandidateArgs {
     /// The target router. Accepts `router` or `router_name`.
     #[serde(alias = "router")]
     pub router_name: String,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RollbackConfigArgs {
+    /// The target router. Accepts `router` or `router_name`.
+    #[serde(alias = "router")]
+    pub router_name: String,
+    /// Rollback version to load (0-49). 0 = candidate vs committed (discard);
+    /// N>=1 = the Nth-previous archived config.
+    pub version: i64,
+    /// If false (default), preview mode: loads rollback N, computes diff, then
+    /// discards (no commit). If true, loads and commits.
+    #[serde(default)]
+    pub commit: bool,
+    /// If set with commit=true, uses confirmed commit with auto-rollback after N
+    /// minutes if not confirmed within this window.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 71_582_788))]
+    pub confirm_timeout_mins: Option<u32>,
+    /// Commit comment recorded in the device commit log when commit=true (normal
+    /// commit only). IGNORED during confirmed commits (confirm_timeout_mins set)
+    /// due to rustez API limitation. Defaults to "rollback to N via rollback_config".
+    #[serde(default)]
+    pub commit_comment: Option<String>,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -411,6 +440,44 @@ mod tests {
             serde_json::from_value(serde_json::json!({"router":"r1"})).unwrap();
         assert_eq!(a.router_name, "r1");
         assert_eq!(a.timeout, 360);
+    }
+
+    #[test]
+    fn rollback_config_defaults_commit_false_and_timeout() {
+        let v = serde_json::json!({"router_name":"r1","version":5});
+        let a: RollbackConfigArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.version, 5);
+        assert!(!a.commit);
+        assert!(a.confirm_timeout_mins.is_none());
+        assert!(a.commit_comment.is_none());
+        assert_eq!(a.timeout, 360);
+    }
+
+    #[test]
+    fn rollback_config_accepts_commit_with_confirm() {
+        let v = serde_json::json!({
+            "router_name":"r1","version":3,"commit":true,"confirm_timeout_mins":10
+        });
+        let a: RollbackConfigArgs = serde_json::from_value(v).unwrap();
+        assert!(a.commit);
+        assert_eq!(a.confirm_timeout_mins, Some(10));
+    }
+
+    #[test]
+    fn rollback_config_accepts_commit_comment() {
+        let v = serde_json::json!({
+            "router_name":"r1","version":1,"commit":true,"commit_comment":"emergency rollback"
+        });
+        let a: RollbackConfigArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.commit_comment.as_deref(), Some("emergency rollback"));
+    }
+
+    #[test]
+    fn rollback_config_rejects_missing_version() {
+        let v = serde_json::json!({"router_name":"r1"});
+        let r: Result<RollbackConfigArgs, _> = serde_json::from_value(v);
+        assert!(r.is_err());
     }
 
     #[test]

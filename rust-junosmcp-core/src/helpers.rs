@@ -62,6 +62,21 @@ pub fn validate_rollback_version(v: i64) -> Result<u32, JmcpError> {
     }
 }
 
+/// Convert confirmed-commit timeout from minutes to seconds, validating RFC 6241
+/// constraints: must be >= 1 minute, and the result must fit in u32 (no overflow).
+pub fn confirm_timeout_to_secs(mins: u32) -> Result<u32, JmcpError> {
+    if mins == 0 {
+        return Err(JmcpError::Validation(
+            "confirm_timeout_mins must be >= 1".into(),
+        ));
+    }
+    mins.checked_mul(60).ok_or_else(|| {
+        JmcpError::Validation(
+            "confirm_timeout_mins too large (overflow when converting to seconds)".into(),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +151,38 @@ mod tests {
     fn strip_config_xml_wrapper_passthrough_when_no_tag() {
         let raw = "  system { host-name r1; }  ";
         assert_eq!(strip_config_xml_wrapper(raw), "system { host-name r1; }");
+    }
+
+    #[test]
+    fn confirm_timeout_to_secs_converts_minutes() {
+        assert_eq!(confirm_timeout_to_secs(1).unwrap(), 60);
+        assert_eq!(confirm_timeout_to_secs(10).unwrap(), 600);
+        assert_eq!(confirm_timeout_to_secs(120).unwrap(), 7200);
+    }
+
+    #[test]
+    fn confirm_timeout_to_secs_rejects_zero() {
+        let r = confirm_timeout_to_secs(0);
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("must be >= 1"), "error: {msg}");
+            }
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirm_timeout_to_secs_rejects_overflow() {
+        // u32::MAX / 60 = 71582788; anything above that overflows when * 60.
+        let r = confirm_timeout_to_secs(u32::MAX / 60 + 1);
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(
+                    msg.contains("too large") || msg.contains("overflow"),
+                    "error: {msg}"
+                );
+            }
+            other => panic!("expected Validation error, got {other:?}"),
+        }
     }
 }

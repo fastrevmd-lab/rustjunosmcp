@@ -21,6 +21,7 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "load_and_commit_config",
     "reload_devices",
     "render_and_apply_j2_template",
+    "rollback_config",
     "transfer_file",
     "upgrade_junos",
 ];
@@ -64,6 +65,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "manage_idp_security_package",
     "reload_devices",
     "render_and_apply_j2_template",
+    "rollback_config",
     "srxmcp_status",
     "transfer_file",
     "upgrade_junos",

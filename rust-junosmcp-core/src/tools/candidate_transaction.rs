@@ -25,6 +25,7 @@ pub(crate) enum CandidateMode {
 #[derive(Debug)]
 pub(crate) struct CandidateRequest {
     pub(crate) payload: Option<ConfigPayload>,
+    pub(crate) rollback_source: Option<u32>,
     pub(crate) mode: CandidateMode,
 }
 
@@ -52,6 +53,7 @@ pub(crate) enum CandidateResult {
 trait CandidateBackend {
     async fn lock(&mut self) -> Result<(), JmcpError>;
     async fn load(&mut self, payload: ConfigPayload) -> Result<(), JmcpError>;
+    async fn load_rollback(&mut self, version: u32) -> Result<(), JmcpError>;
     async fn diff(&mut self) -> Result<String, JmcpError>;
     async fn commit_check(&mut self) -> Result<(), JmcpError>;
     async fn commit_with_comment(&mut self, comment: &str) -> Result<(), JmcpError>;
@@ -70,6 +72,12 @@ impl CandidateBackend for ConfigManager<'_> {
         ConfigManager::load(self, payload)
             .await
             .map(|_| ())
+            .map_err(Into::into)
+    }
+
+    async fn load_rollback(&mut self, version: u32) -> Result<(), JmcpError> {
+        ConfigManager::rollback(self, version)
+            .await
             .map_err(Into::into)
     }
 
@@ -242,10 +250,21 @@ async fn primary_operation<B: CandidateBackend>(
     ct: &CancellationToken,
     committed: &mut bool,
 ) -> Result<CandidateResult, JmcpError> {
-    let payload = request.payload.ok_or_else(|| {
-        JmcpError::Validation("candidate transaction requires a configuration payload".into())
-    })?;
-    run_step(deadline, operation_timeout, ct, backend.load(payload)).await?;
+    // Load step: either a rollback archive or a config payload.
+    if let Some(version) = request.rollback_source {
+        run_step(
+            deadline,
+            operation_timeout,
+            ct,
+            backend.load_rollback(version),
+        )
+        .await?;
+    } else {
+        let payload = request.payload.ok_or_else(|| {
+            JmcpError::Validation("candidate transaction requires a configuration payload".into())
+        })?;
+        run_step(deadline, operation_timeout, ct, backend.load(payload)).await?;
+    }
     let diff = run_step(deadline, operation_timeout, ct, backend.diff()).await?;
 
     match request.mode {
@@ -443,6 +462,7 @@ mod tests {
         locked: bool,
         dirty: bool,
         events: Vec<Op>,
+        last_rollback_version: Option<u32>,
     }
 
     struct FakeBackend {
@@ -508,6 +528,16 @@ mod tests {
             self.operation(Op::Load).await
         }
 
+        async fn load_rollback(&mut self, version: u32) -> Result<(), JmcpError> {
+            // Rollback also dirties the candidate (loads archived config).
+            {
+                let mut state = self.state.lock().unwrap();
+                state.dirty = true;
+                state.last_rollback_version = Some(version);
+            }
+            self.operation(Op::Load).await
+        }
+
         async fn diff(&mut self) -> Result<String, JmcpError> {
             self.operation(Op::Diff).await?;
             Ok("fake diff".into())
@@ -543,6 +573,7 @@ mod tests {
     fn commit_request() -> CandidateRequest {
         CandidateRequest {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
+            rollback_source: None,
             mode: CandidateMode::CommitWithComment("test".into()),
         }
     }
@@ -550,6 +581,7 @@ mod tests {
     fn check_request() -> CandidateRequest {
         CandidateRequest {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
+            rollback_source: None,
             mode: CandidateMode::CommitCheck,
         }
     }
@@ -557,6 +589,7 @@ mod tests {
     fn dry_run_request() -> CandidateRequest {
         CandidateRequest {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
+            rollback_source: None,
             mode: CandidateMode::DryRun,
         }
     }
@@ -564,6 +597,7 @@ mod tests {
     fn discard_request() -> CandidateRequest {
         CandidateRequest {
             payload: None,
+            rollback_source: None,
             mode: CandidateMode::Discard,
         }
     }
@@ -911,5 +945,94 @@ mod tests {
             }
             other => panic!("expected CheckFailed, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn rollback_preview_loads_diffs_discards_and_is_reusable() {
+        // Preview path (DryRun, rollback_source: Some(3)): loads rollback 3, diffs,
+        // cleanup discards (rollback 0), unlocks. Session is reusable.
+        let state = Arc::new(Mutex::new(DeviceState::default()));
+        let mut backend = FakeBackend::new(state.clone());
+        let execution = run_fake(
+            &mut backend,
+            CandidateRequest {
+                payload: None,
+                rollback_source: Some(3),
+                mode: CandidateMode::DryRun,
+            },
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &CancellationToken::new(),
+        )
+        .await;
+
+        // Result is DryRun with diff, session reusable.
+        match &execution.result {
+            Ok(CandidateResult::DryRun { diff }) => {
+                assert_eq!(diff, "fake diff");
+            }
+            other => panic!("expected DryRun result, got {other:?}"),
+        }
+        assert!(execution.reusable);
+
+        // Event sequence: Lock, Load (rollback 3), Diff, Rollback (cleanup), Unlock.
+        let events = state.lock().unwrap().events.clone();
+        assert_eq!(
+            events,
+            vec![Op::Lock, Op::Load, Op::Diff, Op::Rollback, Op::Unlock]
+        );
+
+        // Verify rollback version 3 was loaded.
+        assert_eq!(state.lock().unwrap().last_rollback_version, Some(3));
+
+        // Session is clean; next operation can lock.
+        assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
+    }
+
+    #[tokio::test]
+    async fn rollback_commit_loads_commits_no_cleanup_rollback() {
+        // Commit path (CommitWithComment, rollback_source: Some(2)): loads rollback 2,
+        // diffs, commits. NO cleanup rollback (committed=true). Unlock still happens.
+        let state = Arc::new(Mutex::new(DeviceState::default()));
+        let mut backend = FakeBackend::new(state.clone());
+        let execution = run_fake(
+            &mut backend,
+            CandidateRequest {
+                payload: None,
+                rollback_source: Some(2),
+                mode: CandidateMode::CommitWithComment("rollback to 2".into()),
+            },
+            Duration::from_secs(1),
+            Duration::from_millis(50),
+            &CancellationToken::new(),
+        )
+        .await;
+
+        // Result is Committed with diff, session reusable.
+        match &execution.result {
+            Ok(CandidateResult::Committed { diff }) => {
+                assert_eq!(diff, "fake diff");
+            }
+            other => panic!("expected Committed result, got {other:?}"),
+        }
+        assert!(execution.reusable);
+
+        // Event sequence: Lock, Load (rollback 2), Diff, Commit, Unlock.
+        // NO Rollback in the sequence (committed=true means no cleanup rollback).
+        let events = state.lock().unwrap().events.clone();
+        assert_eq!(
+            events,
+            vec![Op::Lock, Op::Load, Op::Diff, Op::Commit, Op::Unlock]
+        );
+        assert!(
+            !events.contains(&Op::Rollback),
+            "successful commit must not rollback"
+        );
+
+        // Verify rollback version 2 was loaded.
+        assert_eq!(state.lock().unwrap().last_rollback_version, Some(2));
+
+        // Session is clean; next operation can lock.
+        assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
     }
 }

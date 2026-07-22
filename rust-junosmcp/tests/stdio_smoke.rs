@@ -18,6 +18,7 @@ const JUNOS_TOOLS: &[&str] = &[
     "load_and_commit_config",
     "commit_check_config",
     "discard_candidate",
+    "rollback_config",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -140,9 +141,9 @@ fn lists_expected_tools() {
         .collect();
     assert_eq!(names, expected);
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 26);
+    assert_eq!(names.len(), 27);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 17);
+    assert_eq!(names.len(), 18);
 }
 
 #[cfg(feature = "srx")]

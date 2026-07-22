@@ -76,6 +76,7 @@ pub async fn handle_with_cancel(
         &args.router_name,
         CandidateRequest {
             payload: Some(payload),
+            rollback_source: None,
             mode: CandidateMode::CommitCheck,
         },
         timeout_dur,

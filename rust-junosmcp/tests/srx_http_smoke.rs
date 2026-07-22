@@ -199,8 +199,8 @@ fn lists_all_known_tools() {
         .copied()
         .collect();
     assert_eq!(names, expected);
-    assert_eq!(tools.len(), 26);
-    assert_eq!(names.len(), 26);
+    assert_eq!(tools.len(), 27);
+    assert_eq!(names.len(), 27);
 }
 
 #[test]

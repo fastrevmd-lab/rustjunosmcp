@@ -33,6 +33,7 @@ pub async fn handle_with_cancel(
         &args.router_name,
         CandidateRequest {
             payload: None,
+            rollback_source: None,
             mode: CandidateMode::Discard,
         },
         timeout_dur,

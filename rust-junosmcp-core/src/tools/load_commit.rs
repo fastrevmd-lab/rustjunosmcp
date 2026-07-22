@@ -3,7 +3,9 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::{build_config_payload, excerpt, validate_input_length};
+use crate::helpers::{
+    build_config_payload, confirm_timeout_to_secs, excerpt, validate_input_length,
+};
 use crate::policy::{Decision, Policy};
 use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use crate::tools::LoadCommitArgs;
@@ -67,7 +69,10 @@ pub async fn handle_with_cancel(
     let timeout_dur = Duration::from_secs(args.timeout);
     let confirmed = args.confirm_timeout_mins;
     let mode = match confirmed {
-        Some(mins) => CandidateMode::CommitConfirmed(mins * 60),
+        Some(mins) => {
+            let secs = confirm_timeout_to_secs(mins)?;
+            CandidateMode::CommitConfirmed(secs)
+        }
         None => CandidateMode::CommitWithComment(args.commit_comment.clone()),
     };
     let result = candidate_transaction::run(
@@ -75,6 +80,7 @@ pub async fn handle_with_cancel(
         &args.router_name,
         CandidateRequest {
             payload: Some(payload),
+            rollback_source: None,
             mode,
         },
         timeout_dur,

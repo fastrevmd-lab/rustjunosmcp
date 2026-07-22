@@ -258,6 +258,7 @@ async fn commit_one(
         router,
         CandidateRequest {
             payload: Some(payload),
+            rollback_source: None,
             mode,
         },
         timeout,

@@ -14,11 +14,12 @@ use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{
     tools::{
         add_device, batch, commit_check, config_diff, discard_candidate, execute_command, facts,
-        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices, router_list,
-        template, transfer_file, upgrade_junos, AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs,
-        DiscardCandidateArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs,
-        GatherFactsArgs, GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs,
-        TemplateArgs, TransferFileArgs, UpgradeJunosArgs,
+        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices,
+        rollback_config, router_list, template, transfer_file, upgrade_junos, AddDeviceArgs,
+        CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
+        ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
+        ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs, TemplateArgs,
+        TransferFileArgs, UpgradeJunosArgs,
     },
     DeviceManager, Policy,
 };
@@ -276,6 +277,7 @@ const SERVER_TOOLS: &[&str] = &[
     "load_and_commit_config",
     "commit_check_config",
     "discard_candidate",
+    "rollback_config",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -296,8 +298,8 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_17() {
-        assert_eq!(SERVER_TOOLS.len(), 17);
+    fn server_tools_len_is_18() {
+        assert_eq!(SERVER_TOOLS.len(), 18);
     }
 
     #[test]
@@ -630,6 +632,48 @@ impl JmcpHandler {
         }
 
         let result = discard_candidate::handle_with_cancel(args, self.dm.clone(), ct).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "rollback_config",
+        description = "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config."
+    )]
+    async fn rollback_config(
+        &self,
+        Parameters(args): Parameters<RollbackConfigArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = AuditScope::new(
+            ctx,
+            "rollback_config",
+            if args.commit { "commit" } else { "preview" },
+            vec![args.router_name.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "rollback_config") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "rollback_config", &args.router_name) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        audit.meta("version", args.version.to_string());
+        if args.commit {
+            if let Some(confirm_mins) = args.confirm_timeout_mins {
+                audit.meta("commit_confirmed", confirm_mins as u64);
+            }
+        }
+
+        let result = rollback_config::handle_with_cancel(args, self.dm.clone(), ct).await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -1135,13 +1179,13 @@ mod scope_tests {
             .map(|name| (*name).to_string())
             .collect();
         assert_eq!(names, expected);
-        assert_eq!(names.len(), 26);
+        assert_eq!(names.len(), 27);
     }
 
     #[test]
     #[cfg(not(feature = "srx"))]
-    fn junos_only_router_has_seventeen_tools() {
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 17);
+    fn junos_only_router_has_eighteen_tools() {
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 18);
     }
 
     #[test]

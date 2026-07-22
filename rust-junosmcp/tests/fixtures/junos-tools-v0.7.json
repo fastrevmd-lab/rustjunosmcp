@@ -531,7 +531,8 @@
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
+          "maximum": 71582788,
           "default": null
         },
         "timeout": {
@@ -625,6 +626,60 @@
         },
         "timeout": {
           "description": "Connection timeout in seconds (per-router).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        }
+      }
+    }
+  },
+  "rollback_config": {
+    "name": "rollback_config",
+    "description": "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "router_name",
+        "version"
+      ],
+      "type": "object",
+      "properties": {
+        "router_name": {
+          "description": "The target router. Accepts `router` or `router_name`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Rollback version to load (0-49). 0 = candidate vs committed (discard);\nN>=1 = the Nth-previous archived config.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "commit": {
+          "description": "If false (default), preview mode: loads rollback N, computes diff, then\ndiscards (no commit). If true, loads and commits.",
+          "type": "boolean",
+          "default": false
+        },
+        "confirm_timeout_mins": {
+          "description": "If set with commit=true, uses confirmed commit with auto-rollback after N\nminutes if not confirmed within this window.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1,
+          "maximum": 71582788,
+          "default": null
+        },
+        "commit_comment": {
+          "description": "Commit comment recorded in the device commit log when commit=true (normal\ncommit only). IGNORED during confirmed commits (confirm_timeout_mins set)\ndue to rustez API limitation. Defaults to \"rollback to N via rollback_config\".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
