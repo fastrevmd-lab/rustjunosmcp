@@ -6,6 +6,18 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-07-22
+
+### Fixed
+
+- **#180 — `commit_check_config` returns a real verdict on chassis clusters.**
+  Picks up `rustnetconf 0.13.2`, which repairs the malformed multi-RE
+  `validate` / `commit-check` reply Junos clusters send (each `<routing-engine>`
+  block opened but never closed) instead of failing to parse it. Cluster
+  commit-checks now return `valid` / `invalid` rather than the `check_failed`
+  fallback introduced in 0.9.0, which remains as defense-in-depth. No rustEZ
+  change (patch pickup).
+
 ## [0.9.0] — 2026-07-22
 
 ### Added
