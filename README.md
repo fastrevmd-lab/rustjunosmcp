@@ -46,9 +46,14 @@ Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
 on sequential commands to the same router. The batch tool runs routers in
 parallel with a configurable concurrency cap.
 
-> ## v0.9.0 released
+> ## v0.9.1 released
 >
-> Adds the **`rollback_config`** tool — load a Junos rollback archive
+> Patch: chassis-cluster `commit_check_config` now returns a real
+> `valid` / `invalid` verdict — picks up `rustnetconf 0.13.2`, which repairs the
+> malformed multi-RE `validate` reply Junos clusters send (#180). Everything
+> from v0.9.0 below.
+>
+> **v0.9.0** adds the **`rollback_config`** tool — load a Junos rollback archive
 > (rollback N) into the candidate and preview or commit it — bringing the
 > surface to 27 tools (18 Junos-only with `--no-default-features`). Also:
 > server-side `| match` / `| except` filtering (the `<command>` RPC silently
@@ -62,7 +67,7 @@ parallel with a configurable concurrency cap.
 > Security: the SSH transport moves off prerelease RustCrypto — `russh 0.62`
 > drops the `-rc` crypto crates in the lock from 13 to 3.
 >
-> See the [v0.9.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.9.0).
+> See the [v0.9.1 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.9.1).
 
 ## Feature scope
 
@@ -381,7 +386,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.9, 0.9.0).
+# Pull the prebuilt image (tags: latest, 0.9, 0.9.1).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -444,8 +449,8 @@ docker run --rm -i \
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
 # installer copies the unified binary and unit from its extracted package root.
-pct push 115 dist/rust-junosmcp_0.9.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.9.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.9.1_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.9.1_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.
