@@ -7,6 +7,9 @@ repository.workspace = true
 authors.workspace    = true
 description = "Unified MCP server for Juniper Junos and SRX devices, built on rustEZ."
 
+[lints]
+workspace = true
+
 [features]
 default = ["tls", "srx"]
 tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
@@ -50,10 +53,10 @@ path = "tests/srx_live_smoke.rs"
 required-features = ["srx"]
 
 [dependencies]
-rust-junosmcp-core = { path = "../rust-junosmcp-core" }
-rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
-rust-junosmcp-audit = { path = "../rust-junosmcp-audit" }
-rust-junosmcp-srx-core = { path = "../rust-junosmcp-srx-core", optional = true }
+rust-junosmcp-core = { version = "0.9.1", path = "../rust-junosmcp-core" }
+rust-junosmcp-auth = { version = "0.9.1", path = "../rust-junosmcp-auth" }
+rust-junosmcp-audit = { version = "0.9.1", path = "../rust-junosmcp-audit" }
+rust-junosmcp-srx-core = { version = "0.9.1", path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
 serde              = { workspace = true }
@@ -85,7 +88,7 @@ axum-server        = { workspace = true, optional = true, default-features = fal
 libc = "0.2"
 
 [dev-dependencies]
-rust-junosmcp-audit = { path = "../rust-junosmcp-audit", features = ["test-util"] }
+rust-junosmcp-audit = { version = "0.9.1", path = "../rust-junosmcp-audit", features = ["test-util"] }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

@@ -7,6 +7,9 @@ repository.workspace  = true
 authors.workspace     = true
 description = "Core logic and Junos tool handlers for rust-junosmcp."
 
+[lints]
+workspace = true
+
 [dependencies]
 chrono       = { workspace = true }
 tokio        = { workspace = true }
@@ -31,7 +34,7 @@ http         = { workspace = true }
 http-body    = { workspace = true }
 http-body-util = { workspace = true }
 rmcp         = { version = "2", features = ["server", "transport-streamable-http-server"] }
-rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+rust-junosmcp-auth = { version = "0.9.1", path = "../rust-junosmcp-auth" }
 dashmap      = { workspace = true }
 futures      = "0.3"
 metrics                     = { workspace = true }

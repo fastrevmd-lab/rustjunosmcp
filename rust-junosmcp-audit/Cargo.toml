@@ -7,11 +7,14 @@ repository.workspace  = true
 authors.workspace     = true
 description = "Caller-attributed audit events and configurable audit sink for rust-junosmcp."
 
+[lints]
+workspace = true
+
 [features]
 test-util = []
 
 [dependencies]
-rust-junosmcp-auth = { path = "../rust-junosmcp-auth" }
+rust-junosmcp-auth = { version = "0.9.1", path = "../rust-junosmcp-auth" }
 metrics             = { workspace = true }
 tracing            = { workspace = true }
 tracing-journald   = "0.3"

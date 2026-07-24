@@ -312,6 +312,10 @@ fn friendly_read_error(path: &Path, err: std::io::Error) -> TokenStoreError {
 }
 
 #[cfg(unix)]
+// One of two `unsafe` sites in this workspace, which is why `unsafe_code` is
+// `deny` rather than `forbid`. mecmcp Phase 1 replaces this module with
+// `mecmcp-auth`, which reaches the same syscall safely through `rustix`.
+#[allow(unsafe_code)]
 fn eacces_to_friendly(path: &Path, _err: std::io::Error) -> TokenStoreError {
     use std::os::unix::fs::MetadataExt;
     // SAFETY: `getuid()` has no preconditions and is async-signal-safe.
@@ -694,6 +698,7 @@ mod tests {
     /// test is exercising.
     #[cfg(unix)]
     #[test]
+    #[allow(unsafe_code)] // see `eacces_to_friendly`; removed in mecmcp Phase 1
     fn eacces_surfaces_friendly_message_with_uid_and_mode() {
         use std::os::unix::fs::PermissionsExt;
         // SAFETY: `getuid()` has no preconditions.

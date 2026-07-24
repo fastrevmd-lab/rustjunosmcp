@@ -1,3 +1,8 @@
+// SIGHUP delivery in these tests uses `libc::kill` directly. mecmcp Phase 3
+// moves signal handling into `mecmcp-runtime`, which reaches the same syscall
+// safely through `rustix`; this allow goes away with it.
+#![allow(unsafe_code)]
+
 //! SIGHUP hot reload smoke. Unix-only.
 //!
 //! Verifies that sending SIGHUP to the running server causes it to re-read

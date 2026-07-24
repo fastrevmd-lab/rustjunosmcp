@@ -7,8 +7,11 @@ repository.workspace  = true
 authors.workspace     = true
 description = "SRX-specific workflow core for rust-junosmcp."
 
+[lints]
+workspace = true
+
 [dependencies]
-rust-junosmcp-core = { path = "../rust-junosmcp-core" }
+rust-junosmcp-core = { version = "0.9.1", path = "../rust-junosmcp-core" }
 rustez             = { workspace = true }
 serde              = { workspace = true, features = ["derive"] }
 serde_json         = { workspace = true }

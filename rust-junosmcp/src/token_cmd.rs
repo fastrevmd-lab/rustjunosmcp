@@ -103,6 +103,10 @@ fn list(path: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
+// The last `unsafe` outside rust-junosmcp-auth, which is why `unsafe_code` is
+// `deny` rather than `forbid`. This module moves to `mecmcp-runtime` in
+// mecmcp Phase 3, where the signal is sent safely through `rustix`.
+#[allow(unsafe_code)]
 fn sighup_if_requested(pid: Option<i32>) {
     if let Some(pid) = pid {
         // SAFETY: libc::kill is an FFI call with no preconditions on `pid`; invalid pids

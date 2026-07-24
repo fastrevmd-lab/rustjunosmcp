@@ -27,6 +27,11 @@ impl Secret {
 }
 
 impl Drop for Secret {
+    // The only `unsafe` in this workspace, which is why `unsafe_code` is `deny`
+    // rather than `forbid`. mecmcp Phase 1 replaces this hand-rolled zeroing
+    // with the `zeroize` crate; when it lands, delete this attribute and raise
+    // the workspace lint to `forbid`.
+    #[allow(unsafe_code)]
     fn drop(&mut self) {
         // Best-effort zeroize. Not constant-time, but the process is on its way
         // out for token-management subcommands.
