@@ -92,9 +92,7 @@ pub enum SrxError {
     #[error("[code=install_failed] router={router}: {detail}")]
     SignaturePackageInstallFailed { router: String, detail: String },
 
-    #[error(
-        "[code=post_install_version_mismatch] router={router}: expected={expected}, got={got}"
-    )]
+    #[error("[code=post_install_version_mismatch] router={router}: expected={expected}, got={got}")]
     SignaturePackageVerificationFailed {
         router: String,
         expected: String,
@@ -122,20 +120,28 @@ pub enum SrxError {
     // Phase 3 / v0.3.0 — cluster health + support bundle.
     // Same `[code=<snake>] router=<name>: <detail>` convention.
     // ---------------------------------------------------------------------
-    #[error("[code=cluster_health_check_timeout] router={router}: outer budget exceeded after {elapsed_secs}s")]
+    #[error(
+        "[code=cluster_health_check_timeout] router={router}: outer budget exceeded after {elapsed_secs}s"
+    )]
     ClusterHealthCheckTimeout { router: String, elapsed_secs: u64 },
 
-    #[error("[code=bundle_staging_full] router={router}: staging dir over cap even after LRU eviction (bundle {bundle_bytes} bytes; cap {cap_bytes} bytes)")]
+    #[error(
+        "[code=bundle_staging_full] router={router}: staging dir over cap even after LRU eviction (bundle {bundle_bytes} bytes; cap {cap_bytes} bytes)"
+    )]
     BundleStagingFull {
         router: String,
         bundle_bytes: u64,
         cap_bytes: u64,
     },
 
-    #[error("[code=bundle_staging_evicted] router={router}: requested request_id={request_id} not present in staging (LRU evicted or never written)")]
+    #[error(
+        "[code=bundle_staging_evicted] router={router}: requested request_id={request_id} not present in staging (LRU evicted or never written)"
+    )]
     BundleStagingEvicted { router: String, request_id: String },
 
-    #[error("[code=bundle_rpc_subset_failed] router={router}: {failed_count} of {total_count} bundle RPCs failed (first error: {first_error})")]
+    #[error(
+        "[code=bundle_rpc_subset_failed] router={router}: {failed_count} of {total_count} bundle RPCs failed (first error: {first_error})"
+    )]
     BundleRpcSubsetFailed {
         router: String,
         failed_count: usize,
@@ -143,10 +149,14 @@ pub enum SrxError {
         first_error: String,
     },
 
-    #[error("[code=bundle_per_router_contention] router={router}: another collect_jtac_support_bundle is in flight; retry after it completes")]
+    #[error(
+        "[code=bundle_per_router_contention] router={router}: another collect_jtac_support_bundle is in flight; retry after it completes"
+    )]
     BundlePerRouterContention { router: String },
 
-    #[error("[code=bundle_config_capture_failed] router={router}: universal-baseline get-configuration RPC failed: {detail}")]
+    #[error(
+        "[code=bundle_config_capture_failed] router={router}: universal-baseline get-configuration RPC failed: {detail}"
+    )]
     BundleConfigCaptureFailed { router: String, detail: String },
 }
 

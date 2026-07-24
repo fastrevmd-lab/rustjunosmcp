@@ -5,8 +5,8 @@
 #![cfg(feature = "tls")]
 
 mod common;
-use common::{binary_path, ensure_built, parse_first_sse_data, pick_port, Server};
-use serde_json::{json, Value};
+use common::{Server, binary_path, ensure_built, parse_first_sse_data, pick_port};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -109,8 +109,8 @@ fn spawn_tls(inv_path: &Path, tokens_path: &Path, cert: &Path, key: &Path) -> Se
 }
 
 fn build_tls_agent(cert_pem_path: &Path) -> ureq::Agent {
-    use rustls_pki_types::pem::PemObject;
     use rustls_pki_types::CertificateDer;
+    use rustls_pki_types::pem::PemObject;
     let pem = std::fs::read(cert_pem_path).unwrap();
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_slice_iter(&pem) {

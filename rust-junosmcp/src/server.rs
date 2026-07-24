@@ -9,19 +9,19 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
 };
-use rmcp::{tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{
+    DeviceManager, Policy,
     tools::{
-        add_device, batch, commit_check, config_diff, discard_candidate, execute_command, facts,
-        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices,
-        rollback_config, router_list, template, transfer_file, upgrade_junos, AddDeviceArgs,
-        CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
+        AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
         ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
         ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs, TemplateArgs,
-        TransferFileArgs, UpgradeJunosArgs,
+        TransferFileArgs, UpgradeJunosArgs, add_device, batch, commit_check, config_diff,
+        discard_candidate, execute_command, facts, fetch_file, get_config, list_staged_files,
+        load_commit, pfe, reload_devices, rollback_config, router_list, template, transfer_file,
+        upgrade_junos,
     },
-    DeviceManager, Policy,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -203,12 +203,13 @@ impl JmcpHandler {
         tool: &'static str,
     ) -> Result<(), ScopeError> {
         if let Some(ctx) = ctx
-            && !ctx.tools.allows(tool) {
-                return Err(ScopeError::ToolNotInScope {
-                    token: ctx.token_name.clone(),
-                    tool,
-                });
-            }
+            && !ctx.tools.allows(tool)
+        {
+            return Err(ScopeError::ToolNotInScope {
+                token: ctx.token_name.clone(),
+                tool,
+            });
+        }
         Ok(())
     }
 
@@ -246,13 +247,14 @@ impl JmcpHandler {
             }
         }
         if let Some(ctx) = ctx
-            && !ctx.routers.allows(router) {
-                return Err(ScopeError::RouterNotInScope {
-                    token: ctx.token_name.clone(),
-                    router: router.to_string(),
-                    tool,
-                });
-            }
+            && !ctx.routers.allows(router)
+        {
+            return Err(ScopeError::RouterNotInScope {
+                token: ctx.token_name.clone(),
+                router: router.to_string(),
+                tool,
+            });
+        }
         Ok(())
     }
 }
@@ -666,9 +668,10 @@ impl JmcpHandler {
 
         audit.meta("version", args.version.to_string());
         if args.commit
-            && let Some(confirm_mins) = args.confirm_timeout_mins {
-                audit.meta("commit_confirmed", confirm_mins as u64);
-            }
+            && let Some(confirm_mins) = args.confirm_timeout_mins
+        {
+            audit.meta("commit_confirmed", confirm_mins as u64);
+        }
 
         let result = rollback_config::handle_with_cancel(args, self.dm.clone(), ct).await;
         match &result {
@@ -790,9 +793,10 @@ impl JmcpHandler {
 
         // Parse vars_content to count vars
         if let Ok(vars) = serde_json::from_str::<serde_json::Value>(&args.vars_content)
-            && let Some(obj) = vars.as_object() {
-                audit.meta("var_count", obj.len() as u64);
-            }
+            && let Some(obj) = vars.as_object()
+        {
+            audit.meta("var_count", obj.len() as u64);
+        }
         audit.meta("committed", args.apply_config && !args.dry_run);
 
         let result =
@@ -879,10 +883,11 @@ impl JmcpHandler {
             Ok(v) => {
                 self.rebuild_policy();
                 if let Some(added) = v.get("added").and_then(|a| a.as_array())
-                    && let Some(removed) = v.get("removed").and_then(|r| r.as_array()) {
-                        let total = added.len() + removed.len();
-                        audit.meta("device_count", total as u64);
-                    }
+                    && let Some(removed) = v.get("removed").and_then(|r| r.as_array())
+                {
+                    let total = added.len() + removed.len();
+                    audit.meta("device_count", total as u64);
+                }
                 audit.succeed();
             }
             Err(e) => {
@@ -1043,10 +1048,11 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
         if let Some(router) = args.router_name.as_deref()
-            && let Err(e) = self.check_router_scope(ctx, "list_staged_files", router) {
-                audit.deny("router_scope");
-                return Self::scope_to_call_result(e);
-            }
+            && let Err(e) = self.check_router_scope(ctx, "list_staged_files", router)
+        {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
 
         let result = list_staged_files::handle(
             args,
@@ -1090,8 +1096,8 @@ impl ServerHandler for JmcpHandler {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
+    use rust_junosmcp_auth::caller::CallerCtx;
 
     fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {
         rust_junosmcp_core::TransferConfig {
@@ -1210,12 +1216,16 @@ mod scope_tests {
     #[test]
     fn no_ctx_allows_anything() {
         let handler = make_handler();
-        assert!(handler
-            .check_tool_scope(None, "execute_junos_command")
-            .is_ok());
-        assert!(handler
-            .check_router_scope(None, "execute_junos_command", "r1")
-            .is_ok());
+        assert!(
+            handler
+                .check_tool_scope(None, "execute_junos_command")
+                .is_ok()
+        );
+        assert!(
+            handler
+                .check_router_scope(None, "execute_junos_command", "r1")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1226,9 +1236,11 @@ mod scope_tests {
             routers: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
         };
-        assert!(handler
-            .check_tool_scope(Some(&ctx), "get_router_list")
-            .is_ok());
+        assert!(
+            handler
+                .check_tool_scope(Some(&ctx), "get_router_list")
+                .is_ok()
+        );
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_command"),
             Err(ScopeError::ToolNotInScope { .. })
@@ -1243,9 +1255,11 @@ mod scope_tests {
             routers: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
         };
-        assert!(handler
-            .check_router_scope(Some(&ctx), "execute_junos_command", "r1")
-            .is_ok());
+        assert!(
+            handler
+                .check_router_scope(Some(&ctx), "execute_junos_command", "r1")
+                .is_ok()
+        );
         assert!(matches!(
             handler.check_router_scope(Some(&ctx), "execute_junos_command", "r2"),
             Err(ScopeError::RouterNotInScope { .. })
@@ -1268,8 +1282,8 @@ mod scope_tests {
 
     #[test]
     fn handler_carries_transfer_config() {
-        use rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner;
         use rust_junosmcp_core::TransferConfig;
+        use rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner;
 
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
@@ -1329,9 +1343,11 @@ mod scope_tests {
             routers: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
         };
-        assert!(handler
-            .check_tool_scope(Some(&ctx), "transfer_file")
-            .is_ok());
+        assert!(
+            handler
+                .check_tool_scope(Some(&ctx), "transfer_file")
+                .is_ok()
+        );
         assert!(matches!(
             handler.check_router_scope(Some(&ctx), "transfer_file", "vsrx-test10"),
             Err(ScopeError::RouterNotInScope { .. })

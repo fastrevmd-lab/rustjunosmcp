@@ -10,7 +10,7 @@
 
 mod common;
 use common::parse_first_sse_data;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn endpoint() -> (String, String) {
     let url = std::env::var("JMCP_LIVE_URL").expect("JMCP_LIVE_URL required");

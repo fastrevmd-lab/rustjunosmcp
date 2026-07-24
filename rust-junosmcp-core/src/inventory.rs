@@ -69,9 +69,10 @@ pub(crate) mod validation {
             }
         }
         if let Some(s) = p.to_str()
-            && s.starts_with('-') {
-                return false;
-            }
+            && s.starts_with('-')
+        {
+            return false;
+        }
         true
     }
 

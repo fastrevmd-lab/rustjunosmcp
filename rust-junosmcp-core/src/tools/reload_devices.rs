@@ -2,7 +2,7 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::inventory::{hash_file, Inventory};
+use crate::inventory::{Inventory, hash_file};
 use crate::tools::ReloadDevicesArgs;
 use serde_json::json;
 use std::path::PathBuf;
@@ -115,9 +115,10 @@ async fn reload(
     let mut changed: Vec<String> = Vec::new();
     for name in prev_names.intersection(&new_names) {
         if let (Ok(p), Ok(n)) = (prev.get(name), new_inv.get(name))
-            && !inventory_entry_equal(p, n) {
-                changed.push(name.clone());
-            }
+            && !inventory_entry_equal(p, n)
+        {
+            changed.push(name.clone());
+        }
     }
 
     let new_hash = hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;

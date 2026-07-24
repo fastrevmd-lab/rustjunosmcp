@@ -88,7 +88,9 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
-    #[error("[code=local_dest_exists_differs] local destination '{dest}' exists with sha256 '{local_sha}'; remote sha256 is '{remote_sha}'; set force=true to overwrite")]
+    #[error(
+        "[code=local_dest_exists_differs] local destination '{dest}' exists with sha256 '{local_sha}'; remote sha256 is '{remote_sha}'; set force=true to overwrite"
+    )]
     LocalDestExistsDiffers {
         dest: String,
         local_sha: String,
@@ -98,7 +100,9 @@ pub enum JmcpError {
     #[error("[code=remote_file_missing] router '{router}' has no file at '{remote_path}'")]
     RemoteFileMissing { router: String, remote_path: String },
 
-    #[error("[code=fetch_verify_mismatch] fetched file '{dest}' local sha256 '{local_sha}' does not match remote sha256 '{remote_sha}'")]
+    #[error(
+        "[code=fetch_verify_mismatch] fetched file '{dest}' local sha256 '{local_sha}' does not match remote sha256 '{remote_sha}'"
+    )]
     FetchVerifyMismatch {
         dest: String,
         local_sha: String,
@@ -241,7 +245,9 @@ pub enum JmcpError {
     #[error("device `{0}` already exists in the inventory")]
     DeviceExists(String),
 
-    #[error("password authentication is not allowed for add_device; use --allow-password-auth-add to enable")]
+    #[error(
+        "password authentication is not allowed for add_device; use --allow-password-auth-add to enable"
+    )]
     PasswordAuthDisabled,
 
     #[error("invalid device name `{0}`: must match ^[A-Za-z0-9_.-]+$")]
@@ -256,9 +262,7 @@ pub enum JmcpError {
     #[error("missing required arguments: {0:?}")]
     MissingArguments(Vec<String>),
 
-    #[error(
-        "inventory file changed on disk between read and write; call reload_devices and retry"
-    )]
+    #[error("inventory file changed on disk between read and write; call reload_devices and retry")]
     InventoryDriftedOnDisk,
 
     #[error("inventory is empty (no devices)")]

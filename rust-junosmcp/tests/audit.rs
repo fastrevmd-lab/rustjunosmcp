@@ -1,7 +1,7 @@
 //! Audit field + redaction assertions for rust-junosmcp.
 
-use rust_junosmcp_audit::testutil::run_with_capture;
 use rust_junosmcp_audit::AuditScope;
+use rust_junosmcp_audit::testutil::run_with_capture;
 
 #[test]
 fn add_device_audit_omits_credentials() {

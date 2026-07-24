@@ -38,12 +38,12 @@
 //!   *not* `get-*-status`) → poll-style status reply.
 //! * `<request-idp-security-package-rollback/>` (flat).
 
-use crate::workflows::signature_package::{
-    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore, Service,
-};
 use crate::SrxError;
-use rust_junosmcp_core::device_manager::PooledDevice;
+use crate::workflows::signature_package::{
+    ConfirmationBinding, ConfirmationStore, Service, confirmation_token_for_request,
+};
 use rust_junosmcp_core::DeviceLeaseManager;
+use rust_junosmcp_core::device_manager::PooledDevice;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -64,8 +64,7 @@ const RPC_ROLLBACK: &str = "request-idp-security-package-rollback";
 // Composite-RPC payloads for `rustez::RpcExecutor::call_xml`. Their human
 // label is the parent+child path, e.g.
 // `request-idp-security-package-download/status`.
-const XML_CHECK_SERVER: &str =
-    "<request-idp-security-package-download><check-server/></request-idp-security-package-download>";
+const XML_CHECK_SERVER: &str = "<request-idp-security-package-download><check-server/></request-idp-security-package-download>";
 const XML_DOWNLOAD_STATUS: &str =
     "<request-idp-security-package-download><status/></request-idp-security-package-download>";
 const XML_INSTALL_STATUS: &str =
@@ -738,7 +737,7 @@ pub async fn download_and_install(
                 PlanOutcome::AlreadyAtTarget(_) => {
                     return Err(SrxError::SignaturePackageConfirmationPlanDrift {
                         router: args.router.clone(),
-                    })
+                    });
                 }
             };
             let confirmed = confirmations
@@ -774,17 +773,17 @@ async fn preflight(
     let mut blockers: Vec<String> = Vec::new();
     if let Ok(mut exec) = device.rpc()
         && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
-            && let Ok(true) =
-                crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
-            {
-                tracing::warn!(
-                    target: "audit",
-                    event = "sigpkg_commit_confirmed_window_active",
-                    router = %args.router,
-                    "commit-confirmed window open; proceeding because sig-package install is op-mode"
-                );
-                blockers.push("commit-confirmed window open (informational)".to_string());
-            }
+        && let Ok(true) =
+            crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "sigpkg_commit_confirmed_window_active",
+            router = %args.router,
+            "commit-confirmed window open; proceeding because sig-package install is op-mode"
+        );
+        blockers.push("commit-confirmed window open (informational)".to_string());
+    }
 
     // Server reachability + current-version snapshot.
     // check_server's own parser maps unreachable → SignaturePackageServerUnreachable.
@@ -1255,17 +1254,17 @@ async fn preflight_rollback(
     let mut blockers: Vec<String> = Vec::new();
     if let Ok(mut exec) = device.rpc()
         && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
-            && let Ok(true) =
-                crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
-            {
-                tracing::warn!(
-                    target: "audit",
-                    event = "sigpkg_commit_confirmed_window_active",
-                    router = %args.router,
-                    "commit-confirmed window open; proceeding because sig-package rollback is op-mode"
-                );
-                blockers.push("commit-confirmed window open (informational)".to_string());
-            }
+        && let Ok(true) =
+            crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "sigpkg_commit_confirmed_window_active",
+            router = %args.router,
+            "commit-confirmed window open; proceeding because sig-package rollback is op-mode"
+        );
+        blockers.push("commit-confirmed window open (informational)".to_string());
+    }
 
     let info_xml = {
         let mut exec = device

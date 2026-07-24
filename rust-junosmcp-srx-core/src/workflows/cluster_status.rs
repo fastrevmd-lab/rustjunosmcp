@@ -150,9 +150,9 @@ pub fn parse(reply_xml: &str) -> Result<SrxToolResponse<ClusterStatusData>, SrxE
                 .children()
                 .find(|n| n.is_element() && n.tag_name().name() == "cluster-id")
                 .and_then(|n| n.text())
-            {
-                cluster_id_opt = cid_str.trim().parse().ok();
-            }
+        {
+            cluster_id_opt = cid_str.trim().parse().ok();
+        }
 
         // Parse each <redundancy-group>.
         for rg_node in css
@@ -289,20 +289,22 @@ fn is_not_configured_xml(xml: &str) -> Result<bool, SrxError> {
         // Condition 2: error-tag element.
         for child in err.descendants().filter(|n| n.is_element()) {
             if child.tag_name().name() == "error-tag"
-                && let Some(t) = child.text() {
-                    let t = t.trim();
-                    if t == "not-configured" || t == "data-missing" {
-                        return Ok(true);
-                    }
+                && let Some(t) = child.text()
+            {
+                let t = t.trim();
+                if t == "not-configured" || t == "data-missing" {
+                    return Ok(true);
                 }
+            }
             // Condition 1: message element.
             if child.tag_name().name() == "message"
-                && let Some(t) = child.text() {
-                    let lower = t.to_ascii_lowercase();
-                    if lower.contains("not enabled") || lower.contains("not configured") {
-                        return Ok(true);
-                    }
+                && let Some(t) = child.text()
+            {
+                let lower = t.to_ascii_lowercase();
+                if lower.contains("not enabled") || lower.contains("not configured") {
+                    return Ok(true);
                 }
+            }
         }
     }
 

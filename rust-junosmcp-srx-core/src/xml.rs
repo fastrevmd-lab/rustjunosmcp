@@ -1,8 +1,8 @@
 //! XML helpers shared across SRX workflows. Uses roxmltree for a clean DOM
 //! API that keeps every tool out of the multi-RE envelope business.
 
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use std::io::Cursor;
 
 /// One node's payload after stripping the multi-RE envelope.
@@ -43,10 +43,11 @@ fn write_node<W: std::io::Write>(writer: &mut Writer<W>, node: roxmltree::Node<'
             let _ = writer.write_event(Event::Empty(start));
         }
     } else if node.is_text()
-        && let Some(text) = node.text() {
-            // BytesText::new escapes text content automatically.
-            let _ = writer.write_event(Event::Text(BytesText::new(text)));
-        }
+        && let Some(text) = node.text()
+    {
+        // BytesText::new escapes text content automatically.
+        let _ = writer.write_event(Event::Text(BytesText::new(text)));
+    }
 }
 
 /// Split an `<rpc-reply>` body into per-RE chunks. Returns a single-element

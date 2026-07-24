@@ -75,8 +75,8 @@ pub(crate) fn detect_format(rendered: &str) -> &'static str {
 use crate::device_manager::DeviceManager;
 use crate::helpers::build_config_payload;
 use crate::policy::Policy;
-use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use crate::tools::TemplateArgs;
+use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use serde_json::json;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

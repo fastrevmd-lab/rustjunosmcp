@@ -1,6 +1,6 @@
 //! RAII audit guard: emits exactly one `target="audit"` event on Drop.
 
-use crate::schema::{bounded_error, AuditOutcome, AuditValue};
+use crate::schema::{AuditOutcome, AuditValue, bounded_error};
 use rust_junosmcp_auth::caller::CallerCtx;
 use std::fmt::Display;
 use std::time::Instant;
@@ -133,8 +133,8 @@ impl Drop for AuditScope {
 mod tests {
     use super::*;
     use crate::testutil::run_with_capture;
-    use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
+    use rust_junosmcp_auth::caller::CallerCtx;
 
     fn ctx(name: &str) -> CallerCtx {
         CallerCtx {

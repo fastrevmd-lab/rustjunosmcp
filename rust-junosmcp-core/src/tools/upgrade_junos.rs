@@ -562,15 +562,15 @@ Filesystem  Size Used Avail Capacity Mounted on
     }
 }
 
+use crate::DeviceLeaseManager;
 use crate::cancel::{select_cancel, select_cancel_raw};
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
-use crate::tools::transfer_file::{
-    sha256_file_cancellable, validate_source_basename, TransferConfig,
-};
 use crate::tools::UpgradeJunosArgs;
-use crate::DeviceLeaseManager;
+use crate::tools::transfer_file::{
+    TransferConfig, sha256_file_cancellable, validate_source_basename,
+};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -1129,7 +1129,7 @@ mod handle_early_exit_tests {
     use super::*;
     use crate::device_manager::DeviceManager;
     use crate::inventory::Inventory;
-    use crate::tools::{transfer_file::TransferLocks, UpgradeJunosArgs};
+    use crate::tools::{UpgradeJunosArgs, transfer_file::TransferLocks};
     use std::io::Write;
     use std::sync::Arc;
 
@@ -1644,19 +1644,25 @@ mod response_tests {
         assert_eq!(v["elapsed_seconds"], 423);
         assert_eq!(v["phase_timings"]["preflight_secs"], 4);
         assert_eq!(v["phase_timings"]["transfer_secs"], 84);
-        assert!(v["pre_baseline"]["show version"]
-            .as_str()
-            .unwrap()
-            .contains("24.4R1.9"));
-        assert!(v["post_baseline"]["show version"]
-            .as_str()
-            .unwrap()
-            .contains("25.4R1.12"));
-        assert!(v["baseline_diff"]["show version"]["added"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|x| x.as_str().unwrap().contains("25.4R1.12")));
+        assert!(
+            v["pre_baseline"]["show version"]
+                .as_str()
+                .unwrap()
+                .contains("24.4R1.9")
+        );
+        assert!(
+            v["post_baseline"]["show version"]
+                .as_str()
+                .unwrap()
+                .contains("25.4R1.12")
+        );
+        assert!(
+            v["baseline_diff"]["show version"]["added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x.as_str().unwrap().contains("25.4R1.12"))
+        );
     }
 }
 

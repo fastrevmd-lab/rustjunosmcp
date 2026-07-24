@@ -70,9 +70,11 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
 
     let scrape = http_get(server.port, "/metrics", None, None);
     assert_eq!(scrape.code, 200);
-    assert!(scrape
-        .body
-        .contains("junosmcp_active_sessions{server=\"junos\"} 1"));
+    assert!(
+        scrape
+            .body
+            .contains("junosmcp_active_sessions{server=\"junos\"} 1")
+    );
     assert!(scrape.body.lines().any(|line| {
         line.starts_with("junosmcp_tool_duration_seconds_bucket{")
             && line.contains("server=\"junos\"")
@@ -107,9 +109,11 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
         200 | 202 | 204
     ));
     let closed = http_get(server.port, "/metrics", None, None);
-    assert!(closed
-        .body
-        .contains("junosmcp_active_sessions{server=\"junos\"} 0"));
+    assert!(
+        closed
+            .body
+            .contains("junosmcp_active_sessions{server=\"junos\"} 0")
+    );
 }
 
 #[test]

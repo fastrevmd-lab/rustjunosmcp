@@ -321,13 +321,14 @@ impl Policy {
                 continue;
             }
             if let Some(rule) = evaluate(&rules, &line)
-                && rule.action == Action::Deny {
-                    return Ok(Decision::Deny {
-                        rule,
-                        source: rule.source,
-                        line_number: Some(idx + 1),
-                    });
-                }
+                && rule.action == Action::Deny
+            {
+                return Ok(Decision::Deny {
+                    rule,
+                    source: rule.source,
+                    line_number: Some(idx + 1),
+                });
+            }
         }
         Ok(Decision::Allow)
     }

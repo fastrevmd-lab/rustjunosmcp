@@ -1,8 +1,8 @@
+use axum::Router;
 use axum::extract::State;
-use axum::http::{header::CONTENT_TYPE, HeaderValue};
+use axum::http::{HeaderValue, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder, PrometheusHandle};
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
@@ -137,8 +137,8 @@ pub(crate) fn test_recorder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
-    use axum::http::{header::CONTENT_TYPE, Request, StatusCode};
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode, header::CONTENT_TYPE};
     use metrics::with_local_recorder;
     use tower::ServiceExt as _;
 

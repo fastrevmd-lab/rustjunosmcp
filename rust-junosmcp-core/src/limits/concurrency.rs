@@ -6,7 +6,7 @@
 
 use crate::limits::config::LimitsConfig;
 use crate::limits::overload::overload_response;
-use crate::limits::router::{extract_router_targets, RouterLimiter};
+use crate::limits::router::{RouterLimiter, extract_router_targets};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
@@ -94,48 +94,51 @@ pub async fn concurrency_middleware(
     }
 
     if state.max_per_token > 0
-        && let Some(ctx) = req.extensions().get::<CallerCtx>() {
-            let token = ctx.token_name.clone();
-            let sem = state.token_sem(&token);
-            match sem.try_acquire_owned() {
-                Ok(p) => permits.push(p),
-                Err(_) => {
-                    tracing::warn!(limit = "token_concurrency", token = %token, max = state.max_per_token, "request shed");
-                    return overload_response("token_concurrency"); // global permit drops here
-                }
+        && let Some(ctx) = req.extensions().get::<CallerCtx>()
+    {
+        let token = ctx.token_name.clone();
+        let sem = state.token_sem(&token);
+        match sem.try_acquire_owned() {
+            Ok(p) => permits.push(p),
+            Err(_) => {
+                tracing::warn!(limit = "token_concurrency", token = %token, max = state.max_per_token, "request shed");
+                return overload_response("token_concurrency"); // global permit drops here
             }
         }
+    }
 
     if let Some(tracker) = &state.sessions
-        && session_creating && tracker.at_capacity() {
-            tracing::warn!(limit = "session_cap", "request shed");
-            return overload_response("session_cap");
-        }
+        && session_creating
+        && tracker.at_capacity()
+    {
+        tracing::warn!(limit = "session_cap", "request shed");
+        return overload_response("session_cap");
+    }
 
     if session_creating
         && let (Some(tracker), Some(ctx)) =
             (state.sessions.as_ref(), req.extensions().get::<CallerCtx>())
-        {
-            let token = ctx.token_name.clone();
-            match tracker.try_reserve_token(token.clone()) {
-                Ok(reservation) => token_session_reservation = reservation,
-                Err(capacity) => {
-                    tracing::warn!(
-                        limit = "token_session_cap",
-                        token = %token,
-                        current = capacity.current,
-                        max = capacity.max,
-                        "request shed"
-                    );
-                    let mut response = overload_response("token_session_cap");
-                    response.headers_mut().insert(
-                        axum::http::header::CONTENT_TYPE,
-                        axum::http::HeaderValue::from_static("application/json"),
-                    );
-                    return response;
-                }
+    {
+        let token = ctx.token_name.clone();
+        match tracker.try_reserve_token(token.clone()) {
+            Ok(reservation) => token_session_reservation = reservation,
+            Err(capacity) => {
+                tracing::warn!(
+                    limit = "token_session_cap",
+                    token = %token,
+                    current = capacity.current,
+                    max = capacity.max,
+                    "request shed"
+                );
+                let mut response = overload_response("token_session_cap");
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/json"),
+                );
+                return response;
             }
         }
+    }
 
     if state.max_per_router > 0 {
         let (rebuilt, routers) = match inspect_router_targets(req).await {
@@ -176,23 +179,24 @@ pub async fn concurrency_middleware(
         resp = overload_response("session_cap");
     }
     if let Some(reservation) = token_session_reservation
-        && resp.status().is_success() {
-            match resp
-                .headers()
-                .get("mcp-session-id")
-                .and_then(|value| value.to_str().ok())
-            {
-                Some(session_id) => {
-                    let id: rmcp::transport::common::server_side_http::SessionId =
-                        Arc::from(session_id);
-                    let _ = reservation.commit(id);
-                }
-                None => tracing::warn!(
-                    limit = "token_session_cap",
-                    "successful initialize candidate returned no valid session id"
-                ),
+        && resp.status().is_success()
+    {
+        match resp
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+        {
+            Some(session_id) => {
+                let id: rmcp::transport::common::server_side_http::SessionId =
+                    Arc::from(session_id);
+                let _ = reservation.commit(id);
             }
+            None => tracing::warn!(
+                limit = "token_session_cap",
+                "successful initialize candidate returned no valid session id"
+            ),
         }
+    }
     attach_permits(resp, permits)
 }
 
@@ -301,14 +305,14 @@ impl HttpBody for GuardedBody {
 mod tests {
     use super::*;
     use crate::DeviceLeaseManager;
+    use axum::Router;
     use axum::body::Body;
     use axum::body::Bytes;
     use axum::http::{Request, StatusCode};
     use axum::routing::{get, post};
-    use axum::Router;
-    use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
-    use serde_json::{json, Value};
+    use rust_junosmcp_auth::caller::CallerCtx;
+    use serde_json::{Value, json};
     use std::convert::Infallible;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};

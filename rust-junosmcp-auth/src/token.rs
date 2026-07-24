@@ -1,8 +1,8 @@
 //! Token mint, hash, and constant-time verify.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 

@@ -3,9 +3,9 @@
 #![cfg(feature = "tls")]
 
 mod common;
-use common::{binary_path, ensure_built, init_body, parse_first_sse_data, pick_port, Server};
+use common::{Server, binary_path, ensure_built, init_body, parse_first_sse_data, pick_port};
 use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -77,8 +77,8 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
 }
 
 fn tls_agent(cert: &Path) -> ureq::Agent {
-    use rustls_pki_types::pem::PemObject;
     use rustls_pki_types::CertificateDer;
+    use rustls_pki_types::pem::PemObject;
 
     let pem = std::fs::read(cert).unwrap();
     let mut roots = rustls::RootCertStore::empty();

@@ -2,10 +2,10 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
+use crate::inventory::AuthConfig;
 use crate::inventory::validation::{
     is_valid_auth_path, is_valid_device_name, is_valid_ip_or_hostname, is_valid_ssh_username,
 };
-use crate::inventory::AuthConfig;
 use crate::tools::AddDeviceArgs;
 use std::sync::Arc;
 
@@ -67,12 +67,13 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         return Err(JmcpError::PasswordAuthDisabled);
     }
     if let AuthConfig::SshKey { private_key_path } = &auth
-        && !is_valid_auth_path(private_key_path) {
-            return Err(JmcpError::Validation(format!(
-                "invalid private_key_path `{}`: must be non-empty and must not start with '-'",
-                private_key_path.display()
-            )));
-        }
+        && !is_valid_auth_path(private_key_path)
+    {
+        return Err(JmcpError::Validation(format!(
+            "invalid private_key_path `{}`: must be non-empty and must not start with '-'",
+            private_key_path.display()
+        )));
+    }
 
     let username = args.username.clone().unwrap();
     if !is_valid_ssh_username(&username) {

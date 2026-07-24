@@ -41,12 +41,12 @@
 //! * `<request-appid-application-package-uninstall-status/>` (flat) →
 //!   `<apppack-uninstall-status><apppack-uninstall-status-detail>`.
 
-use crate::workflows::signature_package::{
-    confirmation_token_for_request, ConfirmationBinding, ConfirmationStore, Service,
-};
 use crate::SrxError;
-use rust_junosmcp_core::device_manager::PooledDevice;
+use crate::workflows::signature_package::{
+    ConfirmationBinding, ConfirmationStore, Service, confirmation_token_for_request,
+};
 use rust_junosmcp_core::DeviceLeaseManager;
+use rust_junosmcp_core::device_manager::PooledDevice;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -619,7 +619,7 @@ pub async fn download_and_install(
                 PlanOutcome::AlreadyAtTarget(_) => {
                     return Err(SrxError::SignaturePackageConfirmationPlanDrift {
                         router: args.router.clone(),
-                    })
+                    });
                 }
             };
             let confirmed = confirmations
@@ -650,17 +650,17 @@ async fn preflight(
     let mut blockers: Vec<String> = Vec::new();
     if let Ok(mut exec) = device.rpc()
         && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
-            && let Ok(true) =
-                crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
-            {
-                tracing::warn!(
-                    target: "audit",
-                    event = "sigpkg_commit_confirmed_window_active",
-                    router = %args.router,
-                    "commit-confirmed window open; proceeding because sig-package install is op-mode"
-                );
-                blockers.push("commit-confirmed window open (informational)".to_string());
-            }
+        && let Ok(true) =
+            crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "sigpkg_commit_confirmed_window_active",
+            router = %args.router,
+            "commit-confirmed window open; proceeding because sig-package install is op-mode"
+        );
+        blockers.push("commit-confirmed window open (informational)".to_string());
+    }
 
     let mut snapshot = check_server(device, args).await?;
     snapshot.topology = topology;
@@ -687,17 +687,17 @@ async fn preflight_uninstall(
     let mut blockers: Vec<String> = Vec::new();
     if let Ok(mut exec) = device.rpc()
         && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
-            && let Ok(true) =
-                crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
-            {
-                tracing::warn!(
-                    target: "audit",
-                    event = "sigpkg_commit_confirmed_window_active",
-                    router = %args.router,
-                    "commit-confirmed window open; proceeding because sig-package uninstall is op-mode"
-                );
-                blockers.push("commit-confirmed window open (informational)".to_string());
-            }
+        && let Ok(true) =
+            crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "sigpkg_commit_confirmed_window_active",
+            router = %args.router,
+            "commit-confirmed window open; proceeding because sig-package uninstall is op-mode"
+        );
+        blockers.push("commit-confirmed window open (informational)".to_string());
+    }
 
     let info_xml = {
         let mut exec = device
@@ -1359,9 +1359,11 @@ mod tests {
         let names: Vec<&str> = nodes.iter().map(|n| n.re_name.as_str()).collect();
         assert!(names.contains(&"node0"));
         assert!(names.contains(&"node1"));
-        assert!(nodes
-            .iter()
-            .all(|n| n.current_package_version.as_deref() == Some("3910 (Minor)")));
+        assert!(
+            nodes
+                .iter()
+                .all(|n| n.current_package_version.as_deref() == Some("3910 (Minor)"))
+        );
     }
 
     // ── parse_check_server_reply ─────────────────────────────────────────────
