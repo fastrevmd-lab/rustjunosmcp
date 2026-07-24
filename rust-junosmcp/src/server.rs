@@ -202,14 +202,13 @@ impl JmcpHandler {
         ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
-        if let Some(ctx) = ctx {
-            if !ctx.tools.allows(tool) {
+        if let Some(ctx) = ctx
+            && !ctx.tools.allows(tool) {
                 return Err(ScopeError::ToolNotInScope {
                     token: ctx.token_name.clone(),
                     tool,
                 });
             }
-        }
         Ok(())
     }
 
@@ -246,15 +245,14 @@ impl JmcpHandler {
                 );
             }
         }
-        if let Some(ctx) = ctx {
-            if !ctx.routers.allows(router) {
+        if let Some(ctx) = ctx
+            && !ctx.routers.allows(router) {
                 return Err(ScopeError::RouterNotInScope {
                     token: ctx.token_name.clone(),
                     router: router.to_string(),
                     tool,
                 });
             }
-        }
         Ok(())
     }
 }
@@ -667,11 +665,10 @@ impl JmcpHandler {
         }
 
         audit.meta("version", args.version.to_string());
-        if args.commit {
-            if let Some(confirm_mins) = args.confirm_timeout_mins {
+        if args.commit
+            && let Some(confirm_mins) = args.confirm_timeout_mins {
                 audit.meta("commit_confirmed", confirm_mins as u64);
             }
-        }
 
         let result = rollback_config::handle_with_cancel(args, self.dm.clone(), ct).await;
         match &result {
@@ -792,11 +789,10 @@ impl JmcpHandler {
         }
 
         // Parse vars_content to count vars
-        if let Ok(vars) = serde_json::from_str::<serde_json::Value>(&args.vars_content) {
-            if let Some(obj) = vars.as_object() {
+        if let Ok(vars) = serde_json::from_str::<serde_json::Value>(&args.vars_content)
+            && let Some(obj) = vars.as_object() {
                 audit.meta("var_count", obj.len() as u64);
             }
-        }
         audit.meta("committed", args.apply_config && !args.dry_run);
 
         let result =
@@ -882,12 +878,11 @@ impl JmcpHandler {
         match &result {
             Ok(v) => {
                 self.rebuild_policy();
-                if let Some(added) = v.get("added").and_then(|a| a.as_array()) {
-                    if let Some(removed) = v.get("removed").and_then(|r| r.as_array()) {
+                if let Some(added) = v.get("added").and_then(|a| a.as_array())
+                    && let Some(removed) = v.get("removed").and_then(|r| r.as_array()) {
                         let total = added.len() + removed.len();
                         audit.meta("device_count", total as u64);
                     }
-                }
                 audit.succeed();
             }
             Err(e) => {
@@ -1047,12 +1042,11 @@ impl JmcpHandler {
             audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        if let Some(router) = args.router_name.as_deref() {
-            if let Err(e) = self.check_router_scope(ctx, "list_staged_files", router) {
+        if let Some(router) = args.router_name.as_deref()
+            && let Err(e) = self.check_router_scope(ctx, "list_staged_files", router) {
                 audit.deny("router_scope");
                 return Self::scope_to_call_result(e);
             }
-        }
 
         let result = list_staged_files::handle(
             args,

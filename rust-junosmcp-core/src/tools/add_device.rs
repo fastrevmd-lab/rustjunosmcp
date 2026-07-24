@@ -66,14 +66,13 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
     if matches!(auth, AuthConfig::Password { .. }) && !dm.allow_password_auth_add() {
         return Err(JmcpError::PasswordAuthDisabled);
     }
-    if let AuthConfig::SshKey { private_key_path } = &auth {
-        if !is_valid_auth_path(private_key_path) {
+    if let AuthConfig::SshKey { private_key_path } = &auth
+        && !is_valid_auth_path(private_key_path) {
             return Err(JmcpError::Validation(format!(
                 "invalid private_key_path `{}`: must be non-empty and must not start with '-'",
                 private_key_path.display()
             )));
         }
-    }
 
     let username = args.username.clone().unwrap();
     if !is_valid_ssh_username(&username) {

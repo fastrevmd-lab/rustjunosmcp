@@ -54,14 +54,13 @@ impl JmcpHandler {
         ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
-        if let Some(ctx) = ctx {
-            if !ctx.tools.allows(tool) {
+        if let Some(ctx) = ctx
+            && !ctx.tools.allows(tool) {
                 return Err(ScopeError::ToolNotInScope {
                     token: ctx.token_name.clone(),
                     tool,
                 });
             }
-        }
         Ok(())
     }
 
@@ -96,14 +95,13 @@ impl JmcpHandler {
                 );
             }
         }
-        if let Some(ctx) = ctx {
-            if !ctx.routers.allows(router) {
+        if let Some(ctx) = ctx
+            && !ctx.routers.allows(router) {
                 return Err(ScopeError::RouterNotInScope {
                     token: ctx.token_name.clone(),
                     tool,
                 });
             }
-        }
         Ok(())
     }
 

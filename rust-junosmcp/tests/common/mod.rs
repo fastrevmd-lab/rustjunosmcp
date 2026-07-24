@@ -208,11 +208,10 @@ pub fn call_tool(child: &mut StdioChild, name: &str, args: Value) -> Value {
         return result;
     }
 
-    if let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+    if let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str)
+        && let Ok(parsed) = serde_json::from_str::<Value>(text) {
             return parsed;
         }
-    }
     if let Some(sc) = result.get("structuredContent") {
         return sc.clone();
     }

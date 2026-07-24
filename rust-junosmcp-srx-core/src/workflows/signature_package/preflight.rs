@@ -75,8 +75,8 @@ pub async fn license_active(
     }
     // Defence-in-depth: license parsed Active but installed count is 0 →
     // matching record(s) exist but no entitlement. Treat as inactive.
-    if let Some(data) = parsed.data {
-        if data.counts.installed == 0 {
+    if let Some(data) = parsed.data
+        && data.counts.installed == 0 {
             return Err(SrxError::SignaturePackageLicenseInactive {
                 router: router.to_string(),
                 feature: match feature {
@@ -86,7 +86,6 @@ pub async fn license_active(
                 },
             });
         }
-    }
     Ok(())
 }
 

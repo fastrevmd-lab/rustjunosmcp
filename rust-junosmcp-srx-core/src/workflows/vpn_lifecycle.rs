@@ -498,22 +498,20 @@ fn is_not_configured_xml(xml: &str) -> Result<bool, SrxError> {
 
     for err in &error_nodes {
         for child in err.descendants().filter(|n| n.is_element()) {
-            if child.tag_name().name() == "error-tag" {
-                if let Some(t) = child.text() {
+            if child.tag_name().name() == "error-tag"
+                && let Some(t) = child.text() {
                     let t = t.trim();
                     if t == "not-configured" || t == "data-missing" {
                         return Ok(true);
                     }
                 }
-            }
-            if child.tag_name().name() == "message" {
-                if let Some(t) = child.text() {
+            if child.tag_name().name() == "message"
+                && let Some(t) = child.text() {
                     let lower = t.to_ascii_lowercase();
                     if lower.contains("not configured") || lower.contains("not enabled") {
                         return Ok(true);
                     }
                 }
-            }
         }
     }
 

@@ -93,8 +93,8 @@ pub async fn concurrency_middleware(
         }
     }
 
-    if state.max_per_token > 0 {
-        if let Some(ctx) = req.extensions().get::<CallerCtx>() {
+    if state.max_per_token > 0
+        && let Some(ctx) = req.extensions().get::<CallerCtx>() {
             let token = ctx.token_name.clone();
             let sem = state.token_sem(&token);
             match sem.try_acquire_owned() {
@@ -105,17 +105,15 @@ pub async fn concurrency_middleware(
                 }
             }
         }
-    }
 
-    if let Some(tracker) = &state.sessions {
-        if session_creating && tracker.at_capacity() {
+    if let Some(tracker) = &state.sessions
+        && session_creating && tracker.at_capacity() {
             tracing::warn!(limit = "session_cap", "request shed");
             return overload_response("session_cap");
         }
-    }
 
-    if session_creating {
-        if let (Some(tracker), Some(ctx)) =
+    if session_creating
+        && let (Some(tracker), Some(ctx)) =
             (state.sessions.as_ref(), req.extensions().get::<CallerCtx>())
         {
             let token = ctx.token_name.clone();
@@ -138,7 +136,6 @@ pub async fn concurrency_middleware(
                 }
             }
         }
-    }
 
     if state.max_per_router > 0 {
         let (rebuilt, routers) = match inspect_router_targets(req).await {
@@ -178,8 +175,8 @@ pub async fn concurrency_middleware(
         );
         resp = overload_response("session_cap");
     }
-    if let Some(reservation) = token_session_reservation {
-        if resp.status().is_success() {
+    if let Some(reservation) = token_session_reservation
+        && resp.status().is_success() {
             match resp
                 .headers()
                 .get("mcp-session-id")
@@ -196,7 +193,6 @@ pub async fn concurrency_middleware(
                 ),
             }
         }
-    }
     attach_permits(resp, permits)
 }
 

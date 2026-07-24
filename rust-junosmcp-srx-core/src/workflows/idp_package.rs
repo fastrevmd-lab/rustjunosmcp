@@ -772,9 +772,9 @@ async fn preflight(
 
     // Commit-confirmed window — non-blocking, just audit-warn if open.
     let mut blockers: Vec<String> = Vec::new();
-    if let Ok(mut exec) = device.rpc() {
-        if let Ok(commit_xml) = exec.call("get-commit-information", &[]).await {
-            if let Ok(true) =
+    if let Ok(mut exec) = device.rpc()
+        && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
+            && let Ok(true) =
                 crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
             {
                 tracing::warn!(
@@ -785,8 +785,6 @@ async fn preflight(
                 );
                 blockers.push("commit-confirmed window open (informational)".to_string());
             }
-        }
-    }
 
     // Server reachability + current-version snapshot.
     // check_server's own parser maps unreachable → SignaturePackageServerUnreachable.
@@ -1255,9 +1253,9 @@ async fn preflight_rollback(
             .await?;
 
     let mut blockers: Vec<String> = Vec::new();
-    if let Ok(mut exec) = device.rpc() {
-        if let Ok(commit_xml) = exec.call("get-commit-information", &[]).await {
-            if let Ok(true) =
+    if let Ok(mut exec) = device.rpc()
+        && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
+            && let Ok(true) =
                 crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
             {
                 tracing::warn!(
@@ -1268,8 +1266,6 @@ async fn preflight_rollback(
                 );
                 blockers.push("commit-confirmed window open (informational)".to_string());
             }
-        }
-    }
 
     let info_xml = {
         let mut exec = device

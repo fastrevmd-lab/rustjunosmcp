@@ -42,12 +42,11 @@ fn write_node<W: std::io::Write>(writer: &mut Writer<W>, node: roxmltree::Node<'
         } else {
             let _ = writer.write_event(Event::Empty(start));
         }
-    } else if node.is_text() {
-        if let Some(text) = node.text() {
+    } else if node.is_text()
+        && let Some(text) = node.text() {
             // BytesText::new escapes text content automatically.
             let _ = writer.write_event(Event::Text(BytesText::new(text)));
         }
-    }
 }
 
 /// Split an `<rpc-reply>` body into per-RE chunks. Returns a single-element

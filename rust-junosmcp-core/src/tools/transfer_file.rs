@@ -63,13 +63,12 @@ pub(crate) fn scrub_scp_stderr(stderr: &str) -> String {
         }
 
         // IPv4 dotted-quad: greedy match of d{1,3}(.d{1,3}){3}.
-        if b.is_ascii_digit() {
-            if let Some(end) = match_ipv4(&bytes[i..]) {
+        if b.is_ascii_digit()
+            && let Some(end) = match_ipv4(&bytes[i..]) {
                 out.push_str("<host>");
                 i += end;
                 continue;
             }
-        }
 
         // Default: copy byte through. Safe because we only consume valid
         // UTF-8 boundaries above (the substituted matches are all ASCII).
@@ -105,11 +104,10 @@ fn match_ipv4(bytes: &[u8]) -> Option<usize> {
     }
     // Must not be followed by another digit or '.' (would mean it's a longer
     // numeric token, not an address).
-    if let Some(&next) = bytes.get(idx) {
-        if next.is_ascii_digit() || next == b'.' {
+    if let Some(&next) = bytes.get(idx)
+        && (next.is_ascii_digit() || next == b'.') {
             return None;
         }
-    }
     Some(idx)
 }
 

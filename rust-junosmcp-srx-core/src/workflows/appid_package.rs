@@ -648,9 +648,9 @@ async fn preflight(
             .await?;
 
     let mut blockers: Vec<String> = Vec::new();
-    if let Ok(mut exec) = device.rpc() {
-        if let Ok(commit_xml) = exec.call("get-commit-information", &[]).await {
-            if let Ok(true) =
+    if let Ok(mut exec) = device.rpc()
+        && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
+            && let Ok(true) =
                 crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
             {
                 tracing::warn!(
@@ -661,8 +661,6 @@ async fn preflight(
                 );
                 blockers.push("commit-confirmed window open (informational)".to_string());
             }
-        }
-    }
 
     let mut snapshot = check_server(device, args).await?;
     snapshot.topology = topology;
@@ -687,9 +685,9 @@ async fn preflight_uninstall(
             .await?;
 
     let mut blockers: Vec<String> = Vec::new();
-    if let Ok(mut exec) = device.rpc() {
-        if let Ok(commit_xml) = exec.call("get-commit-information", &[]).await {
-            if let Ok(true) =
+    if let Ok(mut exec) = device.rpc()
+        && let Ok(commit_xml) = exec.call("get-commit-information", &[]).await
+            && let Ok(true) =
                 crate::workflows::signature_package::preflight::detect_commit_confirmed(&commit_xml)
             {
                 tracing::warn!(
@@ -700,8 +698,6 @@ async fn preflight_uninstall(
                 );
                 blockers.push("commit-confirmed window open (informational)".to_string());
             }
-        }
-    }
 
     let info_xml = {
         let mut exec = device
