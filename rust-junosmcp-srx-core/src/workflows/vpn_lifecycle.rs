@@ -364,11 +364,7 @@ pub fn parse_ipsec(xml: &str) -> Result<Vec<IpsecSa>, SrxError> {
                 .as_deref()
                 .and_then(|t| {
                     let n: u64 = t.parse().ok()?;
-                    if n == 0 {
-                        None
-                    } else {
-                        Some(n)
-                    }
+                    if n == 0 { None } else { Some(n) }
                 });
 
             let lifetime_remaining_kilobytes = child_text(&sa_node, "sa-lifesize-remaining")
@@ -498,20 +494,20 @@ fn is_not_configured_xml(xml: &str) -> Result<bool, SrxError> {
 
     for err in &error_nodes {
         for child in err.descendants().filter(|n| n.is_element()) {
-            if child.tag_name().name() == "error-tag" {
-                if let Some(t) = child.text() {
-                    let t = t.trim();
-                    if t == "not-configured" || t == "data-missing" {
-                        return Ok(true);
-                    }
+            if child.tag_name().name() == "error-tag"
+                && let Some(t) = child.text()
+            {
+                let t = t.trim();
+                if t == "not-configured" || t == "data-missing" {
+                    return Ok(true);
                 }
             }
-            if child.tag_name().name() == "message" {
-                if let Some(t) = child.text() {
-                    let lower = t.to_ascii_lowercase();
-                    if lower.contains("not configured") || lower.contains("not enabled") {
-                        return Ok(true);
-                    }
+            if child.tag_name().name() == "message"
+                && let Some(t) = child.text()
+            {
+                let lower = t.to_ascii_lowercase();
+                if lower.contains("not configured") || lower.contains("not enabled") {
+                    return Ok(true);
                 }
             }
         }

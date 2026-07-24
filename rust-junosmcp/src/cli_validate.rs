@@ -7,11 +7,11 @@ use std::net::IpAddr;
 pub enum CliRefusal {
     #[error("--transport streamable-http requires --tokens-file (or --allow-no-auth on loopback)")]
     AuthRequired,
-    #[error(
-        "--allow-no-auth refuses to bind off-loopback (host '{host}' is not 127.0.0.1 or ::1)"
-    )]
+    #[error("--allow-no-auth refuses to bind off-loopback (host '{host}' is not 127.0.0.1 or ::1)")]
     NoAuthOffLoopback { host: String },
-    #[error("non-loopback bind '{host}' over plain HTTP requires --allow-insecure-bind (or supply --tls-cert/--tls-key)")]
+    #[error(
+        "non-loopback bind '{host}' over plain HTTP requires --allow-insecure-bind (or supply --tls-cert/--tls-key)"
+    )]
     InsecureBindRequired { host: String },
     #[error("--tls-cert and --tls-key must be set together (got cert={cert}, key={key})")]
     TlsPairIncomplete { cert: bool, key: bool },
@@ -87,13 +87,15 @@ mod tests {
             validate(&parse(&["--enable-metrics"])),
             Err(CliRefusal::MetricsRequireHttp)
         );
-        assert!(validate(&parse(&[
-            "-t",
-            "streamable-http",
-            "--allow-no-auth",
-            "--enable-metrics",
-        ]))
-        .is_ok());
+        assert!(
+            validate(&parse(&[
+                "-t",
+                "streamable-http",
+                "--allow-no-auth",
+                "--enable-metrics",
+            ]))
+            .is_ok()
+        );
     }
 
     #[test]

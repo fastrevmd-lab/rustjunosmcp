@@ -6,9 +6,9 @@ mod schema;
 mod scope;
 pub mod testutil;
 
-pub use init::{init_tracing, AuditConfig, AuditFormat};
+pub use init::{AuditConfig, AuditFormat, init_tracing};
 pub use redact::{
-    active, install, render, AuditRedaction, FieldTransform, RedactError, REDACTABLE_FIELDS,
+    AuditRedaction, FieldTransform, REDACTABLE_FIELDS, RedactError, active, install, render,
 };
 pub use schema::{AuditOutcome, AuditValue};
 pub use scope::AuditScope;

@@ -1,14 +1,14 @@
 //! Server-issued confirmation artifacts for destructive signature workflows.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const DEFAULT_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_CAPACITY: usize = 4096;
@@ -411,9 +411,11 @@ mod tests {
             store.consume(token(&plan), &binding("mallory"), &bare_plan()),
             Err(ConfirmationError::BindingMismatch)
         );
-        assert!(store
-            .consume(token(&plan), &binding("alice"), &bare_plan())
-            .is_ok());
+        assert!(
+            store
+                .consume(token(&plan), &binding("alice"), &bare_plan())
+                .is_ok()
+        );
     }
 
     #[test]
@@ -423,9 +425,11 @@ mod tests {
         store
             .validate_binding(token(&plan), &binding("alice"))
             .unwrap();
-        assert!(store
-            .consume(token(&plan), &binding("alice"), &bare_plan())
-            .is_ok());
+        assert!(
+            store
+                .consume(token(&plan), &binding("alice"), &bare_plan())
+                .is_ok()
+        );
     }
 
     #[test]

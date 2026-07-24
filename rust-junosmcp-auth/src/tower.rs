@@ -2,12 +2,12 @@
 //! the current `Arc<TokenStore>`, and stuff a `CallerCtx` into request
 //! extensions. Reject otherwise with HTTP 401.
 
-use crate::caller::CallerCtx;
 use crate::TokenStore;
+use crate::caller::CallerCtx;
 use arc_swap::ArcSwap;
 use axum::{
     body::Body,
-    http::{header, HeaderValue, Request, Response, StatusCode},
+    http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::Next,
 };
 use std::sync::Arc;
@@ -41,7 +41,7 @@ pub async fn auth_layer(
                 "invalid_request",
                 "missing Authorization header",
                 CHALLENGE_NO_CREDENTIALS,
-            )
+            );
         }
     };
     let secret = match parse_bearer(header_value) {
@@ -52,7 +52,7 @@ pub async fn auth_layer(
                 "invalid_request",
                 "Authorization header must use Bearer scheme",
                 CHALLENGE_NO_CREDENTIALS,
-            )
+            );
         }
     };
 

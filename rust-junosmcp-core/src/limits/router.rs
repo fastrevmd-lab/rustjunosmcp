@@ -140,7 +140,7 @@ impl RouterLimiter {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_router_targets, RouterLimiter};
+    use super::{RouterLimiter, extract_router_targets};
 
     fn names(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()

@@ -432,12 +432,16 @@ mod tests {
     fn path_builders_use_one_prefix_and_reject_bad_inputs() {
         let config = SupportBundleStagingConfig::default();
         let minted = "srxmcp-a783d1a5";
-        assert!(bundle_tarball_path(&config, "vSRX-test10", minted)
-            .unwrap()
-            .ends_with("srxmcp-a783d1a5.tgz"));
-        assert!(bundle_manifest_path(&config, "vSRX-test10", "deadbeef")
-            .unwrap()
-            .ends_with("srxmcp-deadbeef.json"));
+        assert!(
+            bundle_tarball_path(&config, "vSRX-test10", minted)
+                .unwrap()
+                .ends_with("srxmcp-a783d1a5.tgz")
+        );
+        assert!(
+            bundle_manifest_path(&config, "vSRX-test10", "deadbeef")
+                .unwrap()
+                .ends_with("srxmcp-deadbeef.json")
+        );
         assert_eq!(
             device_tarball_path(minted).unwrap(),
             "/var/tmp/srxmcp-a783d1a5.tgz"

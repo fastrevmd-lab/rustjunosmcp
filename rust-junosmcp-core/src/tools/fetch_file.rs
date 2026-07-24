@@ -8,12 +8,12 @@ use crate::cancel::{select_cancel, select_cancel_raw};
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
-use crate::tools::transfer_file::{
-    hex32, parse_checksum_output, sha256_file_cancellable, validate_source_basename, ScpFetchJob,
-    TransferConfig,
-};
 use crate::tools::FetchFileArgs;
-use serde_json::{json, Value};
+use crate::tools::transfer_file::{
+    ScpFetchJob, TransferConfig, hex32, parse_checksum_output, sha256_file_cancellable,
+    validate_source_basename,
+};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 fn skipped_response(

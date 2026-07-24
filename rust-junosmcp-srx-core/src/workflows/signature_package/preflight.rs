@@ -12,8 +12,8 @@
 //! (`workflows::license::parse`, `workflows::cluster_status::parse`)
 //! directly rather than going through the MCP layer.
 
-use crate::workflows::signature_package::Topology;
 use crate::SrxError;
+use crate::workflows::signature_package::Topology;
 use rust_junosmcp_core::device_manager::PooledDevice;
 
 /// True if the device has an open commit-confirmed rollback window.
@@ -75,17 +75,17 @@ pub async fn license_active(
     }
     // Defence-in-depth: license parsed Active but installed count is 0 →
     // matching record(s) exist but no entitlement. Treat as inactive.
-    if let Some(data) = parsed.data {
-        if data.counts.installed == 0 {
-            return Err(SrxError::SignaturePackageLicenseInactive {
-                router: router.to_string(),
-                feature: match feature {
-                    crate::workflows::license::SrxLicensedFeature::Idp => "idp".into(),
-                    crate::workflows::license::SrxLicensedFeature::AppId => "app_id".into(),
-                    other => format!("{other:?}").to_lowercase(),
-                },
-            });
-        }
+    if let Some(data) = parsed.data
+        && data.counts.installed == 0
+    {
+        return Err(SrxError::SignaturePackageLicenseInactive {
+            router: router.to_string(),
+            feature: match feature {
+                crate::workflows::license::SrxLicensedFeature::Idp => "idp".into(),
+                crate::workflows::license::SrxLicensedFeature::AppId => "app_id".into(),
+                other => format!("{other:?}").to_lowercase(),
+            },
+        });
     }
     Ok(())
 }

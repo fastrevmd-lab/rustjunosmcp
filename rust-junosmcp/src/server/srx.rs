@@ -1,6 +1,6 @@
 //! SRX-specific rmcp adapters composed into the unified [`JmcpHandler`].
 
-use super::{caller_ctx, mint_request_id, JmcpHandler};
+use super::{JmcpHandler, caller_ctx, mint_request_id};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Extensions};
@@ -9,7 +9,7 @@ use rust_junosmcp_audit::AuditScope;
 #[cfg(test)]
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager};
 use rust_junosmcp_srx_core::workflows::signature_package::{
-    confirmation_token_for_request, ConfirmationBinding,
+    ConfirmationBinding, confirmation_token_for_request,
 };
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -54,13 +54,13 @@ impl JmcpHandler {
         ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
-        if let Some(ctx) = ctx {
-            if !ctx.tools.allows(tool) {
-                return Err(ScopeError::ToolNotInScope {
-                    token: ctx.token_name.clone(),
-                    tool,
-                });
-            }
+        if let Some(ctx) = ctx
+            && !ctx.tools.allows(tool)
+        {
+            return Err(ScopeError::ToolNotInScope {
+                token: ctx.token_name.clone(),
+                tool,
+            });
         }
         Ok(())
     }
@@ -96,13 +96,13 @@ impl JmcpHandler {
                 );
             }
         }
-        if let Some(ctx) = ctx {
-            if !ctx.routers.allows(router) {
-                return Err(ScopeError::RouterNotInScope {
-                    token: ctx.token_name.clone(),
-                    tool,
-                });
-            }
+        if let Some(ctx) = ctx
+            && !ctx.routers.allows(router)
+        {
+            return Err(ScopeError::RouterNotInScope {
+                token: ctx.token_name.clone(),
+                tool,
+            });
         }
         Ok(())
     }
@@ -816,8 +816,8 @@ pub struct SrxmcpStatusResponse {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use rust_junosmcp_auth::caller::CallerCtx;
     use rust_junosmcp_auth::ScopeSet;
+    use rust_junosmcp_auth::caller::CallerCtx;
 
     fn make_handler(authorization_required: bool) -> JmcpHandler {
         let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
@@ -855,13 +855,15 @@ mod scope_tests {
     #[test]
     fn missing_caller_context_preserves_explicit_no_auth_mode() {
         let handler = make_handler(false);
-        assert!(handler
-            .authorize_call(
-                &Extensions::new(),
-                "manage_idp_security_package",
-                Some("srx-01"),
-            )
-            .is_ok());
+        assert!(
+            handler
+                .authorize_call(
+                    &Extensions::new(),
+                    "manage_idp_security_package",
+                    Some("srx-01"),
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -888,9 +890,11 @@ mod scope_tests {
 
         for tool in SRX_SERVER_TOOLS {
             assert!(handler.check_srx_tool_scope(Some(&ctx), tool).is_ok());
-            assert!(handler
-                .check_srx_router_scope(Some(&ctx), tool, "srx-01")
-                .is_ok());
+            assert!(
+                handler
+                    .check_srx_router_scope(Some(&ctx), tool, "srx-01")
+                    .is_ok()
+            );
         }
     }
 
@@ -925,14 +929,16 @@ mod scope_tests {
             .unwrap();
         let token = plan["confirmation_token"].as_str().unwrap();
         let cloned_handler = handler.clone();
-        assert!(cloned_handler
-            .validate_confirmation_request(
-                true,
-                Some(token),
-                Some("alice"),
-                "srx-01",
-                "srx-01|192.0.2.1|830|netconf",
-            )
-            .is_ok());
+        assert!(
+            cloned_handler
+                .validate_confirmation_request(
+                    true,
+                    Some(token),
+                    Some("alice"),
+                    "srx-01",
+                    "srx-01|192.0.2.1|830|netconf",
+                )
+                .is_ok()
+        );
     }
 }

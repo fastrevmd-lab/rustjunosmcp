@@ -9,7 +9,7 @@ mod rate_limit;
 mod router;
 mod session;
 
-pub use concurrency::{apply_body_limit, concurrency_middleware, ConcurrencyState};
+pub use concurrency::{ConcurrencyState, apply_body_limit, concurrency_middleware};
 pub use config::{LimitsConfig, LimitsConfigError};
 pub use overload::overload_response;
 pub use prometheus::PrometheusRuntime;

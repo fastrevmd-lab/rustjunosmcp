@@ -2,7 +2,7 @@
 
 mod common;
 use common::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::Command;
 
 fn write_tmp(json: &str) -> tempfile::NamedTempFile {

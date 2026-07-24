@@ -1,6 +1,6 @@
 mod common;
 
-use common::{call_tool, spawn_stdio_server_with_args, write_inventory_temp, StdioChild};
+use common::{StdioChild, call_tool, spawn_stdio_server_with_args, write_inventory_temp};
 use serde_json::json;
 use std::path::Path;
 use tempfile::NamedTempFile;

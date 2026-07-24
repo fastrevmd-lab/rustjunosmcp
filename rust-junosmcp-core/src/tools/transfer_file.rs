@@ -10,7 +10,7 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::inventory::AuthConfig;
 use crate::tools::TransferFileArgs;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 /// Required free-space headroom on `/var` beyond the local file size, in bytes.
@@ -63,12 +63,12 @@ pub(crate) fn scrub_scp_stderr(stderr: &str) -> String {
         }
 
         // IPv4 dotted-quad: greedy match of d{1,3}(.d{1,3}){3}.
-        if b.is_ascii_digit() {
-            if let Some(end) = match_ipv4(&bytes[i..]) {
-                out.push_str("<host>");
-                i += end;
-                continue;
-            }
+        if b.is_ascii_digit()
+            && let Some(end) = match_ipv4(&bytes[i..])
+        {
+            out.push_str("<host>");
+            i += end;
+            continue;
         }
 
         // Default: copy byte through. Safe because we only consume valid
@@ -105,10 +105,10 @@ fn match_ipv4(bytes: &[u8]) -> Option<usize> {
     }
     // Must not be followed by another digit or '.' (would mean it's a longer
     // numeric token, not an address).
-    if let Some(&next) = bytes.get(idx) {
-        if next.is_ascii_digit() || next == b'.' {
-            return None;
-        }
+    if let Some(&next) = bytes.get(idx)
+        && (next.is_ascii_digit() || next == b'.')
+    {
+        return None;
     }
     Some(idx)
 }
@@ -874,7 +874,7 @@ pub trait ScpRunner: Send + Sync {
 
     /// Run the SCP download job. Same cancellation contract as `run()`.
     async fn fetch(&self, job: &ScpFetchJob, ct: &CancellationToken)
-        -> std::io::Result<ScpOutcome>;
+    -> std::io::Result<ScpOutcome>;
 }
 
 /// Drive an already-spawned `scp` child to completion, racing against

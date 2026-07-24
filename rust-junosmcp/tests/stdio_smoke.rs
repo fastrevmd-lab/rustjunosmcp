@@ -3,7 +3,7 @@
 
 mod common;
 use common::binary_path;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};

@@ -1,8 +1,8 @@
 //! Stable overload responses: HTTP 503 + `Retry-After`, load-shed semantics.
 
 use axum::http::{
-    header::{CONTENT_TYPE, RETRY_AFTER},
     StatusCode,
+    header::{CONTENT_TYPE, RETRY_AFTER},
 };
 use axum::response::{IntoResponse, Response};
 

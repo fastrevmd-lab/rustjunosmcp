@@ -693,11 +693,13 @@ mod tests {
             }
             other => panic!("unexpected result: {other:?}"),
         }
-        assert!(state
-            .lock()
-            .unwrap()
-            .events
-            .ends_with(&[Op::Rollback, Op::Unlock]));
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .events
+                .ends_with(&[Op::Rollback, Op::Unlock])
+        );
         assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
     }
 
@@ -778,11 +780,13 @@ mod tests {
 
         assert!(matches!(execution.result, Err(JmcpError::Timeout(_))));
         assert!(!execution.reusable);
-        assert!(state
-            .lock()
-            .unwrap()
-            .events
-            .ends_with(&[Op::Rollback, Op::Unlock]));
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .events
+                .ends_with(&[Op::Rollback, Op::Unlock])
+        );
         assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
     }
 
@@ -807,11 +811,13 @@ mod tests {
 
         assert!(matches!(execution.result, Err(JmcpError::Cancelled)));
         assert!(!execution.reusable);
-        assert!(state
-            .lock()
-            .unwrap()
-            .events
-            .ends_with(&[Op::Rollback, Op::Unlock]));
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .events
+                .ends_with(&[Op::Rollback, Op::Unlock])
+        );
         assert_next_operation_can_lock(&mut backend, &execution, state.clone()).await;
     }
 

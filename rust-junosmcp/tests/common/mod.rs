@@ -8,7 +8,7 @@
 //! - streamable-http helpers: spawn the binary on an ephemeral port, POST
 //!   JSON-RPC, parse SSE, assert HTTP behavior (auth, sessions, etc.).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -208,10 +208,10 @@ pub fn call_tool(child: &mut StdioChild, name: &str, args: Value) -> Value {
         return result;
     }
 
-    if let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-            return parsed;
-        }
+    if let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str)
+        && let Ok(parsed) = serde_json::from_str::<Value>(text)
+    {
+        return parsed;
     }
     if let Some(sc) = result.get("structuredContent") {
         return sc.clone();

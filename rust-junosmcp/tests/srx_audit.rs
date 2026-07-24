@@ -1,7 +1,7 @@
 //! Audit field + redaction assertions for the unified server's SRX tools.
 
-use rust_junosmcp_audit::testutil::run_with_capture;
 use rust_junosmcp_audit::AuditScope;
+use rust_junosmcp_audit::testutil::run_with_capture;
 
 #[test]
 fn scope_denial_emits_deny_not_fail() {

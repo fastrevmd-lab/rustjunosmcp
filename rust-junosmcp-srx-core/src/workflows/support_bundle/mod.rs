@@ -45,14 +45,14 @@ pub mod redact;
 pub mod staging;
 
 pub use artefacts::{ArtefactSource, CapturedArtefact};
-pub use problem_type::{ProblemType, BASELINE_LOGS, BASELINE_RPCS};
+pub use problem_type::{BASELINE_LOGS, BASELINE_RPCS, ProblemType};
 pub use redact::{
-    redact_log_artefact, redact_log_text, redact_xml, REDACTED_MARKER, REDACT_ELEMENT_NAMES,
+    REDACT_ELEMENT_NAMES, REDACTED_MARKER, redact_log_artefact, redact_log_text, redact_xml,
 };
 pub use staging::{
-    bundle_manifest_path, bundle_tarball_path, device_log_tarball_path, device_tarball_path,
-    enforce_staging_cap, router_staging_dir, validate_path_component, PreparedBundlePaths,
-    SupportBundleStagingConfig, DEFAULT_STAGING_DIR, DEFAULT_STAGING_MAX_BYTES,
+    DEFAULT_STAGING_DIR, DEFAULT_STAGING_MAX_BYTES, PreparedBundlePaths,
+    SupportBundleStagingConfig, bundle_manifest_path, bundle_tarball_path, device_log_tarball_path,
+    device_tarball_path, enforce_staging_cap, router_staging_dir, validate_path_component,
 };
 
 use crate::{SrxError, SrxToolResponse};

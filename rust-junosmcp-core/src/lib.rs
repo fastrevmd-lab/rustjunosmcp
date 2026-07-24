@@ -14,7 +14,7 @@ pub mod limits;
 pub mod output;
 pub mod policy;
 pub mod tools;
-pub use device_lease::{DeviceLeaseGuard, DeviceLeaseManager, DEFAULT_DEVICE_LEASE_DIR};
+pub use device_lease::{DEFAULT_DEVICE_LEASE_DIR, DeviceLeaseGuard, DeviceLeaseManager};
 pub use device_manager::DeviceManager;
 pub use error::JmcpError;
 pub use inventory::{AuthConfig, DeviceEntry, Inventory};

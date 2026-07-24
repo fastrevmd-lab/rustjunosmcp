@@ -2,7 +2,7 @@
 
 use crate::error::JmcpError;
 use crate::inventory::Inventory;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub async fn handle(inv: Arc<Inventory>) -> Result<Value, JmcpError> {

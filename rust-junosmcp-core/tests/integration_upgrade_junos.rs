@@ -10,9 +10,9 @@
 //!   JMCP_LIVE_UPGRADE_TARGET_VERSION=25.4R1.12 \
 //!   cargo test -p rust-junosmcp-core --test integration_upgrade_junos -- --nocapture
 
-use rust_junosmcp_core::tools::transfer_file::{OpenSshScpRunner, TransferConfig, TransferLocks};
-use rust_junosmcp_core::tools::upgrade_junos::{handle, UpgradeConfig};
 use rust_junosmcp_core::tools::UpgradeJunosArgs;
+use rust_junosmcp_core::tools::transfer_file::{OpenSshScpRunner, TransferConfig, TransferLocks};
+use rust_junosmcp_core::tools::upgrade_junos::{UpgradeConfig, handle};
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager, Inventory};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

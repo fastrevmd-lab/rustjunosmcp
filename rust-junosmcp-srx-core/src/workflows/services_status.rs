@@ -23,7 +23,7 @@
 //! The await points still keep the executor responsive; the bottleneck is the
 //! NETCONF channel serialisation on the device side anyway.
 
-use crate::xml::{multi_re_split, ReNode};
+use crate::xml::{ReNode, multi_re_split};
 use crate::{SrxError, SrxToolResponse};
 use rust_junosmcp_core::device_manager::PooledDevice;
 use schemars::JsonSchema;

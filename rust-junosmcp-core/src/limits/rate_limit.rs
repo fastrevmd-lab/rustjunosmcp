@@ -2,10 +2,10 @@
 
 use crate::limits::config::LimitsConfig;
 use crate::limits::overload::rate_limited_response;
+use axum::Router;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::Router;
 use dashmap::DashMap;
 use rust_junosmcp_auth::caller::CallerCtx;
 use std::sync::Arc;
@@ -125,12 +125,12 @@ fn refill_units(elapsed: Duration, rate: u64) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
-    use axum::http::{header, Request, StatusCode};
-    use axum::routing::post;
     use axum::Router;
-    use rust_junosmcp_auth::caller::CallerCtx;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode, header};
+    use axum::routing::post;
     use rust_junosmcp_auth::ScopeSet;
+    use rust_junosmcp_auth::caller::CallerCtx;
     use tokio::sync::Notify;
     use tower::ServiceExt as _;
 

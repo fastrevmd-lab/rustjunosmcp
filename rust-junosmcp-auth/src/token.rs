@@ -1,8 +1,8 @@
 //! Token mint, hash, and constant-time verify.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -27,6 +27,11 @@ impl Secret {
 }
 
 impl Drop for Secret {
+    // The only `unsafe` in this workspace, which is why `unsafe_code` is `deny`
+    // rather than `forbid`. mecmcp Phase 1 replaces this hand-rolled zeroing
+    // with the `zeroize` crate; when it lands, delete this attribute and raise
+    // the workspace lint to `forbid`.
+    #[allow(unsafe_code)]
     fn drop(&mut self) {
         // Best-effort zeroize. Not constant-time, but the process is on its way
         // out for token-management subcommands.

@@ -559,12 +559,12 @@ impl<S: SessionManager> SessionManager for LimitedSessionManager<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::transport::Transport;
     use rmcp::RoleServer;
+    use rmcp::transport::Transport;
     use std::convert::Infallible;
     use std::future::Future;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
     use tokio::sync::{Barrier as AsyncBarrier, Notify};
@@ -840,9 +840,11 @@ mod tests {
         let closed_ids = fake.closed_ids();
         assert_eq!(closed_ids.len(), CREATE_COUNT - 1);
         assert_eq!(closed_ids.iter().cloned().collect::<HashSet<_>>().len(), 3);
-        assert!(closed_ids
-            .iter()
-            .all(|session_id| !fake.live_ids().contains(session_id)));
+        assert!(
+            closed_ids
+                .iter()
+                .all(|session_id| !fake.live_ids().contains(session_id))
+        );
 
         let winner_id = winner_ids.into_iter().next().unwrap();
         manager.close_session(&winner_id).await.unwrap();
@@ -1262,11 +1264,13 @@ mod tests {
         tracker.note_session_created(&session);
         assert!(tracker.try_register(session.clone(), Instant::now()));
         assert!(first.commit(session.clone()));
-        assert!(!tracker
-            .try_reserve_token("bob".to_owned())
-            .unwrap()
-            .unwrap()
-            .commit(session.clone()));
+        assert!(
+            !tracker
+                .try_reserve_token("bob".to_owned())
+                .unwrap()
+                .unwrap()
+                .commit(session.clone())
+        );
         assert_eq!(tracker.active_for_token("alice"), 1);
         assert_eq!(tracker.active_for_token("bob"), 0);
         assert_eq!(tracker.pending_reservation_count(), 0);
@@ -1396,10 +1400,12 @@ mod tests {
             max_sessions_per_token: 0,
             ..Default::default()
         }));
-        assert!(tracker
-            .try_reserve_token("alice".to_owned())
-            .unwrap()
-            .is_none());
+        assert!(
+            tracker
+                .try_reserve_token("alice".to_owned())
+                .unwrap()
+                .is_none()
+        );
         let disabled = id("disabled-created");
         tracker.note_session_created(&disabled);
         tracker.unregister(&disabled);

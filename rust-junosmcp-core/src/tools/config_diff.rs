@@ -4,7 +4,7 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{strip_config_xml_wrapper, validate_rollback_version};
 use crate::tools::ConfigDiffArgs;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
