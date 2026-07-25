@@ -20,8 +20,9 @@ pub fn run(action: TokenAction) -> Result<()> {
             // For `add`, we don't have inventory loaded. Pass empty slices
             // to KnownNames — validation will happen in the shared code.
             let known = build_known_names();
-            let secret = TokenStoreFile::add(&tokens_file, &name, routers_scope, tools_scope, &known)
-                .with_context(|| format!("adding token '{name}'"))?;
+            let secret =
+                TokenStoreFile::add(&tokens_file, &name, routers_scope, tools_scope, &known)
+                    .with_context(|| format!("adding token '{name}'"))?;
             // Print only the secret to stdout; nothing else, so it can be
             // piped/captured.
             let mut out = std::io::stdout().lock();

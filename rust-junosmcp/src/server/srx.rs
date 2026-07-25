@@ -892,12 +892,16 @@ mod scope_tests {
         for tool in SRX_SERVER_TOOLS {
             if rust_junosmcp_auth::WRITE_TOOLS.contains(tool) {
                 assert!(
-                    handler.check_srx_tool_scope(Some(&wildcard_ctx), tool).is_err(),
+                    handler
+                        .check_srx_tool_scope(Some(&wildcard_ctx), tool)
+                        .is_err(),
                     "wildcard tool scope should deny write tool: {tool}"
                 );
             } else {
                 assert!(
-                    handler.check_srx_tool_scope(Some(&wildcard_ctx), tool).is_ok(),
+                    handler
+                        .check_srx_tool_scope(Some(&wildcard_ctx), tool)
+                        .is_ok(),
                     "wildcard tool scope should allow non-write tool: {tool}"
                 );
                 assert!(
@@ -912,14 +916,14 @@ mod scope_tests {
         let explicit_ctx = CallerCtx {
             token_name: "srx-write".into(),
             devices: ScopeSet::Wildcard,
-            tools: ScopeSet::Allowlist(
-                SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()
-            ),
+            tools: ScopeSet::Allowlist(SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()),
             grant: None,
         };
         for tool in SRX_SERVER_TOOLS {
             assert!(
-                handler.check_srx_tool_scope(Some(&explicit_ctx), tool).is_ok(),
+                handler
+                    .check_srx_tool_scope(Some(&explicit_ctx), tool)
+                    .is_ok(),
                 "explicit tool allowlist should grant all SRX tools including write tools: {tool}"
             );
         }

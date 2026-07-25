@@ -116,7 +116,10 @@ fn fixture() -> (
         "tls-test",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap()
     .expose_secret()

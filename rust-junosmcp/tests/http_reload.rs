@@ -137,7 +137,10 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
             "check_srx_feature_license".into(),
             "reload_devices".into(),
         ]),
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
 

@@ -152,7 +152,10 @@ fn router_list_returns_only_current_names_in_caller_scope() {
         "router-list-scope",
         ScopeSet::Allowlist(vec!["edge-02".into(), "retired-99".into()]),
         ScopeSet::Allowlist(vec!["get_router_list".into()]),
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
 

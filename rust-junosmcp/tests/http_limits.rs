@@ -56,7 +56,10 @@ fn token_session_cap_isolated_by_token_and_released_on_close() {
         "alice",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
     let bob = TokenStoreFile::add(
@@ -64,7 +67,10 @@ fn token_session_cap_isolated_by_token_and_released_on_close() {
         "bob",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
     let server = spawn_with_auth_args(
@@ -106,7 +112,10 @@ fn per_token_rate_limit_returns_stable_429() {
         "alice",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
     let server = spawn_with_auth_args(

@@ -18,7 +18,10 @@ fn metrics_disabled_leaves_route_absent() {
         "secret-srx-token",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
     let server = spawn_with_auth_args(inventory.path(), tokens.path(), &[]);
@@ -37,7 +40,10 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
         "secret-srx-token",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
-        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
     let server = spawn_with_auth_args(
@@ -69,7 +75,10 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
 
     let big = "x".repeat(4096);
     let body = format!(r#"{{"jsonrpc":"2.0","id":3,"method":"ping","params":"{big}"}}"#);
-    assert_eq!(http_post_raw(server.port, token.expose_secret(), None, &body), 413);
+    assert_eq!(
+        http_post_raw(server.port, token.expose_secret(), None, &body),
+        413
+    );
 
     let scrape = http_get(server.port, "/metrics", None, None);
     assert!(

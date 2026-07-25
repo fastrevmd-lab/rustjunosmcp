@@ -251,7 +251,11 @@ fn set_scope_narrows_tools_without_reissuing_secret() {
         ])
         .output()
         .unwrap();
-    assert!(out1.status.success(), "{}", String::from_utf8_lossy(&out1.stderr));
+    assert!(
+        out1.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
     let secret = String::from_utf8(out1.stdout).unwrap().trim().to_string();
     assert_eq!(secret.len(), 43);
 
@@ -259,7 +263,10 @@ fn set_scope_narrows_tools_without_reissuing_secret() {
     let body_before: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
     let created_at = body_before["tokens"][0]["created_at"].clone();
-    assert!(created_at.is_string(), "created_at missing before set-scope");
+    assert!(
+        created_at.is_string(),
+        "created_at missing before set-scope"
+    );
 
     // Narrow tool scope to explicit list
     let out2 = Command::new(binary_path())
@@ -275,7 +282,11 @@ fn set_scope_narrows_tools_without_reissuing_secret() {
         ])
         .output()
         .unwrap();
-    assert!(out2.status.success(), "{}", String::from_utf8_lossy(&out2.stderr));
+    assert!(
+        out2.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
     assert!(out2.stdout.is_empty(), "set-scope should not print secret");
 
     // Read resulting token file
@@ -420,7 +431,10 @@ fn set_scope_rejects_no_scopes() {
         .output()
         .unwrap();
 
-    assert!(!out.status.success(), "set-scope should reject invocation with neither --routers nor --tools");
+    assert!(
+        !out.status.success(),
+        "set-scope should reject invocation with neither --routers nor --tools"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--routers") || stderr.contains("--tools"),

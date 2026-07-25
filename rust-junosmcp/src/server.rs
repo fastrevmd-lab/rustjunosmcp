@@ -44,14 +44,10 @@ mod srx;
 ///   scope checks become a no-op (preserves original behavior).
 /// - **streamable-http:** rmcp inserted `Parts`; auth middleware put `CallerCtx`
 ///   into `req.extensions` which became `parts.extensions` → returns `Some(&ctx)`.
-pub(super) fn caller_ctx(
-    extensions: &Extensions,
-) -> Option<&rust_junosmcp_auth::CallerCtx> {
-    extensions.get::<http::request::Parts>().and_then(|parts| {
-        parts
-            .extensions
-            .get::<rust_junosmcp_auth::CallerCtx>()
-    })
+pub(super) fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::CallerCtx> {
+    extensions
+        .get::<http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<rust_junosmcp_auth::CallerCtx>())
 }
 
 pub(super) fn mint_request_id() -> String {
@@ -346,8 +342,7 @@ impl JmcpHandler {
             audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        let names =
-            rust_junosmcp_auth::filter_router_names(ctx, self.dm.inventory().names());
+        let names = rust_junosmcp_auth::filter_router_names(ctx, self.dm.inventory().names());
         let result = router_list::handle_names(names).await;
         match &result {
             Ok(v) => {
