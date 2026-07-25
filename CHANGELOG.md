@@ -6,6 +6,89 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-25
+
+> **Operators: this release requires action before upgrading.** A wildcard
+> tool scope no longer grants write tools, and the token file must be mode
+> `0600`. See [Upgrading to v0.10](README.md#upgrading-to-v010) for the
+> two-step procedure.
+
+### Changed
+
+- **BREAKING — a wildcard tool scope (`"tools": ["*"]`) no longer confers
+  write tools.** Granting write authority is now always an explicit, named
+  decision. The ten tools excluded from the wildcard are `add_device`,
+  `discard_candidate`, `load_and_commit_config`,
+  `manage_appid_signature_package`, `manage_idp_security_package`,
+  `reload_devices`, `render_and_apply_j2_template`, `rollback_config`,
+  `transfer_file`, and `upgrade_junos`. A wildcard token still reaches every
+  read-only tool, and an explicit allowlist naming a write tool still grants
+  it — only the wildcard shorthand changed. Callers denied this way get the
+  same `ToolNotInScope` refusal as any other out-of-scope tool.
+
+  Scope checks only apply to authenticated HTTP callers. Local stdio and the
+  `--allow-no-auth` loopback escape hatch carry no caller context and are
+  unaffected.
+
+- **BREAKING — the token file must be mode `0600`.** The server refuses to
+  start on a group- or world-accessible `tokens.json`, and the error names
+  the file's owner uid, its mode, the calling process's uid, and the exact
+  `chmod` to run. The previous implementation did not check the mode at all.
+  The LXC installer already writes `0600`, so packaged installs are
+  unaffected; hand-managed and container deployments may not be.
+
+- **A malformed token entry no longer takes authentication offline.** Device
+  and tool names are validated when a token is written (`add`, `rotate`,
+  `set-scope`), not when the file is loaded. Previously one stale entry —
+  a device removed from the inventory, say — was fatal at load and every
+  token stopped authenticating. Writes still reject unknown tool names.
+
+### Added
+
+- **`token set-scope` — change a token's scopes without reissuing its
+  secret.** `--routers` and `--tools` are each optional; omitting one leaves
+  it unchanged, and supplying neither is an error. The digest, `created_at`,
+  and envelope version all survive, so existing consumers keep working. This
+  is the migration path off wildcard write access: name the write tools a
+  token actually needs while still on 0.9.x, then upgrade the binary.
+  Accepts `--server-pid` for the usual write-then-SIGHUP reload.
+
+  ```bash
+  rust-junosmcp token set-scope --tokens-file /etc/jmcp/tokens.json \
+    --name ops \
+    --tools gather_device_facts,get_junos_config,load_and_commit_config
+  ```
+
+  A scope is either the literal `*` or an explicit list — the two cannot be
+  mixed, so a token that needs one write tool must enumerate every tool it
+  calls.
+
+### Security
+
+- **The auth stack no longer contains any `unsafe`.** `rust-junosmcp-auth`
+  now re-exports [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp)
+  v0.1.4 rather than carrying its own token, store, file, and caller
+  modules. Three `unsafe` sites went with them — hand-rolled `write_volatile`
+  secret zeroing (now `zeroize`) and `libc::getuid` (now `rustix`). One
+  `unsafe` remains, the `kill(SIGHUP)` in `token_cmd.rs`, which is why
+  `unsafe_code` is `deny` and not yet `forbid`.
+
+### Internal
+
+- Token-file field names are canonically `digest` and `devices`; `hash` and
+  `routers` are accepted as aliases, so deployed 0.9.x files load unchanged.
+  [`tokens-template.json`](tokens-template.json) now shows the canonical
+  spelling. CLI flags are unchanged — `--routers` is still `--routers`.
+
+  **This is one-way.** Any 0.10 token write rewrites the file in the canonical
+  spelling, and 0.9.x requires `hash` — it will not load such a file. Back up
+  `tokens.json` (or snapshot the host) before upgrading if you want a rollback
+  path.
+- Workspace moved to edition 2024 with `rust-version = 1.88`, adopted a
+  shared lint posture (`unsafe_code`, `clippy::all`, `dbg_macro`, `todo`),
+  and added `cargo-deny` to CI. `missing_docs` and `clippy::unwrap_used` are
+  deferred, tracked in #193. No behaviour change.
+
 ## [0.9.1] — 2026-07-22
 
 ### Fixed

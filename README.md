@@ -46,28 +46,25 @@ Session pooling (`PooledDevice`) eliminates SSH/NETCONF handshake overhead
 on sequential commands to the same router. The batch tool runs routers in
 parallel with a configurable concurrency cap.
 
-> ## v0.9.1 released
+> ## v0.10.0 released — read before upgrading
 >
-> Patch: chassis-cluster `commit_check_config` now returns a real
-> `valid` / `invalid` verdict — picks up `rustnetconf 0.13.2`, which repairs the
-> malformed multi-RE `validate` reply Junos clusters send (#180). Everything
-> from v0.9.0 below.
+> Two **breaking** authorization changes, both requiring operator action:
+> a wildcard tool scope (`"tools": ["*"]`) no longer confers the ten **write**
+> tools, and `tokens.json` must be mode `0600` or the server refuses to start.
+> The new **`token set-scope`** command changes a token's scopes without
+> reissuing its secret, so you can narrow scopes on the running 0.9.x server
+> before swapping the binary. See
+> [Upgrading to v0.10](#upgrading-to-v010) for the procedure.
 >
-> **v0.9.0** adds the **`rollback_config`** tool — load a Junos rollback archive
-> (rollback N) into the candidate and preview or commit it — bringing the
-> surface to 27 tools (18 Junos-only with `--no-default-features`). Also:
-> server-side `| match` / `| except` filtering (the `<command>` RPC silently
-> dropped them, a false negative for audits), `junos_config_diff` support for
-> `rollback 0` ("what is staged now?"), a three-way `commit_check_config`
-> `outcome` that never mistakes a multi-RE chassis-cluster parse failure for an
-> invalid config, a `discard_candidate` that recovers a dirty candidate, and
-> SRX services-status that reports a broken health check as `error` rather than
-> `not_configured`.
+> Security: the auth stack is now `unsafe`-free — `rust-junosmcp-auth` consumes
+> the shared [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp) crate,
+> which replaces hand-rolled secret zeroing with `zeroize` and `libc::getuid`
+> with `rustix`. A malformed token entry also no longer takes the whole store
+> offline at load.
 >
-> Security: the SSH transport moves off prerelease RustCrypto — `russh 0.62`
-> drops the `-rc` crypto crates in the lock from 13 to 3.
->
-> See the [v0.9.1 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.9.1).
+> Tool surface is unchanged at 27 tools (18 Junos-only with
+> `--no-default-features`). See the
+> [v0.10.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.10.0).
 
 ## Feature scope
 
@@ -176,6 +173,24 @@ parallel with a configurable concurrency cap.
   a name is unknown or out-of-scope (client response unchanged).
 - **Security** — SSH transport off prerelease RustCrypto (russh 0.62; `-rc`
   crypto crates 13 → 3).
+
+### v0.10 (released)
+
+- **Wildcard tool scopes exclude write tools (breaking)** — `"tools": ["*"]`
+  reaches every read-only tool but none of the ten write tools; granting write
+  authority is now always an explicit, named decision. See
+  [Tool scopes and write tools](#tool-scopes-and-write-tools).
+- **`tokens.json` must be mode `0600` (breaking)** — the server refuses to
+  start on a group- or world-accessible token file and names the owner uid,
+  mode, caller uid, and the `chmod` to run.
+- **`token set-scope`** — rescope a token without reissuing its secret, so
+  scopes can be narrowed ahead of a binary upgrade without a client outage.
+- **Resilient token load** — scope names are validated on write rather than on
+  load, so one stale entry no longer takes the whole store offline.
+- **Security** — `rust-junosmcp-auth` is now a thin re-export of the shared
+  [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp) crate and contains
+  no `unsafe`; `zeroize` replaces hand-rolled secret zeroing and `rustix`
+  replaces `libc::getuid`. Tool count unchanged (27 / 18).
 
 ## Blocklist guardrails (v0.2)
 
@@ -386,7 +401,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.9, 0.9.1).
+# Pull the prebuilt image (tags: latest, 0.10, 0.10.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -432,13 +447,13 @@ accepts requests, so a broken custom image is not advertised as transfer-ready.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.9 .
+docker build -t rust-junosmcp:0.10 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.9
+  rust-junosmcp:0.10
 ```
 
 ## LXC (Proxmox)
@@ -449,8 +464,8 @@ docker run --rm -i \
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
 # installer copies the unified binary and unit from its extracted package root.
-pct push 115 dist/rust-junosmcp_0.9.1_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.9.1_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.10.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.10.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.
@@ -493,15 +508,48 @@ An empty allowlist or empty intersection returns `[]`. Wildcard tokens, local
 stdio, and explicitly unauthenticated loopback mode retain the full inventory.
 
 > **Note:** See [`tokens-template.json`](tokens-template.json) for the file
-> shape. Use `token add` rather than editing the file by hand — the hash field
-> must be a SHA-256 of the secret, not the plaintext.
+> shape. Use `token add` rather than editing the file by hand — the `digest`
+> field must be a versioned SHA-256 of the secret, not the plaintext. Fields
+> are canonically `digest` and `devices`; the older `hash` and `routers`
+> spellings are still accepted as aliases, so existing files load unchanged.
+> The CLI flag remains `--routers`.
+
+> **`tokens.json` must be mode `0600`** (v0.10.0+). The server refuses to
+> start on a group- or world-accessible token file, and the error names the
+> file's owner uid, its mode, the calling process's uid, and the `chmod` to
+> run. Every `token` subcommand writes `0600`, and the LXC installer sets it,
+> so this only bites files created or copied by hand.
+
+### Tool scopes and write tools
+
+A tool scope is either the literal `*` or an explicit list of tool names. The
+two cannot be mixed — `--tools '*',transfer_file` is rejected.
+
+**A wildcard tool scope does not confer write tools** (v0.10.0+). `"tools":
+["*"]` reaches every read-only tool but none of these ten:
+
+| Write tool | |
+|---|---|
+| `add_device` | `manage_idp_security_package` |
+| `discard_candidate` | `reload_devices` |
+| `load_and_commit_config` | `render_and_apply_j2_template` |
+| `manage_appid_signature_package` | `rollback_config` |
+| `transfer_file` | `upgrade_junos` |
+
+Granting write authority is always an explicit, named decision: a token that
+needs `load_and_commit_config` must list it, alongside every other tool it
+calls. An explicit allowlist behaves exactly as before.
+
+Scope checks apply only to authenticated HTTP callers. Local stdio and the
+`--allow-no-auth` loopback escape hatch carry no caller context and are not
+scope-restricted.
 
 > **Run token subcommands as the service user.** When the systemd unit runs
 > the server as a dedicated user (e.g. `User=jmcp` in the packaged unit), the
-> file `token add`/`revoke`/`rotate` writes inherits the calling user's
-> ownership. If you run them as `root`, the resulting `tokens.json` will be
-> `root:root 0600` and the service user cannot read it — the server then
-> crash-loops on startup with `Permission denied`. Either:
+> file `token add`/`revoke`/`rotate`/`set-scope` writes inherits the calling
+> user's ownership. If you run them as `root`, the resulting `tokens.json`
+> will be `root:root 0600` and the service user cannot read it — the server
+> then crash-loops on startup with `Permission denied`. Either:
 >
 > ```bash
 > # Preferred: run subcommands as the service user.
@@ -600,6 +648,35 @@ cargo run -- token add \
   --server-pid <pid>
 ```
 
+### Rescope a token without reissuing its secret
+
+`token set-scope` changes an existing token's scopes in place. The digest,
+`created_at`, and envelope version are all preserved, so clients holding the
+secret keep working — this is the difference from `rotate`, which mints a new
+secret and forces every consumer to be updated at once.
+
+```bash
+# Narrow tools; leave the router scope alone.
+cargo run -- token set-scope \
+  --tokens-file tokens.json \
+  --name ops \
+  --tools gather_device_facts,get_junos_config,load_and_commit_config \
+  --server-pid <pid>
+
+# Narrow routers; leave the tool scope alone.
+cargo run -- token set-scope \
+  --tokens-file tokens.json \
+  --name ops \
+  --routers edge-1,edge-2 \
+  --server-pid <pid>
+```
+
+`--routers` and `--tools` are each optional and independent; whichever you
+omit is left unchanged. Supplying neither is an error. The command prints the
+resulting scopes to stderr, and `--server-pid` sends the usual SIGHUP once the
+file is written. Unknown tool names are rejected; unknown device names warn
+but are accepted, since token operations run before the inventory is loaded.
+
 If you need to trigger a reload without a token change (e.g., after editing the
 file by hand), send SIGHUP directly:
 
@@ -637,6 +714,99 @@ For migration, legacy `JMCP_SRX_*` aliases are accepted with a warning in
 `0.8.0` only when neither the corresponding command-line option nor canonical
 variable is set. `JMCP_SRX_HTTP_PORT` is always ignored: the retired second
 listener no longer exists. Move deployments to the canonical names now.
+
+## Upgrading to v0.10
+
+Two breaking authorization changes land in v0.10.0. Both are checked at
+runtime by the new binary, so **do the preparation while 0.9.x is still
+running** — otherwise the upgrade either fails to start or silently breaks
+write-capable clients.
+
+### 1. Fix token-file permissions
+
+The new binary refuses to start on a group- or world-accessible
+`tokens.json`. Check and fix before swapping the binary:
+
+```bash
+# On the server host, as the service user.
+stat -c '%a %U:%G %n' /etc/jmcp/tokens.json
+chmod 0600 /etc/jmcp/tokens.json
+```
+
+The LXC installer already sets `0600`, so packaged installs are almost
+certainly fine. Files created by hand, copied between hosts, restored from a
+backup, or written by configuration management are the ones to check. If the
+server does hit this, the startup error names the file's owner uid, its mode,
+the calling process's uid, and the exact `chmod` — it is not a silent failure.
+
+### 2. Re-scope wildcard tokens that need write tools
+
+A wildcard tool scope no longer confers the ten
+[write tools](#tool-scopes-and-write-tools). Any token with `"tools": ["*"]`
+that calls one of them will start getting `ToolNotInScope` refusals after the
+upgrade.
+
+Find the affected tokens:
+
+```bash
+sudo -u jmcp rust-junosmcp token list --tokens-file /etc/jmcp/tokens.json
+```
+
+Every row showing `*` in the `TOOLS` column is a candidate. For each one,
+decide whether it genuinely needs write access:
+
+- **Read-only in practice** — leave it. A wildcard scope still reaches every
+  read-only tool, and it is now safer than it was.
+- **Needs write tools** — replace the wildcard with an explicit list naming
+  every tool it calls, including the read-only ones. Scopes cannot mix `*`
+  with names.
+
+`token set-scope` does this without reissuing the secret, so clients keep
+working across the change:
+
+```bash
+sudo -u jmcp rust-junosmcp token set-scope \
+  --tokens-file /etc/jmcp/tokens.json \
+  --name ops \
+  --tools get_router_list,gather_device_facts,get_junos_config,junos_config_diff,commit_check_config,load_and_commit_config \
+  --server-pid "$(systemctl show -p MainPID --value rust-junosmcp)"
+```
+
+`set-scope` exists in 0.10.0 and later. On 0.9.x, the equivalent is to edit
+`tokens.json` by hand — change only the `tools` array, leave `hash`/`digest`
+and `created_at` untouched — then `systemctl kill -s HUP rust-junosmcp`. Do
+not use `rotate` for this: it mints a new secret and locks out every consumer
+of that token at once.
+
+### 3. Upgrade, then verify
+
+After installing the new release, confirm the store loaded and the scopes are
+what you expect:
+
+```bash
+systemctl status rust-junosmcp
+sudo -u jmcp rust-junosmcp token list --tokens-file /etc/jmcp/tokens.json
+```
+
+Then exercise one write tool through an affected client. A refusal at this
+point means that token's allowlist is missing the tool name.
+
+> **Back up `tokens.json` before upgrading — rollback is not symmetric.**
+> v0.10 *reads* the old `hash`/`routers` spellings, but any v0.10 token write
+> (`add`, `rotate`, `revoke`, `set-scope`) rewrites the whole file in the
+> canonical `digest`/`devices` spelling, and **0.9.x cannot parse that** — it
+> requires `hash` and fails to load the store, so the rolled-back server will
+> not start. Keep a copy:
+>
+> ```bash
+> sudo -u jmcp cp -a /etc/jmcp/tokens.json /etc/jmcp/tokens.json.0.9-backup
+> ```
+>
+> If you have not run a v0.10 token write, the file is byte-identical and
+> rollback is clean. Otherwise restore the backup (secrets and scopes are
+> unchanged by the upgrade itself), or rename the two fields back by hand.
+> On Proxmox, an LXC snapshot of the container before install covers this
+> along with everything else.
 
 ## Resource limits (streamable-HTTP)
 
