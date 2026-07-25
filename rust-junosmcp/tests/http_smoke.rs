@@ -335,3 +335,115 @@ fn disable_host_check_allows_any_host() {
         "--disable-host-check must bypass rmcp's Host check"
     );
 }
+
+/// #199: a wildcard tool scope excludes write tools, so tools/list must not
+/// advertise them. What you can see is what you can call.
+#[test]
+fn tools_list_hides_write_tools_from_a_wildcard_token() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "wildcard-ops",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap();
+
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose_secret());
+    let response = http_post(
+        server.port,
+        Some(secret.expose_secret()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    assert_eq!(response.code, 200, "body: {}", response.body);
+
+    let listed: Vec<String> = response
+        .body
+        .pointer("/result/tools")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("missing tools array: {}", response.body))
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect();
+
+    assert!(
+        !listed.is_empty(),
+        "wildcard token must still see read tools"
+    );
+    for write_tool in rust_junosmcp_auth::WRITE_TOOLS {
+        assert!(
+            !listed.contains(&(*write_tool).to_string()),
+            "tools/list must not advertise write tool {write_tool} to a wildcard token: {listed:?}"
+        );
+    }
+    assert!(
+        listed.contains(&"gather_device_facts".to_string()),
+        "read-only tools must still be advertised: {listed:?}"
+    );
+}
+
+/// The other half of #199: an explicit allowlist naming a write tool must
+/// still advertise it, so narrowing a scope does not silently remove
+/// capability the operator deliberately granted.
+#[test]
+fn tools_list_advertises_write_tools_named_in_an_explicit_allowlist() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "explicit-ops",
+        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(vec![
+            "gather_device_facts".into(),
+            "load_and_commit_config".into(),
+        ]),
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap();
+
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose_secret());
+    let response = http_post(
+        server.port,
+        Some(secret.expose_secret()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    assert_eq!(response.code, 200, "body: {}", response.body);
+
+    let mut listed: Vec<String> = response
+        .body
+        .pointer("/result/tools")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("missing tools array: {}", response.body))
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect();
+    listed.sort();
+
+    assert_eq!(
+        listed,
+        vec![
+            "gather_device_facts".to_string(),
+            "load_and_commit_config".to_string()
+        ]
+    );
+}

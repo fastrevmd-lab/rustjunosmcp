@@ -7,9 +7,11 @@
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Extensions, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo,
 };
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::service::RequestContext;
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{
     DeviceManager, Policy,
@@ -48,6 +50,30 @@ pub(super) fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth:
     extensions
         .get::<http::request::Parts>()
         .and_then(|parts| parts.extensions.get::<rust_junosmcp_auth::CallerCtx>())
+}
+
+/// Filter an advertised tool list down to what `ctx` is actually allowed to
+/// call.
+///
+/// Uses the same `allows_tool(name, WRITE_TOOLS)` predicate as
+/// [`JmcpHandler::check_tool_scope`], so `tools/list` cannot drift from the
+/// authorization `tools/call` enforces. `None` — the stdio and
+/// `--allow-no-auth` paths, which carry no caller context — returns the list
+/// unchanged, matching every other scope check.
+pub(super) fn filter_tools_for_scope(
+    tools: Vec<rmcp::model::Tool>,
+    ctx: Option<&rust_junosmcp_auth::CallerCtx>,
+) -> Vec<rmcp::model::Tool> {
+    let Some(ctx) = ctx else {
+        return tools;
+    };
+    tools
+        .into_iter()
+        .filter(|tool| {
+            ctx.tools
+                .allows_tool(tool.name.as_ref(), rust_junosmcp_auth::WRITE_TOOLS)
+        })
+        .collect()
 }
 
 pub(super) fn mint_request_id() -> String {
@@ -1086,6 +1112,20 @@ impl ServerHandler for JmcpHandler {
             ))
             .with_instructions(instructions)
     }
+
+    /// Advertise only the tools this caller may invoke.
+    ///
+    /// Defining this by hand suppresses the one `#[tool_handler]` would
+    /// generate; the attribute still generates `call_tool` and `get_tool`.
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools =
+            filter_tools_for_scope(self.tool_router.list_all(), caller_ctx(&context.extensions));
+        Ok(ListToolsResult::with_all_items(tools))
+    }
 }
 
 #[cfg(test)]
@@ -1419,5 +1459,133 @@ mod scope_tests {
         assert_eq!(classify_router_access(true, false), AllowedUnknown);
         assert_eq!(classify_router_access(false, true), DeniedInScopePresent);
         assert_eq!(classify_router_access(false, false), DeniedUnknown);
+    }
+
+    fn ctx_with_tools(tools: ScopeSet) -> CallerCtx {
+        CallerCtx {
+            token_name: "t".into(),
+            devices: ScopeSet::Wildcard,
+            tools,
+            grant: None,
+        }
+    }
+
+    fn names_of(tools: Vec<rmcp::model::Tool>) -> std::collections::BTreeSet<String> {
+        tools.into_iter().map(|t| t.name.to_string()).collect()
+    }
+
+    #[test]
+    fn no_caller_context_lists_every_tool() {
+        let all = make_handler().tool_router.list_all();
+        let expected = names_of(all.clone());
+        assert_eq!(names_of(filter_tools_for_scope(all, None)), expected);
+    }
+
+    #[test]
+    fn wildcard_scope_hides_exactly_the_write_tools() {
+        let ctx = ctx_with_tools(ScopeSet::Wildcard);
+        let all = make_handler().tool_router.list_all();
+        let all_names = names_of(all.clone());
+        let listed = names_of(filter_tools_for_scope(all, Some(&ctx)));
+
+        let compiled_write_tools: std::collections::BTreeSet<String> =
+            rust_junosmcp_auth::WRITE_TOOLS
+                .iter()
+                .map(|n| (*n).to_string())
+                .filter(|n| all_names.contains(n))
+                .collect();
+
+        for name in &compiled_write_tools {
+            assert!(
+                !listed.contains(name),
+                "wildcard must hide write tool {name}"
+            );
+        }
+        assert_eq!(
+            listed,
+            all_names
+                .difference(&compiled_write_tools)
+                .cloned()
+                .collect::<std::collections::BTreeSet<String>>(),
+            "wildcard must keep every non-write tool"
+        );
+    }
+
+    #[test]
+    fn explicit_allowlist_naming_a_write_tool_still_lists_it() {
+        let ctx = ctx_with_tools(ScopeSet::Allowlist(vec![
+            "gather_device_facts".into(),
+            "load_and_commit_config".into(),
+        ]));
+        let listed = names_of(filter_tools_for_scope(
+            make_handler().tool_router.list_all(),
+            Some(&ctx),
+        ));
+        assert_eq!(
+            listed,
+            ["gather_device_facts", "load_and_commit_config"]
+                .iter()
+                .map(|n| (*n).to_string())
+                .collect::<std::collections::BTreeSet<String>>()
+        );
+    }
+
+    #[test]
+    fn empty_scope_lists_nothing() {
+        let ctx = ctx_with_tools(ScopeSet::Allowlist(vec![]));
+        assert!(
+            filter_tools_for_scope(make_handler().tool_router.list_all(), Some(&ctx)).is_empty()
+        );
+    }
+
+    /// The invariant #199 is about: everything advertised must be callable.
+    #[test]
+    fn every_listed_tool_passes_check_tool_scope() {
+        let handler = make_handler();
+        let scopes = [
+            ScopeSet::Wildcard,
+            ScopeSet::Allowlist(vec![
+                "gather_device_facts".into(),
+                "load_and_commit_config".into(),
+            ]),
+            ScopeSet::Allowlist(vec![]),
+        ];
+
+        let compiled = names_of(handler.tool_router.list_all());
+
+        for scope in scopes {
+            let ctx = ctx_with_tools(scope);
+            let listed = filter_tools_for_scope(handler.tool_router.list_all(), Some(&ctx));
+
+            for tool in &listed {
+                // check_tool_scope takes &'static str; find the matching
+                // registry entry so the lifetime is satisfied.
+                let name: &'static str = rust_junosmcp_auth::KNOWN_TOOLS
+                    .iter()
+                    .find(|known| **known == tool.name.as_ref())
+                    .copied()
+                    .unwrap_or_else(|| panic!("listed tool {} not in KNOWN_TOOLS", tool.name));
+                assert!(
+                    handler.check_tool_scope(Some(&ctx), name).is_ok(),
+                    "listed tool {name} must be callable under scope {:?}",
+                    ctx.tools
+                );
+            }
+
+            // And the converse: nothing callable was wrongly hidden.
+            let listed_names = names_of(listed);
+            for known in rust_junosmcp_auth::KNOWN_TOOLS {
+                // `*known` — iterating a &[&str] yields &&str, and
+                // check_tool_scope takes &'static str.
+                if compiled.contains(*known) && handler.check_tool_scope(Some(&ctx), known).is_ok()
+                {
+                    assert!(
+                        listed_names.contains(*known),
+                        "callable tool {known} must be advertised under scope {:?}",
+                        ctx.tools
+                    );
+                }
+            }
+        }
     }
 }
