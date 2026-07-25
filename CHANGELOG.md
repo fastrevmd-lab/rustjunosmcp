@@ -6,6 +6,12 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-07-25
+
+> Ships the #199 fix that landed after v0.10.0 was cut. Upgrading from 0.10.0
+> needs no operator action; upgrading from 0.9.x still requires the v0.10.0
+> steps below.
+
 ### Changed
 
 - **#199 — `tools/list` is filtered to the caller's tool scope.** The tool list
