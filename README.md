@@ -469,11 +469,14 @@ pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.
+#
+# A wildcard tool scope grants read-only tools only; write tools must be named
+# explicitly. See "Upgrading to v0.10" and "Tool scopes and write tools" below.
 pct exec 115 -- runuser -u jmcp -- /usr/local/bin/rust-junosmcp token add \
   --tokens-file /etc/jmcp/tokens.json \
   --name ops \
   --routers '*' \
-  --tools '*'
+  --tools get_router_list,gather_device_facts,execute_junos_command,get_junos_config,commit_check_config,load_and_commit_config
 
 # Start the authenticated unified loopback HTTP endpoint.
 pct exec 115 -- systemctl enable --now rust-junosmcp
@@ -484,6 +487,11 @@ overwriting `devices.json`, `tokens.json`, or `known_hosts`. It validates the
 complete archive before changing system state. The packaged server exposes all
 enabled Junos and SRX tools at `127.0.0.1:30030/mcp` and requires bearer
 authentication. Use an SSH tunnel or a TLS reverse proxy for remote clients.
+
+> **Narrowing an existing token:** `token set-scope` changes a token's router or
+> tool scopes **without reissuing its secret**, so clients keep working with the
+> same bearer token. Useful for removing access without reconfiguring every
+> client. See the [token management](#token-management) section for examples.
 
 Upgrading from a split-server release removes the retired `rust-srxmcp`
 executable, unit, and enabled-service link. It deliberately preserves existing
