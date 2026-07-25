@@ -6,6 +6,23 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **#199 — `tools/list` is filtered to the caller's tool scope.** The tool list
+  advertised to an authenticated caller now contains only the tools that
+  caller's token can invoke, using the same check that gates `tools/call`. A
+  wildcard token sees the read-only tools and not the ten write tools; a token
+  scoped to nothing sees an empty list. Previously the full surface was
+  advertised to everyone, so an agent would plan around a tool, call it, and
+  burn a turn on the denial. Authorization behaviour is unchanged — this makes
+  the advertisement agree with the enforcement that already existed. Local
+  stdio and `--allow-no-auth` loopback carry no caller context and still see
+  every tool.
+
+  A client that cached `tools/list` before a `token set-scope` keeps the stale
+  view until it reconnects; the server does not emit
+  `notifications/tools/list_changed`.
+
 ## [0.10.0] — 2026-07-25
 
 > **Operators: this release requires action before upgrading.** A wildcard

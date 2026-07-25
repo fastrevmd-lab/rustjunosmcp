@@ -540,6 +540,18 @@ Granting write authority is always an explicit, named decision: a token that
 needs `load_and_commit_config` must list it, alongside every other tool it
 calls. An explicit allowlist behaves exactly as before.
 
+`tools/list` advertises only what the caller's token can invoke, so the list an
+agent sees matches what it can actually call. A wildcard token is shown the
+read-only tools and not the ten write tools; a token scoped to nothing is shown
+an empty list.
+
+> **Cached lists go stale.** A client that fetched `tools/list` before you
+> re-scoped its token with `token set-scope` keeps the old view until it
+> reconnects — the server does not currently emit
+> `notifications/tools/list_changed` on SIGHUP reload. Authorization is
+> unaffected: a call to a tool the token no longer has is refused regardless of
+> what the client believes it can see.
+
 Scope checks apply only to authenticated HTTP callers. Local stdio and the
 `--allow-no-auth` loopback escape hatch carry no caller context and are not
 scope-restricted.
