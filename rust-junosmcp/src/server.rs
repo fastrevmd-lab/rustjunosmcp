@@ -7,9 +7,11 @@
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Extensions, Implementation, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Extensions, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo,
 };
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::service::RequestContext;
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{
     DeviceManager, Policy,
@@ -58,7 +60,6 @@ pub(super) fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth:
 /// authorization `tools/call` enforces. `None` — the stdio and
 /// `--allow-no-auth` paths, which carry no caller context — returns the list
 /// unchanged, matching every other scope check.
-#[allow(dead_code)] // Task 1: pure filter. Wired into tools/list in Task 2.
 pub(super) fn filter_tools_for_scope(
     tools: Vec<rmcp::model::Tool>,
     ctx: Option<&rust_junosmcp_auth::CallerCtx>,
@@ -1110,6 +1111,20 @@ impl ServerHandler for JmcpHandler {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(instructions)
+    }
+
+    /// Advertise only the tools this caller may invoke.
+    ///
+    /// Defining this by hand suppresses the one `#[tool_handler]` would
+    /// generate; the attribute still generates `call_tool` and `get_tool`.
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools =
+            filter_tools_for_scope(self.tool_router.list_all(), caller_ctx(&context.extensions));
+        Ok(ListToolsResult::with_all_items(tools))
     }
 }
 
