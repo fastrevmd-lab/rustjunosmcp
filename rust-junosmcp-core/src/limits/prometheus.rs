@@ -10,7 +10,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 pub(crate) const ACTIVE_SESSIONS: &str = "junosmcp_active_sessions";
 pub(crate) const LIMIT_HITS_TOTAL: &str = "junosmcp_limit_hits_total";
-pub(crate) const TOOL_DURATION_SECONDS: &str = "junosmcp_tool_duration_seconds";
+pub(crate) const TOOL_DURATION_SECONDS: &str = "mecmcp_tool_duration_seconds";
 pub(crate) const SESSIONS_REAPED_TOTAL: &str = "junosmcp_sessions_reaped_total";
 pub(crate) const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
@@ -158,12 +158,14 @@ mod tests {
             metrics::gauge!(ACTIVE_SESSIONS).set(2.0);
             record_limit_hit("global_concurrency", "request_rejected");
             record_session_reaped("idle");
-            metrics::histogram!(
-                TOOL_DURATION_SECONDS,
-                "tool" => "get_router_list",
-                "result" => "ok"
-            )
-            .record(0.25);
+            // Use AuditScope to emit mecmcp_tool_duration_seconds, not a direct
+            // metrics::histogram! call. This tests the real code path.
+            let mut audit = mecmcp_audit::AuditScope::stdio(
+                "get_router_list",
+                "read",
+                vec!["r1".into()],
+            );
+            audit.succeed();
         });
         handle.run_upkeep();
 
@@ -211,7 +213,7 @@ mod tests {
         );
         sample_with(
             text,
-            "junosmcp_tool_duration_seconds_bucket{",
+            "mecmcp_tool_duration_seconds_bucket{",
             &[
                 "server=\"junos\"",
                 "tool=\"get_router_list\"",
@@ -221,7 +223,7 @@ mod tests {
         );
         sample_with(
             text,
-            "junosmcp_tool_duration_seconds_bucket{",
+            "mecmcp_tool_duration_seconds_bucket{",
             &["le=\"1800\"", "tool=\"get_router_list\""],
         );
         assert!(!text.contains("junosmcp_limit_hits_total_total"));
