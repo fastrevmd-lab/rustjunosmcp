@@ -1,11 +1,10 @@
 //! SRX-specific rmcp adapters composed into the unified [`JmcpHandler`].
 
-use super::{JmcpHandler, caller_ctx, mint_request_id};
+use super::{JmcpHandler, audit_scope, caller_ctx, mint_request_id};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Extensions};
 use rmcp::{tool, tool_router};
-use rust_junosmcp_audit::AuditScope;
 #[cfg(test)]
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager};
 use rust_junosmcp_srx_core::workflows::signature_package::{
@@ -237,7 +236,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(ctx, "srxmcp_status", "read", vec![]);
+        let mut audit = audit_scope(ctx, "srxmcp_status", "read", vec![]);
 
         if let Err(e) = self.authorize_call(&extensions, "srxmcp_status", None) {
             audit.deny(match e {
@@ -269,7 +268,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "get_chassis_cluster_status",
             "read",
@@ -326,7 +325,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "get_srx_security_services_status",
             "read",
@@ -384,7 +383,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "check_srx_feature_license",
             "read",
@@ -442,7 +441,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "vpn_lifecycle_report",
             "read",
@@ -504,7 +503,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx_opt = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx_opt,
             "manage_idp_security_package",
             "idp-package",
@@ -594,7 +593,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx_opt = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx_opt,
             "manage_appid_signature_package",
             "appid-package",
@@ -678,7 +677,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "validate_chassis_cluster_health",
             "read",
@@ -752,7 +751,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "collect_jtac_support_bundle",
             "collect",

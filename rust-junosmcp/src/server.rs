@@ -4,6 +4,7 @@
 //! struct, calls into `rust_junosmcp_core::tools::<name>::handle`, and converts
 //! the `Result<serde_json::Value, JmcpError>` into the appropriate rmcp content.
 
+use mecmcp_audit::AuditScope;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -12,7 +13,6 @@ use rmcp::model::{
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
-use rust_junosmcp_audit::AuditScope;
 use rust_junosmcp_core::{
     DeviceManager, Policy,
     tools::{
@@ -82,6 +82,23 @@ pub(super) fn mint_request_id() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     format!("req-{nanos}")
+}
+
+/// Helper to construct an `AuditScope` from an `Option<&CallerCtx>`.
+///
+/// The shared `mecmcp-audit` crate's API split the old single `new(Option<&CallerCtx>, ...)`
+/// into `from_caller(&CallerCtx, ...)` and `stdio(...)`. This helper preserves the branching
+/// behavior at all 58 call sites without duplicating the match.
+pub(super) fn audit_scope(
+    ctx: Option<&rust_junosmcp_auth::CallerCtx>,
+    tool: &'static str,
+    action: &'static str,
+    devices: Vec<String>,
+) -> AuditScope {
+    match ctx {
+        Some(c) => AuditScope::from_caller(c, tool, action, devices),
+        None => AuditScope::stdio(tool, action, devices),
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -362,7 +379,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(ctx, "get_router_list", "read", vec![]);
+        let mut audit = audit_scope(ctx, "get_router_list", "read", vec![]);
 
         if let Err(e) = self.check_tool_scope(ctx, "get_router_list") {
             audit.deny("tool_scope");
@@ -396,7 +413,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "gather_device_facts",
             "read",
@@ -433,7 +450,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "execute_junos_command",
             "execute",
@@ -471,7 +488,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "get_junos_config",
             "read",
@@ -508,7 +525,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "junos_config_diff",
             "read",
@@ -546,7 +563,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "load_and_commit_config",
             "commit",
@@ -593,7 +610,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "commit_check_config",
             "commit-check",
@@ -636,7 +653,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "discard_candidate",
             "discard",
@@ -671,7 +688,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "rollback_config",
             if args.commit { "commit" } else { "preview" },
@@ -712,7 +729,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "execute_junos_pfe_command",
             "execute",
@@ -751,7 +768,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "execute_junos_command_batch",
             "execute-batch",
@@ -794,7 +811,7 @@ impl JmcpHandler {
             (None, Some(many)) => many.clone(),
             _ => Vec::new(),
         };
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "render_and_apply_j2_template",
             "apply",
@@ -844,7 +861,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(ctx, "add_device", "add-device", vec![]);
+        let mut audit = audit_scope(ctx, "add_device", "add-device", vec![]);
 
         if let Err(e) = self.check_tool_scope(ctx, "add_device") {
             audit.deny("tool_scope");
@@ -892,7 +909,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(ctx, "reload_devices", "reload-inventory", vec![]);
+        let mut audit = audit_scope(ctx, "reload_devices", "reload-inventory", vec![]);
 
         if let Err(e) = self.check_tool_scope(ctx, "reload_devices") {
             audit.deny("tool_scope");
@@ -933,7 +950,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "transfer_file",
             "transfer",
@@ -975,7 +992,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(ctx, "fetch_file", "fetch", vec![args.router_name.clone()]);
+        let mut audit = audit_scope(ctx, "fetch_file", "fetch", vec![args.router_name.clone()]);
 
         if let Err(e) = self.check_tool_scope(ctx, "fetch_file") {
             audit.deny("tool_scope");
@@ -1012,7 +1029,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = AuditScope::new(
+        let mut audit = audit_scope(
             ctx,
             "upgrade_junos",
             "upgrade",
@@ -1062,7 +1079,7 @@ impl JmcpHandler {
         } else {
             vec![]
         };
-        let mut audit = AuditScope::new(ctx, "list_staged_files", "read", routers);
+        let mut audit = audit_scope(ctx, "list_staged_files", "read", routers);
 
         if let Err(e) = self.check_tool_scope(ctx, "list_staged_files") {
             audit.deny("tool_scope");
