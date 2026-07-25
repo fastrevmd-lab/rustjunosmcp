@@ -228,3 +228,202 @@ fn add_accepts_srx_only_tool_scope() {
         ])
     );
 }
+
+#[test]
+fn set_scope_narrows_tools_without_reissuing_secret() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+
+    // Mint a token with wildcard tool scope and explicit device scope
+    let out1 = Command::new(binary_path())
+        .args([
+            "token",
+            "add",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "eve",
+            "--routers",
+            "r1,r2",
+            "--tools",
+            "*",
+        ])
+        .output()
+        .unwrap();
+    assert!(out1.status.success(), "{}", String::from_utf8_lossy(&out1.stderr));
+    let secret = String::from_utf8(out1.stdout).unwrap().trim().to_string();
+    assert_eq!(secret.len(), 43);
+
+    // Read initial token to capture created_at
+    let body_before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
+    let created_at = body_before["tokens"][0]["created_at"].clone();
+    assert!(created_at.is_string(), "created_at missing before set-scope");
+
+    // Narrow tool scope to explicit list
+    let out2 = Command::new(binary_path())
+        .args([
+            "token",
+            "set-scope",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "eve",
+            "--tools",
+            "get_router_list,get_junos_config",
+        ])
+        .output()
+        .unwrap();
+    assert!(out2.status.success(), "{}", String::from_utf8_lossy(&out2.stderr));
+    assert!(out2.stdout.is_empty(), "set-scope should not print secret");
+
+    // Read resulting token file
+    let body_after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
+
+    // 1. Assert the narrowed scope took effect
+    assert_eq!(
+        body_after["tokens"][0]["tools"],
+        serde_json::json!(["get_router_list", "get_junos_config"]),
+        "tools scope was not narrowed"
+    );
+
+    // 2. Assert device scope unchanged
+    assert_eq!(
+        body_after["tokens"][0]["devices"],
+        serde_json::json!(["r1", "r2"]),
+        "device scope changed unexpectedly"
+    );
+
+    // 3. Assert created_at unchanged
+    assert_eq!(
+        body_after["tokens"][0]["created_at"], created_at,
+        "created_at changed unexpectedly"
+    );
+
+    // 4. Assert envelope version survived
+    assert_eq!(
+        body_after["version"],
+        serde_json::json!(1),
+        "envelope version lost"
+    );
+
+    // 5. Assert the ORIGINAL secret still authenticates (the critical property)
+    // We don't have an HTTP endpoint to test auth in this subprocess test,
+    // but we can confirm the digest hasn't changed by reading the file.
+    // The digest is computed from the secret; if set-scope changed it,
+    // the original secret would no longer match.
+    assert_eq!(
+        body_after["tokens"][0]["digest"], body_before["tokens"][0]["digest"],
+        "secret digest changed — original secret would no longer authenticate"
+    );
+}
+
+#[test]
+fn set_scope_narrows_devices_without_reissuing_secret() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+
+    // Mint a token with wildcard device scope
+    let out1 = Command::new(binary_path())
+        .args([
+            "token",
+            "add",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "frank",
+            "--routers",
+            "*",
+            "--tools",
+            "get_router_list",
+        ])
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let _secret = String::from_utf8(out1.stdout).unwrap().trim().to_string();
+
+    let body_before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
+    let created_at = body_before["tokens"][0]["created_at"].clone();
+
+    // Narrow device scope to explicit list
+    let out2 = Command::new(binary_path())
+        .args([
+            "token",
+            "set-scope",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "frank",
+            "--routers",
+            "r3,r4",
+        ])
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+
+    let body_after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
+
+    assert_eq!(
+        body_after["tokens"][0]["devices"],
+        serde_json::json!(["r3", "r4"]),
+        "device scope was not narrowed"
+    );
+    assert_eq!(
+        body_after["tokens"][0]["tools"],
+        serde_json::json!(["get_router_list"]),
+        "tool scope changed unexpectedly"
+    );
+    assert_eq!(body_after["tokens"][0]["created_at"], created_at);
+    assert_eq!(body_after["version"], serde_json::json!(1));
+    assert_eq!(
+        body_after["tokens"][0]["digest"], body_before["tokens"][0]["digest"],
+        "secret changed"
+    );
+}
+
+#[test]
+fn set_scope_rejects_no_scopes() {
+    ensure_built();
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+
+    Command::new(binary_path())
+        .args([
+            "token",
+            "add",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "george",
+            "--routers",
+            "*",
+            "--tools",
+            "*",
+        ])
+        .status()
+        .unwrap();
+
+    let out = Command::new(binary_path())
+        .args([
+            "token",
+            "set-scope",
+            "--tokens-file",
+            tokens.to_str().unwrap(),
+            "--name",
+            "george",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success(), "set-scope should reject invocation with neither --routers nor --tools");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--routers") || stderr.contains("--tools"),
+        "expected error mentioning scopes, got: {stderr}"
+    );
+}
