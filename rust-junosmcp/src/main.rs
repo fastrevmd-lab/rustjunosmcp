@@ -10,7 +10,7 @@ mod token_cmd;
 use anyhow::{Context, Result};
 use cli::{Command, Transport};
 use rmcp::ServiceExt;
-use rust_junosmcp_auth::file::TokenStoreFile;
+use rust_junosmcp_auth::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, OpenSshScpRunner, Policy, TransferConfig};
 use server::JmcpHandler;
 use std::sync::Arc;
@@ -94,12 +94,10 @@ async fn main() -> Result<()> {
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
         (Some(path), _) => {
-            let names = inventory.names();
-            let known: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-            let store = TokenStoreFile::load(path, &known)
+            let store_file = TokenStoreFile::load(path)
                 .with_context(|| format!("loading {}", path.display()))?;
-            tracing::info!(tokens = store.len(), "token store loaded");
-            Some(Arc::new(arc_swap::ArcSwap::from_pointee(store)))
+            tracing::info!(tokens = store_file.store().len(), "token store loaded");
+            Some(Arc::new(store_file))
         }
         (None, true) => {
             tracing::warn!("--allow-no-auth: streamable-http will accept unauthenticated requests");
@@ -159,10 +157,8 @@ async fn main() -> Result<()> {
     // the new state. Stdio mode and --allow-no-auth produce a None token_store
     // and skip this entirely.
     #[cfg(unix)]
-    if let (Some(store_arc), Some(path)) = (token_store.clone(), args.tokens_file.clone()) {
+    if let (Some(store_file), Some(_path)) = (token_store.clone(), args.tokens_file.clone()) {
         // Inventory is now mutable at runtime (add_device / reload_devices).
-        // We must refresh `known` from dev_manager.inventory().names() each iteration
-        // so token-scope validation sees the post-reload router set.
         let dm = dev_manager.clone();
         let hup_handler = handler.clone();
         tokio::spawn(async move {
@@ -191,13 +187,11 @@ async fn main() -> Result<()> {
                         tracing::error!(error = %e, "inventory reload failed; keeping previous inventory");
                     }
                 }
-                // Refresh known router names from the (possibly updated) inventory.
-                let known: Vec<String> = dm.inventory().names();
-                let known_refs: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
-                match TokenStoreFile::load(&path, &known_refs) {
-                    Ok(new_store) => {
-                        store_arc.store(Arc::new(new_store));
-                        tracing::info!(path = %path.display(), "token store reloaded");
+                // Reload the token store. The shared TokenStoreFile's reload()
+                // method swaps the internal store atomically.
+                match store_file.reload() {
+                    Ok(()) => {
+                        tracing::info!(path = %store_file.path().display(), "token store reloaded");
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "SIGHUP reload failed; keeping previous store");

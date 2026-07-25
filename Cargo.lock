@@ -1751,6 +1751,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
+name = "mecmcp-auth"
+version = "0.1.4"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=auth-v0.1.4#19c16ac7e8b5c8c1547f4347fe37215a198c4329"
+dependencies = [
+ "arc-swap",
+ "chrono",
+ "getrandom 0.4.2",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2688,17 +2706,9 @@ version = "0.9.1"
 dependencies = [
  "arc-swap",
  "axum",
- "base64ct",
- "chrono",
  "http",
- "libc",
- "rand 0.8.6",
- "serde",
+ "mecmcp-auth",
  "serde_json",
- "sha2 0.10.9",
- "subtle",
- "tempfile",
- "thiserror 2.0.18",
  "tower",
  "tracing",
 ]

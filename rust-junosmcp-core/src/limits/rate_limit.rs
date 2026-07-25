@@ -7,7 +7,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use dashmap::DashMap;
-use rust_junosmcp_auth::caller::CallerCtx;
+use rust_junosmcp_auth::CallerCtx;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -129,16 +129,16 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use axum::routing::post;
-    use rust_junosmcp_auth::ScopeSet;
-    use rust_junosmcp_auth::caller::CallerCtx;
+    use rust_junosmcp_auth::{CallerCtx, ScopeSet};
     use tokio::sync::Notify;
     use tower::ServiceExt as _;
 
     fn caller(name: &str) -> CallerCtx {
         CallerCtx {
             token_name: name.to_owned(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
+            grant: None,
         }
     }
 

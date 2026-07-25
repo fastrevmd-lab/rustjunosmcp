@@ -44,14 +44,10 @@ mod srx;
 ///   scope checks become a no-op (preserves original behavior).
 /// - **streamable-http:** rmcp inserted `Parts`; auth middleware put `CallerCtx`
 ///   into `req.extensions` which became `parts.extensions` → returns `Some(&ctx)`.
-pub(super) fn caller_ctx(
-    extensions: &Extensions,
-) -> Option<&rust_junosmcp_auth::caller::CallerCtx> {
-    extensions.get::<http::request::Parts>().and_then(|parts| {
-        parts
-            .extensions
-            .get::<rust_junosmcp_auth::caller::CallerCtx>()
-    })
+pub(super) fn caller_ctx(extensions: &Extensions) -> Option<&rust_junosmcp_auth::CallerCtx> {
+    extensions
+        .get::<http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<rust_junosmcp_auth::CallerCtx>())
 }
 
 pub(super) fn mint_request_id() -> String {
@@ -199,11 +195,11 @@ impl JmcpHandler {
     /// or if no caller context is present (stdio path).
     fn check_tool_scope(
         &self,
-        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
         if let Some(ctx) = ctx
-            && !ctx.tools.allows(tool)
+            && !ctx.tools.allows_tool(tool, rust_junosmcp_auth::WRITE_TOOLS)
         {
             return Err(ScopeError::ToolNotInScope {
                 token: ctx.token_name.clone(),
@@ -217,12 +213,12 @@ impl JmcpHandler {
     /// or if no caller context is present (stdio path).
     fn check_router_scope(
         &self,
-        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::CallerCtx>,
         tool: &'static str,
         router: &str,
     ) -> Result<(), ScopeError> {
         let in_inventory = self.dm.inventory().contains_router(router);
-        let allows = ctx.map(|c| c.routers.allows(router)).unwrap_or(true);
+        let allows = ctx.map(|c| c.devices.allows(router)).unwrap_or(true);
         let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("<none>");
         match classify_router_access(allows, in_inventory) {
             RouterAccess::Allowed => {}
@@ -247,7 +243,7 @@ impl JmcpHandler {
             }
         }
         if let Some(ctx) = ctx
-            && !ctx.routers.allows(router)
+            && !ctx.devices.allows(router)
         {
             return Err(ScopeError::RouterNotInScope {
                 token: ctx.token_name.clone(),
@@ -262,7 +258,7 @@ impl JmcpHandler {
 /// Single source of truth for the MCP tool names this server exposes.
 ///
 /// Listed in source-declaration order below. Must stay in sync with
-/// `rust_junosmcp_auth::file::JUNOS_TOOLS`; the
+/// `rust_junosmcp_auth::JUNOS_TOOLS`; the
 /// `server_tools_matches_known_tools_as_set` unit test enforces this.
 /// Drift here silently denies operators least-privilege token scopes for new
 /// tools (see RJMCP-SEC-001). This is a binary-crate tripwire consumed only
@@ -292,7 +288,7 @@ const SERVER_TOOLS: &[&str] = &[
 #[cfg(test)]
 mod server_tools_const_tests {
     use super::SERVER_TOOLS;
-    use rust_junosmcp_auth::file::JUNOS_TOOLS;
+    use rust_junosmcp_auth::JUNOS_TOOLS;
     use std::collections::HashSet;
 
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
@@ -346,8 +342,7 @@ impl JmcpHandler {
             audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        let names =
-            rust_junosmcp_auth::caller::filter_router_names(ctx, self.dm.inventory().names());
+        let names = rust_junosmcp_auth::filter_router_names(ctx, self.dm.inventory().names());
         let result = router_list::handle_names(names).await;
         match &result {
             Ok(v) => {
@@ -1096,8 +1091,7 @@ impl ServerHandler for JmcpHandler {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use rust_junosmcp_auth::ScopeSet;
-    use rust_junosmcp_auth::caller::CallerCtx;
+    use rust_junosmcp_auth::{CallerCtx, ScopeSet};
 
     fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {
         rust_junosmcp_core::TransferConfig {
@@ -1174,7 +1168,7 @@ mod scope_tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        let expected: std::collections::HashSet<String> = rust_junosmcp_auth::file::KNOWN_TOOLS
+        let expected: std::collections::HashSet<String> = rust_junosmcp_auth::KNOWN_TOOLS
             .iter()
             .map(|name| (*name).to_string())
             .collect();
@@ -1233,8 +1227,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
+            grant: None,
         };
         assert!(
             handler
@@ -1252,8 +1247,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Allowlist(vec!["r1".into()]),
+            devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
+            grant: None,
         };
         assert!(
             handler
@@ -1271,8 +1267,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+            grant: None,
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
@@ -1310,8 +1307,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+            grant: None,
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "transfer_file"),
@@ -1324,8 +1322,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+            grant: None,
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "list_staged_files"),
@@ -1340,8 +1339,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Allowlist(vec!["other".into()]),
+            devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
+            grant: None,
         };
         assert!(
             handler
@@ -1359,8 +1359,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
+            grant: None,
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "fetch_file"),
@@ -1375,8 +1376,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Allowlist(vec!["other".into()]),
+            devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
+            grant: None,
         };
         assert!(handler.check_tool_scope(Some(&ctx), "fetch_file").is_ok());
         assert!(matches!(
@@ -1392,8 +1394,9 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
-            routers: ScopeSet::Allowlist(vec!["r1".into()]),
+            devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
+            grant: None,
         };
         let routers = ["r1", "r2"];
         let mut first_fail: Option<&str> = None;

@@ -2,7 +2,7 @@
 
 use crate::cli::TokenAction;
 use anyhow::{Context, Result};
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use std::io::Write;
 use std::path::Path;
 
@@ -15,14 +15,18 @@ pub fn run(action: TokenAction) -> Result<()> {
             tools,
             server_pid,
         } => {
-            let routers = parse_scope(routers)?;
-            let tools = parse_scope(tools)?;
-            let secret = TokenStoreFile::add(&tokens_file, &name, routers, tools)
-                .with_context(|| format!("adding token '{name}'"))?;
+            let routers_scope = parse_scope(routers)?;
+            let tools_scope = parse_scope(tools)?;
+            // For `add`, we don't have inventory loaded. Pass empty slices
+            // to KnownNames — validation will happen in the shared code.
+            let known = build_known_names();
+            let secret =
+                TokenStoreFile::add(&tokens_file, &name, routers_scope, tools_scope, &known)
+                    .with_context(|| format!("adding token '{name}'"))?;
             // Print only the secret to stdout; nothing else, so it can be
             // piped/captured.
             let mut out = std::io::stdout().lock();
-            writeln!(out, "{}", secret.expose())?;
+            writeln!(out, "{}", secret.expose_secret())?;
             sighup_if_requested(server_pid);
             Ok(())
         }
@@ -32,7 +36,8 @@ pub fn run(action: TokenAction) -> Result<()> {
             name,
             server_pid,
         } => {
-            let removed = TokenStoreFile::revoke(&tokens_file, &name)
+            let known = build_known_names();
+            let removed = TokenStoreFile::revoke(&tokens_file, &name, &known)
                 .with_context(|| format!("revoking '{name}'"))?;
             if removed {
                 eprintln!("revoked '{name}'");
@@ -47,10 +52,45 @@ pub fn run(action: TokenAction) -> Result<()> {
             name,
             server_pid,
         } => {
-            let secret = TokenStoreFile::rotate(&tokens_file, &name)
+            let known = build_known_names();
+            let secret = TokenStoreFile::rotate(&tokens_file, &name, &known)
                 .with_context(|| format!("rotating '{name}'"))?;
             let mut out = std::io::stdout().lock();
-            writeln!(out, "{}", secret.expose())?;
+            writeln!(out, "{}", secret.expose_secret())?;
+            sighup_if_requested(server_pid);
+            Ok(())
+        }
+        TokenAction::SetScope {
+            tokens_file,
+            name,
+            routers,
+            tools,
+            server_pid,
+        } => {
+            if routers.is_none() && tools.is_none() {
+                anyhow::bail!("at least one of --routers or --tools must be provided");
+            }
+            let routers_scope = routers.map(parse_scope).transpose()?;
+            let tools_scope = tools.map(parse_scope).transpose()?;
+            let known = build_known_names();
+            TokenStoreFile::set_scopes(&tokens_file, &name, routers_scope, tools_scope, &known)
+                .with_context(|| format!("setting scopes for '{name}'"))?;
+
+            // Read back and display the resulting scopes
+            let store_file = TokenStoreFile::load(&tokens_file)
+                .with_context(|| format!("reloading {}", tokens_file.display()))?;
+            let store = store_file.store();
+            if let Some(entry) = store.entries().iter().find(|e| e.name == name) {
+                let routers_str = match &entry.devices {
+                    ScopeSet::Wildcard => "*".to_string(),
+                    ScopeSet::Allowlist(v) => v.join(","),
+                };
+                let tools_str = match &entry.tools {
+                    ScopeSet::Wildcard => "*".to_string(),
+                    ScopeSet::Allowlist(v) => v.join(","),
+                };
+                eprintln!("updated '{name}': routers=[{routers_str}], tools=[{tools_str}]");
+            }
             sighup_if_requested(server_pid);
             Ok(())
         }
@@ -68,9 +108,20 @@ fn parse_scope(parts: Vec<String>) -> Result<ScopeSet> {
     }
 }
 
+fn build_known_names() -> KnownNames<'static> {
+    // Device names: token operations happen before inventory is loaded.
+    // Use None to skip device-name validation (lenient, warns on unknown).
+    // Tool validation is always enforced (fatal on unknown).
+    KnownNames {
+        devices: None,
+        tools: rust_junosmcp_auth::KNOWN_TOOLS,
+    }
+}
+
 fn list(path: &Path) -> Result<()> {
-    let store =
-        TokenStoreFile::load(path, &[]).with_context(|| format!("loading {}", path.display()))?;
+    let store_file =
+        TokenStoreFile::load(path).with_context(|| format!("loading {}", path.display()))?;
+    let store = store_file.store();
     if store.is_empty() {
         eprintln!("(no tokens)");
         return Ok(());
@@ -82,7 +133,7 @@ fn list(path: &Path) -> Result<()> {
         "NAME", "ROUTERS", "TOOLS"
     )?;
     for e in store.entries() {
-        let routers = match &e.routers {
+        let routers = match &e.devices {
             ScopeSet::Wildcard => "*".into(),
             ScopeSet::Allowlist(v) => v.join(","),
         };

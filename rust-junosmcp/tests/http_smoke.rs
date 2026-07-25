@@ -3,7 +3,7 @@
 
 mod common;
 use common::*;
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::process::Command; // still used by tests that mint tokens via `token add`
 
@@ -152,14 +152,18 @@ fn router_list_returns_only_current_names_in_caller_scope() {
         "router-list-scope",
         ScopeSet::Allowlist(vec!["edge-02".into(), "retired-99".into()]),
         ScopeSet::Allowlist(vec!["get_router_list".into()]),
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
     )
     .unwrap();
 
     let server = spawn(inv.path(), &tokens);
-    let session = initialize(server.port, secret.expose());
+    let session = initialize(server.port, secret.expose_secret());
     let response = http_post(
         server.port,
-        Some(secret.expose()),
+        Some(secret.expose_secret()),
         Some(&session),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
             "name":"get_router_list",

@@ -210,6 +210,13 @@ fn tls_rejects_request_without_token() {
     .unwrap();
     let toks = dir.path().join("tokens.json");
     std::fs::write(&toks, r#"{"version":1,"tokens":[]}"#).unwrap();
+    // Token files must be mode 0600 (mecmcp-auth permission check)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&toks, std::fs::Permissions::from_mode(0o600))
+            .expect("chmod token file");
+    }
     let (cert, key) = write_self_signed(dir.path());
 
     let server = spawn_tls(&inv, &toks, &cert, &key);

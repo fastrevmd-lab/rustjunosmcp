@@ -594,5 +594,12 @@ pub fn write_inv(json: &str) -> tempfile::NamedTempFile {
 pub fn write_tokens(json: &str) -> tempfile::NamedTempFile {
     let f = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(f.path(), json).unwrap();
+    // Token files must be mode 0600 (mecmcp-auth permission check)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600))
+            .expect("chmod token file");
+    }
     f
 }

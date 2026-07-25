@@ -241,6 +241,21 @@ pub enum TokenAction {
         #[arg(long)]
         server_pid: Option<i32>,
     },
+    /// Change an existing token's scopes without reissuing its secret.
+    SetScope {
+        #[arg(long)]
+        tokens_file: PathBuf,
+        #[arg(long)]
+        name: String,
+        /// Comma-separated router names, or '*' for all. Omit to leave unchanged.
+        #[arg(long, value_delimiter = ',')]
+        routers: Option<Vec<String>>,
+        /// Comma-separated tool names, or '*' for all. Omit to leave unchanged.
+        #[arg(long, value_delimiter = ',')]
+        tools: Option<Vec<String>>,
+        #[arg(long)]
+        server_pid: Option<i32>,
+    },
 }
 
 #[cfg(test)]

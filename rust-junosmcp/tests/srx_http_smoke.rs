@@ -4,15 +4,24 @@
 
 mod common;
 use common::*;
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::collections::HashSet;
 
 fn add_token(path: &std::path::Path, name: &str, routers: ScopeSet, tools: ScopeSet) -> String {
-    TokenStoreFile::add(path, name, routers, tools)
-        .unwrap()
-        .expose()
-        .to_string()
+    TokenStoreFile::add(
+        path,
+        name,
+        routers,
+        tools,
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap()
+    .expose_secret()
+    .to_string()
 }
 
 fn initialize_authenticated(server: &Server, secret: &str) -> String {
@@ -194,10 +203,7 @@ fn lists_all_known_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect();
-    let expected: HashSet<&str> = rust_junosmcp_auth::file::KNOWN_TOOLS
-        .iter()
-        .copied()
-        .collect();
+    let expected: HashSet<&str> = rust_junosmcp_auth::KNOWN_TOOLS.iter().copied().collect();
     assert_eq!(names, expected);
     assert_eq!(tools.len(), 27);
     assert_eq!(names.len(), 27);
@@ -254,11 +260,18 @@ fn every_router_tool_enforces_router_scope_without_disclosing_router() {
     let inv = placeholder_inv();
     let dir = tempfile::tempdir().unwrap();
     let tokens = dir.path().join("tokens.json");
+    // Must explicitly grant SRX write tools (manage_idp_security_package, manage_appid_signature_package)
+    // to reach router scope check. Wildcard tool scope no longer grants write tools.
     let secret = add_token(
         &tokens,
         "other-router-only",
         ScopeSet::Allowlist(vec!["other-router".into()]),
-        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(
+            rust_junosmcp_auth::SRX_TOOLS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+        ),
     );
     let server = spawn(inv.path(), &tokens);
     let sid = initialize_authenticated(&server, &secret);

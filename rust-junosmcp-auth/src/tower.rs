@@ -2,9 +2,7 @@
 //! the current `Arc<TokenStore>`, and stuff a `CallerCtx` into request
 //! extensions. Reject otherwise with HTTP 401.
 
-use crate::TokenStore;
-use crate::caller::CallerCtx;
-use arc_swap::ArcSwap;
+use crate::CallerCtx;
 use axum::{
     body::Body,
     http::{HeaderValue, Request, Response, StatusCode, header},
@@ -14,7 +12,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AuthState {
-    pub store: Arc<ArcSwap<TokenStore>>,
+    pub store: Arc<crate::TokenStoreFile>,
 }
 
 /// RFC 6750 §3 bearer challenge for the "no credentials presented" cases.
@@ -31,7 +29,7 @@ pub async fn auth_layer(
     mut req: Request<Body>,
     next: Next,
 ) -> Response<Body> {
-    let store_snapshot = state.store.load_full();
+    let store_snapshot = state.store.store();
 
     let header_value = match req.headers().get(header::AUTHORIZATION) {
         Some(v) => v,
@@ -56,7 +54,7 @@ pub async fn auth_layer(
         }
     };
 
-    match store_snapshot.find(secret) {
+    match store_snapshot.authenticate(secret) {
         Some(entry) => {
             let ctx: CallerCtx = entry.into();
             req.extensions_mut().insert(ctx);

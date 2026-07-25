@@ -4,7 +4,7 @@
 
 mod common;
 use common::{Server, binary_path, ensure_built, init_body, parse_first_sse_data, pick_port};
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -68,12 +68,30 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
         }
     });
 
+    // The readiness log line is emitted just before the listener begins
+    // accepting, so a client racing it can still see ECONNREFUSED. `http_tls.rs`
+    // already guards this the same way; without it this test fails on a loaded
+    // CI runner while passing locally.
+    wait_for_port(port, Duration::from_secs(5));
+
     Server {
         child,
         port,
         _stderr_drain: drain,
         _device_lease_dir: device_lease_dir,
     }
+}
+
+/// Poll until TCP connections to `port` are accepted, or panic after `timeout`.
+fn wait_for_port(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("port {port} not accepting connections within {timeout:?}");
 }
 
 fn tls_agent(cert: &Path) -> ureq::Agent {
@@ -111,10 +129,19 @@ fn fixture() -> (
     )
     .unwrap();
     let tokens = dir.path().join("tokens.json");
-    let secret = TokenStoreFile::add(&tokens, "tls-test", ScopeSet::Wildcard, ScopeSet::Wildcard)
-        .unwrap()
-        .expose()
-        .to_string();
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "tls-test",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap()
+    .expose_secret()
+    .to_string();
     let (cert, key) = write_self_signed(dir.path());
     (dir, inventory, tokens, cert, key, secret)
 }
