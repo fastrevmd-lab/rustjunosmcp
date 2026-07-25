@@ -10,12 +10,10 @@
 
 use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
-use arc_swap::ArcSwap;
 use axum::Router;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use rust_junosmcp_auth::TokenStore;
 use rust_junosmcp_auth::tower::{AuthState, auth_layer};
 use rust_junosmcp_core::limits::{
     ConcurrencyState, LimitedSessionManager, LimitsConfig, PrometheusRuntime, apply_body_limit,
@@ -47,7 +45,7 @@ fn build_http_config(
 pub async fn serve(
     handler: JmcpHandler,
     addr: SocketAddr,
-    token_store: Option<Arc<ArcSwap<TokenStore>>>,
+    token_store: Option<Arc<rust_junosmcp_auth::TokenStoreFile>>,
     allowed_hosts: Vec<String>,
     disable_host_check: bool,
     enable_metrics: bool,

@@ -13,7 +13,7 @@
 mod common;
 use common::*;
 #[cfg(feature = "srx")]
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -126,17 +126,29 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
     )
     .unwrap();
     let tokens = dir.path().join("tokens.json");
-    let secret =
-        TokenStoreFile::add(&tokens, "all", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+    // Token must explicitly grant reload_devices (a write tool) to reach
+    // the inventory-readonly flag check. Wildcard tool scope no longer grants it.
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "all",
+        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(vec![
+            "get_router_list".into(),
+            "check_srx_feature_license".into(),
+            "reload_devices".into(),
+        ]),
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+    )
+    .unwrap();
 
     // This matches the packaged service's inventory policy.
     let server = spawn_with_auth_args(&inv, &tokens, &["--inventory-readonly"]);
-    let session = initialize(server.port, secret.expose());
+    let session = initialize(server.port, secret.expose_secret());
 
     let router_list = |id| {
         http_post(
             server.port,
-            Some(secret.expose()),
+            Some(secret.expose_secret()),
             Some(&session),
             json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
                 "name":"get_router_list","arguments":{}
@@ -184,7 +196,7 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
     // evidence that SRX retained stale inventory.
     let srx = http_post(
         server.port,
-        Some(secret.expose()),
+        Some(secret.expose_secret()),
         Some(&session),
         json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
             "name":"check_srx_feature_license",
@@ -202,7 +214,7 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
     // remains denied under the packaged read-only policy.
     let external_reload = http_post(
         server.port,
-        Some(secret.expose()),
+        Some(secret.expose_secret()),
         Some(&session),
         json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
             "name":"reload_devices","arguments":{}

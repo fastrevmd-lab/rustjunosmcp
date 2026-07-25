@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 use dashmap::DashMap;
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::LengthLimitError;
-use rust_junosmcp_auth::caller::CallerCtx;
+use rust_junosmcp_auth::CallerCtx;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -310,8 +310,7 @@ mod tests {
     use axum::body::Bytes;
     use axum::http::{Request, StatusCode};
     use axum::routing::{get, post};
-    use rust_junosmcp_auth::ScopeSet;
-    use rust_junosmcp_auth::caller::CallerCtx;
+    use rust_junosmcp_auth::{CallerCtx, ScopeSet};
     use serde_json::{Value, json};
     use std::convert::Infallible;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -326,8 +325,9 @@ mod tests {
     fn ctx(name: &str) -> CallerCtx {
         CallerCtx {
             token_name: name.to_string(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
+            grant: None,
         }
     }
 

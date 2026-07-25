@@ -4,7 +4,7 @@ use common::{
     close_session, http_get, http_post, http_post_raw, initialize, spawn_with_auth_args, write_inv,
     write_tokens,
 };
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::json;
 
 #[test]
@@ -18,10 +18,11 @@ fn metrics_disabled_leaves_route_absent() {
         "secret-srx-token",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
     )
     .unwrap();
     let server = spawn_with_auth_args(inventory.path(), tokens.path(), &[]);
-    let response = http_get(server.port, "/metrics", Some(token.expose()), None);
+    let response = http_get(server.port, "/metrics", Some(token.expose_secret()), None);
     assert_eq!(response.code, 404);
 }
 
@@ -36,6 +37,7 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
         "secret-srx-token",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
     )
     .unwrap();
     let server = spawn_with_auth_args(
@@ -51,10 +53,10 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
         "text/plain; version=0.0.4; charset=utf-8"
     );
 
-    let session_id = initialize(server.port, token.expose());
+    let session_id = initialize(server.port, token.expose_secret());
     let tool = http_post(
         server.port,
-        Some(token.expose()),
+        Some(token.expose_secret()),
         Some(&session_id),
         json!({
             "jsonrpc": "2.0",
@@ -67,7 +69,7 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
 
     let big = "x".repeat(4096);
     let body = format!(r#"{{"jsonrpc":"2.0","id":3,"method":"ping","params":"{big}"}}"#);
-    assert_eq!(http_post_raw(server.port, token.expose(), None, &body), 413);
+    assert_eq!(http_post_raw(server.port, token.expose_secret(), None, &body), 413);
 
     let scrape = http_get(server.port, "/metrics", None, None);
     assert!(
@@ -88,7 +90,7 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
     }));
     for forbidden in [
         "secret-srx-token",
-        token.expose(),
+        token.expose_secret(),
         "secret-srx",
         &session_id,
         "caller=",
@@ -105,7 +107,7 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
     }
 
     assert!(matches!(
-        close_session(server.port, token.expose(), &session_id),
+        close_session(server.port, token.expose_secret(), &session_id),
         200 | 202 | 204
     ));
     let closed = http_get(server.port, "/metrics", None, None);

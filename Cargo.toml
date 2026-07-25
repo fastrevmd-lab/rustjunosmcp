@@ -48,6 +48,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 schemars     = "1.0"
 anyhow       = "1"
 rustez       = "0.13"
+mecmcp-auth  = { git = "https://github.com/fastrevmd-lab/mecmcp", tag = "auth-v0.1.4" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

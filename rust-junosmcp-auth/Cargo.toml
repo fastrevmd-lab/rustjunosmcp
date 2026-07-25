@@ -11,23 +11,10 @@ description = "Bearer-token authentication and per-token scopes for rust-junosmc
 workspace = true
 
 [dependencies]
-serde        = { workspace = true }
-serde_json   = { workspace = true }
-thiserror    = { workspace = true }
-sha2         = { workspace = true }
-rand         = { workspace = true }
-subtle       = { workspace = true }
-base64ct     = { workspace = true }
-chrono       = { workspace = true }
+mecmcp-auth  = { workspace = true }
 arc-swap     = { workspace = true }
+serde_json   = { workspace = true }
 axum         = { workspace = true }
 tower        = { workspace = true }
 http         = { workspace = true }
 tracing      = { workspace = true }
-tempfile     = "3"
-
-# Used only inside `cfg(unix)` blocks in `file.rs` to surface a friendlier
-# EACCES message (owner uid + mode vs. caller uid) when `tokens.json` cannot
-# be read by the running process — see issue #22.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

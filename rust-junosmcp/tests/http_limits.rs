@@ -5,7 +5,7 @@ use common::{
     close_session, http_post, http_post_raw, init_body, initialize, spawn_with_args,
     spawn_with_auth_args, write_inv, write_tokens,
 };
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 
 #[test]
 fn oversized_body_returns_413() {
@@ -56,34 +56,41 @@ fn token_session_cap_isolated_by_token_and_released_on_close() {
         "alice",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
     )
     .unwrap();
-    let bob =
-        TokenStoreFile::add(tokens.path(), "bob", ScopeSet::Wildcard, ScopeSet::Wildcard).unwrap();
+    let bob = TokenStoreFile::add(
+        tokens.path(),
+        "bob",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+    )
+    .unwrap();
     let server = spawn_with_auth_args(
         inv.path(),
         tokens.path(),
         &["--max-sessions-per-token", "1"],
     );
 
-    let alice_session = initialize(server.port, alice.expose());
-    let shed = http_post(server.port, Some(alice.expose()), None, init_body());
+    let alice_session = initialize(server.port, alice.expose_secret());
+    let shed = http_post(server.port, Some(alice.expose_secret()), None, init_body());
     assert_eq!(shed.code, 503);
     assert_eq!(shed.body["limit"], "token_session_cap");
 
-    let bob_session = initialize(server.port, bob.expose());
+    let bob_session = initialize(server.port, bob.expose_secret());
     assert!(matches!(
-        close_session(server.port, alice.expose(), &alice_session),
+        close_session(server.port, alice.expose_secret(), &alice_session),
         200 | 202 | 204
     ));
-    let alice_again = initialize(server.port, alice.expose());
+    let alice_again = initialize(server.port, alice.expose_secret());
 
     assert!(matches!(
-        close_session(server.port, alice.expose(), &alice_again),
+        close_session(server.port, alice.expose_secret(), &alice_again),
         200 | 202 | 204
     ));
     assert!(matches!(
-        close_session(server.port, bob.expose(), &bob_session),
+        close_session(server.port, bob.expose_secret(), &bob_session),
         200 | 202 | 204
     ));
 }
@@ -99,6 +106,7 @@ fn per_token_rate_limit_returns_stable_429() {
         "alice",
         ScopeSet::Wildcard,
         ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
     )
     .unwrap();
     let server = spawn_with_auth_args(
@@ -112,11 +120,11 @@ fn per_token_rate_limit_returns_stable_429() {
         ],
     );
 
-    let admitted = http_post(server.port, Some(alice.expose()), None, init_body());
+    let admitted = http_post(server.port, Some(alice.expose_secret()), None, init_body());
     assert_eq!(admitted.code, 200);
     assert!(admitted.session_id.is_some());
 
-    let limited = http_post(server.port, Some(alice.expose()), None, init_body());
+    let limited = http_post(server.port, Some(alice.expose_secret()), None, init_body());
     assert_eq!(limited.code, 429);
     assert_eq!(limited.retry_after.as_deref(), Some("1"));
     assert!(limited.session_id.is_none());

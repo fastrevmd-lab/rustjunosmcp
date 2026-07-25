@@ -4,7 +4,7 @@
 
 mod common;
 use common::{Server, binary_path, ensure_built, init_body, parse_first_sse_data, pick_port};
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -111,10 +111,16 @@ fn fixture() -> (
     )
     .unwrap();
     let tokens = dir.path().join("tokens.json");
-    let secret = TokenStoreFile::add(&tokens, "tls-test", ScopeSet::Wildcard, ScopeSet::Wildcard)
-        .unwrap()
-        .expose()
-        .to_string();
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "tls-test",
+        ScopeSet::Wildcard,
+        ScopeSet::Wildcard,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+    )
+    .unwrap()
+    .expose_secret()
+    .to_string();
     let (cert, key) = write_self_signed(dir.path());
     (dir, inventory, tokens, cert, key, secret)
 }

@@ -4,15 +4,21 @@
 
 mod common;
 use common::*;
-use rust_junosmcp_auth::{ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::json;
 use std::collections::HashSet;
 
 fn add_token(path: &std::path::Path, name: &str, routers: ScopeSet, tools: ScopeSet) -> String {
-    TokenStoreFile::add(path, name, routers, tools)
-        .unwrap()
-        .expose()
-        .to_string()
+    TokenStoreFile::add(
+        path,
+        name,
+        routers,
+        tools,
+        &KnownNames { devices: None, tools: rust_junosmcp_auth::KNOWN_TOOLS },
+    )
+    .unwrap()
+    .expose_secret()
+    .to_string()
 }
 
 fn initialize_authenticated(server: &Server, secret: &str) -> String {
@@ -194,7 +200,7 @@ fn lists_all_known_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect();
-    let expected: HashSet<&str> = rust_junosmcp_auth::file::KNOWN_TOOLS
+    let expected: HashSet<&str> = rust_junosmcp_auth::KNOWN_TOOLS
         .iter()
         .copied()
         .collect();

@@ -51,11 +51,11 @@ impl JmcpHandler {
 
     fn check_srx_tool_scope(
         &self,
-        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::CallerCtx>,
         tool: &'static str,
     ) -> Result<(), ScopeError> {
         if let Some(ctx) = ctx
-            && !ctx.tools.allows(tool)
+            && !ctx.tools.allows_tool(tool, rust_junosmcp_auth::WRITE_TOOLS)
         {
             return Err(ScopeError::ToolNotInScope {
                 token: ctx.token_name.clone(),
@@ -67,12 +67,12 @@ impl JmcpHandler {
 
     fn check_srx_router_scope(
         &self,
-        ctx: Option<&rust_junosmcp_auth::caller::CallerCtx>,
+        ctx: Option<&rust_junosmcp_auth::CallerCtx>,
         tool: &'static str,
         router: &str,
     ) -> Result<(), ScopeError> {
         let in_inventory = self.dm.inventory().contains_router(router);
-        let allows = ctx.map(|c| c.routers.allows(router)).unwrap_or(true);
+        let allows = ctx.map(|c| c.devices.allows(router)).unwrap_or(true);
         let token = ctx.map(|c| c.token_name.as_str()).unwrap_or("<none>");
         match super::classify_router_access(allows, in_inventory) {
             super::RouterAccess::Allowed => {}
@@ -97,7 +97,7 @@ impl JmcpHandler {
             }
         }
         if let Some(ctx) = ctx
-            && !ctx.routers.allows(router)
+            && !ctx.devices.allows(router)
         {
             return Err(ScopeError::RouterNotInScope {
                 token: ctx.token_name.clone(),
@@ -115,7 +115,7 @@ impl JmcpHandler {
         extensions: &'a Extensions,
         tool: &'static str,
         router: Option<&str>,
-    ) -> Result<Option<&'a rust_junosmcp_auth::caller::CallerCtx>, ScopeError> {
+    ) -> Result<Option<&'a rust_junosmcp_auth::CallerCtx>, ScopeError> {
         let ctx = caller_ctx(extensions);
         if self.authorization_required && ctx.is_none() {
             return Err(ScopeError::MissingCallerContext);
@@ -195,7 +195,7 @@ const SRX_SERVER_TOOLS: &[&str] = &[
 #[cfg(test)]
 mod server_tools_const_tests {
     use super::SRX_SERVER_TOOLS;
-    use rust_junosmcp_auth::file::SRX_TOOLS;
+    use rust_junosmcp_auth::SRX_TOOLS;
     use std::collections::HashSet;
 
     #[test]
@@ -816,8 +816,7 @@ pub struct SrxmcpStatusResponse {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use rust_junosmcp_auth::ScopeSet;
-    use rust_junosmcp_auth::caller::CallerCtx;
+    use rust_junosmcp_auth::{CallerCtx, ScopeSet};
 
     fn make_handler(authorization_required: bool) -> JmcpHandler {
         let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
@@ -882,18 +881,46 @@ mod scope_tests {
     #[test]
     fn wildcard_scopes_allow_every_srx_tool_and_router() {
         let handler = make_handler(true);
-        let ctx = CallerCtx {
+        let wildcard_ctx = CallerCtx {
             token_name: "srx-admin".into(),
-            routers: ScopeSet::Wildcard,
+            devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
+            grant: None,
         };
 
+        // Wildcard tool scope now excludes write tools (manage_idp_security_package, manage_appid_signature_package)
         for tool in SRX_SERVER_TOOLS {
-            assert!(handler.check_srx_tool_scope(Some(&ctx), tool).is_ok());
+            if rust_junosmcp_auth::WRITE_TOOLS.contains(tool) {
+                assert!(
+                    handler.check_srx_tool_scope(Some(&wildcard_ctx), tool).is_err(),
+                    "wildcard tool scope should deny write tool: {tool}"
+                );
+            } else {
+                assert!(
+                    handler.check_srx_tool_scope(Some(&wildcard_ctx), tool).is_ok(),
+                    "wildcard tool scope should allow non-write tool: {tool}"
+                );
+                assert!(
+                    handler
+                        .check_srx_router_scope(Some(&wildcard_ctx), tool, "srx-01")
+                        .is_ok()
+                );
+            }
+        }
+
+        // Explicit allowlist should still grant write tools
+        let explicit_ctx = CallerCtx {
+            token_name: "srx-write".into(),
+            devices: ScopeSet::Wildcard,
+            tools: ScopeSet::Allowlist(
+                SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()
+            ),
+            grant: None,
+        };
+        for tool in SRX_SERVER_TOOLS {
             assert!(
-                handler
-                    .check_srx_router_scope(Some(&ctx), tool, "srx-01")
-                    .is_ok()
+                handler.check_srx_tool_scope(Some(&explicit_ctx), tool).is_ok(),
+                "explicit tool allowlist should grant all SRX tools including write tools: {tool}"
             );
         }
     }
