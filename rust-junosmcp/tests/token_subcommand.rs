@@ -218,7 +218,8 @@ fn add_accepts_srx_only_tool_scope() {
     assert_eq!(String::from_utf8(out.stdout).unwrap().trim().len(), 43);
 
     let body: serde_json::Value = serde_json::from_slice(&std::fs::read(&tokens).unwrap()).unwrap();
-    assert_eq!(body["tokens"][0]["routers"], serde_json::json!(["srx-01"]));
+    // mecmcp-auth serializes device scope as "devices", not "routers"
+    assert_eq!(body["tokens"][0]["devices"], serde_json::json!(["srx-01"]));
     assert_eq!(
         body["tokens"][0]["tools"],
         serde_json::json!([

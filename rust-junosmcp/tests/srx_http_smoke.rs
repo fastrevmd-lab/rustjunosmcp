@@ -260,11 +260,13 @@ fn every_router_tool_enforces_router_scope_without_disclosing_router() {
     let inv = placeholder_inv();
     let dir = tempfile::tempdir().unwrap();
     let tokens = dir.path().join("tokens.json");
+    // Must explicitly grant SRX write tools (manage_idp_security_package, manage_appid_signature_package)
+    // to reach router scope check. Wildcard tool scope no longer grants write tools.
     let secret = add_token(
         &tokens,
         "other-router-only",
         ScopeSet::Allowlist(vec!["other-router".into()]),
-        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(rust_junosmcp_auth::SRX_TOOLS.iter().map(|s| (*s).to_string()).collect()),
     );
     let server = spawn(inv.path(), &tokens);
     let sid = initialize_authenticated(&server, &secret);
