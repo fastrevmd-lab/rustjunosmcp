@@ -63,11 +63,11 @@ rustez       = "0.13"
 # configured. That is not theoretical: it is exactly what happened when
 # mecmcp-transport was pinned to `branch = "main"` while these two sat on
 # `tag = "audit-v0.1.5"`.
-mecmcp-audit = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
-mecmcp-auth  = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
+mecmcp-audit = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
+mecmcp-auth  = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
 # mecmcp-transport: no tag exists yet, pinning to branch main. BLOCKER: re-pin to a
 # release tag before merge.
-mecmcp-transport = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
+mecmcp-transport = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

@@ -1748,11 +1748,11 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.1.5"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5#5833fabccccb216cc109e5e608321522b5af9bf8"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
 dependencies = [
  "hmac",
- "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5)",
+ "mecmcp-auth",
  "metrics",
  "serde",
  "serde_json",
@@ -1766,26 +1766,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.1.5"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5#5833fabccccb216cc109e5e608321522b5af9bf8"
-dependencies = [
- "arc-swap",
- "chrono",
- "getrandom 0.4.2",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "subtle",
- "tempfile",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
-name = "mecmcp-auth"
-version = "0.1.5"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=main#55ae13dc0c43b13aea5cfcbc926c4efa8f5c6817"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1802,8 +1784,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.1.5"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=main#55ae13dc0c43b13aea5cfcbc926c4efa8f5c6817"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
 dependencies = [
  "axum",
  "dashmap",
@@ -1811,7 +1793,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?branch=main)",
+ "mecmcp-auth",
  "metrics",
  "metrics-exporter-prometheus 0.17.2",
  "rmcp",
@@ -2768,7 +2750,7 @@ dependencies = [
  "arc-swap",
  "axum",
  "http",
- "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5)",
+ "mecmcp-auth",
  "serde_json",
  "tower",
  "tracing",
