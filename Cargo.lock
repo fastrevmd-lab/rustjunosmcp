@@ -1749,7 +1749,7 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 [[package]]
 name = "mecmcp-audit"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fphase-3b-runtime-crate#11bd9c3c354892c7ff33f616c67773d3e8045023"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "hmac",
  "mecmcp-auth",
@@ -1767,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fphase-3b-runtime-crate#11bd9c3c354892c7ff33f616c67773d3e8045023"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1785,7 +1785,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-runtime"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fphase-3b-runtime-crate#11bd9c3c354892c7ff33f616c67773d3e8045023"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "anyhow",
  "clap",
@@ -1799,7 +1799,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-transport"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fphase-3b-runtime-crate#11bd9c3c354892c7ff33f616c67773d3e8045023"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "axum",
  "dashmap",
