@@ -401,7 +401,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.10, 0.10.1).
+# Pull the prebuilt image (tags: latest, 0.11, 0.11.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -447,13 +447,13 @@ accepts requests, so a broken custom image is not advertised as transfer-ready.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.10 .
+docker build -t rust-junosmcp:0.11 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.10
+  rust-junosmcp:0.11
 ```
 
 ## LXC (Proxmox)
@@ -464,8 +464,8 @@ docker run --rm -i \
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
 # installer copies the unified binary and unit from its extracted package root.
-pct push 115 dist/rust-junosmcp_0.10.1_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.10.1_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.11.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.11.0_amd64/install.sh"
 
 # Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
 # prints the one-time secret needed by MCP clients.
