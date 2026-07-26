@@ -102,13 +102,15 @@ async fn execute_show_version() {
 #[ignore]
 async fn get_running_config() {
     let dm = build_dm();
+    let policy = Arc::new(rust_junosmcp_core::policy::Policy::build(&dm.inventory()).unwrap());
     let v = get_config::handle(
         GetConfigArgs {
             router_name: "lab".into(),
             timeout: 360,
             config_path: None,
         },
-        dm,
+        dm.clone(),
+        policy,
     )
     .await
     .unwrap();

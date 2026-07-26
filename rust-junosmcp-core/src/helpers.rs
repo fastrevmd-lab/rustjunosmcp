@@ -77,6 +77,81 @@ pub fn confirm_timeout_to_secs(mins: u32) -> Result<u32, JmcpError> {
     })
 }
 
+/// Validate a Junos configuration path for `get_junos_config` to prevent command injection.
+/// Junos config paths are hierarchy words: alphanumerics, hyphens, underscores, dots, slashes,
+/// colons, and single spaces between tokens. Rejects pipe operators, semicolons, newlines,
+/// quotes, and other shell metacharacters.
+pub fn validate_config_path(path: &str) -> Result<(), JmcpError> {
+    // Reject empty or whitespace-only paths
+    if path.trim().is_empty() {
+        return Err(JmcpError::Validation(
+            "config_path cannot be empty or whitespace-only".into(),
+        ));
+    }
+
+    // Check for injection characters BEFORE trimming
+    let dangerous_chars = [
+        ('|', "pipe operator"),
+        (';', "semicolon"),
+        ('\n', "newline"),
+        ('\r', "carriage return"),
+        ('"', "double quote"),
+        ('\'', "single quote"),
+        ('`', "backtick"),
+        ('$', "dollar sign"),
+        ('&', "ampersand"),
+        ('>', "redirect"),
+        ('<', "redirect"),
+        ('\\', "backslash"),
+        ('(', "parenthesis"),
+        (')', "parenthesis"),
+        ('{', "brace"),
+        ('}', "brace"),
+        ('[', "bracket"),
+        (']', "bracket"),
+        ('*', "wildcard"),
+        ('?', "wildcard"),
+        ('!', "exclamation"),
+        ('#', "hash"),
+    ];
+
+    for (ch, name) in &dangerous_chars {
+        if path.contains(*ch) {
+            return Err(JmcpError::Validation(format!(
+                "config_path contains forbidden character: {} ({})",
+                name, ch
+            )));
+        }
+    }
+
+    // Valid characters: alphanumerics, hyphen, underscore, dot, slash, colon, space
+    // We already rejected dangerous chars above, so this is a positive allowlist
+    for ch in path.chars() {
+        if !ch.is_alphanumeric()
+            && ch != '-'
+            && ch != '_'
+            && ch != '.'
+            && ch != '/'
+            && ch != ':'
+            && ch != ' '
+        {
+            return Err(JmcpError::Validation(format!(
+                "config_path contains invalid character: '{}' (only alphanumerics, hyphens, underscores, dots, slashes, colons, and spaces are allowed)",
+                ch
+            )));
+        }
+    }
+
+    // Reject multiple consecutive spaces (could be an attempt to hide commands)
+    if path.contains("  ") {
+        return Err(JmcpError::Validation(
+            "config_path contains consecutive spaces".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +243,101 @@ mod tests {
                 assert!(msg.contains("must be >= 1"), "error: {msg}");
             }
             other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_accepts_valid_paths() {
+        assert!(validate_config_path("system services").is_ok());
+        assert!(validate_config_path("security policies").is_ok());
+        assert!(validate_config_path("interfaces ge-0/0/0").is_ok());
+        assert!(validate_config_path("protocols bgp group peer:1").is_ok());
+        assert!(validate_config_path("system.services").is_ok());
+    }
+
+    #[test]
+    fn validate_config_path_rejects_pipe() {
+        let r = validate_config_path("system services | save /tmp/x");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("pipe operator"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for pipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_rejects_semicolon() {
+        let r = validate_config_path("foo; bar");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("semicolon"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for semicolon, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_rejects_newline() {
+        let r = validate_config_path("system\nservices");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("newline"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for newline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_rejects_leading_newline() {
+        let r = validate_config_path("\nsystem services");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("newline"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for leading newline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_rejects_quotes() {
+        assert!(matches!(
+            validate_config_path("system \"services\""),
+            Err(JmcpError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_config_path("system 'services'"),
+            Err(JmcpError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn validate_config_path_rejects_backtick() {
+        let r = validate_config_path("system `cmd`");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("backtick"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for backtick, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_config_path_rejects_empty() {
+        let r = validate_config_path("");
+        assert!(matches!(r, Err(JmcpError::Validation(_))));
+        let r = validate_config_path("   ");
+        assert!(matches!(r, Err(JmcpError::Validation(_))));
+    }
+
+    #[test]
+    fn validate_config_path_rejects_consecutive_spaces() {
+        let r = validate_config_path("system  services");
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("consecutive spaces"), "error: {msg}");
+            }
+            other => panic!("expected Validation error for consecutive spaces, got {other:?}"),
         }
     }
 

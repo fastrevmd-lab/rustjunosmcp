@@ -504,7 +504,8 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
 
-        let result = get_config::handle(args, self.dm.clone()).await;
+        let result =
+            get_config::handle(args, self.dm.clone(), self.policy.load_full().clone()).await;
         match &result {
             Ok(v) => {
                 audit.meta("output_bytes", v.to_string().len() as u64);
