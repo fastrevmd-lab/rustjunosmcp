@@ -449,18 +449,30 @@ mod tests {
             })
             .expect("--audit-redact help text should contain an example in backticks");
 
-        // Parse the example and ensure it validates. The real validator is in
-        // mecmcp_audit::AuditRedaction::parse, called from main.rs. We cannot
-        // invoke it directly here without pulling in that crate, but we can
-        // confirm the CLI accepts the flag and stores the raw string.
-        let cli = Cli::parse_from(["rust-junosmcp", "--audit-redact", audit_redact_example]);
-        assert_eq!(cli.audit_redact, audit_redact_example);
+        // Feed the documented example to the REAL validator.
+        //
+        // An earlier version of this test called `Cli::parse_from` and asserted
+        // the string round-tripped, then compared it to a hardcoded copy of the
+        // expected example. That could not catch the bug it was written for:
+        // clap does no validation of `--audit-redact`, so the test passed just
+        // as happily with the invalid `routers=hmac` that shipped in v0.11.0.
+        // And a hardcoded copy of the example is a second source of truth,
+        // free to drift exactly the way the first one did.
+        //
+        // `mecmcp-audit` is already a dependency of this crate — main.rs calls
+        // this same function — so the real validator is directly reachable.
+        let key_dir = tempfile::tempdir().expect("tempdir");
+        let key_path = key_dir.path().join("hmac.key");
+        std::fs::write(&key_path, b"0123456789abcdef0123456789abcdef").expect("write key");
 
-        // The parsed string must match the known-good pattern to catch typos.
-        assert_eq!(
-            audit_redact_example, "devices=hmac,host=drop",
-            "Documented --audit-redact example changed; update this assertion \
-             if intentional, but verify the new example validates in mecmcp_audit"
+        mecmcp_audit::AuditRedaction::parse(audit_redact_example, Some(&key_path)).unwrap_or_else(
+            |error| {
+                panic!(
+                    "the --audit-redact example in --help does not validate: \
+                     {audit_redact_example:?} rejected by the real parser: {error}. \
+                     Fix the doc comment on the flag, not this test."
+                )
+            },
         );
     }
 }
