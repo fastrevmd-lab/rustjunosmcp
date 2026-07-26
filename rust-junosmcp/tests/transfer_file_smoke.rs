@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 mod common;
 
 use common::{StdioChild, call_tool, spawn_stdio_server_with_args, write_inventory_temp};

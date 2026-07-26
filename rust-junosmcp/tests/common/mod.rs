@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used)]
 //! Shared test harness for rust-junosmcp integration tests.
 //!
 //! Two families of helpers live here:

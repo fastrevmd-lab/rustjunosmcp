@@ -219,7 +219,10 @@ fn redact_log_line(line: &str) -> String {
         }
         if !matched {
             // Push the current char (respecting UTF-8 boundaries).
-            let ch = line[idx..].chars().next().unwrap();
+            let ch = line[idx..]
+                .chars()
+                .next()
+                .expect("chars().next() cannot fail: loop invariant idx < line.len()");
             out.push(ch);
             idx += ch.len_utf8();
         }

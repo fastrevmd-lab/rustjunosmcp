@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! End-to-end streamable-http smoke: spawn the binary on an ephemeral port,
 //! send HTTP, assert auth + scope + blocklist behavior.
 

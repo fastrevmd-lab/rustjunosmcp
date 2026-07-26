@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Stdio smoke for reload_devices.
 
 mod common;

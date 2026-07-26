@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Spawn the `rust-junosmcp` binary and exercise the `token` subcommand.
 
 use std::process::Command;

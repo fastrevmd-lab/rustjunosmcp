@@ -22,10 +22,12 @@ authors      = ["fastrevmd-lab"]
 # them emits ~730 and ~960 findings respectively. Left at "warn" they would bury
 # every genuinely new warning, so they are "allow" until the debt is paid.
 #
-# Neither represents a defect. All 959 unwrap findings but 13 are in tests, and
-# those 13 were reviewed individually: every one is guarded by an earlier return
-# or a loop invariant the lint cannot see. Tracked in issue #193; the debt
-# shrinks on its own as mecmcp phases delete code.
+# `missing_docs` is deferred, not dismissed: enabling it emits ~690 findings
+# in shipping code. All are genuinely missing docs, not false positives. Tracked
+# in issue #193. `unwrap_used` has been addressed: all unwraps in shipping code
+# are now `.expect()` with invariant messages; test code is allowed via
+# `#![cfg_attr(test, allow(clippy::unwrap_used))]` at crate level and
+# `#![allow(clippy::unwrap_used)]` in separate test files.
 [workspace.lints.rust]
 missing_docs = "allow"
 unsafe_code  = "deny"
@@ -34,7 +36,7 @@ unsafe_code  = "deny"
 all         = { level = "warn", priority = -1 }
 dbg_macro   = "deny"
 todo        = "deny"
-unwrap_used = "allow"
+unwrap_used = "warn"
 
 [workspace.dependencies]
 tokio        = { version = "1", features = ["full"] }

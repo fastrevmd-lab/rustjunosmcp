@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Real-device integration tests. `#[ignore]`'d by default; run with:
 //!
 //! ```text

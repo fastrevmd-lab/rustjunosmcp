@@ -5,6 +5,8 @@
 //! (`SrxState`), the multi-RE XML helper, the `SrxError` taxonomy, and
 //! one `workflows::<tool>` module per Phase 1B tool.
 
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod absence;
 pub mod error;
 pub mod workflows;

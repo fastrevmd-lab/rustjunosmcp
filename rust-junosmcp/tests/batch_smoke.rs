@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! End-to-end streamable-http smoke for the execute_junos_command_batch tool.
 
 mod common;
