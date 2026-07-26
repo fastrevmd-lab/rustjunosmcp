@@ -187,8 +187,8 @@ pub struct Cli {
     #[arg(long)]
     pub audit_journald: bool,
 
-    /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
-    /// Fields: routers, host, name, basename, command, pfe_command.
+    /// Per-field audit redaction, e.g. `devices=hmac,host=drop`.
+    /// Fields: devices, host, name, basename, command, pfe_command.
     /// Transforms: keep, drop, hmac. Empty = disabled.
     #[arg(long, default_value = "")]
     pub audit_redact: String,
@@ -426,5 +426,53 @@ mod tests {
 
         let enabled = Cli::parse_from(["rust-junosmcp", "--audit-journald"]);
         assert!(enabled.audit_journald);
+    }
+
+    /// Test that the examples embedded in help text are valid. Prevents
+    /// drift between documentation and validation, which caused #217.
+    #[test]
+    fn help_text_examples_are_valid() {
+        // Extract help text.
+        let help = Cli::command().render_help().to_string();
+
+        // --audit-redact: extract the example from its doc comment.
+        // Format: "Per-field audit redaction, e.g. `devices=hmac,host=drop`."
+        let audit_redact_example = help
+            .lines()
+            .find_map(|line| {
+                if line.contains("Per-field audit redaction") {
+                    // Extract content between backticks.
+                    line.split('`').nth(1)
+                } else {
+                    None
+                }
+            })
+            .expect("--audit-redact help text should contain an example in backticks");
+
+        // Feed the documented example to the REAL validator.
+        //
+        // An earlier version of this test called `Cli::parse_from` and asserted
+        // the string round-tripped, then compared it to a hardcoded copy of the
+        // expected example. That could not catch the bug it was written for:
+        // clap does no validation of `--audit-redact`, so the test passed just
+        // as happily with the invalid `routers=hmac` that shipped in v0.11.0.
+        // And a hardcoded copy of the example is a second source of truth,
+        // free to drift exactly the way the first one did.
+        //
+        // `mecmcp-audit` is already a dependency of this crate — main.rs calls
+        // this same function — so the real validator is directly reachable.
+        let key_dir = tempfile::tempdir().expect("tempdir");
+        let key_path = key_dir.path().join("hmac.key");
+        std::fs::write(&key_path, b"0123456789abcdef0123456789abcdef").expect("write key");
+
+        mecmcp_audit::AuditRedaction::parse(audit_redact_example, Some(&key_path)).unwrap_or_else(
+            |error| {
+                panic!(
+                    "the --audit-redact example in --help does not validate: \
+                     {audit_redact_example:?} rejected by the real parser: {error}. \
+                     Fix the doc comment on the flag, not this test."
+                )
+            },
+        );
     }
 }
