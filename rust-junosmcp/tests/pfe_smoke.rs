@@ -53,11 +53,9 @@ fn pfe_scope_denial_returns_tool_error() {
             "arguments":{"router_name":"r1","fpc_target":"fpc0","pfe_command":"show jnh 0 stats","timeout":1}
         }}),
     );
-    assert_eq!(r.code, 200);
-    let result = r.body.pointer("/result").expect("result");
-    assert_eq!(result.get("isError"), Some(&json!(true)));
-    let text = serde_json::to_string(result).unwrap();
-    assert!(text.contains("not authorized for tool"), "got: {text}");
+    // Scope preflight rejects tool scope violation before dispatch with 403
+    assert_eq!(r.code, 403);
+    assert_eq!(r.body["error"], "insufficient_scope");
 }
 
 #[test]

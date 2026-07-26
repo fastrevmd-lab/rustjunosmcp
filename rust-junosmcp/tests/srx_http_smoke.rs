@@ -236,22 +236,9 @@ fn every_srx_tool_enforces_tool_scope_before_device_access() {
                 "name":tool,"arguments":arguments
             }}),
         );
-        assert_eq!(response.code, 200, "{tool}: {}", response.body);
-        let result = response.body.pointer("/result").expect("tool result");
-        assert_eq!(
-            result.get("isError"),
-            Some(&json!(true)),
-            "{tool}: {result}"
-        );
-        let text = serde_json::to_string(result).unwrap();
-        assert!(
-            text.contains("[code=tool_scope_denied]"),
-            "{tool} did not enforce tool scope: {text}"
-        );
-        assert!(
-            !text.contains("opening device"),
-            "{tool} reached DeviceManager before authorization: {text}"
-        );
+        // Scope preflight rejects tool scope violations before dispatch with 403
+        assert_eq!(response.code, 403, "{tool}: {}", response.body);
+        assert_eq!(response.body["error"], "insufficient_scope", "{tool}");
     }
 }
 
@@ -286,21 +273,8 @@ fn every_router_tool_enforces_router_scope_without_disclosing_router() {
                 "name":tool,"arguments":arguments
             }}),
         );
-        assert_eq!(response.code, 200, "{tool}: {}", response.body);
-        let result = response.body.pointer("/result").expect("tool result");
-        assert_eq!(
-            result.get("isError"),
-            Some(&json!(true)),
-            "{tool}: {result}"
-        );
-        let text = serde_json::to_string(result).unwrap();
-        assert!(
-            text.contains("[code=router_scope_denied]"),
-            "{tool} did not enforce router scope: {text}"
-        );
-        assert!(
-            !text.contains("r1") && !text.contains("opening device"),
-            "{tool} disclosed the router or reached DeviceManager: {text}"
-        );
+        // Scope preflight rejects router scope violations before dispatch with 403
+        assert_eq!(response.code, 403, "{tool}: {}", response.body);
+        assert_eq!(response.body["error"], "insufficient_scope", "{tool}");
     }
 }
