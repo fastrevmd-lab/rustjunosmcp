@@ -4,7 +4,7 @@
 
 use crate::CallerCtx;
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::Next,
 };
@@ -13,6 +13,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AuthState {
     pub store: Arc<crate::TokenStoreFile>,
+    pub preflight: mecmcp_transport::OptionalPreflight,
+    pub body_limit: usize,
 }
 
 /// RFC 6750 §3 bearer challenge for the "no credentials presented" cases.
@@ -26,7 +28,7 @@ const CHALLENGE_INVALID_TOKEN: &str = r#"Bearer realm="jmcp", error="invalid_tok
 
 pub async fn auth_layer(
     axum::extract::State(state): axum::extract::State<AuthState>,
-    mut req: Request<Body>,
+    req: Request<Body>,
     next: Next,
 ) -> Response<Body> {
     let store_snapshot = state.store.store();
@@ -54,25 +56,43 @@ pub async fn auth_layer(
         }
     };
 
-    match store_snapshot.authenticate(secret) {
-        Some(entry) => {
-            let ctx: CallerCtx = entry.into();
-            req.extensions_mut().insert(ctx);
-            next.run(req).await
-        }
+    let ctx: CallerCtx = match store_snapshot.authenticate(secret) {
+        Some(entry) => entry.into(),
         None => {
             tracing::warn!(
                 remote = ?req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>(),
                 "auth_failed: no matching token"
             );
-            reject(
+            return reject(
                 StatusCode::UNAUTHORIZED,
                 "invalid_token",
                 "invalid bearer token",
                 CHALLENGE_INVALID_TOKEN,
-            )
+            );
         }
+    };
+
+    // Buffer and limit body size, then run preflight if configured
+    let (mut parts, body) = req.into_parts();
+    let body_bytes = match to_bytes(body, state.body_limit).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return payload_too_large();
+        }
+    };
+
+    // Run preflight check if configured
+    if let Err(reason) =
+        mecmcp_transport::preflight::run_preflight(&state.preflight, &body_bytes, &ctx)
+    {
+        return forbidden(reason.as_str());
     }
+
+    // Insert CallerCtx for downstream handlers
+    parts.extensions.insert(ctx);
+    let req = Request::from_parts(parts, Body::from(body_bytes));
+
+    next.run(req).await
 }
 
 fn parse_bearer(v: &HeaderValue) -> Option<&str> {
@@ -116,6 +136,28 @@ fn reject(
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
         .expect("response builder cannot fail: status, static challenge, and literal content-type are all valid")
+}
+
+fn forbidden(reason: &str) -> Response<Body> {
+    let body = serde_json::json!({"error": reason}).to_string();
+    Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header(
+            header::WWW_AUTHENTICATE,
+            format!(r#"Bearer realm="jmcp", error="{reason}""#),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .expect("response builder cannot fail")
+}
+
+fn payload_too_large() -> Response<Body> {
+    let body = serde_json::json!({"error": "request_too_large"}).to_string();
+    Response::builder()
+        .status(StatusCode::PAYLOAD_TOO_LARGE)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .expect("response builder cannot fail")
 }
 
 #[cfg(test)]

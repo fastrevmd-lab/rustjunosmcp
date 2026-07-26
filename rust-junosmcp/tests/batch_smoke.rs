@@ -61,11 +61,9 @@ fn batch_router_scope_first_failure_rejects_call() {
             }
         }}),
     );
-    assert_eq!(r.code, 200);
-    let result = r.body.pointer("/result").expect("result");
-    assert_eq!(result.get("isError"), Some(&json!(true)));
-    let text = serde_json::to_string(result).unwrap();
-    assert!(text.contains("not authorized for router"), "got: {text}");
+    // Scope preflight rejects r2 before dispatch with 403
+    assert_eq!(r.code, 403);
+    assert_eq!(r.body["error"], "insufficient_scope");
 }
 
 #[test]

@@ -126,14 +126,9 @@ fn router_scope_denial_returns_tool_error_with_message() {
             "arguments":{"router_name":"r1","command":"show version","timeout":1}
         }}),
     );
-    assert_eq!(r.code, 200, "body: {}", r.body);
-    let result = r.body.pointer("/result").expect("result");
-    assert_eq!(result.get("isError"), Some(&json!(true)));
-    let text = serde_json::to_string(result).unwrap();
-    assert!(
-        text.contains("not authorized for router"),
-        "expected scope denial, got {text}"
-    );
+    // Scope preflight rejects before dispatch with 403
+    assert_eq!(r.code, 403);
+    assert_eq!(r.body["error"], "insufficient_scope");
 }
 
 #[test]
@@ -284,14 +279,9 @@ fn tool_scope_transfer_only_cannot_call_upgrade_junos() {
             }
         }}),
     );
-    assert_eq!(r.code, 200, "body: {}", r.body);
-    let result = r.body.pointer("/result").expect("result");
-    assert_eq!(result.get("isError"), Some(&json!(true)));
-    let text = serde_json::to_string(result).unwrap();
-    assert!(
-        text.contains("not authorized for tool"),
-        "expected tool-scope denial for upgrade_junos, got: {text}"
-    );
+    // Scope preflight rejects tool scope violation before dispatch with 403
+    assert_eq!(r.code, 403);
+    assert_eq!(r.body["error"], "insufficient_scope");
 }
 
 #[test]

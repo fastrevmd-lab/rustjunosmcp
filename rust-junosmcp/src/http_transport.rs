@@ -12,15 +12,109 @@ use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
 use axum::Router;
 use mecmcp_transport::{
-    ConcurrencyState, LimitedSessionManager, LimitsConfig, PrometheusRuntime, TransportIdentity,
-    apply_body_limit, apply_rate_limit, concurrency_middleware,
+    ConcurrencyState, LimitedSessionManager, LimitsConfig, OptionalPreflight, PrometheusRuntime,
+    ScopePreflight, TransportIdentity, apply_body_limit, apply_rate_limit, concurrency_middleware,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
+use rust_junosmcp_auth::CallerCtx as SharedCallerCtx;
 use rust_junosmcp_auth::tower::{AuthState, auth_layer};
+use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+/// Junos scope preflight implementation.
+///
+/// Parses JSON-RPC `tools/call` requests (both single and batched), checking:
+/// - Tool name against `caller.tools` using the write-tool registry
+/// - Target devices from all four Junos argument spellings (`router`, `router_name`,
+///   `routers`, `router_names`) against `caller.devices`
+///
+/// Rejects before dispatch if either check fails. Handler-level checks remain the
+/// final authority and run for all transport paths (stdio, HTTP with preflight
+/// bypassed).
+struct JunosPreflight;
+
+impl ScopePreflight for JunosPreflight {
+    fn check(&self, body: &[u8], caller: &SharedCallerCtx) -> Result<(), String> {
+        if request_exceeds_scope(body, caller) {
+            Err("insufficient_scope".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn request_exceeds_scope(bytes: &[u8], caller: &SharedCallerCtx) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return false;
+    };
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| tool_call_exceeds_scope(value, caller)),
+        value => tool_call_exceeds_scope(&value, caller),
+    }
+}
+
+fn tool_call_exceeds_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
+    if value.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return false;
+    }
+    let Some(params) = value.get("params") else {
+        return false;
+    };
+    let Some(tool) = params.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    if !caller
+        .tools
+        .allows_tool(tool, rust_junosmcp_auth::WRITE_TOOLS)
+    {
+        return true;
+    }
+    // Check device scope for all four Junos argument spellings.
+    // If arguments exists but is not an object, deny — unrecognised shapes must fail closed.
+    let Some(arguments) = params.get("arguments").and_then(Value::as_object) else {
+        // No arguments field at all is fine (some tools don't take arguments).
+        // But if it exists and is not an object, that's malformed and we deny.
+        if params.get("arguments").is_some() {
+            return true;
+        }
+        return false;
+    };
+    for key in ["router", "router_name", "routers", "router_names"] {
+        if let Some(value) = arguments.get(key)
+            && !device_value_in_scope(value, caller)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn device_value_in_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
+    match value {
+        Value::String(device) => caller.devices.allows(device),
+        Value::Array(devices) => {
+            // Empty array is denied: .all() on empty iterator returns true, which
+            // would incorrectly pass the check.
+            if devices.is_empty() {
+                return false;
+            }
+            devices
+                .iter()
+                .all(|d| d.as_str().is_some_and(|s| caller.devices.allows(s)))
+        }
+        // Unrecognised shapes (number, object, boolean, null) must deny.
+        // This is fail-closed: if we can't recognize it, we refuse it.
+        _ => false,
+    }
+}
 
 /// Build the streamable-http server config, applying the Host allowlist policy.
 /// Default = rmcp's loopback-only allowlist (localhost/127.0.0.1/::1); each
@@ -100,9 +194,16 @@ pub async fn serve(
     let app = apply_rate_limit(app, &limits);
 
     // Auth runs before rate limiting and concurrency so CallerCtx is present.
+    // Preflight is integrated into auth: it runs after bearer authentication
+    // succeeds but before the request reaches the handler.
     let app = if let Some(store) = token_store {
+        let preflight: OptionalPreflight = Some(Arc::new(JunosPreflight));
         app.layer(axum::middleware::from_fn_with_state(
-            AuthState { store },
+            AuthState {
+                store,
+                preflight,
+                body_limit: limits.max_request_body_bytes,
+            },
             auth_layer,
         ))
     } else {

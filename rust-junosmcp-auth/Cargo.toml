@@ -11,10 +11,11 @@ description = "Bearer-token authentication and per-token scopes for rust-junosmc
 workspace = true
 
 [dependencies]
-mecmcp-auth  = { workspace = true }
-arc-swap     = { workspace = true }
-serde_json   = { workspace = true }
-axum         = { workspace = true }
-tower        = { workspace = true }
-http         = { workspace = true }
-tracing      = { workspace = true }
+mecmcp-auth      = { workspace = true }
+mecmcp-transport = { workspace = true }
+arc-swap         = { workspace = true }
+serde_json       = { workspace = true }
+axum             = { workspace = true }
+tower            = { workspace = true }
+http             = { workspace = true }
+tracing          = { workspace = true }
