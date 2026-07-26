@@ -160,11 +160,8 @@ mod tests {
             record_session_reaped("idle");
             // Use AuditScope to emit mecmcp_tool_duration_seconds, not a direct
             // metrics::histogram! call. This tests the real code path.
-            let mut audit = mecmcp_audit::AuditScope::stdio(
-                "get_router_list",
-                "read",
-                vec!["r1".into()],
-            );
+            let mut audit =
+                mecmcp_audit::AuditScope::stdio("get_router_list", "read", vec!["r1".into()]);
             audit.succeed();
         });
         handle.run_upkeep();
