@@ -6,7 +6,55 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING for batch callers — a scope violation now refuses the whole
+  batch.** Scope preflight (#219) rejects out-of-scope requests at the
+  middleware layer, before dispatch. Previously a batch tool such as
+  `execute_junos_command_batch` called with `routers: ["r1","r2"]` by a token
+  scoped only to `r1` returned HTTP 200 with a per-router error row for `r2`
+  and a real result for `r1`. It now returns **HTTP 403 `insufficient_scope`
+  and executes nothing** — at fifty routers with one out of scope, that is
+  forty-nine results lost.
+
+  This is deliberate: partially executing a request that names a device the
+  caller may not touch is the thing worth avoiding. But it is a response-shape
+  change, so a client that parsed per-row errors must handle a 403.
+
+  Note the resulting asymmetry — per-row error rows still work for
+  **unreachable** devices. Authorization fails whole; runtime failures do not.
+  Tracked in #220, where the alternative of collecting violations and letting
+  the handler emit rows is still open.
+
+
 ## [0.11.1] — 2026-07-26
+
+### Changed
+
+- **BREAKING if you terminate TLS — the private key must be mode `0600` and
+  owned by the service user.** TLS loading moved to the shared
+  `mecmcp-transport` crate, which uses the hardened loader ported from
+  `rustpanosmcp`: `O_NOFOLLOW` on open (defeating a symlink swap), a size cap,
+  an owner check against the effective uid or root, and a mode check. The
+  previous loader performed none of these.
+
+  A deployment whose `--tls-key` file is group- or world-readable **will not
+  start**, failing with:
+
+  ```
+  private key mode 0644 permits group/other access; use chmod 0600 '<path>'
+  ```
+
+  Remedy before upgrading:
+
+  ```bash
+  chmod 0600 /path/to/key.pem
+  chown <service-user> /path/to/key.pem
+  ```
+
+  Servers that do not pass `--tls-cert`/`--tls-key` are unaffected. This
+  requirement shipped in 0.11.1 but was omitted from the original release
+  notes; the published notes have since been corrected.
 
 ### Fixed
 
