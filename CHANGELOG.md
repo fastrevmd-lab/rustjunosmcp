@@ -6,6 +6,42 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-25
+
+> **Operators: this release requires action.** The audit-log field names
+> changed. Update your SIEM queries, dashboards, and log filters that
+> reference `routers=` or `router_count=` to use `devices=` and
+> `device_count=` before or immediately after upgrading. The Prometheus
+> metric name is **unchanged** — no dashboard updates needed there.
+
+### Changed
+
+- **BREAKING — audit-log field names changed.** Migrated to the shared
+  `mecmcp-audit` crate, which brings structured agent attribution and UUID v4
+  correlation IDs. Two field names changed:
+  - `routers=` → `devices=`
+  - `router_count=` → `device_count=`
+
+  SIEM queries and dashboards filtering on the old field names will stop
+  matching when this deploys. Update them to `devices=` and `device_count=`.
+
+  The Prometheus metric `junosmcp_tool_duration_seconds` (and its `_bucket`
+  series) is **preserved** — the shared crate was fixed to let the consumer
+  supply the name. No dashboard changes needed for metrics.
+
+- **Structured agent attribution.** The audit log now records
+  `actor_type=Human|Agent`, `on_behalf_of` (the authenticated user when an
+  agent acts), and `change_ref` (a session or task ID). The MCP `clientInfo`
+  from the `initialize` request is not yet plumbed through, so all calls
+  default to `actor_type=Human` in this release. Full agent tracking will
+  arrive in a future version.
+
+- **UUID v4 correlation IDs.** Replaced the collision-prone timestamp-based
+  scheme with UUIDs. Every tool call gets a unique `correlation_id`, visible
+  in the audit log and returned in the MCP response (on errors). This makes
+  it safe to correlate logs even when multiple agents call the same tool at
+  the same millisecond.
+
 ## [0.10.1] — 2026-07-25
 
 > Ships the #199 fix that landed after v0.10.0 was cut. Upgrading from 0.10.0
