@@ -11,7 +11,31 @@ WORKDIR /src
 COPY . .
 RUN cargo build --release --bin rust-junosmcp
 
-FROM debian:12-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
+# Runtime base. NOT distroless — see below.
+#
+# `docs/PACKAGING.md` §1 sets `gcr.io/distroless/cc-debian13:nonroot` as the
+# standard, and rustpanosmcp runs on it. This repo cannot, because distroless
+# has no shell and no utilities, and two production paths spawn external
+# binaries:
+#
+#   rust-junosmcp-core/src/tools/transfer_file.rs:1002,1017  `scp`
+#     (OpenSshScpRunner — powers transfer_file and fetch_file)
+#   rust-junosmcp-srx-core/src/workflows/support_bundle/mod.rs:691  `tar`
+#     (powers collect_jtac_support_bundle)
+#
+# The `openssh-client` install below exists for exactly that. On distroless
+# those tools would build and start fine, then fail the first time someone
+# used them — the worst place to find out.
+#
+# So this moves to Debian 13 instead, matching the LXC's distro generation so
+# there is one CVE surface to track rather than two. Adopting distroless
+# requires removing the spawns first (SFTP over the SSH connection the server
+# already holds; a Rust archive crate instead of tar), tracked separately.
+#
+# glibc rule: builder generation must be <= runtime generation. The builder is
+# bookworm (12) and this is trixie (13), so the direction is safe. Moving the
+# builder forward would require moving this first.
+FROM debian:13-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/rustjunosmcp"
 LABEL org.opencontainers.image.licenses="MIT"
 
