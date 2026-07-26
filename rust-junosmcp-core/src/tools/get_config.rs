@@ -261,4 +261,46 @@ mod tests {
             ),
         }
     }
+
+    /// The policy check at the top of `handle` is the second half of the fix for
+    /// the injection defect: the allowlist stops shell metacharacters, and this
+    /// stops a *syntactically valid* path that a site has chosen to deny.
+    ///
+    /// Without a test the wiring can be deleted and every other test still
+    /// passes — the default blocklist cannot deny anything reachable from a
+    /// `show configuration ` prefix, so only a per-device rule exercises it.
+    #[tokio::test]
+    async fn config_path_forming_a_blocklisted_command_is_denied_by_policy() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(
+            br#"{
+            "r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"},
+                  "blocklist":{"commands":[{"action":"deny","pattern":"show configuration secret*"}]}}
+        }"#,
+        )
+        .unwrap();
+        let inv = Arc::new(Inventory::load(f.path()).unwrap());
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = Arc::new(Policy::build(&inv).unwrap());
+
+        let result = handle(
+            GetConfigArgs {
+                router_name: "r1".into(),
+                timeout: 5,
+                // Passes the allowlist cleanly — no metacharacters at all.
+                config_path: Some("secrets".to_string()),
+            },
+            dm,
+            policy,
+        )
+        .await;
+
+        match result {
+            Err(JmcpError::Denied { .. }) => {}
+            other => panic!(
+                "a denied config_path must be rejected by the policy, not sent \
+                 to the device. got: {other:?}"
+            ),
+        }
+    }
 }
