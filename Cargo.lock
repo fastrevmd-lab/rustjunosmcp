@@ -1749,7 +1749,7 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 [[package]]
 name = "mecmcp-audit"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "hmac",
  "mecmcp-auth",
@@ -1767,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1783,9 +1783,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mecmcp-runtime"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mecmcp-auth",
+ "rustix 1.1.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mecmcp-transport"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=transport-v0.1.6#1c3c0d0ecb4212af56bbe86c73f844dae0500b74"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
 dependencies = [
  "axum",
  "dashmap",
@@ -2716,8 +2730,8 @@ dependencies = [
  "axum-server",
  "clap",
  "http",
- "libc",
  "mecmcp-audit",
+ "mecmcp-runtime",
  "mecmcp-transport",
  "metrics",
  "metrics-exporter-prometheus 0.18.3",
@@ -2726,6 +2740,7 @@ dependencies = [
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
  "rust-junosmcp-srx-core",
+ "rustix 0.38.44",
  "rustls",
  "rustls-pki-types",
  "schemars",

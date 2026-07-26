@@ -13,10 +13,15 @@ authors      = ["fastrevmd-lab"]
 # Shared lint posture, adopted from rustpanosmcp so both servers can consume the
 # mecmcp crate family on the same terms. See fastrevmd-lab/mecmcp PLAN.md.
 #
-# `unsafe_code` is `deny` rather than `forbid` for now: rust-junosmcp-auth's
-# `Secret::drop` hand-rolls secret zeroing with `write_volatile` and carries a
-# targeted `#[allow]`. mecmcp Phase 1 replaces that code with the `zeroize`
-# crate, at which point this becomes `forbid` and the allow is deleted.
+# `unsafe_code` is `forbid` as of mecmcp Phase 3b (mecmcp#35). Unlike `deny`,
+# `forbid` cannot be locally overridden, so no future `#[allow]` can reintroduce
+# unsafe code into a server that holds credentials for a firewall fleet.
+#
+# Reaching it took two steps. Phase 1 replaced rust-junosmcp-auth's hand-rolled
+# `write_volatile` secret zeroing with the `zeroize` crate. Phase 3b moved SIGHUP
+# signalling into `mecmcp-runtime`, which reaches the syscall through `rustix`
+# rather than `libc::kill` — that removed the last two allows, in `token_cmd.rs`
+# and the `http_reload` test.
 # `missing_docs` and `clippy::unwrap_used` are deferred, NOT dismissed: this
 # codebase predates the house style rustpanosmcp was written into, and enabling
 # them emits ~730 and ~960 findings respectively. Left at "warn" they would bury
@@ -30,7 +35,7 @@ authors      = ["fastrevmd-lab"]
 # `#![allow(clippy::unwrap_used)]` in separate test files.
 [workspace.lints.rust]
 missing_docs = "allow"
-unsafe_code  = "deny"
+unsafe_code  = "forbid"
 
 [workspace.lints.clippy]
 all         = { level = "warn", priority = -1 }
@@ -52,22 +57,20 @@ anyhow       = "1"
 rustez       = "0.13"
 # `version` is redundant for resolution alongside `tag`, but cargo-deny reads a
 # versionless dependency as a wildcard and rejects it under [bans].
-# mecmcp-audit v0.1.5 includes mecmcp-auth 0.1.5 as a transitive dependency from
-# the same commit, so we only need to specify the audit tag. Referencing both tags
-# separately would pull two different commits of mecmcp-auth and cause type mismatches.
-# All three mecmcp crates MUST resolve to the same git ref. Cargo keys a git
+# All four mecmcp crates MUST resolve to the same git ref. Cargo keys a git
 # dependency on its source, not just its version, so two different refs produce
 # two copies of mecmcp-auth in the graph — and two distinct `CallerCtx` types
 # with different TypeIds. `Extensions::get::<CallerCtx>()` then silently returns
 # None, and every per-token limit stops enforcing while still logging as
-# configured. That is not theoretical: it is exactly what happened when
-# mecmcp-transport was pinned to `branch = "main"` while these two sat on
-# `tag = "audit-v0.1.5"`.
-mecmcp-audit = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
-mecmcp-auth  = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
-# mecmcp-transport: no tag exists yet, pinning to branch main. BLOCKER: re-pin to a
-# release tag before merge.
-mecmcp-transport = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.6" }
+# configured. That is not theoretical: it already happened in this repo.
+#
+# mecmcp-runtime exists only on feat/phase-3b-runtime-crate branch (not yet
+# merged, not yet tagged). All four deps point at that branch for now.
+# BLOCKER: re-pin to a release tag before merge.
+mecmcp-audit = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "runtime-v0.1.6" }
+mecmcp-auth  = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "runtime-v0.1.6" }
+mecmcp-transport = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "runtime-v0.1.6" }
+mecmcp-runtime = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "runtime-v0.1.6" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
@@ -96,3 +99,4 @@ minijinja        = { version = "2", default-features = false, features = ["built
 dashmap          = "6"
 http-body        = "1"
 rustnetconf      = "0.13"
+rustix           = "0.38"

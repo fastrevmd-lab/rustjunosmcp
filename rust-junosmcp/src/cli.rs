@@ -1,14 +1,11 @@
 //! Command-line arguments. Two top-level modes: serve (default) and token
 //! management subcommand.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum Transport {
-    Stdio,
-    StreamableHttp,
-}
+// Re-export from mecmcp-runtime for compatibility
+pub use mecmcp_runtime::cli::Transport;
 
 #[derive(Debug, Parser)]
 #[cfg_attr(
@@ -28,7 +25,13 @@ pub struct Cli {
     pub command: Option<Command>,
 
     /// JSON file with device mapping (Juniper junos-mcp-server compatible).
-    #[arg(short = 'f', long, default_value = "devices.json", global = true)]
+    #[arg(
+        short = 'f',
+        long,
+        default_value = "devices.json",
+        global = true,
+        alias = "device-mapping"
+    )]
     pub device_mapping: PathBuf,
 
     /// Transport.
@@ -63,6 +66,41 @@ pub struct Cli {
     #[arg(long)]
     pub allow_insecure_bind: bool,
 
+    /// Additional Host authorities to accept on the streamable-http endpoint,
+    /// beyond the loopback defaults (localhost, 127.0.0.1, ::1). Repeatable.
+    /// Set this to the host/authority clients actually send (e.g. the LAN IP)
+    /// or off-loopback clients are rejected with HTTP 403 (DNS-rebinding guard).
+    #[arg(long)]
+    pub allowed_host: Vec<String>,
+
+    /// Accepted browser Origin URL. Repeat for multiple values.
+    #[arg(long)]
+    pub allowed_origin: Vec<String>,
+
+    /// Audit/log output format for stderr: text or json.
+    #[arg(long, default_value = "text")]
+    pub audit_format: String,
+
+    /// Optional file to append JSON audit lines to (in addition to stderr).
+    #[arg(long)]
+    pub audit_log_file: Option<PathBuf>,
+
+    /// Also send structured audit events directly to journald.
+    #[arg(long)]
+    pub audit_journald: bool,
+
+    /// Per-field audit redaction, e.g. `devices=hmac,host=drop`.
+    /// Fields: devices, host, name, basename, command, pfe_command.
+    /// Transforms: keep, drop, hmac. Empty = disabled.
+    #[arg(long, default_value = "")]
+    pub audit_redact: String,
+
+    /// File containing the HMAC key used by any `=hmac` redaction. Required
+    /// when audit-redact requests hmac. Path only; the key is never a flag/env value.
+    #[arg(long)]
+    pub audit_hmac_key_file: Option<PathBuf>,
+
+    // Junos-specific flags below
     /// Reject add_device and reload_devices unconditionally.
     /// Independent of token scopes.
     #[arg(long)]
@@ -109,13 +147,6 @@ pub struct Cli {
     /// `known_hosts` (see scripts/scan-known-hosts.sh). Lab-only.
     #[arg(long)]
     pub ssh_accept_new_host_keys: bool,
-
-    /// Additional Host authorities to accept on the streamable-http endpoint,
-    /// beyond the loopback defaults (localhost, 127.0.0.1, ::1). Repeatable.
-    /// Set this to the host/authority clients actually send (e.g. the LAN IP)
-    /// or off-loopback clients are rejected with HTTP 403 (DNS-rebinding guard).
-    #[arg(long)]
-    pub allowed_host: Vec<String>,
 
     /// Disable the streamable-http Host allowlist entirely (accept any Host).
     /// Reintroduces the RUSTSEC-2026-0189 exposure; bearer auth still applies.
@@ -174,29 +205,6 @@ pub struct Cli {
     /// Session max lifetime in seconds. 0 = disabled.
     #[arg(long, default_value_t = 3600)]
     pub session_max_lifetime_secs: u64,
-
-    /// Audit/log output format for stderr: text or json.
-    #[arg(long, default_value = "text")]
-    pub audit_format: String,
-
-    /// Optional file to append JSON audit lines to (in addition to stderr).
-    #[arg(long)]
-    pub audit_log_file: Option<std::path::PathBuf>,
-
-    /// Also send structured audit events directly to journald.
-    #[arg(long)]
-    pub audit_journald: bool,
-
-    /// Per-field audit redaction, e.g. `devices=hmac,host=drop`.
-    /// Fields: devices, host, name, basename, command, pfe_command.
-    /// Transforms: keep, drop, hmac. Empty = disabled.
-    #[arg(long, default_value = "")]
-    pub audit_redact: String,
-
-    /// File containing the HMAC key used by any `=hmac` redaction. Required
-    /// when audit-redact requests hmac. Path only; the key is never a flag/env value.
-    #[arg(long)]
-    pub audit_hmac_key_file: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -216,9 +224,9 @@ pub enum TokenAction {
         tokens_file: PathBuf,
         #[arg(long)]
         name: String,
-        /// Comma-separated router names, or '*' for all.
-        #[arg(long, value_delimiter = ',')]
-        routers: Vec<String>,
+        /// Comma-separated device names, or '*' for all.
+        #[arg(long, alias = "routers", value_delimiter = ',')]
+        devices: Vec<String>,
         /// Comma-separated tool names, or '*' for all.
         #[arg(long, value_delimiter = ',')]
         tools: Vec<String>,
@@ -255,9 +263,9 @@ pub enum TokenAction {
         tokens_file: PathBuf,
         #[arg(long)]
         name: String,
-        /// Comma-separated router names, or '*' for all. Omit to leave unchanged.
-        #[arg(long, value_delimiter = ',')]
-        routers: Option<Vec<String>>,
+        /// Comma-separated device names, or '*' for all. Omit to leave unchanged.
+        #[arg(long, alias = "routers", value_delimiter = ',')]
+        devices: Option<Vec<String>>,
         /// Comma-separated tool names, or '*' for all. Omit to leave unchanged.
         #[arg(long, value_delimiter = ',')]
         tools: Option<Vec<String>>,
@@ -268,6 +276,37 @@ pub enum TokenAction {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two junos-only CLI rules that cannot live in `mecmcp-runtime`,
+    /// because the shared `Cli` struct has no fields for these flags.
+    ///
+    /// The Phase 3b migration moved `cli_validate.rs` upstream and dropped the
+    /// inventory rule on the way: the binary accepted `--inventory-readonly`
+    /// together with `--allow-password-auth-add` while the doc comment on the
+    /// latter still promised they were mutually exclusive. Asserting on the
+    /// parsed flags here keeps the pair coupled to something that fails.
+    #[test]
+    fn junos_only_cli_rules_are_still_reachable() {
+        // Both flags parse, so the refusal has to come from main's vendor block
+        // rather than from clap — which is exactly why it was droppable.
+        let both = Cli::parse_from([
+            "rust-junosmcp",
+            "--inventory-readonly",
+            "--allow-password-auth-add",
+        ]);
+        assert!(
+            both.inventory_readonly && both.allow_password_auth_add,
+            "both flags must remain parseable; the mutual exclusion is enforced \
+             in main.rs, not by clap"
+        );
+
+        let metrics_stdio = Cli::parse_from(["rust-junosmcp", "-t", "stdio", "--enable-metrics"]);
+        assert!(
+            metrics_stdio.enable_metrics && metrics_stdio.transport == Transport::Stdio,
+            "the metrics/stdio combination must remain parseable for the same reason"
+        );
+    }
+
     use super::*;
     use clap::{CommandFactory, Parser};
 
@@ -402,7 +441,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_token_add_subcommand() {
+    fn parses_token_add_subcommand_with_devices() {
+        let cli = Cli::parse_from([
+            "rust-junosmcp",
+            "token",
+            "add",
+            "--tokens-file",
+            "/tmp/t.json",
+            "--name",
+            "alice",
+            "--devices",
+            "*",
+            "--tools",
+            "*",
+        ]);
+        assert!(matches!(cli.command, Some(Command::Token { .. })));
+    }
+
+    #[test]
+    fn parses_token_add_subcommand_with_routers_alias() {
+        // --routers is a hidden alias for --devices (mecmcp #29, plan D2)
         let cli = Cli::parse_from([
             "rust-junosmcp",
             "token",

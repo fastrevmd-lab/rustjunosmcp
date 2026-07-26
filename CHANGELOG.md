@@ -6,6 +6,31 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`--devices` is the new spelling for token device scopes.** `token add` and
+  `token rotate` now take `--devices`; `--routers` continues to work as a hidden
+  alias, so existing runbooks and scripts need no change. The term is universal
+  across the fleet — PAN-OS firewalls and the Proxmox and UniFi servers being
+  built on the same foundation are none of them routers — and this repo was
+  already inconsistent: v0.11.0 renamed the *audit* fields `routers` →
+  `devices`, so events used the new term while the CLI still said the old one.
+  (mecmcp #29)
+
+### Security
+
+- **`unsafe_code` raised from `deny` to `forbid`.** Unlike `deny`, `forbid`
+  cannot be overridden by a local `#[allow]`, so unsafe code cannot re-enter
+  this server through a future change. No `unsafe` remains anywhere in the
+  workspace.
+
+  Reaching it took two steps across two phases. `rust-junosmcp-auth`'s
+  hand-rolled `write_volatile` secret zeroing was replaced with the `zeroize`
+  crate, and SIGHUP signalling moved into the shared `mecmcp-runtime` crate,
+  which reaches the syscall through `rustix` rather than `libc::kill`. That
+  removed the last two `#[allow(unsafe_code)]` sites. (mecmcp #35)
+
+
 ### Changed
 
 - **BREAKING for batch callers — a scope violation now refuses the whole

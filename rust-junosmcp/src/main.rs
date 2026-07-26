@@ -1,7 +1,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod cli;
-mod cli_validate;
 mod env_compat;
 mod http_transport;
 mod server;
@@ -49,7 +48,47 @@ async fn main() -> Result<()> {
         return token_cmd::run(action);
     }
 
-    cli_validate::validate(&args).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Convert to shared CLI for validation
+    let shared_cli = mecmcp_runtime::cli::Cli {
+        command: None, // Not checked by validate
+        device_mapping: args.device_mapping.clone(),
+        transport: args.transport,
+        host: args.host.clone(),
+        port: args.port,
+        tokens_file: args.tokens_file.clone(),
+        tls_cert: args.tls_cert.clone(),
+        tls_key: args.tls_key.clone(),
+        allow_no_auth: args.allow_no_auth,
+        allow_insecure_bind: args.allow_insecure_bind,
+        allowed_host: args.allowed_host.clone(),
+        allowed_origin: args.allowed_origin.clone(),
+        audit_format: args.audit_format.clone(),
+        audit_log_file: args.audit_log_file.clone(),
+        audit_journald: args.audit_journald,
+        audit_redact: args.audit_redact.clone(),
+        audit_hmac_key_file: args.audit_hmac_key_file.clone(),
+    };
+    mecmcp_runtime::cli_validate::validate(&shared_cli).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Vendor-specific validation.
+    //
+    // These two rules cannot live in mecmcp-runtime: --inventory-readonly,
+    // --allow-password-auth-add, and --enable-metrics are junos flags, and the
+    // shared Cli struct has no fields for them. The Phase 3b migration moved
+    // cli_validate.rs upstream and dropped the inventory rule on the way — the
+    // doc comment on --allow-password-auth-add still promised "Mutually
+    // exclusive with --inventory-readonly" while the binary happily accepted
+    // both, which is the same class of defect as #217 with the polarity
+    // reversed: documentation asserting a constraint nothing enforces.
+    if args.inventory_readonly && args.allow_password_auth_add {
+        anyhow::bail!(
+            "--inventory-readonly and --allow-password-auth-add are mutually exclusive: \
+             the first rejects add_device outright, the second widens what it accepts"
+        );
+    }
+    if args.enable_metrics && args.transport != Transport::StreamableHttp {
+        anyhow::bail!("--enable-metrics requires --transport streamable-http");
+    }
 
     rust_junosmcp_core::tools::transfer_file::validate_scp_runtime(std::path::Path::new("scp"))
         .map_err(anyhow::Error::from)
@@ -107,7 +146,9 @@ async fn main() -> Result<()> {
             None
         }
         (None, false) if matches!(args.transport, Transport::StreamableHttp) => {
-            unreachable!("cli_validate::validate should have refused this combination");
+            unreachable!(
+                "mecmcp_runtime::cli_validate::validate should have refused this combination"
+            );
         }
         _ => None,
     };
