@@ -106,6 +106,7 @@ async fn get_running_config() {
         GetConfigArgs {
             router_name: "lab".into(),
             timeout: 360,
+            config_path: None,
         },
         dm,
     )

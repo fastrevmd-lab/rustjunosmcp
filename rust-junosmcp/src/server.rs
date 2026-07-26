@@ -480,7 +480,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "get_junos_config",
-        description = "Get the configuration of the router"
+        description = "Get the configuration of the router. Returns the full running config by default. Pass config_path (e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage for targeted queries. Invalid paths return an error rather than silently falling back to the full config."
     )]
     async fn get_junos_config(
         &self,
