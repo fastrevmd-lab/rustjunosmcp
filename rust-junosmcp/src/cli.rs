@@ -276,6 +276,37 @@ pub enum TokenAction {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two junos-only CLI rules that cannot live in `mecmcp-runtime`,
+    /// because the shared `Cli` struct has no fields for these flags.
+    ///
+    /// The Phase 3b migration moved `cli_validate.rs` upstream and dropped the
+    /// inventory rule on the way: the binary accepted `--inventory-readonly`
+    /// together with `--allow-password-auth-add` while the doc comment on the
+    /// latter still promised they were mutually exclusive. Asserting on the
+    /// parsed flags here keeps the pair coupled to something that fails.
+    #[test]
+    fn junos_only_cli_rules_are_still_reachable() {
+        // Both flags parse, so the refusal has to come from main's vendor block
+        // rather than from clap — which is exactly why it was droppable.
+        let both = Cli::parse_from([
+            "rust-junosmcp",
+            "--inventory-readonly",
+            "--allow-password-auth-add",
+        ]);
+        assert!(
+            both.inventory_readonly && both.allow_password_auth_add,
+            "both flags must remain parseable; the mutual exclusion is enforced \
+             in main.rs, not by clap"
+        );
+
+        let metrics_stdio = Cli::parse_from(["rust-junosmcp", "-t", "stdio", "--enable-metrics"]);
+        assert!(
+            metrics_stdio.enable_metrics && metrics_stdio.transport == Transport::Stdio,
+            "the metrics/stdio combination must remain parseable for the same reason"
+        );
+    }
+
     use super::*;
     use clap::{CommandFactory, Parser};
 

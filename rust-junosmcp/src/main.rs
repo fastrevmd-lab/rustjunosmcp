@@ -70,7 +70,22 @@ async fn main() -> Result<()> {
     };
     mecmcp_runtime::cli_validate::validate(&shared_cli).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    // Vendor-specific validation
+    // Vendor-specific validation.
+    //
+    // These two rules cannot live in mecmcp-runtime: --inventory-readonly,
+    // --allow-password-auth-add, and --enable-metrics are junos flags, and the
+    // shared Cli struct has no fields for them. The Phase 3b migration moved
+    // cli_validate.rs upstream and dropped the inventory rule on the way — the
+    // doc comment on --allow-password-auth-add still promised "Mutually
+    // exclusive with --inventory-readonly" while the binary happily accepted
+    // both, which is the same class of defect as #217 with the polarity
+    // reversed: documentation asserting a constraint nothing enforces.
+    if args.inventory_readonly && args.allow_password_auth_add {
+        anyhow::bail!(
+            "--inventory-readonly and --allow-password-auth-add are mutually exclusive: \
+             the first rejects add_device outright, the second widens what it accepts"
+        );
+    }
     if args.enable_metrics && args.transport != Transport::StreamableHttp {
         anyhow::bail!("--enable-metrics requires --transport streamable-http");
     }
