@@ -10,7 +10,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 pub(crate) const ACTIVE_SESSIONS: &str = "junosmcp_active_sessions";
 pub(crate) const LIMIT_HITS_TOTAL: &str = "junosmcp_limit_hits_total";
-pub(crate) const TOOL_DURATION_SECONDS: &str = "mecmcp_tool_duration_seconds";
+pub(crate) const TOOL_DURATION_SECONDS: &str = "junosmcp_tool_duration_seconds";
 pub(crate) const SESSIONS_REAPED_TOTAL: &str = "junosmcp_sessions_reaped_total";
 pub(crate) const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
@@ -152,6 +152,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn renders_exact_metric_contract_and_content_type() {
+        mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
         let (recorder, handle) = test_recorder("junos");
         with_local_recorder(&recorder, || {
             describe_metrics();
@@ -210,7 +211,7 @@ mod tests {
         );
         sample_with(
             text,
-            "mecmcp_tool_duration_seconds_bucket{",
+            "junosmcp_tool_duration_seconds_bucket{",
             &[
                 "server=\"junos\"",
                 "tool=\"get_router_list\"",
@@ -220,7 +221,7 @@ mod tests {
         );
         sample_with(
             text,
-            "mecmcp_tool_duration_seconds_bucket{",
+            "junosmcp_tool_duration_seconds_bucket{",
             &["le=\"1800\"", "tool=\"get_router_list\""],
         );
         assert!(!text.contains("junosmcp_limit_hits_total_total"));

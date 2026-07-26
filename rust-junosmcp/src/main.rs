@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
         journald: args.audit_journald,
     };
     mecmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
     env_compat::emit_warnings(&warnings);
 
     if let Some(Command::Token { action }) = args.command {
