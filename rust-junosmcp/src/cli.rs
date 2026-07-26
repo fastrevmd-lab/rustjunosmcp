@@ -139,6 +139,14 @@ pub struct Cli {
     #[arg(long, default_value_t = 16)]
     pub max_inflight_requests_per_token: usize,
 
+    /// Max requests per second per source IP address. Set with burst; 0/0 = disabled.
+    #[arg(long, default_value_t = 0)]
+    pub max_requests_per_second_per_ip: u64,
+
+    /// Max immediate request burst per source IP address. Set with rate; 0/0 = disabled.
+    #[arg(long, default_value_t = 0)]
+    pub max_request_burst_per_ip: u64,
+
     /// Max requests per second per bearer token. Set with burst; 0/0 = disabled.
     #[arg(long, default_value_t = 0)]
     pub max_requests_per_second_per_token: u64,

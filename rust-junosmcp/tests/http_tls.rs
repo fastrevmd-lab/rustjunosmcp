@@ -32,6 +32,19 @@ fn write_self_signed(dir: &Path) -> (PathBuf, PathBuf) {
     let key_path = dir.join("key.pem");
     std::fs::write(&cert_path, issued.cert.pem()).unwrap();
     std::fs::write(&key_path, issued.signing_key.serialize_pem()).unwrap();
+    // The hardened loader (mecmcp-transport, plan decision D2) refuses a private
+    // key readable by group or other, and exits rather than serving with the key
+    // exposed. `fs::write` creates 0644 under a typical umask, so without this
+    // the server never starts and the test fails with "did not start within 15s"
+    // rather than anything pointing at permissions.
+    //
+    // This is the same step an operator must take on upgrade — it is not test
+    // scaffolding around an inconvenience.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     (cert_path, key_path)
 }
 

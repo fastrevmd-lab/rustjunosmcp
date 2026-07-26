@@ -11,14 +11,14 @@
 use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
 use axum::Router;
+use mecmcp_transport::{
+    ConcurrencyState, LimitedSessionManager, LimitsConfig, PrometheusRuntime, TransportIdentity,
+    apply_body_limit, apply_rate_limit, concurrency_middleware,
+};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use rust_junosmcp_auth::tower::{AuthState, auth_layer};
-use rust_junosmcp_core::limits::{
-    ConcurrencyState, LimitedSessionManager, LimitsConfig, PrometheusRuntime, apply_body_limit,
-    apply_token_rate_limit, concurrency_middleware,
-};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -61,14 +61,29 @@ pub async fn serve(
         .context("validating HTTP resource limits")?;
     limits.log_effective();
 
+    // Junos transport identity: metric prefix, server label, bearer realm, target keys.
+    let identity = TransportIdentity::new(
+        "junosmcp",
+        "junos",
+        "rust-junosmcp",
+        ["router", "router_name", "routers", "router_names"],
+    );
+
     let metrics_runtime = if enable_metrics {
-        Some(PrometheusRuntime::install("junos").context("initializing Prometheus metrics")?)
+        Some(
+            PrometheusRuntime::install(&identity.metric_prefix, &identity.server_label)
+                .context("initializing Prometheus metrics")?,
+        )
     } else {
         None
     };
 
     let session_mgr = LimitedSessionManager::new(LocalSessionManager::default(), &limits);
-    let conc = ConcurrencyState::new(&limits, Some(session_mgr.tracker()));
+    let conc = ConcurrencyState::new(
+        &limits,
+        identity.target_keys.clone(),
+        Some(session_mgr.tracker()),
+    );
 
     let http_cfg = build_http_config(allowed_hosts, disable_host_check);
     let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
@@ -82,7 +97,7 @@ pub async fn serve(
 
     // Rate limiting wraps concurrency but remains inside auth, so CallerCtx exists
     // and an over-rate request acquires no concurrency/session capacity.
-    let app = apply_token_rate_limit(app, &limits);
+    let app = apply_rate_limit(app, &limits);
 
     // Auth runs before rate limiting and concurrency so CallerCtx is present.
     let app = if let Some(store) = token_store {
