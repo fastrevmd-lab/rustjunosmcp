@@ -105,6 +105,11 @@ pub struct GetConfigArgs {
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// Optional configuration hierarchy path to retrieve only a subtree of the config.
+    /// Examples: "system services", "security policies", "interfaces ge-0/0/0".
+    /// If omitted, returns the full device configuration.
+    #[serde(default)]
+    pub config_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
