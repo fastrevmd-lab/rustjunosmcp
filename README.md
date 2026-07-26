@@ -465,8 +465,20 @@ docker run --rm -i \
 # Verify the checksum.
 sha256sum -c dist/rust-junosmcp_0.11.0_amd64.tar.gz.sha256
 
-# Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
-# installer copies the unified binary and unit from its extracted package root.
+# Push and install on VM 115. The installer copies the unified binary and unit
+# from its extracted package root.
+#
+# The container MUST be Debian 13 (trixie). This is not a style preference:
+# `package-lxc.sh` builds against the glibc of whatever host runs it, and the
+# published 0.11.0 binary requires GLIBC_2.39. Debian 12 ships 2.36, so the
+# service dies at start with a "GLIBC_2.39 not found" symbol error — after a
+# clean build and a clean install, which is the worst place to discover it.
+# Debian 13 ships 2.41. Check your own tarball with:
+#   objdump -T dist/rust-junosmcp_*/usr/local/bin/rust-junosmcp \
+#     | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | tail -1
+#
+# Debian 13 also matches docs/PACKAGING.md §2, the container runtime base, and
+# rustpanosmcp — one distro generation to track CVEs against, not three.
 pct push 115 dist/rust-junosmcp_0.11.0_amd64.tar.gz /tmp/jmcp.tar.gz
 pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.11.0_amd64/install.sh"
 ```
