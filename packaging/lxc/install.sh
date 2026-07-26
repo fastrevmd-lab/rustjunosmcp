@@ -87,22 +87,27 @@ install -m 0755 "$PACKAGE_ROOT/usr/local/bin/rust-junosmcp" "$BIN_DIR/rust-junos
 install -m 0644 "$PACKAGE_ROOT/etc/jmcp/devices.json.example" "$CONFIG_DIR/devices.json.example"
 install -m 0644 "$PACKAGE_ROOT/etc/systemd/system/rust-junosmcp.service" "$UNIT_DIR/rust-junosmcp.service"
 
-if [[ ! -e "$CONFIG_DIR/devices.json" ]]; then
-    install -m 0600 "$PACKAGE_ROOT/etc/jmcp/devices.json.example" "$CONFIG_DIR/devices.json"
-fi
+# DO NOT create devices.json on first install — the server will fail with a
+# clear actionable error telling the operator to copy the example and edit it.
+# Only preserve an existing devices.json on upgrade (it already exists).
 if [[ ! -e "$CONFIG_DIR/tokens.json" ]]; then
     printf '%s\n' '{"version":1,"tokens":[]}' >"$CONFIG_DIR/tokens.json"
 fi
 if [[ ! -e "$CONFIG_DIR/known_hosts" ]]; then
     : >"$CONFIG_DIR/known_hosts"
 fi
-chmod 0600 "$CONFIG_DIR/devices.json" "$CONFIG_DIR/tokens.json"
+
+# Set modes on files that exist. devices.json may not exist on first install.
+[[ -e "$CONFIG_DIR/devices.json" ]] && chmod 0600 "$CONFIG_DIR/devices.json"
+chmod 0600 "$CONFIG_DIR/tokens.json"
 chmod 0644 "$CONFIG_DIR/known_hosts"
 
 if [[ "$SKIP_USER_SETUP" != "1" ]]; then
     chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR"
+    # chown only files that exist. devices.json may not exist on first install.
+    [[ -e "$CONFIG_DIR/devices.json" ]] && \
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR/devices.json"
     chown "$SERVICE_USER:$SERVICE_GROUP" \
-        "$CONFIG_DIR/devices.json" \
         "$CONFIG_DIR/tokens.json" \
         "$CONFIG_DIR/known_hosts"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"

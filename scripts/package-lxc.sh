@@ -41,5 +41,11 @@ install -m 0644 packaging/systemd/rust-junosmcp.service "$PKGROOT/etc/systemd/sy
 install -m 0755 packaging/lxc/install.sh "$PKGROOT/install.sh"
 
 mkdir -p "$OUTPUT_DIR"
-tar -czf "$OUTPUT_DIR/$PKG.tar.gz" -C "$STAGING" "$PKG"
-echo ">> Wrote $OUTPUT_DIR/$PKG.tar.gz"
+DIST_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+TARBALL="$DIST_DIR/$PKG.tar.gz"
+
+tar -czf "$TARBALL" -C "$STAGING" "$PKG"
+( cd "$DIST_DIR" && sha256sum "$(basename "$TARBALL")" > "$(basename "$TARBALL").sha256" )
+
+echo ">> Wrote $TARBALL"
+echo ">> Wrote $TARBALL.sha256"
