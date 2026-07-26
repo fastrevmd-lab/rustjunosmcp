@@ -55,7 +55,7 @@ required-features = ["srx"]
 [dependencies]
 rust-junosmcp-core = { version = "0.10.1", path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { version = "0.10.1", path = "../rust-junosmcp-auth" }
-rust-junosmcp-audit = { version = "0.10.1", path = "../rust-junosmcp-audit" }
+mecmcp-audit = { workspace = true }
 rust-junosmcp-srx-core = { version = "0.10.1", path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
@@ -88,7 +88,7 @@ axum-server        = { workspace = true, optional = true, default-features = fal
 libc = "0.2"
 
 [dev-dependencies]
-rust-junosmcp-audit = { version = "0.10.1", path = "../rust-junosmcp-audit", features = ["test-util"] }
+mecmcp-audit = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

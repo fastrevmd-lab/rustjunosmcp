@@ -26,20 +26,21 @@ async fn main() -> Result<()> {
         None
     } else {
         Some(
-            rust_junosmcp_audit::AuditRedaction::parse(
+            mecmcp_audit::AuditRedaction::parse(
                 &args.audit_redact,
                 args.audit_hmac_key_file.as_deref(),
             )
             .map_err(|e| anyhow::anyhow!("invalid --audit-redact: {e}"))?,
         )
     };
-    let audit_cfg = rust_junosmcp_audit::AuditConfig {
-        format: rust_junosmcp_audit::AuditFormat::parse(&args.audit_format),
+    let audit_cfg = mecmcp_audit::AuditConfig {
+        format: mecmcp_audit::AuditFormat::parse(&args.audit_format),
         audit_log_file: args.audit_log_file.clone(),
         redaction,
         journald: args.audit_journald,
     };
-    rust_junosmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    mecmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
     env_compat::emit_warnings(&warnings);
 
     if let Some(Command::Token { action }) = args.command {

@@ -1,5 +1,5 @@
 [workspace]
-members          = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth", "rust-junosmcp-srx-core", "rust-junosmcp-audit"]
+members          = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth", "rust-junosmcp-srx-core"]
 default-members  = ["rust-junosmcp", "rust-junosmcp-core", "rust-junosmcp-auth"]
 resolver = "2"
 
@@ -50,7 +50,11 @@ anyhow       = "1"
 rustez       = "0.13"
 # `version` is redundant for resolution alongside `tag`, but cargo-deny reads a
 # versionless dependency as a wildcard and rejects it under [bans].
-mecmcp-auth  = { version = "0.1.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "auth-v0.1.4" }
+# mecmcp-audit v0.1.5 includes mecmcp-auth 0.1.5 as a transitive dependency from
+# the same commit, so we only need to specify the audit tag. Referencing both tags
+# separately would pull two different commits of mecmcp-auth and cause type mismatches.
+mecmcp-audit = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "audit-v0.1.5" }
+mecmcp-auth  = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "audit-v0.1.5" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

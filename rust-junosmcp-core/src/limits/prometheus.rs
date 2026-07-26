@@ -152,18 +152,18 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn renders_exact_metric_contract_and_content_type() {
+        mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
         let (recorder, handle) = test_recorder("junos");
         with_local_recorder(&recorder, || {
             describe_metrics();
             metrics::gauge!(ACTIVE_SESSIONS).set(2.0);
             record_limit_hit("global_concurrency", "request_rejected");
             record_session_reaped("idle");
-            metrics::histogram!(
-                TOOL_DURATION_SECONDS,
-                "tool" => "get_router_list",
-                "result" => "ok"
-            )
-            .record(0.25);
+            // Use AuditScope to emit mecmcp_tool_duration_seconds, not a direct
+            // metrics::histogram! call. This tests the real code path.
+            let mut audit =
+                mecmcp_audit::AuditScope::stdio("get_router_list", "read", vec!["r1".into()]);
+            audit.succeed();
         });
         handle.run_upkeep();
 

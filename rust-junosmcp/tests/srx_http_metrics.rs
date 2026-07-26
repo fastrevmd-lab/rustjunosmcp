@@ -86,6 +86,8 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
             .body
             .contains("junosmcp_active_sessions{server=\"junos\"} 1")
     );
+    // mecmcp-audit now emits caller-supplied metric name (junosmcp_tool_duration_seconds)
+    // as a histogram with buckets, configured in prometheus.rs.
     assert!(scrape.body.lines().any(|line| {
         line.starts_with("junosmcp_tool_duration_seconds_bucket{")
             && line.contains("server=\"junos\"")

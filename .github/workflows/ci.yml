@@ -31,11 +31,11 @@ jobs:
 
       - name: Format check (our packages)
         working-directory: RustJunosMCP
-        run: cargo fmt -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core -p rust-junosmcp-audit -- --check
+        run: cargo fmt -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core -- --check
 
       - name: Clippy (our packages)
         working-directory: RustJunosMCP
-        run: cargo clippy -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core -p rust-junosmcp-audit --all-targets -- -D warnings
+        run: cargo clippy -p rust-junosmcp-core -p rust-junosmcp -p rust-junosmcp-auth -p rust-junosmcp-srx-core --all-targets -- -D warnings
 
       - name: Build
         working-directory: RustJunosMCP
