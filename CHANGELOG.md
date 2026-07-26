@@ -6,6 +6,45 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-07-26
+
+### Fixed
+
+- **#197, #208, #209 — First-install service would not start.** The v0.11.0
+  installer created a non-bootable `devices.json` referencing a placeholder
+  SSH key path that does not exist, causing the service to crash-loop on a
+  fresh install with `Error: loading /etc/jmcp/devices.json ... private key
+  file not found`. The server now fails at startup with an actionable message
+  naming the file when the inventory references a missing key, and the
+  installer's closing message branches to stop telling operators to edit a
+  file it did not create.
+
+- **#207, #208 — Published `.sha256` checksum embedded build-machine path.**
+  The v0.11.0 release asset checksum was hand-generated and embedded the build
+  machine's absolute path, so `sha256sum -c` verified only on that machine.
+  `scripts/package-lxc.sh` now emits the checksum itself with a bare filename.
+
+- **#210 — `get_junos_config` command-injection and blocklist-bypass.** Added
+  optional `config_path` parameter with an allowlist and policy check. Without
+  both, a crafted path could inject commands or bypass the `candidate` blocklist.
+
+### Changed
+
+- **#211 — Container runtime base to `debian:13-slim`.** Adds
+  `packaging/container/compose.example.yaml` showing how to mount the config
+  and run the container.
+
+- **#213 — `unwrap_used` cleared in shipping code.** Raised the lint to `warn`
+  so new instances fail CI.
+
+- **#214 — CI installs cargo-deny directly.** Removed dependency on the
+  Docker-dependent `cargo-deny-action`.
+
+- **#215 — Wired onto `mecmcp-transport` v0.1.6** (Phase 3a Task 8).
+
+- **#216 — README LXC section corrected to Debian 13.** The binary requires
+  `GLIBC_2.39`; Debian 12 ships 2.36 and cannot run it.
+
 ## [0.11.0] — 2026-07-25
 
 > **Operators: this release requires action.** The audit-log field names
