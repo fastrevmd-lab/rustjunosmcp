@@ -494,6 +494,27 @@ impl JmcpHandler {
             "read",
             vec![args.router_name.clone()],
         );
+        // Record the requested subtree. config_path is caller-controlled and is
+        // the input the allowlist and the blocklist both act on, so a denial
+        // whose event does not name it tells an investigator only that someone
+        // was blocked, not what they attempted. Recorded before validation, so
+        // rejected values appear too — that is the case worth having.
+        //
+        // Truncated because the field is only length-bounded at 1 MiB upstream,
+        // and an audit sink is not the place to discover that.
+        if let Some(path) = args.config_path.as_deref() {
+            const MAX_AUDITED: usize = 256;
+            let recorded = if path.len() > MAX_AUDITED {
+                let mut cut = MAX_AUDITED;
+                while !path.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                format!("{}… ({} bytes)", &path[..cut], path.len())
+            } else {
+                path.to_owned()
+            };
+            audit.meta("config_path", recorded);
+        }
 
         if let Err(e) = self.check_tool_scope(ctx, "get_junos_config") {
             audit.deny("tool_scope");
