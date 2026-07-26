@@ -948,7 +948,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1664,9 +1664,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "left-right"
-version = "0.11.7"
+version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0c21e4c8ff95f487fb34e6f9182875f42c84cef966d29216bf115d9bba835a"
+checksum = "8bc015ded5d9b3054dbbdb63332cdd6ee42352ccef19e911e25117490e2f48ee"
 dependencies = [
  "crossbeam-utils",
  "loom",
@@ -1678,6 +1678,12 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "linux-raw-sys"
+version = "0.4.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
 name = "linux-raw-sys"
@@ -1746,7 +1752,7 @@ version = "0.1.5"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5#5833fabccccb216cc109e5e608321522b5af9bf8"
 dependencies = [
  "hmac",
- "mecmcp-auth",
+ "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5)",
  "metrics",
  "serde",
  "serde_json",
@@ -1766,13 +1772,59 @@ dependencies = [
  "arc-swap",
  "chrono",
  "getrandom 0.4.2",
- "rustix",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "subtle",
  "tempfile",
  "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "mecmcp-auth"
+version = "0.1.5"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=main#55ae13dc0c43b13aea5cfcbc926c4efa8f5c6817"
+dependencies = [
+ "arc-swap",
+ "chrono",
+ "getrandom 0.4.2",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "mecmcp-transport"
+version = "0.1.5"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=main#55ae13dc0c43b13aea5cfcbc926c4efa8f5c6817"
+dependencies = [
+ "axum",
+ "dashmap",
+ "futures",
+ "http",
+ "http-body",
+ "http-body-util",
+ "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?branch=main)",
+ "metrics",
+ "metrics-exporter-prometheus 0.17.2",
+ "rmcp",
+ "rustix 0.38.44",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "tracing",
  "zeroize",
 ]
 
@@ -1796,6 +1848,20 @@ checksum = "89550ee9f79e88fef3119de263694973a8adb26c21d75322164fb8c493039fe2"
 dependencies = [
  "portable-atomic",
  "rapidhash",
+]
+
+[[package]]
+name = "metrics-exporter-prometheus"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b166dea96003ee2531cf14833efedced545751d800f03535801d833313f8c15"
+dependencies = [
+ "base64",
+ "indexmap",
+ "metrics",
+ "metrics-util",
+ "quanta",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2670,6 +2736,9 @@ dependencies = [
  "http",
  "libc",
  "mecmcp-audit",
+ "mecmcp-transport",
+ "metrics",
+ "metrics-exporter-prometheus 0.18.3",
  "rcgen",
  "rmcp",
  "rust-junosmcp-auth",
@@ -2699,7 +2768,7 @@ dependencies = [
  "arc-swap",
  "axum",
  "http",
- "mecmcp-auth",
+ "mecmcp-auth 0.1.5 (git+https://github.com/fastrevmd-lab/mecmcp?tag=audit-v0.1.5)",
  "serde_json",
  "tower",
  "tracing",
@@ -2721,8 +2790,7 @@ dependencies = [
  "http-body-util",
  "libc",
  "mecmcp-audit",
- "metrics",
- "metrics-exporter-prometheus",
+ "mecmcp-transport",
  "minijinja",
  "regex",
  "rmcp",
@@ -2800,6 +2868,19 @@ dependencies = [
 
 [[package]]
 name = "rustix"
+version = "0.38.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
+dependencies = [
+ "bitflags",
+ "errno",
+ "libc",
+ "linux-raw-sys 0.4.15",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
@@ -2807,8 +2888,8 @@ dependencies = [
  "bitflags",
  "errno",
  "libc",
- "linux-raw-sys",
- "windows-sys 0.52.0",
+ "linux-raw-sys 0.12.1",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3307,8 +3388,8 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.2",
  "once_cell",
- "rustix",
- "windows-sys 0.52.0",
+ "rustix 1.1.4",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

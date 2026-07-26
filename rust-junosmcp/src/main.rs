@@ -235,10 +235,12 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let limits = rust_junosmcp_core::limits::LimitsConfig {
+            let limits = mecmcp_transport::LimitsConfig {
                 max_request_body_bytes: args.max_request_body_bytes,
                 max_inflight_requests: args.max_inflight_requests,
                 max_inflight_requests_per_token: args.max_inflight_requests_per_token,
+                max_requests_per_second_per_ip: args.max_requests_per_second_per_ip,
+                max_request_burst_per_ip: args.max_request_burst_per_ip,
                 max_requests_per_second_per_token: args.max_requests_per_second_per_token,
                 max_request_burst_per_token: args.max_request_burst_per_token,
                 max_inflight_requests_per_router: args.max_inflight_requests_per_router,

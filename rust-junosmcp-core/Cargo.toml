@@ -35,10 +35,9 @@ http-body    = { workspace = true }
 http-body-util = { workspace = true }
 rmcp         = { version = "2", features = ["server", "transport-streamable-http-server"] }
 rust-junosmcp-auth = { version = "0.11.0", path = "../rust-junosmcp-auth" }
+mecmcp-transport = { workspace = true }
 dashmap      = { workspace = true }
 futures      = "0.3"
-metrics                     = { workspace = true }
-metrics-exporter-prometheus = { workspace = true }
 rustnetconf  = { workspace = true }
 
 [dev-dependencies]
