@@ -3,77 +3,77 @@
 use crate::cli::TokenAction;
 use anyhow::{Context, Result};
 use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
-use std::io::Write;
-use std::path::Path;
 
 pub fn run(action: TokenAction) -> Result<()> {
     match action {
         TokenAction::Add {
             tokens_file,
             name,
-            routers,
+            devices,
             tools,
             server_pid,
         } => {
-            let routers_scope = parse_scope(routers)?;
-            let tools_scope = parse_scope(tools)?;
-            // For `add`, we don't have inventory loaded. Pass empty slices
-            // to KnownNames — validation will happen in the shared code.
-            let known = build_known_names();
-            let secret =
-                TokenStoreFile::add(&tokens_file, &name, routers_scope, tools_scope, &known)
-                    .with_context(|| format!("adding token '{name}'"))?;
-            // Print only the secret to stdout; nothing else, so it can be
-            // piped/captured.
-            let mut out = std::io::stdout().lock();
-            writeln!(out, "{}", secret.expose_secret())?;
-            sighup_if_requested(server_pid);
-            Ok(())
+            // Convert to mecmcp-runtime's TokenAction format
+            let runtime_action = mecmcp_runtime::cli::TokenAction::Add {
+                tokens_file,
+                name,
+                devices,
+                tools,
+                server_pid,
+            };
+            mecmcp_runtime::token_cmd::run(
+                runtime_action,
+                &[], // No inventory loaded; validation is lenient
+                rust_junosmcp_auth::KNOWN_TOOLS,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))
         }
-        TokenAction::List { tokens_file } => list(&tokens_file),
+        TokenAction::List { tokens_file } => {
+            let runtime_action = mecmcp_runtime::cli::TokenAction::List { tokens_file };
+            mecmcp_runtime::token_cmd::run(runtime_action, &[], rust_junosmcp_auth::KNOWN_TOOLS)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }
         TokenAction::Revoke {
             tokens_file,
             name,
             server_pid,
         } => {
-            let known = build_known_names();
-            let removed = TokenStoreFile::revoke(&tokens_file, &name, &known)
-                .with_context(|| format!("revoking '{name}'"))?;
-            if removed {
-                eprintln!("revoked '{name}'");
-            } else {
-                eprintln!("no such token '{name}' (no-op)");
-            }
-            sighup_if_requested(server_pid);
-            Ok(())
+            let runtime_action = mecmcp_runtime::cli::TokenAction::Revoke {
+                tokens_file,
+                name,
+                server_pid,
+            };
+            mecmcp_runtime::token_cmd::run(runtime_action, &[], rust_junosmcp_auth::KNOWN_TOOLS)
+                .map_err(|e| anyhow::anyhow!("{e}"))
         }
         TokenAction::Rotate {
             tokens_file,
             name,
             server_pid,
         } => {
-            let known = build_known_names();
-            let secret = TokenStoreFile::rotate(&tokens_file, &name, &known)
-                .with_context(|| format!("rotating '{name}'"))?;
-            let mut out = std::io::stdout().lock();
-            writeln!(out, "{}", secret.expose_secret())?;
-            sighup_if_requested(server_pid);
-            Ok(())
+            let runtime_action = mecmcp_runtime::cli::TokenAction::Rotate {
+                tokens_file,
+                name,
+                server_pid,
+            };
+            mecmcp_runtime::token_cmd::run(runtime_action, &[], rust_junosmcp_auth::KNOWN_TOOLS)
+                .map_err(|e| anyhow::anyhow!("{e}"))
         }
         TokenAction::SetScope {
             tokens_file,
             name,
-            routers,
+            devices,
             tools,
             server_pid,
         } => {
-            if routers.is_none() && tools.is_none() {
-                anyhow::bail!("at least one of --routers or --tools must be provided");
+            // SetScope stays junos-only (plan D7)
+            if devices.is_none() && tools.is_none() {
+                anyhow::bail!("at least one of --devices or --tools must be provided");
             }
-            let routers_scope = routers.map(parse_scope).transpose()?;
+            let devices_scope = devices.map(parse_scope).transpose()?;
             let tools_scope = tools.map(parse_scope).transpose()?;
             let known = build_known_names();
-            TokenStoreFile::set_scopes(&tokens_file, &name, routers_scope, tools_scope, &known)
+            TokenStoreFile::set_scopes(&tokens_file, &name, devices_scope, tools_scope, &known)
                 .with_context(|| format!("setting scopes for '{name}'"))?;
 
             // Read back and display the resulting scopes
@@ -81,7 +81,7 @@ pub fn run(action: TokenAction) -> Result<()> {
                 .with_context(|| format!("reloading {}", tokens_file.display()))?;
             let store = store_file.store();
             if let Some(entry) = store.entries().iter().find(|e| e.name == name) {
-                let routers_str = match &entry.devices {
+                let devices_str = match &entry.devices {
                     ScopeSet::Wildcard => "*".to_string(),
                     ScopeSet::Allowlist(v) => v.join(","),
                 };
@@ -89,7 +89,7 @@ pub fn run(action: TokenAction) -> Result<()> {
                     ScopeSet::Wildcard => "*".to_string(),
                     ScopeSet::Allowlist(v) => v.join(","),
                 };
-                eprintln!("updated '{name}': routers=[{routers_str}], tools=[{tools_str}]");
+                eprintln!("updated '{name}': devices=[{devices_str}], tools=[{tools_str}]");
             }
             sighup_if_requested(server_pid);
             Ok(())
@@ -118,57 +118,15 @@ fn build_known_names() -> KnownNames<'static> {
     }
 }
 
-fn list(path: &Path) -> Result<()> {
-    let store_file =
-        TokenStoreFile::load(path).with_context(|| format!("loading {}", path.display()))?;
-    let store = store_file.store();
-    if store.is_empty() {
-        eprintln!("(no tokens)");
-        return Ok(());
-    }
-    let mut out = std::io::stdout().lock();
-    writeln!(
-        out,
-        "{:<32} {:<24} {:<24} CREATED_AT",
-        "NAME", "ROUTERS", "TOOLS"
-    )?;
-    for e in store.entries() {
-        let routers = match &e.devices {
-            ScopeSet::Wildcard => "*".into(),
-            ScopeSet::Allowlist(v) => v.join(","),
-        };
-        let tools = match &e.tools {
-            ScopeSet::Wildcard => "*".into(),
-            ScopeSet::Allowlist(v) => v.join(","),
-        };
-        writeln!(
-            out,
-            "{:<32} {:<24} {:<24} {}",
-            e.name,
-            routers,
-            tools,
-            e.created_at.to_rfc3339()
-        )?;
-    }
-    Ok(())
-}
-
 #[cfg(unix)]
-// The last `unsafe` outside rust-junosmcp-auth, which is why `unsafe_code` is
-// `deny` rather than `forbid`. This module moves to `mecmcp-runtime` in
-// mecmcp Phase 3, where the signal is sent safely through `rustix`.
-#[allow(unsafe_code)]
 fn sighup_if_requested(pid: Option<i32>) {
-    if let Some(pid) = pid {
-        // SAFETY: libc::kill is an FFI call with no preconditions on `pid`; invalid pids
-        // return ESRCH/EPERM via errno, which we capture below.
-        let r = unsafe { libc::kill(pid, libc::SIGHUP) };
-        if r != 0 {
-            tracing::warn!(
-                pid,
-                errno = std::io::Error::last_os_error().raw_os_error(),
-                "kill(SIGHUP) failed"
-            );
+    if let Some(raw) = pid {
+        if let Some(pid) = rustix::process::Pid::from_raw(raw) {
+            if let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::Hup) {
+                tracing::warn!(pid = raw, errno = e.raw_os_error(), "kill(SIGHUP) failed");
+            }
+        } else {
+            tracing::warn!(pid = raw, "invalid server PID (must be positive)");
         }
     }
 }

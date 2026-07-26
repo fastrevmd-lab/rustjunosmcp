@@ -57,6 +57,7 @@ rust-junosmcp-core = { version = "0.11.1", path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { version = "0.11.1", path = "../rust-junosmcp-auth" }
 mecmcp-audit = { workspace = true }
 mecmcp-transport = { workspace = true }
+mecmcp-runtime = { workspace = true }
 rust-junosmcp-srx-core = { version = "0.11.1", path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }
@@ -84,9 +85,7 @@ http               = { workspace = true }
 rustls             = { workspace = true, optional = true }
 rustls-pki-types   = { workspace = true, optional = true }
 axum-server        = { workspace = true, optional = true, default-features = false, features = ["tls-rustls-no-provider"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+rustix             = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 mecmcp-audit = { workspace = true, features = ["test-util"] }

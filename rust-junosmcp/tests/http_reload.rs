@@ -1,8 +1,4 @@
 #![allow(clippy::unwrap_used)]
-// SIGHUP delivery in these tests uses `libc::kill` directly. mecmcp Phase 3
-// moves signal handling into `mecmcp-runtime`, which reaches the same syscall
-// safely through `rustix`; this allow goes away with it.
-#![allow(unsafe_code)]
 
 //! SIGHUP hot reload smoke. Unix-only.
 //!
@@ -85,8 +81,8 @@ fn sighup_reloads_token_store() {
 
     // SIGHUP the server to trigger reload.
     let pid = s.child.id() as i32;
-    let rc = unsafe { libc::kill(pid, libc::SIGHUP) };
-    assert_eq!(rc, 0, "kill(SIGHUP) failed: errno");
+    let pid = rustix::process::Pid::from_raw(pid).expect("valid PID");
+    rustix::process::kill_process(pid, rustix::process::Signal::Hup).expect("kill(SIGHUP)");
 
     // Phase 2: same token, but now revoked + reloaded. Poll until we observe
     // 401 or hit the deadline. This is faster on the happy path than a fixed
@@ -176,8 +172,9 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
         r#"{"r2":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     )
     .unwrap();
-    let rc = unsafe { libc::kill(server.child.id() as i32, libc::SIGHUP) };
-    assert_eq!(rc, 0, "kill(SIGHUP) failed");
+    let pid = server.child.id() as i32;
+    let pid = rustix::process::Pid::from_raw(pid).expect("valid PID");
+    rustix::process::kill_process(pid, rustix::process::Signal::Hup).expect("kill(SIGHUP)");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let after = loop {
