@@ -35,13 +35,25 @@ use std::sync::Arc;
 /// Load and hash the device inventory JSON file in one call.
 ///
 /// Returns the Arc-wrapped inventory and its content sha256 for the
-/// inventory-mutation provenance chain. Errors propagate from the
-/// underlying `Inventory::load` / `inventory::hash_file` calls; the binary's
-/// main.rs is responsible for any user-facing context (path display etc.).
+/// inventory-mutation provenance chain. When the inventory file does not
+/// exist, returns a clear actionable error. Other errors propagate from the
+/// underlying `Inventory::load` / `inventory::hash_file` calls.
 pub fn load_inventory(path: &Path) -> Result<(Arc<Inventory>, [u8; 32]), crate::JmcpError> {
-    let inventory = Arc::new(Inventory::load(path)?);
-    let hash = crate::inventory::hash_file(path)?;
-    Ok((inventory, hash))
+    use std::io::ErrorKind;
+
+    match Inventory::load(path) {
+        Ok(inv) => {
+            let hash = crate::inventory::hash_file(path)?;
+            Ok((Arc::new(inv), hash))
+        }
+        Err(crate::JmcpError::Io(io_err)) if io_err.kind() == ErrorKind::NotFound => {
+            Err(crate::JmcpError::InventoryRead(format!(
+                "devices.json not found at {}; copy devices.json.example and edit it",
+                path.display()
+            )))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Build the host-key verification policy for NETCONF SSH.

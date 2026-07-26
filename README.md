@@ -459,17 +459,31 @@ docker run --rm -i \
 ## LXC (Proxmox)
 
 ```bash
-# Build the tarball.
+# Build the tarball and checksum.
 ./scripts/package-lxc.sh
+
+# Verify the checksum.
+sha256sum -c dist/rust-junosmcp_0.11.0_amd64.tar.gz.sha256
 
 # Push and install on VM 115 (Debian 12 / Ubuntu 24.04 LXC). The
 # installer copies the unified binary and unit from its extracted package root.
 pct push 115 dist/rust-junosmcp_0.11.0_amd64.tar.gz /tmp/jmcp.tar.gz
 pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.11.0_amd64/install.sh"
+```
 
-# Edit /etc/jmcp/devices.json, then mint the first bearer token. The command
-# prints the one-time secret needed by MCP clients.
-#
+**Edit the inventory:**
+
+```bash
+# Copy the example and configure your devices.
+pct exec 115 -- cp /etc/jmcp/devices.json.example /etc/jmcp/devices.json
+pct exec 115 -- $EDITOR /etc/jmcp/devices.json  # or edit via another method
+pct exec 115 -- chown jmcp:jmcp /etc/jmcp/devices.json
+pct exec 115 -- chmod 0600 /etc/jmcp/devices.json
+```
+
+**Mint a bearer token:**
+
+```bash
 # A wildcard tool scope grants read-only tools only; write tools must be named
 # explicitly. See "Upgrading to v0.10" and "Tool scopes and write tools" below.
 pct exec 115 -- runuser -u jmcp -- /usr/local/bin/rust-junosmcp token add \
@@ -477,8 +491,11 @@ pct exec 115 -- runuser -u jmcp -- /usr/local/bin/rust-junosmcp token add \
   --name ops \
   --routers '*' \
   --tools get_router_list,gather_device_facts,execute_junos_command,get_junos_config,commit_check_config,load_and_commit_config
+```
 
-# Start the authenticated unified loopback HTTP endpoint.
+**Start the service:**
+
+```bash
 pct exec 115 -- systemctl enable --now rust-junosmcp
 ```
 
