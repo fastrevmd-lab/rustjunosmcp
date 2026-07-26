@@ -55,11 +55,19 @@ rustez       = "0.13"
 # mecmcp-audit v0.1.5 includes mecmcp-auth 0.1.5 as a transitive dependency from
 # the same commit, so we only need to specify the audit tag. Referencing both tags
 # separately would pull two different commits of mecmcp-auth and cause type mismatches.
-mecmcp-audit = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "audit-v0.1.5" }
-mecmcp-auth  = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "audit-v0.1.5" }
+# All three mecmcp crates MUST resolve to the same git ref. Cargo keys a git
+# dependency on its source, not just its version, so two different refs produce
+# two copies of mecmcp-auth in the graph — and two distinct `CallerCtx` types
+# with different TypeIds. `Extensions::get::<CallerCtx>()` then silently returns
+# None, and every per-token limit stops enforcing while still logging as
+# configured. That is not theoretical: it is exactly what happened when
+# mecmcp-transport was pinned to `branch = "main"` while these two sat on
+# `tag = "audit-v0.1.5"`.
+mecmcp-audit = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
+mecmcp-auth  = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
 # mecmcp-transport: no tag exists yet, pinning to branch main. BLOCKER: re-pin to a
 # release tag before merge.
-mecmcp-transport = { version = "0.1.0", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "main" }
+mecmcp-transport = { version = "0.1.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "transport-v0.1.5" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
