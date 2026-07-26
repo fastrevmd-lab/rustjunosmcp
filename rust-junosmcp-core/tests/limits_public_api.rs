@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use rust_junosmcp_core::limits::{LimitsConfig, LimitsConfigError};
 
 #[test]

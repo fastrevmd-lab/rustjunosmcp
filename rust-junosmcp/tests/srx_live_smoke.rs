@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Live smoke against the LXC 601 deployment.
 //!
 //! Required env:

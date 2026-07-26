@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Real rustls handshake coverage for the unified streamable-HTTP endpoint.
 
 #![cfg(feature = "tls")]

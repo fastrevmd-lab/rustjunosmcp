@@ -2,6 +2,8 @@
 //!
 //! Pure data plus HTTP glue; no async device work.
 
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod tower;
 
 pub use mecmcp_auth::{

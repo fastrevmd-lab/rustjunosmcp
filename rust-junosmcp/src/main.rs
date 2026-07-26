@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 mod cli;
 mod cli_validate;
 mod env_compat;

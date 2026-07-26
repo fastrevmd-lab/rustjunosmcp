@@ -43,7 +43,10 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         return Err(JmcpError::MissingArguments(missing));
     }
 
-    let device_name = args.device_name.clone().unwrap();
+    let device_name = args
+        .device_name
+        .clone()
+        .expect("device_name is Some: validated by early return");
     if !is_valid_device_name(&device_name) {
         return Err(JmcpError::InvalidDeviceName(device_name));
     }
@@ -52,7 +55,10 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         return Err(JmcpError::DeviceExists(device_name));
     }
 
-    let device_ip = args.device_ip.clone().unwrap();
+    let device_ip = args
+        .device_ip
+        .clone()
+        .expect("device_ip is Some: validated by early return");
     if !is_valid_ip_or_hostname(&device_ip) {
         return Err(JmcpError::InvalidDeviceIp(device_ip));
     }
@@ -62,7 +68,10 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         return Err(JmcpError::InvalidDevicePort(device_port));
     }
 
-    let auth = args.auth.clone().unwrap();
+    let auth = args
+        .auth
+        .clone()
+        .expect("auth is Some: validated by early return");
     if matches!(auth, AuthConfig::Password { .. }) && !dm.allow_password_auth_add() {
         return Err(JmcpError::PasswordAuthDisabled);
     }
@@ -75,7 +84,10 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
         )));
     }
 
-    let username = args.username.clone().unwrap();
+    let username = args
+        .username
+        .clone()
+        .expect("username is Some: validated by early return");
     if !is_valid_ssh_username(&username) {
         return Err(JmcpError::Validation(format!(
             "invalid username `{username}`: must match ^[A-Za-z0-9_.-]{{1,64}}$ and must not start with '-'"

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 // SIGHUP delivery in these tests uses `libc::kill` directly. mecmcp Phase 3
 // moves signal handling into `mecmcp-runtime`, which reaches the same syscall
 // safely through `rustix`; this allow goes away with it.

@@ -3,6 +3,8 @@
 //!
 //! The binary crate `rust-junosmcp` wires this into the rmcp transport.
 
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod bootstrap;
 pub mod cancel;
 pub mod device_lease;

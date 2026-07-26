@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Live upgrade_junos smoke test. Gated behind three env vars; if any
 //! is unset the test exits 0 (skipped). Expected runtime ~7-10 min.
 //!

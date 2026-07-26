@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Stdio smoke for add_device: full add -> reload -> router_list cycle.
 
 mod common;

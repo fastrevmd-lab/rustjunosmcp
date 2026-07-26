@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Process-boundary and crash-recovery tests for destructive device leases.
 
 #![cfg(unix)]

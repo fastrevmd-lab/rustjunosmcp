@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Audit field + redaction assertions for the unified server's SRX tools.
 
 use mecmcp_audit::AuditScope;

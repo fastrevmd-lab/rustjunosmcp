@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Stdio-transport smoke tests for `render_and_apply_j2_template`.
 //!
 //! Render-only paths run end-to-end (no real device I/O). Apply-path is

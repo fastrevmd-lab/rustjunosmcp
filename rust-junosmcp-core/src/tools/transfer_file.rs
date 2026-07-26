@@ -1414,8 +1414,12 @@ pub fn parse_checksum_output(output: &str) -> Result<Option<[u8; 32]>, JmcpError
             if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
                 let mut out = [0u8; 32];
                 for (i, byte) in out.iter_mut().enumerate() {
-                    let hi = u8::from_str_radix(&hex[i * 2..i * 2 + 1], 16).unwrap();
-                    let lo = u8::from_str_radix(&hex[i * 2 + 1..i * 2 + 2], 16).unwrap();
+                    let hi = u8::from_str_radix(&hex[i * 2..i * 2 + 1], 16).expect(
+                        "from_str_radix cannot fail: is_ascii_hexdigit() validated all chars",
+                    );
+                    let lo = u8::from_str_radix(&hex[i * 2 + 1..i * 2 + 2], 16).expect(
+                        "from_str_radix cannot fail: is_ascii_hexdigit() validated all chars",
+                    );
                     *byte = (hi << 4) | lo;
                 }
                 return Ok(Some(out));

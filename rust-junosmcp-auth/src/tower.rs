@@ -115,10 +115,7 @@ fn reject(
         .header(header::WWW_AUTHENTICATE, challenge)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
-        // OK: builder only fails on invalid header values; `code`, the static
-        // challenge constants, and the literal content-type are all valid by
-        // construction.
-        .unwrap()
+        .expect("response builder cannot fail: status, static challenge, and literal content-type are all valid")
 }
 
 #[cfg(test)]
