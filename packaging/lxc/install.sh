@@ -119,5 +119,14 @@ if [[ "$INSTALL_ROOT" == "/" && "$SKIP_SYSTEMD_RELOAD" != "1" ]]; then
 fi
 
 echo ">> RustJunosMCP package installed."
-echo ">> Edit $CONFIG_DIR/devices.json and mint a bearer token before enabling the service."
+if [[ -e "$CONFIG_DIR/devices.json" ]]; then
+    echo ">> Edit $CONFIG_DIR/devices.json and mint a bearer token before enabling the service."
+else
+    echo ">> No inventory yet. Before enabling the service:"
+    echo ">>   cp $CONFIG_DIR/devices.json.example $CONFIG_DIR/devices.json"
+    echo ">>   \$EDITOR $CONFIG_DIR/devices.json    # replace the placeholder paths"
+    echo ">>   chmod 0600 $CONFIG_DIR/devices.json"
+    echo ">> Then mint a bearer token. The service will not start until the"
+    echo ">> inventory exists — it exits with a message naming this file."
+fi
 echo ">> Junos/SRX endpoint: http://127.0.0.1:30030/mcp"
