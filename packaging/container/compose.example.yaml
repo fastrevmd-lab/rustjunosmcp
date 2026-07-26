@@ -1,0 +1,94 @@
+# Example Compose deployment for rust-junosmcp.
+#
+# Per docs/PACKAGING.md §1 the container runs with a read-only root filesystem
+# and explicit writable mounts. Copy this, adjust the image tag and the paths,
+# and treat it as a starting point rather than a drop-in.
+#
+# The image is NOT distroless — it carries a shell, `scp`, and `tar`, because
+# transfer_file, fetch_file, and collect_jtac_support_bundle spawn `scp` and
+# `tar`. See the comment on the runtime FROM line in the Dockerfile. That makes
+# `read_only: true` and a non-root user more load-bearing here than they would
+# be on a distroless base, not less.
+
+services:
+  rust-junosmcp:
+    image: ghcr.io/fastrevmd-lab/rustjunosmcp:0.11.0
+    # Pin by digest in production. A tag is mutable; a digest is the thing you
+    # actually reviewed.
+    # image: ghcr.io/fastrevmd-lab/rustjunosmcp@sha256:...
+
+    user: "65532:65532"
+    read_only: true
+
+    # The binary refuses to start if the inventory is missing, and refuses to
+    # load a group- or world-readable token file. Mount both read-only: the
+    # server never writes them, and `add_device` is disabled by
+    # --inventory-readonly below.
+    #
+    # BOTH FILES MUST BE OWNED BY 65532 AND tokens.json MUST BE MODE 0600.
+    # A bind mount carries the host's uid straight through, so a tokens.json
+    # created by your own user fails with:
+    #
+    #   Error: loading /etc/jmcp/tokens.json
+    #   Caused by: token file ...: Permission denied (os error 13)
+    #
+    # and the container exits 1. On the host:
+    #   sudo chown 65532:65532 devices.json tokens.json
+    #   sudo chmod 0600 tokens.json
+    volumes:
+      - ./devices.json:/etc/jmcp/devices.json:ro
+      - ./tokens.json:/etc/jmcp/tokens.json:ro
+      # State. This one MUST be writable — it holds staging area, known_hosts,
+      # and device leases. A named volume rather than a bind mount so the
+      # 65532 ownership set in the image is preserved.
+      - jmcp-state:/var/lib/jmcp
+
+    # Nothing here needs to write to /tmp today. If a future tool does, add an
+    # explicit tmpfs rather than relaxing read_only.
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    environment:
+      RUST_LOG: info
+      JMCP_SUPPORT_BUNDLE_STAGING_DIR: /var/lib/jmcp/srx-staging/bundles
+      JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES: "524288000"
+
+    # Streamable-HTTP. Bind to loopback and put TLS in front of it, or pass
+    # --tls-cert/--tls-key and terminate here. Do not expose plaintext to a
+    # LAN without --allow-insecure-bind, which exists to make that choice
+    # deliberate.
+    ports:
+      - "127.0.0.1:30030:30030"
+
+    # Verified against `rust-junosmcp --help` from this image — the flags below
+    # are the real ones. The ENTRYPOINT already supplies -f, --staging-dir,
+    # --known-hosts-file, and --device-lease-dir; these are appended to it.
+    command:
+      - "-t"
+      - "streamable-http"
+      - "-H"
+      - "0.0.0.0"
+      - "-p"
+      - "30030"
+      - "--tokens-file"
+      - "/etc/jmcp/tokens.json"
+      # Must match the address clients actually dial, or requests are rejected.
+      - "--allowed-host"
+      - "127.0.0.1"
+      # Binding 0.0.0.0 inside the container is what makes the published port
+      # reachable; the port mapping above keeps it on the host's loopback.
+      # Without TLS the server refuses an off-loopback bind unless told to.
+      - "--allow-insecure-bind"
+      # Rejects add_device and reload_devices unconditionally, independent of
+      # token scopes. Drop this if you intend to manage inventory over MCP.
+      - "--inventory-readonly"
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    restart: on-failure
+
+volumes:
+  jmcp-state:
