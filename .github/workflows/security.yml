@@ -45,7 +45,15 @@ jobs:
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      # Installed directly rather than via cargo-deny-action, which builds its
+      # own image and so depends on Docker Hub at run time. That dependency has
+      # now failed this job for real: three retries of
+      # "dial tcp ...:443: i/o timeout" pulling rust:1.85.0-alpine3.20, with
+      # nothing wrong in the repo. A supply-chain gate that goes red on an
+      # unrelated registry outage is a gate people learn to ignore, which is
+      # worse than not having it. Slower, but it depends only on crates.io,
+      # which this job already needs. Matches mecmcp and rustpanosmcp.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
       - name: cargo-deny (bans + sources)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check bans sources
+        run: cargo deny check bans sources
