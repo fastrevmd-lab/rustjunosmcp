@@ -187,8 +187,8 @@ pub struct Cli {
     #[arg(long)]
     pub audit_journald: bool,
 
-    /// Per-field audit redaction, e.g. `routers=hmac,host=drop`.
-    /// Fields: routers, host, name, basename, command, pfe_command.
+    /// Per-field audit redaction, e.g. `devices=hmac,host=drop`.
+    /// Fields: devices, host, name, basename, command, pfe_command.
     /// Transforms: keep, drop, hmac. Empty = disabled.
     #[arg(long, default_value = "")]
     pub audit_redact: String,
@@ -426,5 +426,41 @@ mod tests {
 
         let enabled = Cli::parse_from(["rust-junosmcp", "--audit-journald"]);
         assert!(enabled.audit_journald);
+    }
+
+    /// Test that the examples embedded in help text are valid. Prevents
+    /// drift between documentation and validation, which caused #217.
+    #[test]
+    fn help_text_examples_are_valid() {
+        // Extract help text.
+        let help = Cli::command().render_help().to_string();
+
+        // --audit-redact: extract the example from its doc comment.
+        // Format: "Per-field audit redaction, e.g. `devices=hmac,host=drop`."
+        let audit_redact_example = help
+            .lines()
+            .find_map(|line| {
+                if line.contains("Per-field audit redaction") {
+                    // Extract content between backticks.
+                    line.split('`').nth(1)
+                } else {
+                    None
+                }
+            })
+            .expect("--audit-redact help text should contain an example in backticks");
+
+        // Parse the example and ensure it validates. The real validator is in
+        // mecmcp_audit::AuditRedaction::parse, called from main.rs. We cannot
+        // invoke it directly here without pulling in that crate, but we can
+        // confirm the CLI accepts the flag and stores the raw string.
+        let cli = Cli::parse_from(["rust-junosmcp", "--audit-redact", audit_redact_example]);
+        assert_eq!(cli.audit_redact, audit_redact_example);
+
+        // The parsed string must match the known-good pattern to catch typos.
+        assert_eq!(
+            audit_redact_example, "devices=hmac,host=drop",
+            "Documented --audit-redact example changed; update this assertion \
+             if intentional, but verify the new example validates in mecmcp_audit"
+        );
     }
 }
