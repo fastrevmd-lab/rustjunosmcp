@@ -225,7 +225,7 @@ pub enum TokenAction {
         #[arg(long)]
         name: String,
         /// Comma-separated device names, or '*' for all.
-        #[arg(long, alias = "routers", hide = true, value_delimiter = ',')]
+        #[arg(long, alias = "routers", value_delimiter = ',')]
         devices: Vec<String>,
         /// Comma-separated tool names, or '*' for all.
         #[arg(long, value_delimiter = ',')]
@@ -264,7 +264,7 @@ pub enum TokenAction {
         #[arg(long)]
         name: String,
         /// Comma-separated device names, or '*' for all. Omit to leave unchanged.
-        #[arg(long, alias = "routers", hide = true, value_delimiter = ',')]
+        #[arg(long, alias = "routers", value_delimiter = ',')]
         devices: Option<Vec<String>>,
         /// Comma-separated tool names, or '*' for all. Omit to leave unchanged.
         #[arg(long, value_delimiter = ',')]
