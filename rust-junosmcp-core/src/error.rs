@@ -289,6 +289,32 @@ impl From<rustez::RustEzError> for JmcpError {
     }
 }
 
+impl From<mecmcp_device::DeviceLockError> for JmcpError {
+    fn from(e: mecmcp_device::DeviceLockError) -> Self {
+        use mecmcp_device::DeviceLockError;
+        match e {
+            DeviceLockError::Busy {
+                device,
+                waited_secs,
+            } => JmcpError::DeviceLeaseBusy {
+                router: device,
+                waited_secs,
+            },
+            DeviceLockError::Cancelled => JmcpError::Cancelled,
+            DeviceLockError::Other { device, detail } => JmcpError::DeviceLeaseError {
+                router: device,
+                detail,
+            },
+        }
+    }
+}
+
+impl mecmcp_device::cancel::Cancellable for JmcpError {
+    fn cancelled() -> Self {
+        JmcpError::Cancelled
+    }
+}
+
 impl JmcpError {
     /// Returns the stable audit `error_kind` string for this error variant.
     ///

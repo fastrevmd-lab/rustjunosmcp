@@ -1783,6 +1783,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mecmcp-device"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.7#b9c22e88903bd50952a27e9695c066fe6b9e53c2"
+dependencies = [
+ "async-trait",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "mecmcp-inventory"
 version = "0.1.6"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.7#b9c22e88903bd50952a27e9695c066fe6b9e53c2"
@@ -2809,8 +2825,8 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "libc",
  "mecmcp-audit",
+ "mecmcp-device",
  "mecmcp-inventory",
  "mecmcp-policy",
  "mecmcp-transport",

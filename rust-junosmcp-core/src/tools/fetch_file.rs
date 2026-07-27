@@ -71,7 +71,11 @@ pub async fn handle(
         // Per-router serialization (shared with transfer_file). Acquired AFTER
         // basename validation so an obviously-bogus path never queues behind a
         // live transfer.
-        let _permit = select_cancel_raw(&ct, cfg.transfer_locks.acquire(&args.router_name)).await?;
+        let _permit = select_cancel_raw::<_, _, JmcpError>(
+            &ct,
+            cfg.transfer_locks.acquire(&args.router_name),
+        )
+        .await?;
 
         // Resolve device + check auth type. Snapshot the fields we need before
         // dropping the borrow so we can hand `dm` to `dm.open(...)` below.
@@ -108,7 +112,7 @@ pub async fn handle(
 
         // Probe remote checksum. If absent, fail fast.
         let probe_cmd = format!("file checksum sha-256 {}", remote_path);
-        let probe_out = select_cancel_raw(&ct, dev.cli(&probe_cmd))
+        let probe_out = select_cancel_raw::<_, _, JmcpError>(&ct, dev.cli(&probe_cmd))
             .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "remote_checksum".into(),

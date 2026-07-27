@@ -6,8 +6,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod bootstrap;
-pub mod cancel;
-pub mod device_lease;
 pub mod device_manager;
 pub mod error;
 pub mod helpers;
@@ -15,7 +13,16 @@ pub mod inventory;
 pub mod output;
 pub mod policy;
 pub mod tools;
-pub use device_lease::{DEFAULT_DEVICE_LEASE_DIR, DeviceLeaseGuard, DeviceLeaseManager};
+
+// Re-export mecmcp-device primitives
+pub use mecmcp_device::cancel;
+pub use mecmcp_device::{DeviceLock, DeviceLockGuard, FlockDeviceLock};
+
+// Backward compatibility alias for existing consumers
+pub type DeviceLeaseManager = FlockDeviceLock;
+pub type DeviceLeaseGuard = DeviceLockGuard;
+pub const DEFAULT_DEVICE_LEASE_DIR: &str = "/var/lib/jmcp/device-leases";
+
 pub use device_manager::DeviceManager;
 pub use error::JmcpError;
 pub use inventory::{AuthConfig, DeviceEntry, Inventory};

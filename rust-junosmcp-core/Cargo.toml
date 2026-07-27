@@ -38,6 +38,7 @@ rust-junosmcp-auth = { version = "0.11.1", path = "../rust-junosmcp-auth" }
 mecmcp-transport = { workspace = true }
 mecmcp-policy = { workspace = true }
 mecmcp-inventory = { workspace = true }
+mecmcp-device = { workspace = true }
 dashmap      = { workspace = true }
 futures      = "0.3"
 rustnetconf  = { workspace = true }
@@ -45,6 +46,3 @@ rustnetconf  = { workspace = true }
 [dev-dependencies]
 tower        = { workspace = true }
 mecmcp-audit = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

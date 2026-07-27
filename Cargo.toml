@@ -73,6 +73,7 @@ mecmcp-transport = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/
 mecmcp-runtime = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
 mecmcp-policy = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
 mecmcp-inventory = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
+mecmcp-device = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

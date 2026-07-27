@@ -1569,7 +1569,11 @@ pub async fn handle(
             step = "lock_acquire_pre",
             "transfer_file.step_diag"
         );
-        let _permit = select_cancel_raw(&ct, cfg.transfer_locks.acquire(&args.router_name)).await?;
+        let _permit = select_cancel_raw::<_, _, JmcpError>(
+            &ct,
+            cfg.transfer_locks.acquire(&args.router_name),
+        )
+        .await?;
         tracing::info!(
             router = %args.router_name,
             step = "lock_acquire_post",
@@ -1649,12 +1653,13 @@ pub async fn handle(
         );
 
         // 1. Free-disk pre-flight.
-        let storage_out = select_cancel_raw(&ct, dev.cli("show system storage no-forwarding"))
-            .await?
-            .map_err(|e| JmcpError::DeviceProbeFailed {
-                phase: "storage_probe".into(),
-                message: e.to_string(),
-            })?;
+        let storage_out =
+            select_cancel_raw::<_, _, JmcpError>(&ct, dev.cli("show system storage no-forwarding"))
+                .await?
+                .map_err(|e| JmcpError::DeviceProbeFailed {
+                    phase: "storage_probe".into(),
+                    message: e.to_string(),
+                })?;
         let free_bytes = parse_storage_free_bytes(&storage_out)?;
         let required = local_size.saturating_add(MIN_FREE_HEADROOM_BYTES);
         if free_bytes < required {
@@ -1667,7 +1672,7 @@ pub async fn handle(
 
         // 2. Probe remote checksum to support idempotent skip.
         let probe_cmd = format!("file checksum sha-256 {}", remote_path);
-        let probe_out = select_cancel_raw(&ct, dev.cli(&probe_cmd))
+        let probe_out = select_cancel_raw::<_, _, JmcpError>(&ct, dev.cli(&probe_cmd))
             .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "remote_checksum".into(),
@@ -1733,7 +1738,7 @@ pub async fn handle(
         }
 
         // 4. Post-transfer verify (re-run remote checksum).
-        let verify_out = select_cancel_raw(&ct, dev.cli(&probe_cmd))
+        let verify_out = select_cancel_raw::<_, _, JmcpError>(&ct, dev.cli(&probe_cmd))
             .await?
             .map_err(|e| JmcpError::DeviceProbeFailed {
                 phase: "verify_checksum".into(),
