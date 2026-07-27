@@ -1749,7 +1749,7 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 [[package]]
 name = "mecmcp-audit"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
 dependencies = [
  "hmac",
  "mecmcp-auth",
@@ -1767,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1783,9 +1783,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mecmcp-inventory"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "mecmcp-policy"
+version = "0.1.6"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
+dependencies = [
+ "globset",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "mecmcp-runtime"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
 dependencies = [
  "anyhow",
  "clap",
@@ -1799,7 +1822,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-transport"
 version = "0.1.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=runtime-v0.1.6#633f370d082f9cb88f73bde3254aba10cd267aa8"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=phase4-v0.1.6#1a7626d09407d3c152c2f463611c6119c3273b84"
 dependencies = [
  "axum",
  "dashmap",
@@ -2788,6 +2811,8 @@ dependencies = [
  "http-body-util",
  "libc",
  "mecmcp-audit",
+ "mecmcp-inventory",
+ "mecmcp-policy",
  "mecmcp-transport",
  "minijinja",
  "regex",
