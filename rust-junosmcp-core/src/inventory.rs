@@ -244,7 +244,7 @@ mod auth_tests {
 }
 
 /// `deny` blocks the tool call; `allow` overrides a broader deny.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     Deny,
@@ -252,7 +252,7 @@ pub enum Action {
 }
 
 /// One author-side rule: an action and a glob pattern.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuleSpec {
     pub action: Action,
     pub pattern: String,
@@ -260,7 +260,7 @@ pub struct RuleSpec {
 
 /// Per-domain rule lists (commands → execute_junos_command,
 /// config → load_and_commit_config).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BlocklistRules {
     #[serde(default)]
     pub commands: Vec<RuleSpec>,
@@ -275,7 +275,7 @@ fn default_port() -> u16 {
 }
 
 /// One entry in `devices.json`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeviceEntry {
     pub ip: String,
     #[serde(default = "default_port")]
@@ -342,18 +342,15 @@ use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
+/// Junos inventory wrapping `mecmcp-inventory::FileInventory`.
+///
+/// Maintains the synchronous interface the server uses while delegating
+/// schema validation to the shared crate. The flat-map schema with
+/// `_blocklist_defaults` is validated by FileInventory's dual-schema parser.
 pub struct Inventory {
     devices: HashMap<String, DeviceEntry>,
     blocklist_defaults: Option<BlocklistRules>,
     source_path: PathBuf,
-}
-
-#[derive(Deserialize)]
-struct InventoryFile {
-    #[serde(default, rename = "_blocklist_defaults")]
-    blocklist_defaults: Option<BlocklistRules>,
-    #[serde(flatten)]
-    devices: HashMap<String, DeviceEntry>,
 }
 
 impl Inventory {
@@ -367,14 +364,41 @@ impl Inventory {
     }
 
     /// Load and validate a `devices.json` file.
+    ///
+    /// Parsing is delegated to `mecmcp-inventory`, which detects the Junos
+    /// flat-map schema — including the `_blocklist_defaults` key, which is
+    /// policy rather than a device — and returns owned values. The
+    /// Junos-specific validators below then run over the result; they encode
+    /// SSH and Junos rules the shared crate has no business knowing.
+    ///
+    /// An earlier version parsed the file **twice**: once through the shared
+    /// loader, discarding the result, then again with local types. That was not
+    /// gratuitous — the trait's `get` and `policy` were unimplementable against
+    /// interior mutability and returned `Err`/`None` unconditionally, so there
+    /// was nothing to delegate to. Fixed upstream in `phase4-v0.1.7`; the
+    /// second parse is gone, along with the risk of two parsers drifting apart.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
-        let bytes = std::fs::read(path)?;
-        let file: InventoryFile = serde_json::from_slice(&bytes)
-            .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
-        Self::validate(&file.devices)?;
+        use mecmcp_inventory::Inventory as _;
+
+        let shared = mecmcp_inventory::FileInventory::<DeviceEntry, BlocklistRules>::load(path)
+            .map_err(|error| JmcpError::InventoryInvalid(error.to_string()))?;
+
+        let devices: HashMap<String, DeviceEntry> = shared
+            .names()
+            .into_iter()
+            .map(|name| {
+                let entry = shared
+                    .get(&name)
+                    .map_err(|error| JmcpError::InventoryInvalid(error.to_string()))?;
+                Ok((name, entry))
+            })
+            .collect::<Result<_, JmcpError>>()?;
+
+        Self::validate(&devices)?;
+
         Ok(Self {
-            devices: file.devices,
-            blocklist_defaults: file.blocklist_defaults,
+            devices,
+            blocklist_defaults: shared.policy(),
             source_path: path.to_path_buf(),
         })
     }

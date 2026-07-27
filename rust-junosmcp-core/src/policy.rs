@@ -1,105 +1,23 @@
-//! Pure rule-evaluation logic for the blocklist guardrails.
+//! Junos blocklist policy — thin shim over `mecmcp-policy`.
 //!
-//! `Policy` is built once at startup from the parsed [`Inventory`](crate::Inventory)
-//! and is cheap to clone via `Arc`. Tool handlers consult it before any device
-//! interaction.
+//! This module re-exports the core rule engine from `mecmcp-policy` and
+//! provides Junos-specific wiring: the `Action` and `RuleSpec` types that
+//! parse from `devices.json`, and the `Policy` builder that extracts rules
+//! from the Junos inventory.
 
 use crate::error::JmcpError;
 use crate::inventory::{Action, RuleSpec};
-use globset::{Glob, GlobMatcher};
+use std::collections::HashMap;
 
-/// Origin of a rule, used for tiebreaking equal-specificity matches and for
-/// the human-readable error message on denial.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuleSource {
-    Defaults,
-    Device,
-}
-
-impl RuleSource {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Defaults => "defaults",
-            Self::Device => "device",
-        }
-    }
-}
-
-/// A glob rule with its compiled matcher and pre-computed specificity score.
-#[derive(Debug)]
-pub struct CompiledRule {
-    pub pattern: String,
-    pub action: Action,
-    pub source: RuleSource,
-    pub matcher: GlobMatcher,
-    /// Higher = more specific. Tuple is `(literal_chars, total_len)`.
-    pub specificity: (usize, usize),
-}
-
-/// Count non-wildcard, non-character-class literal characters in a glob pattern.
-/// `*`, `?`, and `[...]` ranges are wildcards; everything else (including
-/// escaped characters) counts.
-pub(crate) fn count_literal_chars(pattern: &str) -> usize {
-    let mut count = 0usize;
-    let mut in_class = false;
-    let mut chars = pattern.chars().peekable();
-    while let Some(c) = chars.next() {
-        if in_class {
-            if c == ']' {
-                in_class = false;
-            }
-            continue;
-        }
-        match c {
-            '*' | '?' => continue,
-            '[' => {
-                in_class = true;
-                continue;
-            }
-            '\\' => {
-                if chars.next().is_some() {
-                    count += 1;
-                }
-            }
-            _ => count += 1,
-        }
-    }
-    count
-}
-
-/// Compile a list of `RuleSpec`s into `CompiledRule`s, attaching the given
-/// `source` and a scope label used in compile-time error messages.
-pub(crate) fn compile_rules(
-    rules: &[RuleSpec],
-    scope: &str,
-    source: RuleSource,
-) -> Result<Vec<CompiledRule>, JmcpError> {
-    rules
-        .iter()
-        .map(|r| {
-            let glob = Glob::new(&r.pattern).map_err(|e| JmcpError::BlocklistRuleInvalid {
-                scope: scope.to_string(),
-                pattern: r.pattern.clone(),
-                source: e,
-            })?;
-            let literal_chars = count_literal_chars(&r.pattern);
-            Ok(CompiledRule {
-                pattern: r.pattern.clone(),
-                action: r.action,
-                source,
-                matcher: glob.compile_matcher(),
-                specificity: (literal_chars, r.pattern.len()),
-            })
-        })
-        .collect()
-}
+// Re-export the upstream rule engine primitives.
+pub use mecmcp_policy::{CompiledRule, RuleSource, count_literal_chars, normalize_input};
 
 /// Outcome of a policy check.
 #[derive(Debug)]
 pub enum Decision<'a> {
     Allow,
     Deny {
-        rule: &'a CompiledRule,
+        rule: &'a CompiledRule<Action>,
         source: RuleSource,
         /// Set only for config-domain checks; identifies the offending line
         /// (1-indexed, comment lines counted).
@@ -107,26 +25,32 @@ pub enum Decision<'a> {
     },
 }
 
-/// Trim and collapse runs of whitespace to a single space.
-pub(crate) fn normalize_input(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut last_was_ws = false;
-    for c in s.trim().chars() {
-        if c.is_whitespace() {
-            if !last_was_ws {
-                out.push(' ');
-                last_was_ws = true;
-            }
-        } else {
-            out.push(c);
-            last_was_ws = false;
+/// Compile a list of `RuleSpec`s into `CompiledRule`s, attaching the given
+/// `source` and a scope label used in compile-time error messages.
+fn compile_rules(
+    rules: &[RuleSpec],
+    scope: &str,
+    source: RuleSource,
+) -> Result<Vec<CompiledRule<Action>>, JmcpError> {
+    let pairs: Vec<(Action, String)> = rules
+        .iter()
+        .map(|r| (r.action, r.pattern.clone()))
+        .collect();
+
+    mecmcp_policy::compile_rules(&pairs, scope, source, |scope, pattern, err| {
+        JmcpError::BlocklistRuleInvalid {
+            scope,
+            pattern,
+            source: err,
         }
-    }
-    out
+    })
 }
 
 /// Pick the most-specific matching rule. Tiebreak: device > defaults.
-fn evaluate<'r>(rules: &[&'r CompiledRule], candidate: &str) -> Option<&'r CompiledRule> {
+fn evaluate<'r>(
+    rules: &[&'r CompiledRule<Action>],
+    candidate: &str,
+) -> Option<&'r CompiledRule<Action>> {
     rules
         .iter()
         .filter(|r| r.matcher.is_match(candidate))
@@ -142,20 +66,18 @@ fn evaluate<'r>(rules: &[&'r CompiledRule], candidate: &str) -> Option<&'r Compi
         })
 }
 
-use std::collections::HashMap;
-
 /// Compiled, per-device blocklist policy. Built once at startup from the
 /// parsed inventory.
 #[derive(Debug)]
 pub struct Policy {
     /// Compiled defaults (commands, config, pfe_commands) shared by every device.
-    default_commands: Vec<CompiledRule>,
-    default_config: Vec<CompiledRule>,
-    default_pfe_commands: Vec<CompiledRule>,
+    default_commands: Vec<CompiledRule<Action>>,
+    default_config: Vec<CompiledRule<Action>>,
+    default_pfe_commands: Vec<CompiledRule<Action>>,
     /// Per-device additions to defaults.
-    device_commands: HashMap<String, Vec<CompiledRule>>,
-    device_config: HashMap<String, Vec<CompiledRule>>,
-    device_pfe_commands: HashMap<String, Vec<CompiledRule>>,
+    device_commands: HashMap<String, Vec<CompiledRule<Action>>>,
+    device_config: HashMap<String, Vec<CompiledRule<Action>>>,
+    device_pfe_commands: HashMap<String, Vec<CompiledRule<Action>>>,
 }
 
 impl Policy {
@@ -219,7 +141,7 @@ impl Policy {
     }
 
     /// Effective command rules for a device = defaults ⊕ device.
-    pub fn command_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+    pub fn command_rules_for(&self, router: &str) -> Vec<&CompiledRule<Action>> {
         self.default_commands
             .iter()
             .chain(
@@ -232,7 +154,7 @@ impl Policy {
     }
 
     /// Effective config rules for a device = defaults ⊕ device.
-    pub fn config_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+    pub fn config_rules_for(&self, router: &str) -> Vec<&CompiledRule<Action>> {
         self.default_config
             .iter()
             .chain(
@@ -254,7 +176,7 @@ impl Policy {
     }
 
     /// Effective PFE-command rules for a device = defaults ⊕ device.
-    pub fn pfe_command_rules_for(&self, router: &str) -> Vec<&CompiledRule> {
+    pub fn pfe_command_rules_for(&self, router: &str) -> Vec<&CompiledRule<Action>> {
         self.default_pfe_commands
             .iter()
             .chain(

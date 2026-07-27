@@ -42,8 +42,8 @@ use crate::SrxError;
 use crate::workflows::signature_package::{
     ConfirmationBinding, ConfirmationStore, Service, confirmation_token_for_request,
 };
-use rust_junosmcp_core::DeviceLeaseManager;
 use rust_junosmcp_core::device_manager::PooledDevice;
+use rust_junosmcp_core::{DeviceLeaseManager, DeviceLock};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -729,7 +729,8 @@ pub async fn download_and_install(
                     "manage_idp_security_package/download_and_install",
                     &validated.correlation_id,
                 )
-                .await?;
+                .await
+                .map_err(rust_junosmcp_core::JmcpError::from)?;
             let (snapshot, _blockers) = preflight(device, args).await?;
             let current_plan = match build_plan(&snapshot, args.version.as_deref(), &[]) {
                 PlanOutcome::NeedsConfirmation(plan) => serde_json::to_value(&plan)
@@ -1220,7 +1221,8 @@ pub async fn rollback(
                     "manage_idp_security_package/rollback",
                     &validated.correlation_id,
                 )
-                .await?;
+                .await
+                .map_err(rust_junosmcp_core::JmcpError::from)?;
             let (snapshot, _blockers) = preflight_rollback(device, args).await?;
             let current_plan = serde_json::to_value(build_rollback_plan(&snapshot, &[])?)
                 .map_err(|e| SrxError::Parse(format!("serializing ConfirmationPlan: {e}")))?;

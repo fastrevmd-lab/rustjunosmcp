@@ -6,6 +6,24 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Policy, inventory, and device locking now come from the shared `mecmcp-*`
+  crates** (`phase4-v0.1.7`). No user-visible change: `devices.json` parses
+  exactly as before — flat map, `_blocklist_defaults`, and all — every CLI flag
+  keeps its spelling, and SIGHUP hot reload is unaffected.
+
+  The local `policy.rs`, `device_lease.rs`, and `cancel.rs` are gone and
+  `inventory.rs` is reduced to Junos-specific validation over the shared loader.
+  Device locking keeps its cross-process semantics: a kernel file lock held by
+  an open descriptor, released on process death, so a long-running
+  `upgrade_junos` still cannot be raced by a second process. It is not a
+  semaphore.
+
+  Test coverage for the extracted modules moved upstream and grew — 10 test
+  functions left this repo, 18 cover the same ground in `mecmcp-device`.
+
+
 ### Added
 
 - **`--devices` is the new spelling for token device scopes.** `token add` and

@@ -3,7 +3,8 @@
 
 #![cfg(unix)]
 
-use rust_junosmcp_core::{DeviceLeaseManager, JmcpError};
+use mecmcp_device::DeviceLockError;
+use rust_junosmcp_core::{DeviceLeaseManager, DeviceLock};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -72,7 +73,7 @@ async fn another_process_is_blocked_and_kernel_releases_lease_after_crash() {
         .acquire("srx-01", "upgrade_junos", "parent-upgrade")
         .await
         .unwrap_err();
-    assert!(matches!(busy, JmcpError::DeviceLeaseBusy { .. }));
+    assert!(matches!(busy, DeviceLockError::Busy { .. }));
 
     child.0.kill().unwrap();
     let status = child.0.wait().unwrap();

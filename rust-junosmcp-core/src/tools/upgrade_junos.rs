@@ -562,7 +562,6 @@ Filesystem  Size Used Avail Capacity Mounted on
     }
 }
 
-use crate::DeviceLeaseManager;
 use crate::cancel::{select_cancel, select_cancel_raw};
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -571,6 +570,7 @@ use crate::tools::UpgradeJunosArgs;
 use crate::tools::transfer_file::{
     TransferConfig, sha256_file_cancellable, validate_source_basename,
 };
+use crate::{DeviceLeaseManager, DeviceLock};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -634,7 +634,7 @@ async fn run_probe(
     phase: &'static str,
     ct: &CancellationToken,
 ) -> Result<String, JmcpError> {
-    select_cancel_raw(ct, dev.cli(command))
+    select_cancel_raw::<_, _, JmcpError>(ct, dev.cli(command))
         .await?
         .map_err(|e| JmcpError::DeviceProbeFailed {
             phase: phase.into(),
@@ -661,7 +661,7 @@ async fn open_validated(
     ct: &CancellationToken,
 ) -> Result<(crate::device_manager::PooledDevice, String), JmcpError> {
     let mut dev = select_cancel(ct, dm.open(router)).await?;
-    match select_cancel_raw(ct, dev.cli(command)).await? {
+    match select_cancel_raw::<_, _, JmcpError>(ct, dev.cli(command)).await? {
         Ok(out) => Ok((dev, out)),
         Err(e) if error_indicates_stale_session(&e.to_string()) => {
             tracing::warn!(
@@ -1112,7 +1112,7 @@ async fn capture_baseline(
     let mut out = std::collections::BTreeMap::new();
     let mut dev = select_cancel(ct, dm.open(router)).await?;
     for cmd in BASELINE_COMMANDS {
-        match select_cancel_raw(ct, dev.cli(cmd)).await? {
+        match select_cancel_raw::<_, _, JmcpError>(ct, dev.cli(cmd)).await? {
             Ok(s) => {
                 out.insert((*cmd).to_string(), s);
             }
@@ -1444,12 +1444,15 @@ where
     Fut: std::future::Future<Output = Result<String, JmcpError>>,
 {
     let start = std::time::Instant::now();
-    select_cancel_raw(ct, tokio::time::sleep(initial_delay)).await?;
+    select_cancel_raw::<_, _, JmcpError>(ct, tokio::time::sleep(initial_delay)).await?;
 
     let mut last_observed: Option<String> = None;
     loop {
-        let attempt =
-            select_cancel_raw(ct, tokio::time::timeout(attempt_deadline, probe())).await?;
+        let attempt = select_cancel_raw::<_, _, JmcpError>(
+            ct,
+            tokio::time::timeout(attempt_deadline, probe()),
+        )
+        .await?;
         match attempt {
             // Probe succeeded and we parsed a version.
             Ok(Ok(output)) => {
@@ -1489,7 +1492,7 @@ where
             };
         }
 
-        select_cancel_raw(ct, tokio::time::sleep(poll_interval)).await?;
+        select_cancel_raw::<_, _, JmcpError>(ct, tokio::time::sleep(poll_interval)).await?;
     }
 }
 
