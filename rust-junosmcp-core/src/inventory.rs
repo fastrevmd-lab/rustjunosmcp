@@ -353,15 +353,6 @@ pub struct Inventory {
     source_path: PathBuf,
 }
 
-/// Internal representation matching the on-disk JSON schema.
-#[derive(Deserialize)]
-struct InventoryFile {
-    #[serde(default, rename = "_blocklist_defaults")]
-    blocklist_defaults: Option<BlocklistRules>,
-    #[serde(flatten)]
-    devices: HashMap<String, DeviceEntry>,
-}
-
 impl Inventory {
     /// Construct an empty inventory. Useful for tests that don't need real devices.
     pub fn empty() -> Self {
@@ -374,27 +365,40 @@ impl Inventory {
 
     /// Load and validate a `devices.json` file.
     ///
-    /// Uses `mecmcp-inventory` for schema validation (supports both Junos flat-map
-    /// and PAN-OS envelope), then parses again with our own types to avoid async
-    /// extraction. The dual parse ensures we benefit from the shared loader's
-    /// schema detection while keeping our synchronous API.
+    /// Parsing is delegated to `mecmcp-inventory`, which detects the Junos
+    /// flat-map schema — including the `_blocklist_defaults` key, which is
+    /// policy rather than a device — and returns owned values. The
+    /// Junos-specific validators below then run over the result; they encode
+    /// SSH and Junos rules the shared crate has no business knowing.
+    ///
+    /// An earlier version parsed the file **twice**: once through the shared
+    /// loader, discarding the result, then again with local types. That was not
+    /// gratuitous — the trait's `get` and `policy` were unimplementable against
+    /// interior mutability and returned `Err`/`None` unconditionally, so there
+    /// was nothing to delegate to. Fixed upstream in `phase4-v0.1.7`; the
+    /// second parse is gone, along with the risk of two parsers drifting apart.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
-        // First pass: validate with mecmcp-inventory to ensure schema compatibility
-        mecmcp_inventory::FileInventory::<DeviceEntry, BlocklistRules>::load(path)
-            .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
+        use mecmcp_inventory::Inventory as _;
 
-        // Second pass: parse with our own types for synchronous access.
-        // This is the same as the old implementation but now we know the schema
-        // is valid per mecmcp-inventory's dual-schema loader.
-        let bytes = std::fs::read(path)?;
-        let file: InventoryFile = serde_json::from_slice(&bytes)
-            .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
+        let shared = mecmcp_inventory::FileInventory::<DeviceEntry, BlocklistRules>::load(path)
+            .map_err(|error| JmcpError::InventoryInvalid(error.to_string()))?;
 
-        Self::validate(&file.devices)?;
+        let devices: HashMap<String, DeviceEntry> = shared
+            .names()
+            .into_iter()
+            .map(|name| {
+                let entry = shared
+                    .get(&name)
+                    .map_err(|error| JmcpError::InventoryInvalid(error.to_string()))?;
+                Ok((name, entry))
+            })
+            .collect::<Result<_, JmcpError>>()?;
+
+        Self::validate(&devices)?;
 
         Ok(Self {
-            devices: file.devices,
-            blocklist_defaults: file.blocklist_defaults,
+            devices,
+            blocklist_defaults: shared.policy(),
             source_path: path.to_path_buf(),
         })
     }
