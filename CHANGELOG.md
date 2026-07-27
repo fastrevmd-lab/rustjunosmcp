@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-27
+
 ### Changed
 
 - **Policy, inventory, and device locking now come from the shared `mecmcp-*`
