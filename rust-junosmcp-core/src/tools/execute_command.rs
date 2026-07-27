@@ -18,9 +18,7 @@ pub async fn handle(
     // Fail fast on unknown devices so the policy check has a valid target.
     let _ = dm.inventory().get(&args.device)?;
 
-    if let Decision::Deny { rule, source, .. } =
-        policy.check_command(&args.device, &args.command)
-    {
+    if let Decision::Deny { rule, source, .. } = policy.check_command(&args.device, &args.command) {
         let pattern = rule.pattern.clone();
         let source_str = source.as_str();
         tracing::warn!(

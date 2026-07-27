@@ -71,11 +71,9 @@ pub async fn handle(
         // Per-router serialization (shared with transfer_file). Acquired AFTER
         // basename validation so an obviously-bogus path never queues behind a
         // live transfer.
-        let _permit = select_cancel_raw::<_, _, JmcpError>(
-            &ct,
-            cfg.transfer_locks.acquire(&args.device),
-        )
-        .await?;
+        let _permit =
+            select_cancel_raw::<_, _, JmcpError>(&ct, cfg.transfer_locks.acquire(&args.device))
+                .await?;
 
         // Resolve device + check auth type. Snapshot the fields we need before
         // dropping the borrow so we can hand `dm` to `dm.open(...)` below.

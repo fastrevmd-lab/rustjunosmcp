@@ -254,7 +254,10 @@ pub struct ExecuteBatchArgs {
     #[serde(default)]
     pub batch_timeout: Option<u64>,
     /// Maximum number of devices in flight concurrently.
-    #[serde(alias = "max_concurrent_routers", default = "default_max_concurrent_devices")]
+    #[serde(
+        alias = "max_concurrent_routers",
+        default = "default_max_concurrent_devices"
+    )]
     pub max_concurrent_devices: u32,
     /// Cap output to at most N lines (head; use `tail` for the last N).
     #[serde(default)]

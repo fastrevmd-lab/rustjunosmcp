@@ -31,19 +31,25 @@ fn all_v0_12_0_arguments_still_deserialize() {
             let value = match arg_name.as_str() {
                 // String fields (v0.12.0 names ONLY)
                 "command" | "pfe_command" | "fpc_target" | "config_text" | "config_format"
-                | "commit_comment" | "feature" | "problem_type" | "request_id"
-                | "local_name" | "remote_path" | "config_path" | "peer" | "tunnel"
-                | "router" | "router_name" => Value::String("test".into()),
-
-                // Vec<String> fields (v0.12.0 names ONLY)
-                "commands" | "routers" => {
-                    Value::Array(vec![Value::String("test".into())])
+                | "commit_comment" | "feature" | "problem_type" | "request_id" | "local_name"
+                | "remote_path" | "config_path" | "peer" | "tunnel" | "router" | "router_name" => {
+                    Value::String("test".into())
                 }
 
+                // Vec<String> fields (v0.12.0 names ONLY)
+                "commands" | "routers" => Value::Array(vec![Value::String("test".into())]),
+
                 // Numeric fields (v0.12.0 names ONLY)
-                "timeout" | "command_timeout" | "batch_timeout" | "max_concurrent_routers"
-                | "max_log_bytes_per_file" | "max_log_files"
-                | "device_port" | "version" | "max_lines" | "max_bytes"
+                "timeout"
+                | "command_timeout"
+                | "batch_timeout"
+                | "max_concurrent_routers"
+                | "max_log_bytes_per_file"
+                | "max_log_files"
+                | "device_port"
+                | "version"
+                | "max_lines"
+                | "max_bytes"
                 | "confirm_timeout_mins" => Value::Number(60.into()),
 
                 // Boolean fields
@@ -63,19 +69,38 @@ fn all_v0_12_0_arguments_still_deserialize() {
         // Attempt deserialization. We don't care if the struct rejects the VALUES,
         // only that it accepts the ARGUMENT NAMES (serde aliases).
         let result: Result<(), serde_json::Error> = match tool_name.as_str() {
-            "execute_junos_command" => serde_json::from_value::<ExecuteCommandArgs>(json_val.clone()).map(|_| ()),
-            "execute_junos_command_batch" => serde_json::from_value::<ExecuteBatchArgs>(json_val.clone()).map(|_| ()),
-            "execute_junos_pfe_command" => serde_json::from_value::<ExecutePfeArgs>(json_val.clone()).map(|_| ()),
-            "gather_device_facts" => serde_json::from_value::<GatherFactsArgs>(json_val.clone()).map(|_| ()),
-            "get_junos_config" => serde_json::from_value::<GetConfigArgs>(json_val.clone()).map(|_| ()),
-            "commit_check_config" => serde_json::from_value::<CommitCheckArgs>(json_val.clone()).map(|_| ()),
-            "junos_config_diff" => serde_json::from_value::<ConfigDiffArgs>(json_val.clone()).map(|_| ()),
+            "execute_junos_command" => {
+                serde_json::from_value::<ExecuteCommandArgs>(json_val.clone()).map(|_| ())
+            }
+            "execute_junos_command_batch" => {
+                serde_json::from_value::<ExecuteBatchArgs>(json_val.clone()).map(|_| ())
+            }
+            "execute_junos_pfe_command" => {
+                serde_json::from_value::<ExecutePfeArgs>(json_val.clone()).map(|_| ())
+            }
+            "gather_device_facts" => {
+                serde_json::from_value::<GatherFactsArgs>(json_val.clone()).map(|_| ())
+            }
+            "get_junos_config" => {
+                serde_json::from_value::<GetConfigArgs>(json_val.clone()).map(|_| ())
+            }
+            "commit_check_config" => {
+                serde_json::from_value::<CommitCheckArgs>(json_val.clone()).map(|_| ())
+            }
+            "junos_config_diff" => {
+                serde_json::from_value::<ConfigDiffArgs>(json_val.clone()).map(|_| ())
+            }
             "fetch_file" => serde_json::from_value::<FetchFileArgs>(json_val.clone()).map(|_| ()),
-            "list_staged_files" => serde_json::from_value::<ListStagedFilesArgs>(json_val.clone()).map(|_| ()),
+            "list_staged_files" => {
+                serde_json::from_value::<ListStagedFilesArgs>(json_val.clone()).map(|_| ())
+            }
             // SRX tools not in rust-junosmcp-core — skip for now
-            "check_srx_feature_license" | "collect_jtac_support_bundle"
-            | "get_chassis_cluster_status" | "get_srx_security_services_status"
-            | "validate_chassis_cluster_health" | "vpn_lifecycle_report" => continue,
+            "check_srx_feature_license"
+            | "collect_jtac_support_bundle"
+            | "get_chassis_cluster_status"
+            | "get_srx_security_services_status"
+            | "validate_chassis_cluster_health"
+            | "vpn_lifecycle_report" => continue,
             // Tools with no arguments or tools we'll verify separately
             "get_router_list" | "srxmcp_status" => continue,
             _ => {

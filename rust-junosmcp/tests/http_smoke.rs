@@ -259,7 +259,11 @@ fn get_router_list_alias_still_works() {
             "arguments":{}
         }}),
     );
-    assert_eq!(response.code, 200, "get_router_list failed: {}", response.body);
+    assert_eq!(
+        response.code, 200,
+        "get_router_list failed: {}",
+        response.body
+    );
     let text = response
         .body
         .pointer("/result/content/0/text")

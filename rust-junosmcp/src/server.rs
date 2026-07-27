@@ -523,12 +523,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(
-            ctx,
-            "get_junos_config",
-            "read",
-            vec![args.device.clone()],
-        );
+        let mut audit = audit_scope(ctx, "get_junos_config", "read", vec![args.device.clone()]);
         // Record the requested subtree. config_path is caller-controlled and is
         // the input the allowlist and the blocklist both act on, so a denial
         // whose event does not name it tells an investigator only that someone
@@ -582,12 +577,7 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(
-            ctx,
-            "junos_config_diff",
-            "read",
-            vec![args.device.clone()],
-        );
+        let mut audit = audit_scope(ctx, "junos_config_diff", "read", vec![args.device.clone()]);
 
         if let Err(e) = self.check_tool_scope(ctx, "junos_config_diff") {
             audit.deny("tool_scope");
@@ -797,8 +787,7 @@ impl JmcpHandler {
             audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
-        if let Err(e) = self.check_router_scope(ctx, "execute_junos_pfe_command", &args.device)
-        {
+        if let Err(e) = self.check_router_scope(ctx, "execute_junos_pfe_command", &args.device) {
             audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
@@ -1007,12 +996,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(
-            ctx,
-            "transfer_file",
-            "transfer",
-            vec![args.device.clone()],
-        );
+        let mut audit = audit_scope(ctx, "transfer_file", "transfer", vec![args.device.clone()]);
 
         if let Err(e) = self.check_tool_scope(ctx, "transfer_file") {
             audit.deny("tool_scope");
@@ -1086,12 +1070,7 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(
-            ctx,
-            "upgrade_junos",
-            "upgrade",
-            vec![args.device.clone()],
-        );
+        let mut audit = audit_scope(ctx, "upgrade_junos", "upgrade", vec![args.device.clone()]);
 
         if let Err(e) = self.check_tool_scope(ctx, "upgrade_junos") {
             audit.deny("tool_scope");
@@ -1252,7 +1231,6 @@ mod scope_tests {
     }
 
     #[test]
-    #[ignore] // Intentionally changed in feat/devices-terminology — will update baseline post-merge
     fn junos_schemas_match_pre_merge_baseline() {
         let expected: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(include_str!("../tests/fixtures/junos-tools-v0.7.json")).unwrap();

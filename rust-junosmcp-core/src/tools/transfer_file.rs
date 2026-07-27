@@ -1569,11 +1569,9 @@ pub async fn handle(
             step = "lock_acquire_pre",
             "transfer_file.step_diag"
         );
-        let _permit = select_cancel_raw::<_, _, JmcpError>(
-            &ct,
-            cfg.transfer_locks.acquire(&args.device),
-        )
-        .await?;
+        let _permit =
+            select_cancel_raw::<_, _, JmcpError>(&ct, cfg.transfer_locks.acquire(&args.device))
+                .await?;
         tracing::info!(
             router = %args.device,
             step = "lock_acquire_post",
