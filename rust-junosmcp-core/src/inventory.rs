@@ -244,7 +244,7 @@ mod auth_tests {
 }
 
 /// `deny` blocks the tool call; `allow` overrides a broader deny.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     Deny,
@@ -252,7 +252,7 @@ pub enum Action {
 }
 
 /// One author-side rule: an action and a glob pattern.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuleSpec {
     pub action: Action,
     pub pattern: String,
@@ -260,7 +260,7 @@ pub struct RuleSpec {
 
 /// Per-domain rule lists (commands → execute_junos_command,
 /// config → load_and_commit_config).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BlocklistRules {
     #[serde(default)]
     pub commands: Vec<RuleSpec>,
@@ -275,7 +275,7 @@ fn default_port() -> u16 {
 }
 
 /// One entry in `devices.json`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeviceEntry {
     pub ip: String,
     #[serde(default = "default_port")]
@@ -342,12 +342,18 @@ use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
+/// Junos inventory wrapping `mecmcp-inventory::FileInventory`.
+///
+/// Maintains the synchronous interface the server uses while delegating
+/// schema validation to the shared crate. The flat-map schema with
+/// `_blocklist_defaults` is validated by FileInventory's dual-schema parser.
 pub struct Inventory {
     devices: HashMap<String, DeviceEntry>,
     blocklist_defaults: Option<BlocklistRules>,
     source_path: PathBuf,
 }
 
+/// Internal representation matching the on-disk JSON schema.
 #[derive(Deserialize)]
 struct InventoryFile {
     #[serde(default, rename = "_blocklist_defaults")]
@@ -367,11 +373,25 @@ impl Inventory {
     }
 
     /// Load and validate a `devices.json` file.
+    ///
+    /// Uses `mecmcp-inventory` for schema validation (supports both Junos flat-map
+    /// and PAN-OS envelope), then parses again with our own types to avoid async
+    /// extraction. The dual parse ensures we benefit from the shared loader's
+    /// schema detection while keeping our synchronous API.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
+        // First pass: validate with mecmcp-inventory to ensure schema compatibility
+        mecmcp_inventory::FileInventory::<DeviceEntry, BlocklistRules>::load(path)
+            .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
+
+        // Second pass: parse with our own types for synchronous access.
+        // This is the same as the old implementation but now we know the schema
+        // is valid per mecmcp-inventory's dual-schema loader.
         let bytes = std::fs::read(path)?;
         let file: InventoryFile = serde_json::from_slice(&bytes)
             .map_err(|e| JmcpError::InventoryInvalid(e.to_string()))?;
+
         Self::validate(&file.devices)?;
+
         Ok(Self {
             devices: file.devices,
             blocklist_defaults: file.blocklist_defaults,
