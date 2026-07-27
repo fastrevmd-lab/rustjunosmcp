@@ -825,7 +825,7 @@ mod argv_tests {
 /// (download) so the branch order can't drift between the two paths.
 pub(crate) fn classify_scp_failure(
     outcome: &ScpOutcome,
-    router_name: &str,
+    device_name: &str,
     known_hosts_file: &std::path::Path,
 ) -> crate::error::JmcpError {
     use crate::error::JmcpError;
@@ -839,7 +839,7 @@ pub(crate) fn classify_scp_failure(
             .contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
     {
         return JmcpError::HostKeyMismatch {
-            router: router_name.to_string(),
+            router: device_name.to_string(),
             known_hosts_file: known_hosts_file.to_path_buf(),
         };
     }
@@ -847,7 +847,7 @@ pub(crate) fn classify_scp_failure(
         && (outcome.stderr.contains("Connection timed out")
             || outcome.stderr.contains("No route to host"))
     {
-        return JmcpError::ConnectTimeout(router_name.to_string());
+        return JmcpError::ConnectTimeout(device_name.to_string());
     }
     JmcpError::ScpFailed {
         exit_code: outcome.exit_code,
@@ -1556,7 +1556,7 @@ pub async fn handle(
             }
         }
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             host_key_policy = if cfg.accept_new_host_keys { "accept-new" } else { "strict" },
             "transfer_file: host-key policy"
         );
@@ -1565,17 +1565,17 @@ pub async fn handle(
         // a live transfer. Permit is dropped at end-of-block (success or
         // error) when `_permit` falls out of scope.
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "lock_acquire_pre",
             "transfer_file.step_diag"
         );
         let _permit = select_cancel_raw::<_, _, JmcpError>(
             &ct,
-            cfg.transfer_locks.acquire(&args.router_name),
+            cfg.transfer_locks.acquire(&args.device),
         )
         .await?;
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "lock_acquire_post",
             "transfer_file.step_diag"
         );
@@ -1603,14 +1603,14 @@ pub async fn handle(
         }
         // Compute local sha256 + size (streamed).
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "sha256_pre",
             local_path = %local_path.display(),
             "transfer_file.step_diag"
         );
         let (local_sha, local_size) = sha256_file_cancellable(&local_path, &ct).await?;
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "sha256_post",
             local_size,
             "transfer_file.step_diag"
@@ -1624,10 +1624,10 @@ pub async fn handle(
         // Resolve device + check auth type. Snapshot the fields we need before
         // dropping the borrow so we can hand `dm` to `dm.open(...)` below.
         let inv = dm.inventory();
-        let entry = inv.get(&args.router_name)?;
+        let entry = inv.get(&args.device)?;
         let private_key_path = match &entry.auth {
             AuthConfig::Password { .. } => {
-                return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+                return Err(JmcpError::UnsupportedAuth(args.device.clone()));
             }
             AuthConfig::SshKey { private_key_path } => private_key_path.clone(),
         };
@@ -1641,13 +1641,13 @@ pub async fn handle(
 
         // Open pooled NETCONF session for the pre-flight + post-verify CLI calls.
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "dm_open_pre",
             "transfer_file.step_diag"
         );
-        let mut dev = select_cancel(&ct, dm.open(&args.router_name)).await?;
+        let mut dev = select_cancel(&ct, dm.open(&args.device)).await?;
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "dm_open_post",
             "transfer_file.step_diag"
         );
@@ -1666,7 +1666,7 @@ pub async fn handle(
             return Err(JmcpError::InsufficientDisk {
                 free: free_bytes,
                 required,
-                message: format!("device '{}' /var/tmp", args.router_name),
+                message: format!("device '{}' /var/tmp", args.device),
             });
         }
 
@@ -1680,7 +1680,7 @@ pub async fn handle(
             })?;
         let remote_sha_pre = parse_checksum_output(&probe_out)?;
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             step = "remote_checksum_done",
             remote_sha_some = remote_sha_pre.is_some(),
             "transfer_file.step_diag"
@@ -1711,7 +1711,7 @@ pub async fn handle(
             accept_new_host_keys: cfg.accept_new_host_keys,
         };
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             phase = "scp_start",
             "transfer_file.scp_diag"
         );
@@ -1724,7 +1724,7 @@ pub async fn handle(
                 _ => JmcpError::Io(e),
             })?;
         tracing::info!(
-            router = %args.router_name,
+            router = %args.device,
             phase = "scp_done",
             exit_code = outcome.exit_code,
             "transfer_file.scp_diag"
@@ -1732,7 +1732,7 @@ pub async fn handle(
         if outcome.exit_code != 0 {
             return Err(classify_scp_failure(
                 &outcome,
-                &args.router_name,
+                &args.device,
                 &cfg.known_hosts_file,
             ));
         }
@@ -1914,7 +1914,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "../etc/passwd".into(),
                 force: false,
                 verify: true,
@@ -1945,7 +1945,7 @@ mod handle_validation_tests {
         c.known_hosts_file = dir.path().join("no-such-known_hosts");
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "foo.tgz".into(),
                 force: false,
                 verify: true,
@@ -1972,7 +1972,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "missing.tgz".into(),
                 force: false,
                 verify: true,
@@ -1997,7 +1997,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "foo.tgz".into(),
                 force: false,
                 verify: true,
@@ -2028,7 +2028,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "link.tgz".into(),
                 force: false,
                 verify: true,
@@ -2061,7 +2061,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 source_path: "subdir".into(),
                 force: false,
                 verify: true,
@@ -2097,7 +2097,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             TransferFileArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 source_path: "foo.tgz".into(),
                 force: false,
                 verify: true,
@@ -2131,7 +2131,7 @@ mod handle_validation_tests {
             std::time::Duration::from_millis(200),
             handle(
                 TransferFileArgs {
-                    router_name: "r1".into(),
+                    device: "r1".into(),
                     // Deliberately invalid basename: if the cancel pre-check
                     // were skipped we would observe `BadSourcePath` instead.
                     source_path: "../etc/passwd".into(),

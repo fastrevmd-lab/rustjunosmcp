@@ -28,7 +28,7 @@ pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Valu
     let version = validate_rollback_version(args.version)?;
     let timeout = Duration::from_secs(args.timeout);
     let result = tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(&args.router_name).await?;
+        let mut dev = dm.open(&args.device).await?;
         let cmd = format!("show configuration | compare rollback {version}");
         match dev.cli(&cmd).await {
             Ok(diff) => Ok::<_, JmcpError>(diff),
@@ -69,7 +69,7 @@ mod tests {
     async fn accepts_version_zero() {
         let r = handle(
             ConfigDiffArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 version: 0,
                 timeout: 5,
             },
@@ -84,7 +84,7 @@ mod tests {
     async fn rejects_version_50_before_connecting() {
         let r = handle(
             ConfigDiffArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 version: 50,
                 timeout: 5,
             },

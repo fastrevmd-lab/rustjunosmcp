@@ -51,13 +51,13 @@ fn default_set_format() -> String {
 fn default_commit_comment() -> String {
     "Configuration loaded via MCP".into()
 }
-fn default_max_concurrent_routers() -> u32 {
+fn default_max_concurrent_devices() -> u32 {
     16
 }
 
 /// Deserialize a `Vec<String>` from either a JSON string (→ one-element vec)
-/// or a JSON array of strings. Lets the batch `routers` field accept a single
-/// router name as well as a list.
+/// or a JSON array of strings. Lets the batch `devices` field accept a single
+/// device name as well as a list.
 fn string_or_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -79,10 +79,10 @@ pub struct EmptyArgs {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteCommandArgs {
-    /// The name of the router.
-    #[serde(alias = "router")]
-    pub router_name: String,
-    /// The command to execute on the router.
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
+    /// The command to execute on the device.
     pub command: String,
     /// Command timeout in seconds.
     #[serde(default = "default_timeout")]
@@ -100,8 +100,9 @@ pub struct ExecuteCommandArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetConfigArgs {
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -114,8 +115,9 @@ pub struct GetConfigArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ConfigDiffArgs {
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Rollback version to compare against (0-49). 0 = candidate vs committed (what is staged now); N>=1 = committed vs the Nth-previous commit.
     #[serde(default = "default_version")]
     pub version: i64,
@@ -126,8 +128,9 @@ pub struct ConfigDiffArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GatherFactsArgs {
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -135,8 +138,9 @@ pub struct GatherFactsArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LoadCommitArgs {
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// The configuration text to load.
     pub config_text: String,
     /// Format: set, text, or xml.
@@ -146,7 +150,7 @@ pub struct LoadCommitArgs {
     #[serde(default = "default_commit_comment")]
     pub commit_comment: String,
     /// If set, uses confirmed commit with auto-rollback after N minutes.
-    /// The router will automatically revert if not confirmed within this window.
+    /// The device will automatically revert if not confirmed within this window.
     #[serde(default)]
     #[schemars(range(min = 1, max = 71_582_788))]
     pub confirm_timeout_mins: Option<u32>,
@@ -157,8 +161,9 @@ pub struct LoadCommitArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CommitCheckArgs {
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// The configuration text to validate.
     pub config_text: String,
     /// Format: set, text, or xml.
@@ -171,9 +176,9 @@ pub struct CommitCheckArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DiscardCandidateArgs {
-    /// The target router. Accepts `router` or `router_name`.
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The target device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -181,9 +186,9 @@ pub struct DiscardCandidateArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RollbackConfigArgs {
-    /// The target router. Accepts `router` or `router_name`.
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The target device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Rollback version to load (0-49). 0 = candidate vs committed (discard);
     /// N>=1 = the Nth-previous archived config.
     pub version: i64,
@@ -208,9 +213,9 @@ pub struct RollbackConfigArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecutePfeArgs {
-    /// The name of the router.
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// The name of the device.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// FPC target, e.g. `fpc0`.
     pub fpc_target: String,
     /// PFE command to execute (no surrounding quotes).
@@ -231,15 +236,16 @@ pub struct ExecutePfeArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteBatchArgs {
-    /// Routers to execute against. Must be non-empty. Accepts a list, or a
-    /// single router name; the keys `router` / `router_name` are also accepted.
+    /// Devices to execute against. Must be non-empty. Accepts a list, or a
+    /// single device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.
     #[serde(
+        alias = "routers",
         alias = "router",
         alias = "router_name",
         deserialize_with = "string_or_vec"
     )]
-    pub routers: Vec<String>,
-    /// Operational CLI commands to run sequentially per router. Must be non-empty.
+    pub devices: Vec<String>,
+    /// Operational CLI commands to run sequentially per device. Must be non-empty.
     pub commands: Vec<String>,
     /// Per-command timeout in seconds.
     #[serde(default = "default_timeout")]
@@ -247,9 +253,9 @@ pub struct ExecuteBatchArgs {
     /// Optional whole-batch wall-clock ceiling in seconds.
     #[serde(default)]
     pub batch_timeout: Option<u64>,
-    /// Maximum number of routers in flight concurrently.
-    #[serde(default = "default_max_concurrent_routers")]
-    pub max_concurrent_routers: u32,
+    /// Maximum number of devices in flight concurrently.
+    #[serde(alias = "max_concurrent_routers", default = "default_max_concurrent_devices")]
+    pub max_concurrent_devices: u32,
     /// Cap output to at most N lines (head; use `tail` for the last N).
     #[serde(default)]
     pub max_lines: Option<u32>,
@@ -270,12 +276,12 @@ pub struct TemplateArgs {
     /// object. Capped at 64 KiB. YAML is **not** accepted as of v0.5.2
     /// (RJMCP-SEC-002).
     pub vars_content: String,
-    /// Single router to apply to. Mutually exclusive with `router_names`.
-    #[serde(default, alias = "router")]
-    pub router_name: Option<String>,
-    /// Multiple routers to apply to. Mutually exclusive with `router_name`.
-    #[serde(default)]
-    pub router_names: Option<Vec<String>>,
+    /// Single device to apply to. Mutually exclusive with `device_names`.
+    #[serde(default, alias = "router_name", alias = "router")]
+    pub device_name: Option<String>,
+    /// Multiple devices to apply to. Mutually exclusive with `device_name`.
+    #[serde(default, alias = "router_names")]
+    pub device_names: Option<Vec<String>>,
     /// If false (default), only renders and returns the rendered string.
     #[serde(default)]
     pub apply_config: bool,
@@ -288,7 +294,7 @@ pub struct TemplateArgs {
     /// Override format detection ('set', 'text', 'xml'). Auto-detected if omitted.
     #[serde(default)]
     pub config_format: Option<String>,
-    /// Connection timeout in seconds (per-router).
+    /// Connection timeout in seconds (per-device).
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 }
@@ -322,9 +328,9 @@ pub struct ReloadDevicesArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TransferFileArgs {
-    /// Target router name (must exist in inventory and use ssh_key auth).
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// Target device name (must exist in inventory and use ssh_key auth).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Basename of the file under the staging dir. Must not contain '/', '\\', or '..'.
     pub source_path: String,
     /// Overwrite if dest exists with different sha256. Default false.
@@ -340,9 +346,9 @@ pub struct TransferFileArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FetchFileArgs {
-    /// Source router name (must exist in inventory and use ssh_key auth).
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// Source device name (must exist in inventory and use ssh_key auth).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Basename of the file under the device's /var/tmp/. Must not contain
     /// '/', '\\', or '..'. Same allowlist as transfer_file.
     pub remote_path: String,
@@ -363,9 +369,9 @@ pub struct FetchFileArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListStagedFilesArgs {
-    /// Optional router name. If present, also lists the device's /var/tmp/.
-    #[serde(default, alias = "router")]
-    pub router_name: Option<String>,
+    /// Optional device name. If present, also lists the device's /var/tmp/.
+    #[serde(default, alias = "router_name", alias = "router")]
+    pub device: Option<String>,
     /// Per-call timeout in seconds. Default 30.
     #[serde(default = "default_list_staged_timeout")]
     pub timeout: u64,
@@ -373,9 +379,9 @@ pub struct ListStagedFilesArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpgradeJunosArgs {
-    /// Target router (must exist in inventory and use ssh_key auth).
-    #[serde(alias = "router")]
-    pub router_name: String,
+    /// Target device (must exist in inventory and use ssh_key auth).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Basename of the staged image under the staging dir. Validated
     /// against the same ASCII allowlist as transfer_file.
     pub source_path: String,
@@ -443,7 +449,7 @@ mod tests {
     fn discard_candidate_defaults_timeout_and_router_alias() {
         let a: DiscardCandidateArgs =
             serde_json::from_value(serde_json::json!({"router":"r1"})).unwrap();
-        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.device, "r1");
         assert_eq!(a.timeout, 360);
     }
 
@@ -451,7 +457,7 @@ mod tests {
     fn rollback_config_defaults_commit_false_and_timeout() {
         let v = serde_json::json!({"router_name":"r1","version":5});
         let a: RollbackConfigArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.device, "r1");
         assert_eq!(a.version, 5);
         assert!(!a.commit);
         assert!(a.confirm_timeout_mins.is_none());
@@ -512,7 +518,7 @@ mod tests {
         let v = serde_json::json!({"routers":["r1","r2"],"commands":["show version"]});
         let a: ExecuteBatchArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.command_timeout, 360);
-        assert_eq!(a.max_concurrent_routers, 16);
+        assert_eq!(a.max_concurrent_devices, 16);
         assert!(a.batch_timeout.is_none());
     }
 
@@ -524,7 +530,7 @@ mod tests {
         });
         let a: ExecuteBatchArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.batch_timeout, Some(600));
-        assert_eq!(a.max_concurrent_routers, 4);
+        assert_eq!(a.max_concurrent_devices, 4);
     }
 
     #[test]
@@ -538,8 +544,8 @@ mod tests {
         assert!(!a.apply_config);
         assert!(!a.dry_run);
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
-        assert_eq!(a.router_name.as_deref(), Some("r1"));
-        assert!(a.router_names.is_none());
+        assert_eq!(a.device_name.as_deref(), Some("r1"));
+        assert!(a.device_names.is_none());
         assert_eq!(a.timeout, 360);
     }
 
@@ -552,7 +558,7 @@ mod tests {
         });
         let a: TemplateArgs = serde_json::from_value(v).unwrap();
         assert_eq!(
-            a.router_names.as_deref(),
+            a.device_names.as_deref(),
             Some(&["r1".into(), "r2".into()][..])
         );
     }
@@ -594,7 +600,7 @@ mod tests {
     fn transfer_file_args_defaults() {
         let v = serde_json::json!({"router_name":"r1","source_path":"foo.tgz"});
         let a: TransferFileArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.device, "r1");
         assert_eq!(a.source_path, "foo.tgz");
         assert!(!a.force);
         assert!(a.verify);
@@ -612,7 +618,7 @@ mod tests {
     fn list_staged_files_args_router_optional() {
         let v = serde_json::json!({});
         let a: ListStagedFilesArgs = serde_json::from_value(v).unwrap();
-        assert!(a.router_name.is_none());
+        assert!(a.device.is_none());
         assert_eq!(a.timeout, 30);
     }
 
@@ -620,7 +626,7 @@ mod tests {
     fn list_staged_files_args_with_router() {
         let v = serde_json::json!({"router_name":"vSRX-test10"});
         let a: ListStagedFilesArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(a.router_name.as_deref(), Some("vSRX-test10"));
+        assert_eq!(a.device.as_deref(), Some("vSRX-test10"));
     }
 
     #[test]
@@ -631,7 +637,7 @@ mod tests {
             "target_version": "25.4R1.12"
         });
         let a: UpgradeJunosArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(a.router_name, "vsrx-test10");
+        assert_eq!(a.device, "vsrx-test10");
         assert_eq!(a.source_path, "junos-25.4R1.12.tgz");
         assert_eq!(a.target_version, "25.4R1.12");
         assert!(!a.confirm);
@@ -681,7 +687,7 @@ mod tests {
     fn fetch_file_args_defaults() {
         let v = serde_json::json!({"router_name":"r1","remote_path":"foo.tgz"});
         let a: FetchFileArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.device, "r1");
         assert_eq!(a.remote_path, "foo.tgz");
         assert!(a.local_name.is_none());
         assert!(!a.force);
@@ -741,26 +747,26 @@ mod tests {
 
     #[test]
     fn router_alias_accepts_router_and_router_name() {
-        // Single-router tool: both names deserialize to the same field.
+        // Single-device tool: both names deserialize to the same field.
         let a: ExecuteCommandArgs =
             serde_json::from_value(serde_json::json!({"router":"r1","command":"show version"}))
                 .unwrap();
-        assert_eq!(a.router_name, "r1");
+        assert_eq!(a.device, "r1");
         let b: ExecuteCommandArgs = serde_json::from_value(
             serde_json::json!({"router_name":"r1","command":"show version"}),
         )
         .unwrap();
-        assert_eq!(b.router_name, "r1");
+        assert_eq!(b.device, "r1");
     }
 
     #[test]
     fn get_config_and_upgrade_accept_router_alias() {
         let g: GetConfigArgs = serde_json::from_value(serde_json::json!({"router":"r1"})).unwrap();
-        assert_eq!(g.router_name, "r1");
+        assert_eq!(g.device, "r1");
         let u: UpgradeJunosArgs = serde_json::from_value(serde_json::json!({
             "router":"r1","source_path":"x.tgz","target_version":"25.4R1.12"}))
         .unwrap();
-        assert_eq!(u.router_name, "r1");
+        assert_eq!(u.device, "r1");
     }
 
     #[test]
@@ -768,23 +774,23 @@ mod tests {
         let list: ExecuteBatchArgs = serde_json::from_value(serde_json::json!({
             "routers":["a","b"],"commands":["show version"]}))
         .unwrap();
-        assert_eq!(list.routers, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(list.devices, vec!["a".to_string(), "b".to_string()]);
 
         let one: ExecuteBatchArgs = serde_json::from_value(serde_json::json!({
             "routers":"a","commands":["show version"]}))
         .unwrap();
-        assert_eq!(one.routers, vec!["a".to_string()]);
+        assert_eq!(one.devices, vec!["a".to_string()]);
 
         let via_router: ExecuteBatchArgs = serde_json::from_value(serde_json::json!({
             "router":"a","commands":["show version"]}))
         .unwrap();
-        assert_eq!(via_router.routers, vec!["a".to_string()]);
+        assert_eq!(via_router.devices, vec!["a".to_string()]);
 
         let via_router_name: ExecuteBatchArgs = serde_json::from_value(serde_json::json!({
             "router_name":["a","b"],"commands":["show version"]}))
         .unwrap();
         assert_eq!(
-            via_router_name.routers,
+            via_router_name.devices,
             vec!["a".to_string(), "b".to_string()]
         );
     }

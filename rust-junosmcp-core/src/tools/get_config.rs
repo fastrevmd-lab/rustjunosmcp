@@ -22,8 +22,8 @@ pub async fn handle(
         validate_config_path(path)?;
     }
 
-    // Fail fast on unknown routers so the policy check has a valid target.
-    let _ = dm.inventory().get(&args.router_name)?;
+    // Fail fast on unknown devices so the policy check has a valid target.
+    let _ = dm.inventory().get(&args.device)?;
 
     // Build command: "show configuration" or "show configuration <path>"
     let command = match &args.config_path {
@@ -34,12 +34,12 @@ pub async fn handle(
     };
 
     // Check command against policy (same as execute_junos_command)
-    if let Decision::Deny { rule, source, .. } = policy.check_command(&args.router_name, &command) {
+    if let Decision::Deny { rule, source, .. } = policy.check_command(&args.device, &command) {
         let pattern = rule.pattern.clone();
         let source_str = source.as_str();
         tracing::warn!(
             tool = "get_junos_config",
-            router = %args.router_name,
+            router = %args.device,
             matched_rule = %pattern,
             rule_source = %source_str,
             input_excerpt = %excerpt(&command),
@@ -47,7 +47,7 @@ pub async fn handle(
         );
         return Err(JmcpError::Denied {
             tool: "get_junos_config",
-            router: args.router_name.clone(),
+            router: args.device.clone(),
             pattern,
             rule_source: source_str,
             input_excerpt: excerpt(&command),
@@ -57,7 +57,7 @@ pub async fn handle(
 
     let timeout = Duration::from_secs(args.timeout);
     let result = tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(&args.router_name).await?;
+        let mut dev = dm.open(&args.device).await?;
         let cfg_text = dev.cli(&command).await?;
         Ok::<_, JmcpError>(cfg_text)
     })
@@ -96,7 +96,7 @@ mod tests {
         let policy = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             GetConfigArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 timeout: 5,
                 config_path: None,
             },
@@ -111,16 +111,16 @@ mod tests {
     fn config_path_none_is_backward_compatible() {
         // Existing callers that omit config_path must get identical behavior.
         // This test verifies that GetConfigArgs can be deserialized without the field.
-        let json = r#"{"router_name": "r1", "timeout": 30}"#;
+        let json = r#"{"device": "r1", "timeout": 30}"#;
         let args: GetConfigArgs = serde_json::from_str(json).unwrap();
-        assert_eq!(args.router_name, "r1");
+        assert_eq!(args.device, "r1");
         assert_eq!(args.timeout, 30);
         assert!(args.config_path.is_none());
     }
 
     #[test]
     fn config_path_with_value_is_preserved() {
-        let json = r#"{"router_name": "r1", "timeout": 30, "config_path": "system services"}"#;
+        let json = r#"{"device": "r1", "timeout": 30, "config_path": "system services"}"#;
         let args: GetConfigArgs = serde_json::from_str(json).unwrap();
         assert_eq!(args.config_path, Some("system services".to_string()));
     }
@@ -135,7 +135,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 config_path: Some(huge_path),
             },
@@ -155,7 +155,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system services | save /tmp/x".to_string()),
             },
@@ -183,7 +183,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 config_path: Some("foo; bar".to_string()),
             },
@@ -211,7 +211,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system\nservices".to_string()),
             },
@@ -239,7 +239,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 config_path: Some("\nsystem services".to_string()),
             },
@@ -285,7 +285,7 @@ mod tests {
 
         let result = handle(
             GetConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 timeout: 5,
                 // Passes the allowlist cleanly — no metacharacters at all.
                 config_path: Some("secrets".to_string()),

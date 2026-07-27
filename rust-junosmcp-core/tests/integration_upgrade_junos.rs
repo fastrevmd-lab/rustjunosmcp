@@ -55,7 +55,7 @@ async fn live_upgrade_round_trip() {
         device_leases: Arc::new(DeviceLeaseManager::for_directory(lease_dir).unwrap()),
     };
     let args = UpgradeJunosArgs {
-        router_name: router.clone(),
+        device: router.clone(),
         source_path: image.clone(),
         target_version: target_version.clone(),
         confirm: true,

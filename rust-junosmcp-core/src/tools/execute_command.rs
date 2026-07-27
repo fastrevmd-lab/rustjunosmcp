@@ -1,4 +1,4 @@
-//! `execute_junos_command` — run an operational CLI command on one router.
+//! `execute_junos_command` — run an operational CLI command on one device.
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -15,17 +15,17 @@ pub async fn handle(
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
     validate_input_length("command", &args.command)?;
-    // Fail fast on unknown routers so the policy check has a valid target.
-    let _ = dm.inventory().get(&args.router_name)?;
+    // Fail fast on unknown devices so the policy check has a valid target.
+    let _ = dm.inventory().get(&args.device)?;
 
     if let Decision::Deny { rule, source, .. } =
-        policy.check_command(&args.router_name, &args.command)
+        policy.check_command(&args.device, &args.command)
     {
         let pattern = rule.pattern.clone();
         let source_str = source.as_str();
         tracing::warn!(
             tool = "execute_junos_command",
-            router = %args.router_name,
+            router = %args.device,
             matched_rule = %pattern,
             rule_source = %source_str,
             input_excerpt = %excerpt(&args.command),
@@ -33,7 +33,7 @@ pub async fn handle(
         );
         return Err(JmcpError::Denied {
             tool: "execute_junos_command",
-            router: args.router_name.clone(),
+            router: args.device.clone(),
             pattern,
             rule_source: source_str,
             input_excerpt: excerpt(&args.command),
@@ -42,7 +42,7 @@ pub async fn handle(
     }
 
     let timeout = Duration::from_secs(args.timeout);
-    let result = tokio::time::timeout(timeout, dm.run_cli(&args.router_name, &args.command))
+    let result = tokio::time::timeout(timeout, dm.run_cli(&args.device, &args.command))
         .await
         .map_err(|_| JmcpError::Timeout(timeout))??;
     let processed = crate::output::process_output(
@@ -77,7 +77,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecuteCommandArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 command: "show version".into(),
                 timeout: 5,
                 max_lines: None,
@@ -106,7 +106,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecuteCommandArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 command: "request system reboot".into(),
                 timeout: 1,
                 max_lines: None,

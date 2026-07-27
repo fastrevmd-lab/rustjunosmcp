@@ -1,4 +1,4 @@
-//! `execute_junos_command_batch` — N routers x M commands, parallel across routers.
+//! `execute_junos_command_batch` — N devices x M commands, parallel across devices.
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
@@ -76,9 +76,9 @@ pub async fn handle_with_runner(
     policy: Arc<Policy>,
     runner: Arc<dyn BatchRunner>,
 ) -> Result<Value, JmcpError> {
-    if args.routers.is_empty() {
+    if args.devices.is_empty() {
         return Err(JmcpError::InventoryInvalid(
-            "execute_junos_command_batch: routers must be non-empty".into(),
+            "execute_junos_command_batch: devices must be non-empty".into(),
         ));
     }
     if args.commands.is_empty() {
@@ -86,14 +86,14 @@ pub async fn handle_with_runner(
             "execute_junos_command_batch: commands must be non-empty".into(),
         ));
     }
-    if args.max_concurrent_routers == 0 {
+    if args.max_concurrent_devices == 0 {
         return Err(JmcpError::InventoryInvalid(
-            "execute_junos_command_batch: max_concurrent_routers must be > 0".into(),
+            "execute_junos_command_batch: max_concurrent_devices must be > 0".into(),
         ));
     }
-    if args.routers.len() > 100 {
+    if args.devices.len() > 100 {
         return Err(JmcpError::InventoryInvalid(
-            "execute_junos_command_batch: routers list exceeds maximum of 100".into(),
+            "execute_junos_command_batch: devices list exceeds maximum of 100".into(),
         ));
     }
     if args.commands.len() > 50 {
@@ -102,18 +102,18 @@ pub async fn handle_with_runner(
         ));
     }
 
-    // Pre-flight 1: partition routers into valid (in inventory) and unknown.
+    // Pre-flight 1: partition devices into valid (in inventory) and unknown.
     let inventory = dm.inventory();
     let mut valid_indices = Vec::new();
     let mut preflight_results: Vec<Option<RouterResult>> =
-        (0..args.routers.len()).map(|_| None).collect();
+        (0..args.devices.len()).map(|_| None).collect();
 
-    for (idx, r) in args.routers.iter().enumerate() {
+    for (idx, r) in args.devices.iter().enumerate() {
         if inventory.get(r).is_err() {
             tracing::warn!(
                 tool = "execute_junos_command_batch",
                 router = %r,
-                "router not found in device mapping, skipping",
+                "device not found in device mapping, skipping",
             );
             preflight_results[idx] = Some(RouterResult {
                 router: r.clone(),
@@ -124,7 +124,7 @@ pub async fn handle_with_runner(
                         command: c.clone(),
                         ok: false,
                         value: None,
-                        error: Some(format!("router '{}' not found in device mapping", r)),
+                        error: Some(format!("device '{}' not found in device mapping", r)),
                     })
                     .collect(),
             });
@@ -134,10 +134,10 @@ pub async fn handle_with_runner(
     }
     drop(inventory);
 
-    // Pre-flight 2: blocklist check on every (valid router, command) pair.
+    // Pre-flight 2: blocklist check on every (valid device, command) pair.
     // Security boundary — remains strict: one denied pair aborts the batch.
     for &idx in &valid_indices {
-        let r = &args.routers[idx];
+        let r = &args.devices[idx];
         for c in &args.commands {
             if let Decision::Deny { rule, source, .. } = policy.check_command(r, c) {
                 let pattern = rule.pattern.clone();
@@ -163,19 +163,19 @@ pub async fn handle_with_runner(
     }
 
     let permits = Arc::new(tokio::sync::Semaphore::new(
-        args.max_concurrent_routers as usize,
+        args.max_concurrent_devices as usize,
     ));
     let cmd_timeout = std::time::Duration::from_secs(args.command_timeout);
     let mut joinset: tokio::task::JoinSet<(usize, RouterResult)> = tokio::task::JoinSet::new();
 
     for &idx in &valid_indices {
-        let router_name = args.routers[idx].clone();
+        let device_name = args.devices[idx].clone();
         let permits = permits.clone();
         let runner = runner.clone();
         let commands = args.commands.clone();
         joinset.spawn(async move {
             let _permit = permits.acquire_owned().await.expect("semaphore not closed");
-            let rr = run_router(&*runner, router_name, commands, cmd_timeout).await;
+            let rr = run_device(&*runner, device_name, commands, cmd_timeout).await;
             (idx, rr)
         });
     }
@@ -206,7 +206,7 @@ pub async fn handle_with_runner(
     }
 
     let mut final_results: Vec<RouterResult> = args
-        .routers
+        .devices
         .iter()
         .enumerate()
         .map(|(idx, name)| match results[idx].take() {
@@ -244,17 +244,17 @@ pub async fn handle_with_runner(
     Ok(serde_json::to_value(final_results)?)
 }
 
-async fn run_router(
+async fn run_device(
     runner: &dyn BatchRunner,
-    router: String,
+    device_name: String,
     commands: Vec<String>,
     cmd_timeout: std::time::Duration,
 ) -> RouterResult {
-    let mut session = match runner.open(&router).await {
+    let mut session = match runner.open(&device_name).await {
         Ok(s) => s,
         Err(e) => {
             return RouterResult {
-                router,
+                router: device_name,
                 commands: commands
                     .iter()
                     .map(|c| CommandOutcome {
@@ -293,7 +293,7 @@ async fn run_router(
     }
     let _ = session.close().await;
     RouterResult {
-        router,
+        router: device_name,
         commands: outs,
     }
 }
@@ -314,6 +314,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn routers_alias_still_deserializes() {
+        // Prove that JSON with `"routers":` still works via serde alias.
+        let json = r#"{"routers":["r1","r2"],"commands":["show version"]}"#;
+        let args: ExecuteBatchArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.devices, vec!["r1", "r2"]);
+    }
+
+    #[tokio::test]
+    async fn router_alias_still_deserializes() {
+        // Prove that JSON with `"router":` (singular string → vec) still works.
+        let json = r#"{"router":"r1","commands":["show version"]}"#;
+        let args: ExecuteBatchArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.devices, vec!["r1"]);
+    }
+
+    #[tokio::test]
+    async fn router_name_alias_still_deserializes() {
+        // Prove that JSON with `"router_name":` still works.
+        let json = r#"{"router_name":"r1","commands":["show version"]}"#;
+        let args: ExecuteBatchArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.devices, vec!["r1"]);
+    }
+
+    #[tokio::test]
     async fn unknown_router_in_list_produces_inline_error() {
         let inv = inv_with(
             r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
@@ -322,11 +346,11 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let (runner, _) = stub_runner(vec![("r1", OpenBehavior::Ok(Duration::from_millis(10)))]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into(), "ghost".into()],
+            devices: vec!["r1".into(), "ghost".into()],
             commands: vec!["show version".into()],
             command_timeout: 5,
             batch_timeout: None,
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -358,11 +382,11 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into(), "r2".into()],
+            devices: vec!["r1".into(), "r2".into()],
             commands: vec!["show version".into(), "request system reboot".into()],
             command_timeout: 1,
             batch_timeout: None,
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -384,11 +408,11 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let args = ExecuteBatchArgs {
-            routers: vec![],
+            devices: vec![],
             commands: vec!["show version".into()],
             command_timeout: 1,
             batch_timeout: None,
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -396,11 +420,11 @@ mod tests {
         assert!(super::handle(args, dm.clone(), pol.clone()).await.is_err());
 
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into()],
+            devices: vec!["r1".into()],
             commands: vec![],
             command_timeout: 1,
             batch_timeout: None,
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -534,11 +558,11 @@ mod tests {
             ("r1", OpenBehavior::Ok(Duration::from_millis(50))),
         ]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r2".into(), "r1".into()],
+            devices: vec!["r2".into(), "r1".into()],
             commands: vec!["c2".into(), "c1".into()],
             command_timeout: 5,
             batch_timeout: None,
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -567,11 +591,11 @@ mod tests {
             ("r4", OpenBehavior::Ok(Duration::from_millis(80))),
         ]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into(), "r2".into(), "r3".into(), "r4".into()],
+            devices: vec!["r1".into(), "r2".into(), "r3".into(), "r4".into()],
             commands: vec!["show version".into()],
             command_timeout: 5,
             batch_timeout: None,
-            max_concurrent_routers: 2,
+            max_concurrent_devices: 2,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -591,11 +615,11 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let (runner, _) = stub_runner(vec![("r1", OpenBehavior::Ok(Duration::from_millis(200)))]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into()],
+            devices: vec!["r1".into()],
             commands: vec!["c1".into(), "c2".into()],
             command_timeout: 0,
             batch_timeout: None,
-            max_concurrent_routers: 1,
+            max_concurrent_devices: 1,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -622,11 +646,11 @@ mod tests {
             ("r2", OpenBehavior::Ok(Duration::from_secs(10))),
         ]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into(), "r2".into()],
+            devices: vec!["r1".into(), "r2".into()],
             commands: vec!["c1".into()],
             command_timeout: 30,
             batch_timeout: Some(0),
-            max_concurrent_routers: 4,
+            max_concurrent_devices: 4,
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -649,11 +673,11 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let (runner, _) = stub_runner(vec![("r1", OpenBehavior::Fail("boom"))]);
         let args = ExecuteBatchArgs {
-            routers: vec!["r1".into()],
+            devices: vec!["r1".into()],
             commands: vec!["c1".into(), "c2".into(), "c3".into()],
             command_timeout: 5,
             batch_timeout: None,
-            max_concurrent_routers: 1,
+            max_concurrent_devices: 1,
             max_lines: None,
             max_bytes: None,
             tail: false,

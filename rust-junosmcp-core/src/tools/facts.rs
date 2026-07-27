@@ -10,7 +10,7 @@ use std::time::Duration;
 pub async fn handle(args: GatherFactsArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let timeout = Duration::from_secs(args.timeout);
     let result = tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(&args.router_name).await?;
+        let mut dev = dm.open(&args.device).await?;
         let facts = dev.facts().await?;
         let value = serde_json::to_value(facts)?;
         Ok::<_, JmcpError>(value)
@@ -39,7 +39,7 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             GatherFactsArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 timeout: 5,
             },
             dm,

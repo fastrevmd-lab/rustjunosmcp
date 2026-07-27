@@ -30,11 +30,11 @@ pub async fn handle_with_cancel(
 ) -> Result<Value, JmcpError> {
     validate_input_length("config_text", &args.config_text)?;
     // Confirm the router exists before consulting the policy.
-    let _ = dm.inventory().get(&args.router_name)?;
+    let _ = dm.inventory().get(&args.device)?;
 
     // The format gate is part of the policy check; downstream
     // build_config_payload still validates the value separately.
-    match policy.check_config(&args.router_name, &args.config_format, &args.config_text)? {
+    match policy.check_config(&args.device, &args.config_format, &args.config_text)? {
         Decision::Allow => {}
         Decision::Deny {
             rule,
@@ -46,7 +46,7 @@ pub async fn handle_with_cancel(
             let denied_excerpt = excerpt(&args.config_text);
             tracing::warn!(
                 tool = "load_and_commit_config",
-                router = %args.router_name,
+                router = %args.device,
                 matched_rule = %pattern,
                 rule_source = %source_str,
                 line_number = ?line_number,
@@ -55,7 +55,7 @@ pub async fn handle_with_cancel(
             );
             return Err(JmcpError::Denied {
                 tool: "load_and_commit_config",
-                router: args.router_name.clone(),
+                router: args.device.clone(),
                 pattern,
                 rule_source: source_str,
                 input_excerpt: denied_excerpt,
@@ -77,7 +77,7 @@ pub async fn handle_with_cancel(
     };
     let result = candidate_transaction::run(
         &dm,
-        &args.router_name,
+        &args.device,
         CandidateRequest {
             payload: Some(payload),
             rollback_source: None,
@@ -137,7 +137,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             LoadCommitArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 config_text: "set system foo".into(),
                 config_format: "set".into(),
                 commit_comment: "test".into(),
@@ -160,7 +160,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             LoadCommitArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 config_text: "x".into(),
                 config_format: "yaml".into(),
                 commit_comment: "test".into(),
@@ -186,7 +186,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             LoadCommitArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 config_text: "<x/>".into(),
                 config_format: "xml".into(),
                 commit_comment: "test".into(),
@@ -217,7 +217,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             LoadCommitArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 config_text: "set foo\ndelete protocols bgp".into(),
                 config_format: "set".into(),
                 commit_comment: "test".into(),

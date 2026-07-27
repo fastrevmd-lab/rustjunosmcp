@@ -206,8 +206,8 @@ fn lists_all_known_tools() {
         .collect();
     let expected: HashSet<&str> = rust_junosmcp_auth::KNOWN_TOOLS.iter().copied().collect();
     assert_eq!(names, expected);
-    assert_eq!(tools.len(), 27);
-    assert_eq!(names.len(), 27);
+    assert_eq!(tools.len(), 28);
+    assert_eq!(names.len(), 28);
 }
 
 #[test]
