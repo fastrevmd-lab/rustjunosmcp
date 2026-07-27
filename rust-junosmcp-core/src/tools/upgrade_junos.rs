@@ -424,7 +424,7 @@ pub fn evaluate_preflight(
     if !args.confirm {
         let payload = serde_json::json!({
             "code": "confirmation_required",
-            "router": args.router_name,
+            "router": args.device,
             "current_version": current_version,
             "target_version": args.target_version,
             "image_basename": facts.image_basename,
@@ -445,7 +445,7 @@ mod preflight_tests {
 
     fn args() -> crate::tools::UpgradeJunosArgs {
         crate::tools::UpgradeJunosArgs {
-            router_name: "vsrx-test10".into(),
+            device: "vsrx-test10".into(),
             source_path: "junos-25.4R1.12.tgz".into(),
             target_version: "25.4R1.12".into(),
             confirm: false,
@@ -713,10 +713,10 @@ async fn run(
     //    need so the borrow drops before any await on dm.open().
     {
         let inv = dm.inventory();
-        let entry = inv.get(&args.router_name)?;
+        let entry = inv.get(&args.device)?;
         match &entry.auth {
             AuthConfig::Password { .. } => {
-                return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+                return Err(JmcpError::UnsupportedAuth(args.device.clone()));
             }
             AuthConfig::SshKey { .. } => {}
         }
@@ -760,7 +760,7 @@ async fn run(
 
     // 6. Gather NETCONF facts. Stub until Task 9 wires it up.
     let facts = gather_facts(
-        &args.router_name,
+        &args.device,
         dm.clone(),
         args.source_path.clone(),
         local_size,
@@ -790,14 +790,14 @@ async fn dispatch_preflight(
 
     let _lease = cfg
         .device_leases
-        .acquire_cancellable(&args.router_name, "upgrade_junos", correlation_id, ct)
+        .acquire_cancellable(&args.device, "upgrade_junos", correlation_id, ct)
         .await?;
 
     // Re-read every device fact after acquiring the shared lease. This closes
     // the gap where an SRX package operation could change device state between
     // the initial preview/preflight and the Junos upgrade's destructive path.
     let locked_facts = gather_facts(
-        &args.router_name,
+        &args.device,
         dm.clone(),
         facts.image_basename.clone(),
         facts.local_image_size,
@@ -819,7 +819,7 @@ fn finish_preflight(
 ) -> Result<serde_json::Value, JmcpError> {
     match decision {
         PreflightDecision::ClusterUnsupported => Err(JmcpError::UpgradeClusterUnsupported {
-            router: args.router_name.clone(),
+            router: args.device.clone(),
         }),
         PreflightDecision::UnparseableVersion => Err(JmcpError::DeviceProbeFailed {
             phase: "version_parse".into(),
@@ -831,14 +831,14 @@ fn finish_preflight(
         }),
         PreflightDecision::AlreadyAtTarget { current_version } => Ok(serde_json::json!({
             "status": "already_at_target",
-            "router": args.router_name,
+            "router": args.device,
             "current_version": current_version,
             "target_version": args.target_version,
             "message": "device already running target version; no action taken"
         })),
         PreflightDecision::CommitConfirmedActive { rollback_secs } => {
             Err(JmcpError::UpgradeCommitConfirmedActive {
-                router: args.router_name.clone(),
+                router: args.device.clone(),
                 rollback_secs,
             })
         }
@@ -848,7 +848,7 @@ fn finish_preflight(
                 required,
                 message: format!(
                     "device '{}' /var/tmp (install needs 2× image + 32 MiB headroom)",
-                    args.router_name
+                    args.device
                 ),
             })
         }
@@ -872,17 +872,17 @@ async fn run_destructive(
     let preflight_secs = started.elapsed().as_secs();
 
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "destructive_entry",
         "upgrade_junos.phase_diag"
     );
 
     // Phase 1: pre-baseline.
-    let pre_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
+    let pre_baseline = capture_baseline(&args.device, dm.clone(), ct).await?;
     let phase1_done = Instant::now();
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "pre_baseline_done",
         "upgrade_junos.phase_diag"
@@ -897,7 +897,7 @@ async fn run_destructive(
     // before the inner call's own `tokio::time::timeout` does.
     let transfer_args = build_transfer_args(args);
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "transfer_start",
         "upgrade_junos.phase_diag"
@@ -911,7 +911,7 @@ async fn run_destructive(
     .await?;
     let phase2_done = Instant::now();
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "transfer_done",
         "upgrade_junos.phase_diag"
@@ -926,7 +926,7 @@ async fn run_destructive(
     // undo it. We do race the *pre-RPC* `dm.open()` and the *post-RPC*
     // reboot-wait/post-verify steps below. A cancel during the install RPC
     // surfaces only after the RPC returns (or its session drops).
-    let install_stdout = match select_cancel(ct, dm.open(&args.router_name)).await {
+    let install_stdout = match select_cancel(ct, dm.open(&args.device)).await {
         Ok(mut dev) => {
             let cmd = format!(
                 "request system software add /var/tmp/{} no-copy reboot",
@@ -936,7 +936,7 @@ async fn run_destructive(
                 Ok(out) => {
                     if ct.is_cancelled() {
                         tracing::warn!(
-                            router = %args.router_name,
+                            router = %args.device,
                             correlation_id,
                             phase = "install_rpc",
                             "upgrade_junos.cancel_diag: cancel observed after install RPC; \
@@ -962,7 +962,7 @@ async fn run_destructive(
     };
     let phase3_done = Instant::now();
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "install_rpc_done",
         "upgrade_junos.phase_diag"
@@ -981,9 +981,9 @@ async fn run_destructive(
     // genuine reboot outage and raw-propagated the connect error.
     let post_version_output = {
         let dm = dm.clone();
-        let router = args.router_name.clone();
+        let router = args.device.clone();
         wait_for_version(
-            &args.router_name,
+            &args.device,
             &args.target_version,
             std::time::Duration::from_secs(args.reboot_wait_secs),
             std::time::Duration::from_secs(30), // initial_delay — device is rebooting
@@ -1001,7 +1001,7 @@ async fn run_destructive(
     let _ = &post_version_output;
     let phase4_done = Instant::now();
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "reboot_verified",
         "upgrade_junos.phase_diag"
@@ -1011,9 +1011,9 @@ async fn run_destructive(
     let phase5_done = phase4_done;
 
     // Phase 6: post-baseline.
-    let post_baseline = capture_baseline(&args.router_name, dm.clone(), ct).await?;
+    let post_baseline = capture_baseline(&args.device, dm.clone(), ct).await?;
     tracing::info!(
-        router = %args.router_name,
+        router = %args.device,
         correlation_id,
         phase = "post_baseline_done",
         "upgrade_junos.phase_diag"
@@ -1023,7 +1023,7 @@ async fn run_destructive(
     let from_version =
         parse_junos_version(&facts.version_output).unwrap_or_else(|| "<unknown>".to_string());
     let mut response = build_success_response(BuildSuccessArgs {
-        router: &args.router_name,
+        router: &args.device,
         from_version: &from_version,
         to_version: &args.target_version,
         image_basename: &args.source_path,
@@ -1047,7 +1047,7 @@ async fn run_destructive(
 /// without spinning up a device or a Tokio runtime. (#42)
 pub(crate) fn build_transfer_args(args: &UpgradeJunosArgs) -> crate::tools::TransferFileArgs {
     crate::tools::TransferFileArgs {
-        router_name: args.router_name.clone(),
+        device: args.device.clone(),
         source_path: args.source_path.clone(),
         force: false,
         verify: true,
@@ -1061,7 +1061,7 @@ mod build_transfer_args_tests {
 
     fn args_with_timeout(timeout: u64) -> UpgradeJunosArgs {
         UpgradeJunosArgs {
-            router_name: "vsrx-test10".into(),
+            device: "vsrx-test10".into(),
             source_path: "junos-25.4R1.12.tgz".into(),
             target_version: "25.4R1.12".into(),
             confirm: true,
@@ -1096,21 +1096,21 @@ mod build_transfer_args_tests {
     #[test]
     fn forwards_router_and_source() {
         let mut upgrade = args_with_timeout(900);
-        upgrade.router_name = "vsrx-test11".into();
+        upgrade.device = "vsrx-test11".into();
         upgrade.source_path = "junos-25.4R1.12.tgz".into();
         let transfer = build_transfer_args(&upgrade);
-        assert_eq!(transfer.router_name, "vsrx-test11");
+        assert_eq!(transfer.device, "vsrx-test11");
         assert_eq!(transfer.source_path, "junos-25.4R1.12.tgz");
     }
 }
 
 async fn capture_baseline(
-    router: &str,
+    device_name: &str,
     dm: Arc<DeviceManager>,
     ct: &CancellationToken,
 ) -> Result<std::collections::BTreeMap<String, String>, JmcpError> {
     let mut out = std::collections::BTreeMap::new();
-    let mut dev = select_cancel(ct, dm.open(router)).await?;
+    let mut dev = select_cancel(ct, dm.open(device_name)).await?;
     for cmd in BASELINE_COMMANDS {
         match select_cancel_raw::<_, _, JmcpError>(ct, dev.cli(cmd)).await? {
             Ok(s) => {
@@ -1174,7 +1174,7 @@ mod handle_early_exit_tests {
 
     fn args(router: &str, source: &str) -> UpgradeJunosArgs {
         UpgradeJunosArgs {
-            router_name: router.into(),
+            device: router.into(),
             source_path: source.into(),
             target_version: "25.4R1.12".into(),
             confirm: false,

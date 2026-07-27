@@ -235,9 +235,9 @@ pub async fn handle(
             "device": Value::Null,
             "device_files": Value::Null,
         });
-        if let Some(router) = args.router_name {
-            let _ = dm.inventory().get(&router)?;
-            let mut dev = dm.open(&router).await?;
+        if let Some(device_name) = args.device {
+            let _ = dm.inventory().get(&device_name)?;
+            let mut dev = dm.open(&device_name).await?;
             let raw = dev.cli("file list /var/tmp/ detail").await.map_err(|e| {
                 JmcpError::DeviceProbeFailed {
                     phase: "list_var_tmp".into(),
@@ -247,7 +247,7 @@ pub async fn handle(
             let now = chrono::Utc::now();
             let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
             let entries = parse_var_tmp_listing(&raw, year);
-            payload["device"] = json!(router);
+            payload["device"] = json!(device_name);
             payload["device_files"] = serde_json::to_value(&entries)?;
         }
         Ok::<_, JmcpError>(payload)
@@ -324,7 +324,7 @@ mod handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: None,
+                device: None,
                 timeout: 5,
             },
             dm,
@@ -346,7 +346,7 @@ mod handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: None,
+                device: None,
                 timeout: 5,
             },
             dm,
@@ -378,7 +378,7 @@ mod handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: None,
+                device: None,
                 timeout: 30,
             },
             dm,
@@ -405,7 +405,7 @@ mod handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: None,
+                device: None,
                 timeout: 5,
             },
             dm,
@@ -429,7 +429,7 @@ mod handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: Some("nope".into()),
+                device: Some("nope".into()),
                 timeout: 5,
             },
             dm,
@@ -446,7 +446,7 @@ mod device_handle_tests {
     use crate::inventory::Inventory;
     use std::io::Write;
 
-    /// Smoke: when router_name is given but the device is unreachable, the call
+    /// Smoke: when device is given but the device is unreachable, the call
     /// returns an error (rustez connect failure), not silent success. This
     /// guards against the device_files key being silently set to []
     /// when the device isn't actually contacted.
@@ -466,7 +466,7 @@ mod device_handle_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             ListStagedFilesArgs {
-                router_name: Some("r1".into()),
+                device: Some("r1".into()),
                 timeout: 5,
             },
             dm,

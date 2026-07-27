@@ -1,0 +1,97 @@
+{
+  "check_srx_feature_license": [
+    "feature",
+    "include_raw",
+    "router"
+  ],
+  "collect_jtac_support_bundle": [
+    "include_logs",
+    "max_log_bytes_per_file",
+    "max_log_files",
+    "problem_type",
+    "redact",
+    "request_id",
+    "router",
+    "timeout"
+  ],
+  "commit_check_config": [
+    "config_format",
+    "config_text",
+    "router_name",
+    "timeout"
+  ],
+  "execute_junos_command": [
+    "command",
+    "max_bytes",
+    "max_lines",
+    "router_name",
+    "tail",
+    "timeout"
+  ],
+  "execute_junos_command_batch": [
+    "batch_timeout",
+    "command_timeout",
+    "commands",
+    "max_bytes",
+    "max_concurrent_routers",
+    "max_lines",
+    "routers",
+    "tail"
+  ],
+  "execute_junos_pfe_command": [
+    "fpc_target",
+    "max_bytes",
+    "max_lines",
+    "pfe_command",
+    "router_name",
+    "tail",
+    "timeout"
+  ],
+  "fetch_file": [
+    "force",
+    "local_name",
+    "remote_path",
+    "router_name",
+    "timeout",
+    "verify"
+  ],
+  "gather_device_facts": [
+    "router_name",
+    "timeout"
+  ],
+  "get_chassis_cluster_status": [
+    "include_raw",
+    "router"
+  ],
+  "get_junos_config": [
+    "config_path",
+    "router_name",
+    "timeout"
+  ],
+  "get_router_list": [],
+  "get_srx_security_services_status": [
+    "include_raw",
+    "router"
+  ],
+  "junos_config_diff": [
+    "router_name",
+    "timeout",
+    "version"
+  ],
+  "list_staged_files": [
+    "router_name",
+    "timeout"
+  ],
+  "srxmcp_status": [],
+  "validate_chassis_cluster_health": [
+    "include_raw",
+    "request_id",
+    "router"
+  ],
+  "vpn_lifecycle_report": [
+    "include_raw",
+    "peer",
+    "router",
+    "tunnel"
+  ]
+}

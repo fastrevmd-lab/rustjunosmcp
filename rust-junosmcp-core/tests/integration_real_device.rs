@@ -84,7 +84,7 @@ async fn execute_show_version() {
     let pol = Arc::new(Policy::build(&inv).unwrap());
     let v = execute_command::handle(
         ExecuteCommandArgs {
-            router_name: "lab".into(),
+            device: "lab".into(),
             command: "show version".into(),
             timeout: 30,
             max_lines: None,
@@ -106,7 +106,7 @@ async fn get_running_config() {
     let policy = Arc::new(rust_junosmcp_core::policy::Policy::build(&dm.inventory()).unwrap());
     let v = get_config::handle(
         GetConfigArgs {
-            router_name: "lab".into(),
+            device: "lab".into(),
             timeout: 360,
             config_path: None,
         },
@@ -126,7 +126,7 @@ async fn diff_against_rollback_1() {
     let dm = build_dm();
     let v = config_diff::handle(
         ConfigDiffArgs {
-            router_name: "lab".into(),
+            device: "lab".into(),
             version: 1,
             timeout: 360,
         },
@@ -143,7 +143,7 @@ async fn gather_facts() {
     let dm = build_dm();
     let v = facts::handle(
         GatherFactsArgs {
-            router_name: "lab".into(),
+            device: "lab".into(),
             timeout: 30,
         },
         dm,
@@ -181,11 +181,11 @@ async fn live_batch_show_version_one_router_one_command() {
     let dm = Arc::new(DeviceManager::new(inv.clone()));
     let pol = Arc::new(Policy::build(&inv).unwrap());
     let args = ExecuteBatchArgs {
-        routers: vec!["r1".into()],
+        devices: vec!["r1".into()],
         commands: vec!["show version".into()],
         command_timeout: 30,
         batch_timeout: Some(60),
-        max_concurrent_routers: 1,
+        max_concurrent_devices: 1,
         max_lines: None,
         max_bytes: None,
         tail: false,
@@ -213,7 +213,7 @@ async fn live_pfe_show_jnh_stats_packet() {
     let dm = Arc::new(DeviceManager::new(inv.clone()));
     let pol = Arc::new(Policy::build(&inv).unwrap());
     let args = ExecutePfeArgs {
-        router_name: "r1".into(),
+        device: "r1".into(),
         fpc_target: std::env::var("JMCP_TEST_FPC").unwrap_or_else(|_| "fpc0".into()),
         pfe_command: "show jnh 0 stats packet".into(),
         timeout: 30,
@@ -249,8 +249,8 @@ async fn live_render_show_version_template_dry_run() {
     let args = rust_junosmcp_core::tools::TemplateArgs {
         template_content: "set system host-name {{ name }}".into(),
         vars_content: r#"{"name":"jmcp-test"}"#.into(),
-        router_name: Some("r1".into()),
-        router_names: None,
+        device_name: Some("r1".into()),
+        device_names: None,
         apply_config: true,
         commit_comment: "rust-junosmcp template smoke".into(),
         dry_run: true,
@@ -375,7 +375,7 @@ async fn transfer_file_round_trip_1kb() {
     // First push — must report "transferred".
     let result1 = rust_junosmcp_core::tools::transfer_file::handle(
         TransferFileArgs {
-            router_name: device_name.clone(),
+            device: device_name.clone(),
             source_path: filename.into(),
             force: false,
             verify: true,
@@ -394,7 +394,7 @@ async fn transfer_file_round_trip_1kb() {
     // Second push with identical content — must be idempotent ("skipped").
     let result2 = rust_junosmcp_core::tools::transfer_file::handle(
         TransferFileArgs {
-            router_name: device_name.clone(),
+            device: device_name.clone(),
             source_path: filename.into(),
             force: false,
             verify: true,
@@ -441,7 +441,7 @@ async fn transfer_file_round_trip_200mb() {
 
     let result = rust_junosmcp_core::tools::transfer_file::handle(
         TransferFileArgs {
-            router_name: device_name.clone(),
+            device: device_name.clone(),
             source_path: filename.into(),
             force: true, // overwrite any previous run's leftover
             verify: true,
@@ -473,7 +473,7 @@ async fn transfer_file_force_false_rejects_diff() {
     std::fs::write(cfg.staging_dir.join(filename), b"version-A").unwrap();
     let r_a = rust_junosmcp_core::tools::transfer_file::handle(
         TransferFileArgs {
-            router_name: device_name.clone(),
+            device: device_name.clone(),
             source_path: filename.into(),
             force: true, // ensure a clean slate regardless of prior test runs
             verify: true,
@@ -496,7 +496,7 @@ async fn transfer_file_force_false_rejects_diff() {
     // operator's responsibility.
     let res = rust_junosmcp_core::tools::transfer_file::handle(
         TransferFileArgs {
-            router_name: device_name.clone(),
+            device: device_name.clone(),
             source_path: filename.into(),
             force: false,
             verify: true,

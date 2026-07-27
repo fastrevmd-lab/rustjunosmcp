@@ -96,16 +96,17 @@
   },
   "commit_check_config": {
     "name": "commit_check_config",
-    "description": "Validate a candidate configuration on a Junos router without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
+    "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "config_text"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "config_text": {
@@ -129,16 +130,16 @@
   },
   "discard_candidate": {
     "name": "discard_candidate",
-    "description": "Discard uncommitted candidate configuration changes on a Junos router (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified').",
+    "description": "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified').",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name"
+        "device"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "The target router. Accepts `router` or `router_name`.",
+        "device": {
+          "description": "The target device.",
           "type": "string"
         },
         "timeout": {
@@ -153,21 +154,21 @@
   },
   "execute_junos_command": {
     "name": "execute_junos_command",
-    "description": "Execute a Junos command on the router. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "command"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "The name of the router.",
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "command": {
-          "description": "The command to execute on the router.",
+          "description": "The command to execute on the device.",
           "type": "string"
         },
         "timeout": {
@@ -207,24 +208,24 @@
   },
   "execute_junos_command_batch": {
     "name": "execute_junos_command_batch",
-    "description": "Run N operational CLI commands across M routers, parallel across routers, sequential per router. Returns a per-router array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "routers",
+        "devices",
         "commands"
       ],
       "type": "object",
       "properties": {
-        "routers": {
-          "description": "Routers to execute against. Must be non-empty. Accepts a list, or a\nsingle router name; the keys `router` / `router_name` are also accepted.",
+        "devices": {
+          "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "commands": {
-          "description": "Operational CLI commands to run sequentially per router. Must be non-empty.",
+          "description": "Operational CLI commands to run sequentially per device. Must be non-empty.",
           "type": "array",
           "items": {
             "type": "string"
@@ -247,8 +248,8 @@
           "minimum": 0,
           "default": null
         },
-        "max_concurrent_routers": {
-          "description": "Maximum number of routers in flight concurrently.",
+        "max_concurrent_devices": {
+          "description": "Maximum number of devices in flight concurrently.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0,
@@ -284,18 +285,18 @@
   },
   "execute_junos_pfe_command": {
     "name": "execute_junos_pfe_command",
-    "description": "Execute a single PFE-shell command on one router via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "fpc_target",
         "pfe_command"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "The name of the router.",
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "fpc_target": {
@@ -347,13 +348,13 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "remote_path"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "Source router name (must exist in inventory and use ssh_key auth).",
+        "device": {
+          "description": "Source device name (must exist in inventory and use ssh_key auth).",
           "type": "string"
         },
         "remote_path": {
@@ -390,15 +391,16 @@
   },
   "gather_device_facts": {
     "name": "gather_device_facts",
-    "description": "Gather Junos device facts from the router",
+    "description": "Gather Junos device facts from the device",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name"
+        "device"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "timeout": {
@@ -411,17 +413,26 @@
       }
     }
   },
+  "get_device_list": {
+    "name": "get_device_list",
+    "description": "Get the Junos devices visible to this caller. Returns [] when the caller's device scope has no current inventory matches.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object"
+    }
+  },
   "get_junos_config": {
     "name": "get_junos_config",
-    "description": "Get the configuration of the router. Returns the full running config by default. Pass config_path (e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage for targeted queries. Invalid paths return an error rather than silently falling back to the full config.",
+    "description": "Get the configuration of the device. Returns the full running config by default. Pass config_path (e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage for targeted queries. Invalid paths return an error rather than silently falling back to the full config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name"
+        "device"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "timeout": {
@@ -444,7 +455,7 @@
   },
   "get_router_list": {
     "name": "get_router_list",
-    "description": "Get the Junos routers visible to this caller. Returns [] when the caller's router scope has no current inventory matches.",
+    "description": "DEPRECATED: Use get_device_list instead. Get the Junos routers visible to this caller. Returns [] when the caller's router scope has no current inventory matches.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object"
@@ -456,11 +467,12 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name"
+        "device"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "version": {
@@ -481,12 +493,12 @@
   },
   "list_staged_files": {
     "name": "list_staged_files",
-    "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when router_name is supplied",
+    "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when device is supplied",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
-        "router_name": {
-          "description": "Optional router name. If present, also lists the device's /var/tmp/.",
+        "device": {
+          "description": "Optional device name. If present, also lists the device's /var/tmp/.",
           "type": [
             "string",
             "null"
@@ -506,16 +518,17 @@
   },
   "load_and_commit_config": {
     "name": "load_and_commit_config",
-    "description": "Load and commit configuration on a Junos router",
+    "description": "Load and commit configuration on a Junos device",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "config_text"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
+        "device": {
+          "description": "The name of the device.",
           "type": "string"
         },
         "config_text": {
@@ -533,7 +546,7 @@
           "default": "Configuration loaded via MCP"
         },
         "confirm_timeout_mins": {
-          "description": "If set, uses confirmed commit with auto-rollback after N minutes.\nThe router will automatically revert if not confirmed within this window.",
+          "description": "If set, uses confirmed commit with auto-rollback after N minutes.\nThe device will automatically revert if not confirmed within this window.",
           "type": [
             "integer",
             "null"
@@ -573,7 +586,7 @@
   },
   "render_and_apply_j2_template": {
     "name": "render_and_apply_j2_template",
-    "description": "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more routers; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)",
+    "description": "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more devices; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
@@ -590,16 +603,16 @@
           "description": "Vars as a JSON object string. Must deserialize to a top-level JSON\nobject. Capped at 64 KiB. YAML is **not** accepted as of v0.5.2\n(RJMCP-SEC-002).",
           "type": "string"
         },
-        "router_name": {
-          "description": "Single router to apply to. Mutually exclusive with `router_names`.",
+        "device_name": {
+          "description": "Single device to apply to. Mutually exclusive with `device_names`.",
           "type": [
             "string",
             "null"
           ],
           "default": null
         },
-        "router_names": {
-          "description": "Multiple routers to apply to. Mutually exclusive with `router_name`.",
+        "device_names": {
+          "description": "Multiple devices to apply to. Mutually exclusive with `device_name`.",
           "type": [
             "array",
             "null"
@@ -633,7 +646,7 @@
           "default": null
         },
         "timeout": {
-          "description": "Connection timeout in seconds (per-router).",
+          "description": "Connection timeout in seconds (per-device).",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
@@ -648,13 +661,13 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "version"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "The target router. Accepts `router` or `router_name`.",
+        "device": {
+          "description": "The target device.",
           "type": "string"
         },
         "version": {
@@ -702,13 +715,13 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "source_path"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "Target router name (must exist in inventory and use ssh_key auth).",
+        "device": {
+          "description": "Target device name (must exist in inventory and use ssh_key auth).",
           "type": "string"
         },
         "source_path": {
@@ -741,14 +754,14 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
-        "router_name",
+        "device",
         "source_path",
         "target_version"
       ],
       "type": "object",
       "properties": {
-        "router_name": {
-          "description": "Target router (must exist in inventory and use ssh_key auth).",
+        "device": {
+          "description": "Target device (must exist in inventory and use ssh_key auth).",
           "type": "string"
         },
         "source_path": {

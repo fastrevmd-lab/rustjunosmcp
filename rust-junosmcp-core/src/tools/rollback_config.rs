@@ -27,7 +27,7 @@ pub async fn handle_with_cancel(
     ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     // Confirm the router exists before connecting.
-    let _ = dm.inventory().get(&args.router_name)?;
+    let _ = dm.inventory().get(&args.device)?;
 
     // Validate rollback version 0..=49.
     let version = validate_rollback_version(args.version)?;
@@ -56,7 +56,7 @@ pub async fn handle_with_cancel(
 
     match candidate_transaction::run(
         &dm,
-        &args.router_name,
+        &args.device,
         CandidateRequest {
             payload: None,
             rollback_source: Some(version),
@@ -132,7 +132,7 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             RollbackConfigArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 version: 1,
                 commit: false,
                 confirm_timeout_mins: None,
@@ -153,7 +153,7 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             RollbackConfigArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 version: 50,
                 commit: false,
                 confirm_timeout_mins: None,

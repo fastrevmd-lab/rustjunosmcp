@@ -25,12 +25,12 @@ pub async fn handle_with_cancel(
     ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     // Confirm the router exists before connecting.
-    let _ = dm.inventory().get(&args.router_name)?;
+    let _ = dm.inventory().get(&args.device)?;
     let timeout_dur = Duration::from_secs(args.timeout);
 
     match candidate_transaction::run(
         &dm,
-        &args.router_name,
+        &args.device,
         CandidateRequest {
             payload: None,
             rollback_source: None,
@@ -69,7 +69,7 @@ mod tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             DiscardCandidateArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 timeout: 5,
             },
             dm,

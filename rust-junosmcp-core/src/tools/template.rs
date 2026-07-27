@@ -81,17 +81,17 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// Resolve the router-selector args to a single canonical Vec<String>.
-/// Rejects both-supplied; rejects empty `router_names`; allows neither
+/// Resolve the device-selector args to a single canonical Vec<String>.
+/// Rejects both-supplied; rejects empty `device_names`; allows neither
 /// (returns an empty list — apply path will be a no-op).
-fn resolve_routers(args: &TemplateArgs) -> Result<Vec<String>, JmcpError> {
-    match (&args.router_name, &args.router_names) {
+fn resolve_devices(args: &TemplateArgs) -> Result<Vec<String>, JmcpError> {
+    match (&args.device_name, &args.device_names) {
         (Some(_), Some(_)) => Err(JmcpError::Validation(
-            "specify exactly one of `router_name` or `router_names`".into(),
+            "specify exactly one of `device_name` or `device_names`".into(),
         )),
         (Some(one), None) => Ok(vec![one.clone()]),
         (None, Some(many)) if many.is_empty() => Err(JmcpError::Validation(
-            "`router_names` cannot be empty".into(),
+            "`device_names` cannot be empty".into(),
         )),
         (None, Some(many)) => Ok(many.clone()),
         (None, None) => Ok(Vec::new()),
@@ -112,11 +112,11 @@ pub async fn handle_with_cancel(
     policy: Arc<Policy>,
     ct: CancellationToken,
 ) -> Result<serde_json::Value, JmcpError> {
-    let routers = resolve_routers(&args)?;
+    let devices = resolve_devices(&args)?;
 
-    // Pre-flight: verify every named router exists. Mirrors the batch tool.
-    for r in &routers {
-        let _ = dm.inventory().get(r)?;
+    // Pre-flight: verify every named device exists. Mirrors the batch tool.
+    for d in &devices {
+        let _ = dm.inventory().get(d)?;
     }
 
     let vars = parse_vars(&args.vars_content)?;
@@ -127,29 +127,29 @@ pub async fn handle_with_cancel(
         None => detect_format(&rendered).to_string(),
     };
 
-    // Format gate: if any selected router has effective config rules,
+    // Format gate: if any selected device has effective config rules,
     // the rendered format must be `set`. Same restriction as
     // load_and_commit_config.
     if format != "set" {
-        for r in &routers {
-            if policy.has_config_rules_for(r) {
+        for d in &devices {
+            if policy.has_config_rules_for(d) {
                 return Err(JmcpError::TemplateFormatMismatch { format });
             }
         }
     }
 
     if !args.apply_config {
-        let mut rows = Vec::with_capacity(routers.len().max(1));
-        if routers.is_empty() {
+        let mut rows = Vec::with_capacity(devices.len().max(1));
+        if devices.is_empty() {
             rows.push(json!({
                 "router": null,
                 "rendered_template": rendered,
                 "config_format": format,
             }));
         } else {
-            for r in routers {
+            for d in devices {
                 rows.push(json!({
-                    "router": r,
+                    "router": d,
                     "rendered_template": rendered,
                     "config_format": format,
                 }));
@@ -158,11 +158,11 @@ pub async fn handle_with_cancel(
         return Ok(json!({ "results": rows, "applied": false }));
     }
 
-    // Apply path: per-router blocklist on the rendered output, then commit.
+    // Apply path: per-device blocklist on the rendered output, then commit.
     let payload = build_config_payload(rendered.clone(), Some(&format))?;
-    let mut rows: Vec<serde_json::Value> = Vec::with_capacity(routers.len());
-    for r in &routers {
-        match policy.check_config(r, &format, &rendered)? {
+    let mut rows: Vec<serde_json::Value> = Vec::with_capacity(devices.len());
+    for d in &devices {
+        match policy.check_config(d, &format, &rendered)? {
             crate::policy::Decision::Allow => {}
             crate::policy::Decision::Deny {
                 rule,
@@ -173,14 +173,14 @@ pub async fn handle_with_cancel(
                 let source_str = source.as_str();
                 tracing::warn!(
                     tool = "render_and_apply_j2_template",
-                    router = %r,
+                    router = %d,
                     matched_rule = %pattern,
                     rule_source = %source_str,
                     line_number = ?line_number,
                     "blocklist denied request",
                 );
                 rows.push(json!({
-                    "router": r,
+                    "router": d,
                     "rendered_template": rendered,
                     "config_format": format,
                     "error": format!("blocklist denied: pattern `{pattern}` from {source_str}"),
@@ -190,7 +190,7 @@ pub async fn handle_with_cancel(
         }
 
         let row = match commit_one(
-            r,
+            d,
             payload.clone(),
             &args.commit_comment,
             args.dry_run,
@@ -204,14 +204,14 @@ pub async fn handle_with_cancel(
             Ok(diff_or_id) => {
                 if args.dry_run {
                     json!({
-                        "router": r,
+                        "router": d,
                         "rendered_template": rendered,
                         "config_format": format,
                         "diff": diff_or_id,
                     })
                 } else {
                     json!({
-                        "router": r,
+                        "router": d,
                         "rendered_template": rendered,
                         "config_format": format,
                         // Note: rustez's commit() does not return a server-issued
@@ -223,7 +223,7 @@ pub async fn handle_with_cancel(
                 }
             }
             Err(e) => json!({
-                "router": r,
+                "router": d,
                 "rendered_template": rendered,
                 "config_format": format,
                 "error": e.to_string(),
@@ -234,12 +234,12 @@ pub async fn handle_with_cancel(
     Ok(json!({ "results": rows, "applied": !args.dry_run }))
 }
 
-/// Commit (or dry-run) a rendered config payload to one router.
+/// Commit (or dry-run) a rendered config payload to one device.
 /// Returns the diff string in dry-run mode, or the commit comment echo in apply
 /// mode. rustez does not return a server-issued commit identifier, so callers
 /// should treat the apply-mode return value as the comment that was used.
 async fn commit_one(
-    router: &str,
+    device_name: &str,
     payload: rustez::ConfigPayload,
     commit_comment: &str,
     dry_run: bool,
@@ -255,7 +255,7 @@ async fn commit_one(
     };
     match candidate_transaction::run(
         dm,
-        router,
+        device_name,
         CandidateRequest {
             payload: Some(payload),
             rollback_source: None,
@@ -435,12 +435,12 @@ mod tests {
         Arc::new(Inventory::load(f.path()).unwrap())
     }
 
-    fn args_render_only(routers: Vec<&str>) -> TemplateArgs {
+    fn args_render_only(devices: Vec<&str>) -> TemplateArgs {
         TemplateArgs {
             template_content: "set system host-name {{ name }}".into(),
             vars_content: r#"{"name":"r1"}"#.into(),
-            router_name: None,
-            router_names: Some(routers.iter().map(|s| s.to_string()).collect()),
+            device_name: None,
+            device_names: Some(devices.iter().map(|s| s.to_string()).collect()),
             apply_config: false,
             commit_comment: "test".into(),
             dry_run: false,
@@ -477,20 +477,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn render_only_rejects_both_router_name_and_names() {
+    async fn render_only_rejects_both_device_name_and_names() {
         let inv = inv_with(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
         let dm = Arc::new(DeviceManager::new(inv.clone()));
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let mut a = args_render_only(vec!["r1"]);
-        a.router_name = Some("r1".into());
+        a.device_name = Some("r1".into());
         let r = handle(a, dm, pol).await;
         assert!(matches!(r, Err(JmcpError::Validation(_))));
     }
 
-    fn args_apply(routers: Vec<&str>, dry_run: bool) -> TemplateArgs {
-        let mut a = args_render_only(routers);
+    fn args_apply(devices: Vec<&str>, dry_run: bool) -> TemplateArgs {
+        let mut a = args_render_only(devices);
         a.apply_config = true;
         a.dry_run = dry_run;
         a

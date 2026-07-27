@@ -180,6 +180,100 @@ fn router_list_returns_only_current_names_in_caller_scope() {
 }
 
 #[test]
+fn device_list_returns_only_current_names_in_caller_scope() {
+    ensure_built();
+    let inv = write_inv(
+        r#"{
+            "core-01":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}},
+            "edge-01":{"ip":"203.0.113.2","port":1,"username":"u","auth":{"type":"password","password":"x"}},
+            "edge-02":{"ip":"203.0.113.3","port":1,"username":"u","auth":{"type":"password","password":"x"}}
+        }"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "device-list-scope",
+        ScopeSet::Allowlist(vec!["edge-02".into(), "retired-99".into()]),
+        ScopeSet::Allowlist(vec!["get_device_list".into()]),
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap();
+
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose_secret());
+    let response = http_post(
+        server.port,
+        Some(secret.expose_secret()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name":"get_device_list",
+            "arguments":{}
+        }}),
+    );
+    assert_eq!(response.code, 200, "body: {}", response.body);
+    let text = response
+        .body
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("missing device-list text: {}", response.body));
+    let names: Vec<String> = serde_json::from_str(text).unwrap();
+    assert_eq!(names, vec!["edge-02"]);
+    assert!(!text.contains("core-01"));
+    assert!(!text.contains("edge-01"));
+    assert!(!text.contains("retired-99"));
+}
+
+#[test]
+fn get_router_list_alias_still_works() {
+    // Prove backward compat: get_router_list still registered and callable
+    ensure_built();
+    let inv = write_inv(
+        r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "router-list-compat",
+        ScopeSet::Wildcard,
+        ScopeSet::Allowlist(vec!["get_router_list".into()]),
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap();
+
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose_secret());
+    let response = http_post(
+        server.port,
+        Some(secret.expose_secret()),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+            "name":"get_router_list",
+            "arguments":{}
+        }}),
+    );
+    assert_eq!(
+        response.code, 200,
+        "get_router_list failed: {}",
+        response.body
+    );
+    let text = response
+        .body
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("missing text: {}", response.body));
+    let names: Vec<String> = serde_json::from_str(text).unwrap();
+    assert_eq!(names, vec!["r1"]);
+}
+
+#[test]
 fn auth_then_scope_then_blocklist_ordering() {
     ensure_built();
     let inv = write_inv(

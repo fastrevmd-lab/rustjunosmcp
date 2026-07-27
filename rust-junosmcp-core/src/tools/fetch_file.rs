@@ -71,19 +71,17 @@ pub async fn handle(
         // Per-router serialization (shared with transfer_file). Acquired AFTER
         // basename validation so an obviously-bogus path never queues behind a
         // live transfer.
-        let _permit = select_cancel_raw::<_, _, JmcpError>(
-            &ct,
-            cfg.transfer_locks.acquire(&args.router_name),
-        )
-        .await?;
+        let _permit =
+            select_cancel_raw::<_, _, JmcpError>(&ct, cfg.transfer_locks.acquire(&args.device))
+                .await?;
 
         // Resolve device + check auth type. Snapshot the fields we need before
         // dropping the borrow so we can hand `dm` to `dm.open(...)` below.
         let inv = dm.inventory();
-        let entry = inv.get(&args.router_name)?;
+        let entry = inv.get(&args.device)?;
         let private_key_path = match &entry.auth {
             AuthConfig::Password { .. } => {
-                return Err(JmcpError::UnsupportedAuth(args.router_name.clone()));
+                return Err(JmcpError::UnsupportedAuth(args.device.clone()));
             }
             AuthConfig::SshKey { private_key_path } => private_key_path.clone(),
         };
@@ -108,7 +106,7 @@ pub async fn handle(
         };
 
         // Open pooled NETCONF session for the remote checksum probe.
-        let mut dev = select_cancel(&ct, dm.open(&args.router_name)).await?;
+        let mut dev = select_cancel(&ct, dm.open(&args.device)).await?;
 
         // Probe remote checksum. If absent, fail fast.
         let probe_cmd = format!("file checksum sha-256 {}", remote_path);
@@ -122,7 +120,7 @@ pub async fn handle(
             Some(s) => s,
             None => {
                 return Err(JmcpError::RemoteFileMissing {
-                    router: args.router_name.clone(),
+                    router: args.device.clone(),
                     remote_path: remote_path.clone(),
                 });
             }
@@ -188,7 +186,7 @@ pub async fn handle(
             let _ = std::fs::remove_file(&partial_path);
             return Err(crate::tools::transfer_file::classify_scp_failure(
                 &outcome,
-                &args.router_name,
+                &args.device,
                 &cfg.known_hosts_file,
             ));
         }
@@ -259,7 +257,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             FetchFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 remote_path: "../etc/shadow".into(),
                 local_name: None,
                 force: false,
@@ -284,7 +282,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             FetchFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 remote_path: "ok.tgz".into(),
                 local_name: Some("../escape".into()),
                 force: false,
@@ -314,7 +312,7 @@ mod handle_validation_tests {
         c.known_hosts_file = dir.path().join("no-such-known_hosts");
         let r = handle(
             FetchFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 remote_path: "ok.tgz".into(),
                 local_name: None,
                 force: false,
@@ -342,7 +340,7 @@ mod handle_validation_tests {
         let dm = Arc::new(DeviceManager::new(inv));
         let r = handle(
             FetchFileArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 remote_path: "ok.tgz".into(),
                 local_name: None,
                 force: false,

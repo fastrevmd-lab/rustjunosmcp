@@ -34,16 +34,16 @@ pub async fn handle(
     }
 
     // Fail fast on unknown routers so the policy check has a valid target.
-    let _ = dm.inventory().get(&args.router_name)?;
+    let _ = dm.inventory().get(&args.device)?;
 
     if let Decision::Deny { rule, source, .. } =
-        policy.check_pfe_command(&args.router_name, &args.pfe_command)
+        policy.check_pfe_command(&args.device, &args.pfe_command)
     {
         let pattern = rule.pattern.clone();
         let source_str = source.as_str();
         tracing::warn!(
             tool = "execute_junos_pfe_command",
-            router = %args.router_name,
+            router = %args.device,
             matched_rule = %pattern,
             rule_source = %source_str,
             input_excerpt = %excerpt(&args.pfe_command),
@@ -51,7 +51,7 @@ pub async fn handle(
         );
         return Err(JmcpError::Denied {
             tool: "execute_junos_pfe_command",
-            router: args.router_name.clone(),
+            router: args.device.clone(),
             pattern,
             rule_source: source_str,
             input_excerpt: excerpt(&args.pfe_command),
@@ -66,7 +66,7 @@ pub async fn handle(
         args.fpc_target, args.pfe_command
     );
     let result = tokio::time::timeout(timeout, async {
-        let mut dev = dm.open(&args.router_name).await?;
+        let mut dev = dm.open(&args.device).await?;
         let output = dev.cli(&wrapper).await?;
         Ok::<_, JmcpError>(output)
     })
@@ -106,7 +106,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecutePfeArgs {
-                router_name: "nope".into(),
+                device: "nope".into(),
                 fpc_target: "fpc0".into(),
                 pfe_command: "show jnh 0 stats".into(),
                 timeout: 5,
@@ -133,7 +133,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecutePfeArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 fpc_target: "fpc0".into(),
                 pfe_command: "set jnh 0 debug".into(),
                 timeout: 1,
@@ -169,7 +169,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecutePfeArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 fpc_target: "fpc0; rm -rf /".into(),
                 pfe_command: "show jnh 0 stats".into(),
                 timeout: 5,
@@ -193,7 +193,7 @@ mod tests {
         let pol = Arc::new(Policy::build(&inv).unwrap());
         let r = handle(
             ExecutePfeArgs {
-                router_name: "r1".into(),
+                device: "r1".into(),
                 fpc_target: "fpc0".into(),
                 pfe_command: r#"show "evil""#.into(),
                 timeout: 5,

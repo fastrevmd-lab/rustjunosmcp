@@ -11,6 +11,12 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const JUNOS_TOOLS: &[&str] = &[
+    // `get_device_list` is canonical; `get_router_list` is the deprecated alias
+    // kept so existing clients keep working. Both are advertised, so both belong
+    // here. This list is deliberately a second copy of the one in
+    // `rust_junosmcp_auth::JUNOS_TOOLS` — it exists to catch that crate being
+    // wrong, so do not collapse it into an import.
+    "get_device_list",
     "get_router_list",
     "gather_device_facts",
     "execute_junos_command",
@@ -142,9 +148,9 @@ fn lists_expected_tools() {
         .collect();
     assert_eq!(names, expected);
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 27);
+    assert_eq!(names.len(), 28);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 18);
+    assert_eq!(names.len(), 19);
 }
 
 #[cfg(feature = "srx")]
