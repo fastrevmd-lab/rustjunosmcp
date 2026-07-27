@@ -150,7 +150,7 @@ fn lists_expected_tools() {
     #[cfg(feature = "srx")]
     assert_eq!(names.len(), 28);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 18);
+    assert_eq!(names.len(), 19);
 }
 
 #[cfg(feature = "srx")]
