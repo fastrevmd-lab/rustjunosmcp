@@ -856,6 +856,86 @@ fn format_attribution(attribution: &Attribution) -> String {
 mod tests {
     use super::*;
 
+    /// A transaction over an empty inventory. Every test using this asserts on
+    /// behaviour that happens *before* a session is opened, so no device is
+    /// contacted; `stage()` would fail at `device_manager.open()` if one of
+    /// these ever got that far, which is itself the signal that the validation
+    /// under test stopped working.
+    fn offline_transaction() -> JunosTransaction {
+        use crate::{device_manager::DeviceManager, inventory::Inventory};
+        use std::sync::Arc;
+
+        JunosTransaction::new(
+            Arc::new(DeviceManager::new(Arc::new(Inventory::empty()))),
+            "no-such-router".to_owned(),
+        )
+    }
+
+    fn action(payload: Option<&str>, rollback_source: Option<u32>) -> JunosAction {
+        JunosAction {
+            payload: payload.map(|text| ConfigPayloadSpec {
+                text: text.to_owned(),
+                format: Some("set".to_owned()),
+            }),
+            rollback_source,
+        }
+    }
+
+    /// `payload` and `rollback_source` are mutually exclusive. Staging both
+    /// would load a payload *and* a rollback archive into one candidate, so the
+    /// resulting configuration is neither of the things the caller asked for.
+    #[tokio::test]
+    async fn stage_rejects_an_action_carrying_both_payload_and_rollback() {
+        let error = offline_transaction()
+            .stage(&[action(Some("set system host-name a"), Some(0))])
+            .await
+            .err()
+            .expect("both fields set must be refused");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("both payload and rollback_source"),
+            "the error should name the conflict, got: {message}"
+        );
+    }
+
+    /// Neither field set has no meaning either, and it must be caught before a
+    /// session is opened rather than surfacing as an `unreachable!` later.
+    #[tokio::test]
+    async fn stage_rejects_an_action_carrying_neither_payload_nor_rollback() {
+        let error = offline_transaction()
+            .stage(&[action(None, None)])
+            .await
+            .err()
+            .expect("neither field set must be refused");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("neither payload nor rollback_source"),
+            "the error should name the omission, got: {message}"
+        );
+    }
+
+    /// The invariant is per action, not just the first one: a valid action must
+    /// not mask an invalid one behind it.
+    #[tokio::test]
+    async fn stage_validates_every_action_not_only_the_first() {
+        let error = offline_transaction()
+            .stage(&[
+                action(Some("set system host-name a"), None),
+                action(Some("set system host-name b"), Some(0)),
+            ])
+            .await
+            .err()
+            .expect("the second action is invalid and must be caught");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("action 1"),
+            "the error should identify which action failed, got: {message}"
+        );
+    }
+
     fn agent_attribution(model_id: &str) -> Attribution {
         let mut attribution = Attribution::stdio();
         attribution.actor_type = mecmcp_audit::ActorType::Agent;
