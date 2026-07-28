@@ -252,6 +252,18 @@ pub enum TokenAction {
         /// Comma-separated tool names, or '*' for all.
         #[arg(long, value_delimiter = ',')]
         tools: Vec<String>,
+        /// Provider name (e.g., "anthropic", "ollama"). Optional.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Provider tier: "public" or "private". Required if provider is set.
+        #[arg(long)]
+        provider_tier: Option<String>,
+        /// The human on whose behalf this credential acts. Optional.
+        #[arg(long)]
+        on_behalf_of: Option<String>,
+        /// Actor type: "human", "agent", or "unknown". Optional.
+        #[arg(long)]
+        actor_type: Option<String>,
         /// Send SIGHUP to this pid after writing.
         #[arg(long)]
         server_pid: Option<i32>,
@@ -331,6 +343,55 @@ mod tests {
 
     use super::*;
     use clap::{CommandFactory, Parser};
+
+    /// `token add` must accept the provenance flags and carry them to
+    /// `mecmcp-runtime`. They were declared upstream but never wired here, so
+    /// the fields were hardcoded to `None` and every commit this server made
+    /// was attributed to `(unknown) on-behalf-of=self` — visible on the vSRX
+    /// commit log, invisible to the whole test suite.
+    #[test]
+    fn token_add_carries_the_provenance_flags() {
+        let cli = Cli::parse_from([
+            "rust-junosmcp",
+            "token",
+            "add",
+            "--tokens-file",
+            "/tmp/t.json",
+            "--name",
+            "svc",
+            "--devices",
+            "*",
+            "--tools",
+            "*",
+            "--provider",
+            "anthropic",
+            "--provider-tier",
+            "private",
+            "--on-behalf-of",
+            "mharman",
+            "--actor-type",
+            "agent",
+        ]);
+
+        let Some(Command::Token {
+            action:
+                TokenAction::Add {
+                    provider,
+                    provider_tier,
+                    on_behalf_of,
+                    actor_type,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected `token add` to parse");
+        };
+
+        assert_eq!(provider.as_deref(), Some("anthropic"));
+        assert_eq!(provider_tier.as_deref(), Some("private"));
+        assert_eq!(on_behalf_of.as_deref(), Some("mharman"));
+        assert_eq!(actor_type.as_deref(), Some("agent"));
+    }
 
     #[test]
     fn help_describes_the_compiled_feature_surface() {
