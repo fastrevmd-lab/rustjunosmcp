@@ -34,7 +34,7 @@ pub(crate) struct CandidateRequest {
 /// (`CheckFailed`, e.g. the malformed multi-RE reply on chassis clusters that
 /// rustnetconf cannot parse). Conflating them is a safety bug (#180).
 #[derive(Debug)]
-pub(crate) enum CheckOutcome {
+pub enum CheckOutcome {
     Valid,
     Invalid(String),
     CheckFailed(String),
@@ -50,7 +50,7 @@ pub(crate) enum CandidateResult {
 }
 
 #[async_trait]
-trait CandidateBackend {
+pub(crate) trait CandidateBackend {
     async fn lock(&mut self) -> Result<(), JmcpError>;
     async fn load(&mut self, payload: ConfigPayload) -> Result<(), JmcpError>;
     async fn load_rollback(&mut self, version: u32) -> Result<(), JmcpError>;
@@ -401,7 +401,7 @@ where
 /// verdict. Unknown → CheckFailed. Never report an inconclusive check as an
 /// invalid config, and never report a genuine rejection as a validation pass
 /// (#180).
-fn classify_check_error(error: JmcpError) -> CheckOutcome {
+pub(crate) fn classify_check_error(error: JmcpError) -> CheckOutcome {
     let JmcpError::Rustez(ref boxed) = error else {
         return CheckOutcome::CheckFailed(error.to_string());
     };

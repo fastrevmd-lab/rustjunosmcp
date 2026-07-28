@@ -35,6 +35,11 @@ const JUNOS_TOOLS: &[&str] = &[
     "fetch_file",
     "list_staged_files",
     "upgrade_junos",
+    // Phase 5: two-person change control on Junos.
+    "create_junos_change_set",
+    "approve_junos_change_set",
+    "apply_junos_change_set",
+    "get_junos_change_set_status",
 ];
 
 #[cfg(feature = "srx")]
@@ -147,10 +152,11 @@ fn lists_expected_tools() {
         .chain(SRX_TOOLS.iter().copied())
         .collect();
     assert_eq!(names, expected);
+    // 28 / 19 before Phase 5; the four change-set tools add four to each.
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 32);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 19);
+    assert_eq!(names.len(), 23);
 }
 
 #[cfg(feature = "srx")]

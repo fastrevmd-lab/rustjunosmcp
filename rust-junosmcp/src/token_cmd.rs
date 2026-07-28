@@ -19,6 +19,10 @@ pub fn run(action: TokenAction) -> Result<()> {
                 name,
                 devices,
                 tools,
+                provider: None,
+                provider_tier: None,
+                on_behalf_of: None,
+                actor_type: None,
                 server_pid,
             };
             mecmcp_runtime::token_cmd::run(

@@ -186,7 +186,27 @@ async fn main() -> Result<()> {
         transfer_cfg: transfer_cfg.clone(),
         device_leases,
     };
-    let handler = JmcpHandler::new(dev_manager.clone(), policy, transfer_cfg, upgrade_cfg);
+    let coordinator = std::sync::Arc::new(
+        mecmcp_changeset::ChangesetCoordinator::load(
+            Some(&args.changeset_state_file),
+            mecmcp_changeset::OperationLimits::default(),
+            std::time::Duration::from_secs(args.changeset_approval_timeout_secs),
+            args.changeset_lab_mode,
+        )
+        .with_context(|| {
+            format!(
+                "initializing changeset coordinator at {}",
+                args.changeset_state_file.display()
+            )
+        })?,
+    );
+    let handler = JmcpHandler::new(
+        dev_manager.clone(),
+        policy,
+        transfer_cfg,
+        upgrade_cfg,
+        coordinator,
+    );
     #[cfg(feature = "srx")]
     let handler = handler.with_srx_runtime(
         token_store.is_some() && matches!(args.transport, Transport::StreamableHttp),
@@ -284,7 +304,7 @@ async fn main() -> Result<()> {
                 max_request_burst_per_ip: args.max_request_burst_per_ip,
                 max_requests_per_second_per_token: args.max_requests_per_second_per_token,
                 max_request_burst_per_token: args.max_request_burst_per_token,
-                max_inflight_requests_per_router: args.max_inflight_requests_per_router,
+                max_inflight_requests_per_device: args.max_inflight_requests_per_router,
                 max_sessions: args.max_sessions,
                 max_sessions_per_token: args.max_sessions_per_token,
                 session_idle_timeout_secs: args.session_idle_timeout_secs,

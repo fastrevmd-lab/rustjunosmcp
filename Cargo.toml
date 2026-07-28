@@ -67,13 +67,14 @@ rustez       = "0.13"
 # mecmcp-runtime exists only on feat/phase-3b-runtime-crate branch (not yet
 # merged, not yet tagged). All four deps point at that branch for now.
 # BLOCKER: re-pin to a release tag before merge.
-mecmcp-audit = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-auth  = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-transport = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-runtime = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-policy = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-inventory = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
-mecmcp-device = { version = "0.1.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "phase4-v0.1.7" }
+mecmcp-audit = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-auth  = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-transport = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-runtime = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-policy = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-inventory = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-device = { version = "0.3.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
+mecmcp-changeset = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.1" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

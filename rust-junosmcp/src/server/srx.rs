@@ -836,7 +836,18 @@ mod scope_tests {
             transfer_cfg: transfer_cfg.clone(),
             device_leases,
         };
-        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
+        // In-memory coordinator: these SRX tests never exercise the change-set
+        // flow, and giving it no state path keeps them from touching disk.
+        let coordinator = Arc::new(
+            mecmcp_changeset::ChangesetCoordinator::load(
+                None,
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(900),
+                false,
+            )
+            .expect("in-memory changeset coordinator"),
+        );
+        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg, coordinator)
             .with_srx_runtime(authorization_required, Default::default())
     }
 
@@ -885,6 +896,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
 
         // Wildcard tool scope now excludes write tools (manage_idp_security_package, manage_appid_signature_package)
@@ -917,6 +932,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         for tool in SRX_SERVER_TOOLS {
             assert!(

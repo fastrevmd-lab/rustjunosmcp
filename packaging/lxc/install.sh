@@ -96,11 +96,15 @@ fi
 if [[ ! -e "$CONFIG_DIR/known_hosts" ]]; then
     : >"$CONFIG_DIR/known_hosts"
 fi
+if [[ ! -e "$STATE_DIR/changeset-state.json" ]]; then
+    printf '%s\n' '{"version":1,"state":{"operations":{},"change_sets":{}}}' >"$STATE_DIR/changeset-state.json"
+fi
 
 # Set modes on files that exist. devices.json may not exist on first install.
 [[ -e "$CONFIG_DIR/devices.json" ]] && chmod 0600 "$CONFIG_DIR/devices.json"
 chmod 0600 "$CONFIG_DIR/tokens.json"
 chmod 0644 "$CONFIG_DIR/known_hosts"
+chmod 0600 "$STATE_DIR/changeset-state.json"
 
 if [[ "$SKIP_USER_SETUP" != "1" ]]; then
     chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR"
@@ -110,6 +114,8 @@ if [[ "$SKIP_USER_SETUP" != "1" ]]; then
     chown "$SERVICE_USER:$SERVICE_GROUP" \
         "$CONFIG_DIR/tokens.json" \
         "$CONFIG_DIR/known_hosts"
+    # chown -R covers device-leases/, staging/, and srx-staging/ subdirs,
+    # plus changeset-state.json.
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
 fi
 

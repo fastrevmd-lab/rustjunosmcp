@@ -123,6 +123,28 @@ pub struct Cli {
     #[arg(long, default_value = "/var/lib/jmcp/device-leases")]
     pub device_lease_dir: PathBuf,
 
+    /// Change-set lifecycle state file for two-person approval workflow.
+    #[arg(long, default_value = "/var/lib/jmcp/changeset-state.json")]
+    pub changeset_state_file: PathBuf,
+
+    /// Change-set approval timeout in seconds. After this window, unapproved
+    /// change sets expire and cannot be applied.
+    #[arg(long, default_value_t = 3600)]
+    pub changeset_approval_timeout_secs: u64,
+
+    /// Enable lab mode for change-set workflow: allows single-operator
+    /// waiver instead of requiring a second principal to approve.
+    #[arg(long)]
+    /// Enable the lab-mode approval waiver in the change-set coordinator.
+    ///
+    /// NOT YET USABLE FROM JUNOS. The coordinator supports `waive_approval`
+    /// and this flag enables it there, but no Junos MCP tool calls it, so a
+    /// single operator still cannot move a plan to `Approved`. Setting this
+    /// today changes nothing observable. Tracked in issue #228; the flag is
+    /// kept rather than removed because the waiver itself is a requested
+    /// feature (mecmcp#54) and the gap is the tool, not the capability.
+    pub changeset_lab_mode: bool,
+
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]
     #[arg(

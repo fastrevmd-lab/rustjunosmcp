@@ -23,7 +23,10 @@ pub type TokenStoreFile = SharedFile<NoGrant>;
 /// compares its `#[tool]` surface against this registry.
 pub const JUNOS_TOOLS: &[&str] = &[
     "add_device",
+    "apply_junos_change_set",
+    "approve_junos_change_set",
     "commit_check_config",
+    "create_junos_change_set",
     "discard_candidate",
     "execute_junos_command",
     "execute_junos_command_batch",
@@ -31,6 +34,7 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "fetch_file",
     "gather_device_facts",
     "get_device_list",
+    "get_junos_change_set_status",
     "get_junos_config",
     "get_router_list",
     "junos_config_diff",
@@ -62,9 +66,12 @@ pub const SRX_TOOLS: &[&str] = &[
 /// [`SRX_TOOLS`]; the registry tests below enforce that invariant.
 pub const KNOWN_TOOLS: &[&str] = &[
     "add_device",
+    "apply_junos_change_set",
+    "approve_junos_change_set",
     "check_srx_feature_license",
     "collect_jtac_support_bundle",
     "commit_check_config",
+    "create_junos_change_set",
     "discard_candidate",
     "execute_junos_command",
     "execute_junos_command_batch",
@@ -73,6 +80,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "gather_device_facts",
     "get_chassis_cluster_status",
     "get_device_list",
+    "get_junos_change_set_status",
     "get_junos_config",
     "get_router_list",
     "get_srx_security_services_status",
@@ -95,15 +103,18 @@ pub const KNOWN_TOOLS: &[&str] = &[
 /// must always be an explicit, named decision.
 pub const WRITE_TOOLS: &[&str] = &[
     "add_device",
+    "apply_junos_change_set",
+    "approve_junos_change_set",
+    "create_junos_change_set",
+    "discard_candidate",
     "load_and_commit_config",
+    "manage_appid_signature_package",
+    "manage_idp_security_package",
+    "reload_devices",
     "render_and_apply_j2_template",
     "rollback_config",
     "transfer_file",
     "upgrade_junos",
-    "manage_idp_security_package",
-    "manage_appid_signature_package",
-    "discard_candidate",
-    "reload_devices",
 ];
 
 /// Backwards-compatible alias. `filter_router_names` was the pre-extraction

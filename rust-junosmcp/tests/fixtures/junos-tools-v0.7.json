@@ -94,6 +94,65 @@
       }
     }
   },
+  "apply_junos_change_set": {
+    "name": "apply_junos_change_set",
+    "description": "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "change_set_id",
+        "expected_digest",
+        "expected_fingerprint",
+        "device"
+      ],
+      "properties": {
+        "change_set_id": {
+          "description": "Change-set ID to apply.",
+          "type": "string"
+        },
+        "expected_digest": {
+          "description": "Expected plan digest. Prevents applying a plan that was tampered with\nafter approval.",
+          "type": "string"
+        },
+        "expected_fingerprint": {
+          "description": "Expected device fingerprint at apply time. If the device changed after\nthe plan was created, the apply is rejected.",
+          "type": "string"
+        },
+        "device": {
+          "description": "Target device endpoint (device name from inventory).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "approve_junos_change_set": {
+    "name": "approve_junos_change_set",
+    "description": "Approve a change set created by a different principal. The approver must provide the exact plan digest to confirm they reviewed the plan. After approval, the owner can apply the change set.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "change_set_id",
+        "device",
+        "expected_digest"
+      ],
+      "properties": {
+        "change_set_id": {
+          "description": "Change-set ID returned by create.",
+          "type": "string"
+        },
+        "device": {
+          "description": "Device name. Required because change sets are indexed by (id, device).",
+          "type": "string"
+        },
+        "expected_digest": {
+          "description": "Expected plan digest. The approver must compute or be shown the exact\ndigest and confirm it matches what they reviewed.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
   "commit_check_config": {
     "name": "commit_check_config",
     "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
@@ -124,6 +183,83 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        }
+      }
+    }
+  },
+  "create_junos_change_set": {
+    "name": "create_junos_change_set",
+    "description": "Create a change set (plan) for two-person approval workflow. Returns a change_set_id and plan_digest. The plan must be approved by a second principal before it can be applied.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "JunosAction": {
+          "description": "Junos-specific action: a config payload or a rollback archive reference.",
+          "type": "object",
+          "properties": {
+            "payload": {
+              "description": "Configuration payload to load. Exactly one of `payload` or\n`rollback_source` must be set.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConfigPayloadSpec"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rollback_source": {
+              "description": "Rollback archive version (0..=49). Junos loads rollback N and diffs it.\nExactly one of `payload` or `rollback_source` must be set.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          }
+        },
+        "ConfigPayloadSpec": {
+          "description": "Serializable config payload specification.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "format": {
+              "description": "Format: \"set\", \"text\", or \"xml\". Defaults to \"set\" if omitted.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "device",
+        "expected_fingerprint",
+        "actions"
+      ],
+      "type": "object",
+      "properties": {
+        "device": {
+          "description": "Target device name.",
+          "type": "string"
+        },
+        "expected_fingerprint": {
+          "description": "Expected device fingerprint before applying. If the device state\nchanges after planning, application will be rejected.",
+          "type": "string"
+        },
+        "actions": {
+          "description": "List of actions to stage. Each action is either a payload or a\nrollback archive reference.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JunosAction"
+          }
         }
       }
     }
@@ -418,6 +554,28 @@
     "description": "Get the Junos devices visible to this caller. Returns [] when the caller's device scope has no current inventory matches.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object"
+    }
+  },
+  "get_junos_change_set_status": {
+    "name": "get_junos_change_set_status",
+    "description": "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "change_set_id",
+        "device"
+      ],
+      "properties": {
+        "change_set_id": {
+          "description": "Change-set ID to query.",
+          "type": "string"
+        },
+        "device": {
+          "description": "Device name. Required because change sets are indexed by (id, device).",
+          "type": "string"
+        }
+      },
       "type": "object"
     }
   },
