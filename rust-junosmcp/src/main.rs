@@ -284,7 +284,7 @@ async fn main() -> Result<()> {
                 max_request_burst_per_ip: args.max_request_burst_per_ip,
                 max_requests_per_second_per_token: args.max_requests_per_second_per_token,
                 max_request_burst_per_token: args.max_request_burst_per_token,
-                max_inflight_requests_per_router: args.max_inflight_requests_per_router,
+                max_inflight_requests_per_device: args.max_inflight_requests_per_router,
                 max_sessions: args.max_sessions,
                 max_sessions_per_token: args.max_sessions_per_token,
                 session_idle_timeout_secs: args.session_idle_timeout_secs,

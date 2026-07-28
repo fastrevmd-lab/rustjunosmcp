@@ -885,6 +885,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
 
         // Wildcard tool scope now excludes write tools (manage_idp_security_package, manage_appid_signature_package)
@@ -917,6 +921,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         for tool in SRX_SERVER_TOOLS {
             assert!(

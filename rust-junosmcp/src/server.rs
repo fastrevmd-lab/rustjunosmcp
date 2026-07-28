@@ -1323,6 +1323,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(
             handler
@@ -1343,6 +1347,10 @@ mod scope_tests {
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(
             handler
@@ -1363,6 +1371,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
@@ -1403,6 +1415,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "transfer_file"),
@@ -1418,6 +1434,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "list_staged_files"),
@@ -1435,6 +1455,10 @@ mod scope_tests {
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(
             handler
@@ -1455,6 +1479,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "fetch_file"),
@@ -1472,6 +1500,10 @@ mod scope_tests {
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         assert!(handler.check_tool_scope(Some(&ctx), "fetch_file").is_ok());
         assert!(matches!(
@@ -1490,6 +1522,10 @@ mod scope_tests {
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         };
         let routers = ["r1", "r2"];
         let mut first_fail: Option<&str> = None;
@@ -1520,6 +1556,10 @@ mod scope_tests {
             devices: ScopeSet::Wildcard,
             tools,
             grant: None,
+            provider: None,
+            provider_tier: None,
+            on_behalf_of: None,
+            actor_type: Default::default(),
         }
     }
 
