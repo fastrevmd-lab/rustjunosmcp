@@ -42,3 +42,4 @@ SRX_RUSTJUNOSMCP_CAPABILITY_GAPS.md
 coverage/
 *.agekey
 *.decrypted.*
+target-deb/
