@@ -182,7 +182,13 @@ impl DeviceTransaction for JunosTransaction {
             if let Err(error) = load_result {
                 // Partial failure. Revert the candidate (rollback 0) and unlock.
                 // Both must succeed before we allow the session back into the pool.
-                let mut cleanup_failed = false;
+                // Finding 2 (P1): Cleanup failures must be visible in the returned
+                // error, not just logged. A failed revert on a standalone device can
+                // leave earlier actions sitting in the shared candidate, breaking the
+                // all-or-none staging contract, and the caller sees nothing telling it
+                // recovery is needed.
+                let mut revert_err_opt = None;
+                let mut unlock_err_opt = None;
 
                 if loaded > 0
                     && let Err(revert_error) = cfg.rollback(0).await
@@ -194,7 +200,7 @@ impl DeviceTransaction for JunosTransaction {
                         revert_error = %revert_error,
                         "failed to revert partial stage; session tainted"
                     );
-                    cleanup_failed = true;
+                    revert_err_opt = Some(revert_error.to_string());
                 }
 
                 if let Err(unlock_error) = cfg.unlock().await {
@@ -204,14 +210,34 @@ impl DeviceTransaction for JunosTransaction {
                         unlock_error = %unlock_error,
                         "failed to unlock after load failure; session tainted"
                     );
-                    cleanup_failed = true;
+                    unlock_err_opt = Some(unlock_error.to_string());
                 }
 
-                if !cleanup_failed {
+                if revert_err_opt.is_none() && unlock_err_opt.is_none() {
                     dev.allow_reuse();
                 }
 
-                return Err(error.into());
+                // Return the cleanup-aware error if cleanup failed, otherwise the primary.
+                return match (&revert_err_opt, &unlock_err_opt) {
+                    (Some(revert_err), Some(unlock_err)) => {
+                        Err(JmcpError::CandidateCleanupFailed {
+                            primary: error.to_string(),
+                            rollback: revert_err.clone(),
+                            unlock: unlock_err.clone(),
+                        })
+                    }
+                    (Some(revert_err), None) => Err(JmcpError::CandidateCleanupFailed {
+                        primary: error.to_string(),
+                        rollback: revert_err.clone(),
+                        unlock: "ok".into(),
+                    }),
+                    (None, Some(unlock_err)) => Err(JmcpError::CandidateCleanupFailed {
+                        primary: error.to_string(),
+                        rollback: if loaded > 0 { "ok" } else { "skipped" }.into(),
+                        unlock: unlock_err.clone(),
+                    }),
+                    (None, None) => Err(error.into()),
+                };
             }
         }
 
@@ -287,17 +313,10 @@ impl DeviceTransaction for JunosTransaction {
         attribution: &Attribution,
         options: &CommitOptions,
     ) -> Result<CommitOutcome, Self::Error> {
-        // Defect #1 fix: Use the staged session's lock and private candidate database.
-        let mut session_guard = staged.session.lock().await;
-        let session = session_guard.as_mut().ok_or_else(|| {
-            JmcpError::Validation("staged transaction has no session; already consumed?".into())
-        })?;
-
-        let mut cfg = session.config()?;
-
-        // Build the commit comment from the attribution.
-        let comment = format_attribution(attribution);
-
+        // Finding 1 (P1): Reject confirm_timeout BEFORE staging to avoid leaving
+        // the candidate dirty on refusal. The previous code refused after stage(),
+        // which locked and loaded the shared candidate, then returned an error
+        // without cleanup — leaving the staged changes for whatever commits next.
         if let Some(_confirm_timeout) = options.confirm_timeout {
             // Defect #4: Confirmed commit. The commit RPC is non-persistent by default,
             // which means it must be confirmed ON THE SAME SESSION or it will be
@@ -323,6 +342,17 @@ impl DeviceTransaction for JunosTransaction {
             ));
         }
 
+        // Defect #1 fix: Use the staged session's lock and private candidate database.
+        let mut session_guard = staged.session.lock().await;
+        let session = session_guard.as_mut().ok_or_else(|| {
+            JmcpError::Validation("staged transaction has no session; already consumed?".into())
+        })?;
+
+        let mut cfg = session.config()?;
+
+        // Build the commit comment from the attribution.
+        let comment = format_attribution(attribution);
+
         // Normal synchronous commit with comment.
         // Defect #3: Distinguish timeout/transport uncertainty from known rejection.
         match cfg.commit_with_comment(&comment).await {
@@ -332,17 +362,13 @@ impl DeviceTransaction for JunosTransaction {
                 // is unknown — that's Indeterminate.
                 match cfg.unlock().await {
                     Ok(()) => {
-                        // Clean success. Allow the session to be pooled.
-                        // SAFETY: We're borrowing session from staged.session, which is
-                        // still owned by `staged`. We can't call allow_reuse() on a
-                        // borrowed PooledDevice. The session will be dropped when
-                        // `staged` is dropped, and at that point it will NOT be pooled
-                        // because prevent_reuse() was called in stage().
-                        //
-                        // WORKAROUND: Accept that the session will be closed (not pooled)
-                        // after a successful commit. This is safe but not optimal for
-                        // performance. A better fix would be to take ownership of the
-                        // session, but that requires a mutable Staged reference.
+                        // Finding 4 (P2): After commit and unlock both succeed, allow
+                        // the session to be pooled. The previous code left prevent_reuse
+                        // set, forcing a fresh SSH connection for every successful change
+                        // set. ConfigManager doesn't implement Drop, so we can just allow
+                        // reuse on the session directly (the borrow ends at the match arm).
+                        session.allow_reuse();
+
                         Ok(CommitOutcome::Reconciled {
                             succeeded: true,
                             job_id: None,
@@ -715,27 +741,78 @@ fn find_attr_end(s: &str) -> usize {
 
 /// Classify whether a rustez error indicates transport/timeout uncertainty.
 ///
-/// Defect #3: A commit RPC that times out or whose transport drops after the
-/// request was sent may have succeeded on the device. Reporting that as a
-/// definite failure lets the caller retry or discard a change that may be live.
+/// Finding 3 (P2): Match on error VARIANTS, not substrings. A device returning
+/// `<rpc-error>` with a message that happens to contain "timeout" (e.g., rejecting
+/// a configuration statement *named* `timeout`) is a terminal ServerError — a
+/// known rejection (Reconciled { succeeded: false }), not Indeterminate.
 ///
 /// Returns `true` for errors that indicate the outcome is unknown (timeout,
 /// connection drop, channel closed). Returns `false` for errors that indicate
-/// a known rejection (RPC error, parse failure, validation failure).
+/// a known rejection (explicit ServerError from the device).
+///
+/// **Evidence on error variant discrimination**: rustnetconf 0.13.x and rustez 0.13.x
+/// provide the following enum structure:
+///
+/// - `RustEzError::Netconf(NetconfError)` wraps all NETCONF-layer errors.
+/// - `NetconfError::Rpc(RpcError::ServerError { .. })` is an explicit `<rpc-error>`
+///   from the device — a known verdict, even if the message text contains "timeout".
+/// - `NetconfError::Transport(_)` and `NetconfError::Framing(_)` are transport/framing
+///   failures — the RPC outcome is unknown.
+/// - `RpcError::ParseError(_)` can be a multi-RE cluster reply or a framing failure —
+///   treat as uncertainty (safer default).
+///
+/// This distinction is PRESENT in the error variants and is RELIABLE: ServerError
+/// means the device replied with an `<rpc-error>` element, which is a terminal
+/// rejection. Transport/Framing mean the connection dropped or the message was
+/// corrupt, which leaves the outcome unknown.
 fn is_transport_uncertainty(error: &rustez::RustEzError) -> bool {
-    let err_str = error.to_string().to_ascii_lowercase();
-    [
-        "timeout",
-        "timed out",
-        "connection closed",
-        "connection reset",
-        "broken pipe",
-        "unexpected eof",
-        "channel closed",
-        "transport error",
-    ]
-    .iter()
-    .any(|needle| err_str.contains(needle))
+    use rustez::RustEzError;
+    use rustnetconf::error::{NetconfError, RpcError};
+
+    match error {
+        // ServerError is an explicit <rpc-error> from the device. The device
+        // rendered a verdict. This is a known rejection, NOT uncertainty.
+        RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError { .. })) => false,
+
+        // ParseError can be a framing failure, a multi-RE cluster reply that
+        // won't parse, or a device rejection wrapped in unparseable XML. Without
+        // more context, treat it as uncertainty (the safer default).
+        RustEzError::Netconf(NetconfError::Rpc(RpcError::ParseError(_))) => true,
+
+        // Transport and framing errors (session closed, EOF, channel dropped).
+        RustEzError::Netconf(NetconfError::Transport(_) | NetconfError::Framing(_)) => true,
+
+        // Protocol errors (capability mismatch, session state) also indicate
+        // uncertainty when they occur mid-commit.
+        RustEzError::Netconf(NetconfError::Protocol(_)) => true,
+
+        // SSH config errors, facts errors, config errors, XML parse errors — these
+        // are usually pre-RPC failures, but if they occur mid-commit the outcome is
+        // unknown. Treat as uncertainty (safer default).
+        RustEzError::SshConfig(_) | RustEzError::Facts(_) | RustEzError::Config(_) => true,
+
+        // XML parse errors can occur when a device returns malformed XML mid-commit.
+        RustEzError::XmlParse(_) => true,
+
+        // Backstop for any future variants or nested errors not explicitly matched.
+        _ => {
+            // Substring matching as a last resort. This catches timeout messages that
+            // don't fit the above variants. Still check variants first to avoid
+            // false positives (e.g., ServerError with "timeout" in the message).
+            let err_str = error.to_string().to_ascii_lowercase();
+            [
+                "timeout",
+                "timed out",
+                "connection closed",
+                "connection reset",
+                "broken pipe",
+                "unexpected eof",
+                "channel closed",
+            ]
+            .iter()
+            .any(|needle| err_str.contains(needle))
+        }
+    }
 }
 
 /// Format the attribution into a Junos commit comment.
@@ -1011,16 +1088,76 @@ mod tests {
         );
     }
 
-    // Note: Full integration tests for defects #1-#4, #6-#7 require either
-    // (a) a FakeBackend that models the Junos private-database and lock behavior,
-    // or (b) a live device. The existing candidate_transaction.rs test suite
-    // provides the FakeBackend pattern for similar primitives.
+    #[test]
+    fn finding3_server_error_with_timeout_in_message_is_not_uncertain() {
+        // Finding 3 (P2) regression guard: A ServerError (explicit <rpc-error>
+        // from the device) whose message happens to contain "timeout" is still
+        // a known rejection, not Indeterminate. The previous string-matching
+        // classifier would treat this as uncertain.
+        use rustez::RustEzError;
+        use rustnetconf::error::{NetconfError, RpcError};
+
+        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError {
+            error_type: None,
+            tag: rustnetconf::types::ErrorTag::InvalidValue,
+            severity: None,
+            app_tag: None,
+            path: None,
+            message: "invalid value for 'timeout' parameter: must be 1..3600".into(),
+            info: None,
+        }));
+
+        assert!(
+            !is_transport_uncertainty(&error),
+            "ServerError with 'timeout' in message must be classified as a known rejection"
+        );
+    }
+
+    #[test]
+    fn finding3_parse_error_is_uncertain() {
+        // ParseError can be a framing failure or unparseable device reply.
+        // Treat it as uncertainty (the safer default).
+        use rustez::RustEzError;
+        use rustnetconf::error::{NetconfError, RpcError};
+
+        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ParseError(
+            "unexpected element".into(),
+        )));
+
+        assert!(
+            is_transport_uncertainty(&error),
+            "ParseError must be classified as uncertainty"
+        );
+    }
+
+    #[test]
+    fn finding3_transport_errors_are_uncertain() {
+        use rustez::RustEzError;
+        use rustnetconf::error::{NetconfError, TransportError};
+
+        let transport = RustEzError::Netconf(NetconfError::Transport(TransportError::Connect(
+            "connection refused".into(),
+        )));
+        assert!(
+            is_transport_uncertainty(&transport),
+            "Transport error must be classified as uncertainty"
+        );
+    }
+
+    // Three fixes in this round have NO automated test, and that is a gap rather
+    // than an oversight:
     //
-    // The fixes are structurally correct (session retained in Staged, cleanup
-    // paths enforce invariants, timeout classified as Indeterminate), but proving
-    // they work end-to-end requires either mocking DeviceManager or running
-    // against a real device.
+    //   - the confirmed-commit refusal happening before anything is staged,
+    //   - a partial-stage cleanup failure surfacing in the returned error,
+    //   - pooling being re-enabled after a clean commit.
     //
-    // Defect #5 (fingerprint collision) and defect #8 (exactly-one validation)
-    // are unit-testable and covered above.
+    // `JunosTransaction` is constructed from a `DeviceManager` and reaches the
+    // device through a real `PooledDevice`, so there is no seam to inject a
+    // failing backend the way `candidate_transaction.rs` does with `FakeBackend`.
+    // Testing these means either a live device or giving this type the same
+    // backend abstraction, which is a larger change than the fixes themselves and
+    // is tracked separately.
+    //
+    // Recording it here so the absence is visible in the file rather than only in
+    // a review comment.
 }
