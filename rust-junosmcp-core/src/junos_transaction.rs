@@ -317,30 +317,12 @@ impl DeviceTransaction for JunosTransaction {
         // the candidate dirty on refusal. The previous code refused after stage(),
         // which locked and loaded the shared candidate, then returned an error
         // without cleanup — leaving the staged changes for whatever commits next.
-        if let Some(_confirm_timeout) = options.confirm_timeout {
-            // Defect #4: Confirmed commit. The commit RPC is non-persistent by default,
-            // which means it must be confirmed ON THE SAME SESSION or it will be
-            // rolled back when the session closes (e.g., by the pool reaper after 300s).
-            //
-            // FIX: We cannot retain the session across the confirmation window without
-            // either (a) keeping it out of the pool for the entire timeout, or
-            // (b) using `persist`/`persist-id` to make the confirmed commit session-
-            // independent.
-            //
-            // The rustez API does not expose `persist` or `persist-id` arguments as of
-            // this writing. The correct long-term fix is to add those parameters to
-            // rustez::ConfigManager::commit_confirmed and bind the confirmation to the
-            // operation ID. Until that exists, we CANNOT safely implement confirmed
-            // commit without risking premature rollback.
-            //
-            // TEMPORARY: Return an error stating the feature is unsafe without persist.
-            return Err(JmcpError::Validation(
-                "confirmed commit is unsafe without persist/persist-id support in rustez; \
-                 the commit would be rolled back when the session closes (e.g., after pool \
-                 idle timeout). Refusing to commit."
-                    .into(),
-            ));
-        }
+        // Reject an unusable confirm window before staging is touched, so a refusal
+        // never leaves the candidate dirty for whatever commits next.
+        let confirm_minutes = match options.confirm_timeout {
+            Some(timeout) => Some(junos_confirm_minutes(timeout)?),
+            None => None,
+        };
 
         // Defect #1 fix: Use the staged session's lock and private candidate database.
         let mut session_guard = staged.session.lock().await;
@@ -348,10 +330,16 @@ impl DeviceTransaction for JunosTransaction {
             JmcpError::Validation("staged transaction has no session; already consumed?".into())
         })?;
 
-        let mut cfg = session.config()?;
-
         // Build the commit comment from the attribution.
         let comment = format_attribution(attribution);
+
+        // Confirmed commit takes a different path: the Junos-native RPC rather
+        // than the RFC form, because only the native one survives this session.
+        if let Some(minutes) = confirm_minutes {
+            return confirmed_commit_on_session(session, minutes, &comment).await;
+        }
+
+        let mut cfg = session.config()?;
 
         // Normal synchronous commit with comment.
         // Defect #3: Distinguish timeout/transport uncertainty from known rejection.
@@ -815,6 +803,111 @@ fn is_transport_uncertainty(error: &rustez::RustEzError) -> bool {
     }
 }
 
+/// Convert a confirm timeout into the whole minutes Junos expects.
+///
+/// The trait expresses the window as a `Duration`, but the Junos native RPC's
+/// `<confirm-timeout>` is in **minutes** — verified on vSRX 24.4R1.9, where a
+/// value of 1 rolled the change back at roughly sixty seconds. Passing seconds
+/// straight through would have asked for a 300-minute window when the caller
+/// meant five minutes.
+///
+/// Sub-minute windows are refused rather than rounded up to one minute: the
+/// caller would be told a deadline the device will not honour, and a confirmed
+/// commit whose window is wrong is worse than no confirmed commit.
+fn junos_confirm_minutes(timeout: std::time::Duration) -> Result<u32, JmcpError> {
+    let seconds = timeout.as_secs();
+    if seconds < 60 {
+        return Err(JmcpError::Validation(format!(
+            "confirm timeout must be at least 60 seconds; Junos schedules the rollback in whole \
+             minutes and cannot honour {seconds}s"
+        )));
+    }
+    if !seconds.is_multiple_of(60) {
+        return Err(JmcpError::Validation(format!(
+            "confirm timeout must be a whole number of minutes; Junos cannot honour {seconds}s"
+        )));
+    }
+    u32::try_from(seconds / 60)
+        .map_err(|_| JmcpError::Validation("confirm timeout is implausibly large".into()))
+}
+
+/// Build the Junos-native confirmed-commit RPC.
+///
+/// Deliberately not `rustez`'s `commit_confirmed`, which sends the RFC form
+/// `<commit><confirmed/><confirm-timeout/></commit>`. Under
+/// `:confirmed-commit:1.0` — the only version vSRX 24.4R1.9 advertises — that
+/// form is bound to the issuing session and rolls back the moment the session
+/// closes. Since this server pools NETCONF sessions and returns them after the
+/// commit, the pool reaper would revert the change well before the deadline the
+/// caller was given (#227).
+///
+/// The Junos-native `<commit-configuration>` has the CLI's `commit confirmed`
+/// semantics instead: the pending rollback belongs to the device, not the
+/// session. Verified against vSRX 24.4R1.9 — the change survived closing the
+/// issuing session, auto-reverted at the deadline when left alone, and was held
+/// permanently by a confirming commit issued from a *different* session.
+fn build_confirmed_commit_xml(minutes: u32, comment: &str) -> String {
+    format!(
+        "<commit-configuration><confirmed/><confirm-timeout>{minutes}</confirm-timeout>\
+         <log>{}</log></commit-configuration>",
+        escape_xml_text(comment)
+    )
+}
+
+/// Minimal XML text escaping for values interpolated into an RPC body.
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Issue a confirmed commit on the staged session and report the deadline.
+async fn confirmed_commit_on_session(
+    session: &mut crate::device_manager::PooledDevice,
+    minutes: u32,
+    comment: &str,
+) -> Result<CommitOutcome, JmcpError> {
+    let xml = build_confirmed_commit_xml(minutes, comment);
+
+    let response = {
+        let mut exec = session.rpc()?;
+        exec.call_xml(&xml).await
+    };
+
+    match response {
+        Ok(_) => {
+            // The rollback is the device's now, so the session is no longer
+            // special and may return to the pool. This is the whole point of
+            // using the native RPC: with the RFC form, pooling this session
+            // would revert the change.
+            session.allow_reuse();
+
+            let deadline = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .unwrap_or(0)
+                + u64::from(minutes) * 60;
+
+            Ok(CommitOutcome::AwaitingConfirmation {
+                job_id: None,
+                rollback_deadline_unix: deadline,
+                details: Some(format!(
+                    "confirmed commit issued; the device reverts in {minutes} minute(s) unless a \
+                     confirming commit is received"
+                )),
+            })
+        }
+        Err(error) if is_transport_uncertainty(&error) => Ok(CommitOutcome::Indeterminate {
+            reason: format!(
+                "confirmed commit sent but the outcome is unknown: {error}; the device may be \
+                 holding a pending rollback"
+            ),
+        }),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Format the attribution into a Junos commit comment.
 fn format_attribution(attribution: &Attribution) -> String {
     let change_ref = attribution.change_ref.as_deref().unwrap_or("no-change-ref");
@@ -934,6 +1027,64 @@ mod tests {
             message.contains("action 1"),
             "the error should identify which action failed, got: {message}"
         );
+    }
+
+    /// Junos schedules the rollback in whole minutes. Passing the trait's
+    /// seconds straight through would request a 300-minute window for a
+    /// five-minute one — verified against vSRX 24.4R1.9, where
+    /// `<confirm-timeout>1</confirm-timeout>` reverted at about sixty seconds.
+    #[test]
+    fn confirm_timeout_converts_seconds_to_whole_minutes() {
+        use std::time::Duration;
+
+        assert_eq!(junos_confirm_minutes(Duration::from_secs(60)).unwrap(), 1);
+        assert_eq!(junos_confirm_minutes(Duration::from_secs(300)).unwrap(), 5);
+    }
+
+    /// A window Junos cannot honour is refused rather than rounded. Rounding up
+    /// would hand the caller a deadline the device will not keep, and a
+    /// confirmed commit with the wrong window is worse than none.
+    #[test]
+    fn confirm_timeout_refuses_windows_junos_cannot_honour() {
+        use std::time::Duration;
+
+        let err =
+            junos_confirm_minutes(Duration::from_secs(30)).expect_err("sub-minute must be refused");
+        assert!(err.to_string().contains("at least 60 seconds"), "{err}");
+
+        let err = junos_confirm_minutes(Duration::from_secs(90))
+            .expect_err("part-minute must be refused");
+        assert!(err.to_string().contains("whole number of minutes"), "{err}");
+    }
+
+    /// The native `<commit-configuration>` RPC, not the RFC `<commit><confirmed/>`
+    /// form. Only the native one survives the issuing session, which is what lets
+    /// the session return to the pool (#227).
+    #[test]
+    fn confirmed_commit_uses_the_junos_native_rpc() {
+        let xml = build_confirmed_commit_xml(5, "no-change-ref by tok (agent)");
+
+        assert!(xml.starts_with("<commit-configuration>"), "{xml}");
+        assert!(xml.contains("<confirmed/>"), "{xml}");
+        assert!(
+            xml.contains("<confirm-timeout>5</confirm-timeout>"),
+            "{xml}"
+        );
+        assert!(
+            !xml.contains("<commit>"),
+            "must not emit the session-bound RFC form: {xml}"
+        );
+    }
+
+    /// A comment reaches the device inside XML, so a stray angle bracket in the
+    /// attribution must not be able to close the element early.
+    #[test]
+    fn confirmed_commit_escapes_the_comment() {
+        let xml = build_confirmed_commit_xml(1, "evil </log><foo> & bar");
+
+        assert!(!xml.contains("<foo>"), "unescaped markup leaked: {xml}");
+        assert!(xml.contains("&lt;/log&gt;"), "{xml}");
+        assert!(xml.contains("&amp; bar"), "{xml}");
     }
 
     fn agent_attribution(model_id: &str) -> Attribution {
