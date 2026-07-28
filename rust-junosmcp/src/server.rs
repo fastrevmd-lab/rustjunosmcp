@@ -334,6 +334,7 @@ const SERVER_TOOLS: &[&str] = &[
     "approve_junos_change_set",
     "apply_junos_change_set",
     "get_junos_change_set_status",
+    "get_junos_candidate_fingerprint",
 ];
 
 #[cfg(test)]
@@ -345,8 +346,9 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_23() {
-        assert_eq!(SERVER_TOOLS.len(), 23);
+    fn server_tools_len_is_24() {
+        // 23 before the candidate-fingerprint tool (#231).
+        assert_eq!(SERVER_TOOLS.len(), 24);
     }
 
     #[test]
@@ -1312,6 +1314,42 @@ impl JmcpHandler {
     }
 
     #[tool(
+        name = "get_junos_candidate_fingerprint",
+        description = "Read the device's candidate-configuration fingerprint. Use this first: create_junos_change_set requires the fingerprint so the plan is bound to the exact candidate it was reviewed against. This is a read; it takes no lock and does not modify the candidate."
+    )]
+    async fn get_junos_candidate_fingerprint(
+        &self,
+        Parameters(args): Parameters<changeset::CandidateFingerprintArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "get_junos_candidate_fingerprint",
+            "read",
+            vec![args.device.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "get_junos_candidate_fingerprint") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) =
+            self.check_router_scope(ctx, "get_junos_candidate_fingerprint", &args.device)
+        {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        let result = changeset::get_candidate_fingerprint(args, self.dm.clone()).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
         name = "get_junos_change_set_status",
         description = "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state."
     )]
@@ -1482,14 +1520,14 @@ mod scope_tests {
             .collect();
         assert_eq!(names, expected);
         // 28 before Phase 5; the four change-set tools take it to 32.
-        assert_eq!(names.len(), 32);
+        assert_eq!(names.len(), 33);
     }
 
     #[test]
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_eighteen_tools() {
         // 19 before Phase 5; the four change-set tools take it to 23.
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 23);
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 24);
     }
 
     #[test]

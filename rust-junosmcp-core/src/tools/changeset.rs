@@ -10,7 +10,7 @@ use crate::helpers::excerpt;
 use crate::junos_transaction::{JunosAction, JunosTransaction};
 use crate::policy::{Decision, Policy};
 use mecmcp_audit::Attribution;
-use mecmcp_changeset::{ChangesetCoordinator, CommitOptions};
+use mecmcp_changeset::{ChangesetCoordinator, CommitOptions, DeviceTransaction as _};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -423,6 +423,40 @@ pub async fn get_change_set_status(
 
     // Serialize the full status structure.
     serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
+}
+
+/// Arguments for `get_junos_candidate_fingerprint`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CandidateFingerprintArgs {
+    /// Target device name.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
+}
+
+/// Read the device's candidate fingerprint.
+///
+/// This seeds the change-set flow. `create_junos_change_set` requires an
+/// `expected_fingerprint` so the plan is bound to the exact candidate it was
+/// reviewed against — and without this tool there was no way to obtain one, so
+/// the whole workflow was unreachable from MCP (#231).
+///
+/// The value comes from `DeviceTransaction::fingerprint`, the same code the
+/// coordinator compares against at apply time, so it round-trips unchanged.
+/// It is a read: no lock is taken and the candidate is not modified.
+pub async fn get_candidate_fingerprint(
+    args: CandidateFingerprintArgs,
+    dm: Arc<DeviceManager>,
+) -> Result<Value, JmcpError> {
+    let transaction = JunosTransaction::new(dm, args.device.clone());
+    let fingerprint = transaction
+        .fingerprint()
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    Ok(json!({
+        "device": args.device,
+        "candidate_fingerprint": fingerprint,
+    }))
 }
 
 #[cfg(test)]

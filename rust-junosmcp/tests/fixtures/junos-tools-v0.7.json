@@ -557,6 +557,23 @@
       "type": "object"
     }
   },
+  "get_junos_candidate_fingerprint": {
+    "name": "get_junos_candidate_fingerprint",
+    "description": "Read the device's candidate-configuration fingerprint. Use this first: create_junos_change_set requires the fingerprint so the plan is bound to the exact candidate it was reviewed against. This is a read; it takes no lock and does not modify the candidate.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "device"
+      ],
+      "properties": {
+        "device": {
+          "description": "Target device name.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
   "get_junos_change_set_status": {
     "name": "get_junos_change_set_status",
     "description": "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state.",
