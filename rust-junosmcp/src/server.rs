@@ -19,10 +19,10 @@ use rust_junosmcp_core::{
         AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
         ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
         ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs, TemplateArgs,
-        TransferFileArgs, UpgradeJunosArgs, add_device, batch, commit_check, config_diff,
-        discard_candidate, execute_command, facts, fetch_file, get_config, list_staged_files,
-        load_commit, pfe, reload_devices, rollback_config, router_list, template, transfer_file,
-        upgrade_junos,
+        TransferFileArgs, UpgradeJunosArgs, add_device, batch, changeset, commit_check,
+        config_diff, discard_candidate, execute_command, facts, fetch_file, get_config,
+        list_staged_files, load_commit, pfe, reload_devices, rollback_config, router_list,
+        template, transfer_file, upgrade_junos,
     },
 };
 use serde_json::Value;
@@ -144,6 +144,7 @@ pub struct JmcpHandler {
     policy: Arc<arc_swap::ArcSwap<Policy>>,
     transfer_cfg: rust_junosmcp_core::TransferConfig,
     upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
+    coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
     tool_router: ToolRouter<Self>,
     #[cfg(feature = "srx")]
     pub(super) started: Arc<tokio::time::Instant>,
@@ -165,6 +166,7 @@ impl JmcpHandler {
         policy: Arc<Policy>,
         transfer_cfg: rust_junosmcp_core::TransferConfig,
         upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
+        coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
     ) -> Self {
         let tool_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
@@ -177,6 +179,7 @@ impl JmcpHandler {
             policy: Arc::new(arc_swap::ArcSwap::from(policy)),
             transfer_cfg,
             upgrade_cfg,
+            coordinator,
             tool_router,
             #[cfg(feature = "srx")]
             started: Arc::new(tokio::time::Instant::now()),
@@ -327,6 +330,10 @@ const SERVER_TOOLS: &[&str] = &[
     "fetch_file",
     "upgrade_junos",
     "list_staged_files",
+    "create_junos_change_set",
+    "approve_junos_change_set",
+    "apply_junos_change_set",
+    "get_junos_change_set_status",
 ];
 
 #[cfg(test)]
@@ -338,8 +345,8 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_18() {
-        assert_eq!(SERVER_TOOLS.len(), 19);
+    fn server_tools_len_is_23() {
+        assert_eq!(SERVER_TOOLS.len(), 23);
     }
 
     #[test]
@@ -1145,6 +1152,160 @@ impl JmcpHandler {
         }
         Self::to_call_result(result)
     }
+
+    #[tool(
+        name = "create_junos_change_set",
+        description = "Create a change set (plan) for two-person approval workflow. Returns a change_set_id and plan_digest. The plan must be approved by a second principal before it can be applied."
+    )]
+    async fn create_junos_change_set(
+        &self,
+        Parameters(args): Parameters<changeset::CreateChangeSetArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "create_junos_change_set",
+            "create",
+            vec![args.device.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "create_junos_change_set") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "create_junos_change_set", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        let attribution = mecmcp_audit::Attribution::from_caller(
+            ctx.expect("create_junos_change_set requires caller context for principal tracking"),
+        );
+
+        let result = changeset::create_change_set_with_cancel(
+            args,
+            self.dm.clone(),
+            self.coordinator.clone(),
+            attribution,
+            ct,
+        )
+        .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "approve_junos_change_set",
+        description = "Approve a change set created by a different principal. The approver must provide the exact plan digest to confirm they reviewed the plan. After approval, the owner can apply the change set."
+    )]
+    async fn approve_junos_change_set(
+        &self,
+        Parameters(args): Parameters<changeset::ApproveChangeSetArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "approve_junos_change_set", "approve", vec![]);
+
+        if let Err(e) = self.check_tool_scope(ctx, "approve_junos_change_set") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        let attribution = mecmcp_audit::Attribution::from_caller(
+            ctx.expect("approve_junos_change_set requires caller context for principal tracking"),
+        );
+
+        let result = changeset::approve_change_set_with_cancel(
+            args,
+            self.coordinator.clone(),
+            self.dm.clone(),
+            attribution,
+            ct,
+        )
+        .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "apply_junos_change_set",
+        description = "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state."
+    )]
+    async fn apply_junos_change_set(
+        &self,
+        Parameters(args): Parameters<changeset::ApplyChangeSetArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "apply_junos_change_set",
+            "apply",
+            vec![args.device.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "apply_junos_change_set") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "apply_junos_change_set", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        let attribution = mecmcp_audit::Attribution::from_caller(
+            ctx.expect("apply_junos_change_set requires caller context for principal tracking"),
+        );
+
+        let result = changeset::apply_change_set_with_cancel(
+            args,
+            self.dm.clone(),
+            self.coordinator.clone(),
+            attribution,
+            ct,
+        )
+        .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "get_junos_change_set_status",
+        description = "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state."
+    )]
+    async fn get_junos_change_set_status(
+        &self,
+        Parameters(args): Parameters<changeset::GetChangeSetStatusArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "get_junos_change_set_status", "read", vec![]);
+
+        if let Err(e) = self.check_tool_scope(ctx, "get_junos_change_set_status") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        let result = changeset::get_change_set_status(args, self.coordinator.clone()).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -1215,7 +1376,23 @@ mod scope_tests {
             transfer_cfg: transfer_cfg.clone(),
             device_leases: test_device_leases(),
         };
-        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
+        JmcpHandler::new(
+            dm,
+            policy,
+            transfer_cfg,
+            upgrade_cfg,
+            std::sync::Arc::new(
+                // In-memory: these tests do not exercise the change-set flow, so a
+                // coordinator with no state path never touches disk.
+                mecmcp_changeset::ChangesetCoordinator::load(
+                    None,
+                    mecmcp_changeset::OperationLimits::default(),
+                    std::time::Duration::from_secs(900),
+                    false,
+                )
+                .expect("in-memory changeset coordinator"),
+            ),
+        )
     }
 
     fn normalized_tools(
@@ -1266,13 +1443,15 @@ mod scope_tests {
             .map(|name| (*name).to_string())
             .collect();
         assert_eq!(names, expected);
-        assert_eq!(names.len(), 28);
+        // 28 before Phase 5; the four change-set tools take it to 32.
+        assert_eq!(names.len(), 32);
     }
 
     #[test]
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_eighteen_tools() {
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 19);
+        // 19 before Phase 5; the four change-set tools take it to 23.
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 23);
     }
 
     #[test]
@@ -1403,7 +1582,23 @@ mod scope_tests {
             transfer_cfg: cfg.clone(),
             device_leases: test_device_leases(),
         };
-        let h = JmcpHandler::new(dm, policy, cfg.clone(), upgrade_cfg);
+        let h = JmcpHandler::new(
+            dm,
+            policy,
+            cfg.clone(),
+            upgrade_cfg,
+            std::sync::Arc::new(
+                // In-memory: these tests do not exercise the change-set flow, so a
+                // coordinator with no state path never touches disk.
+                mecmcp_changeset::ChangesetCoordinator::load(
+                    None,
+                    mecmcp_changeset::OperationLimits::default(),
+                    std::time::Duration::from_secs(900),
+                    false,
+                )
+                .expect("in-memory changeset coordinator"),
+            ),
+        );
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }
 

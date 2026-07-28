@@ -67,14 +67,14 @@ rustez       = "0.13"
 # mecmcp-runtime exists only on feat/phase-3b-runtime-crate branch (not yet
 # merged, not yet tagged). All four deps point at that branch for now.
 # BLOCKER: re-pin to a release tag before merge.
-mecmcp-audit = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-auth  = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-transport = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-runtime = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-policy = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-inventory = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
+mecmcp-audit = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
+mecmcp-auth  = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
+mecmcp-transport = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
+mecmcp-runtime = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
+mecmcp-policy = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
+mecmcp-inventory = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
 mecmcp-device = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
-mecmcp-changeset = { version = "0.2.2", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.2.2" }
+mecmcp-changeset = { version = "0.3.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "changeset-v0.3.0" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

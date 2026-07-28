@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Junos-specific action: a config payload or a rollback archive reference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JunosAction {
     /// Configuration payload to load. Exactly one of `payload` or
     /// `rollback_source` must be set.
@@ -30,7 +30,7 @@ pub struct JunosAction {
 }
 
 /// Serializable config payload specification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConfigPayloadSpec {
     pub text: String,
     /// Format: "set", "text", or "xml". Defaults to "set" if omitted.

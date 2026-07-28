@@ -56,6 +56,7 @@ required-features = ["srx"]
 rust-junosmcp-core = { version = "0.12.0", path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { version = "0.12.0", path = "../rust-junosmcp-auth" }
 mecmcp-audit = { workspace = true }
+mecmcp-changeset = { workspace = true }
 mecmcp-transport = { workspace = true }
 mecmcp-runtime = { workspace = true }
 rust-junosmcp-srx-core = { version = "0.12.0", path = "../rust-junosmcp-srx-core", optional = true }

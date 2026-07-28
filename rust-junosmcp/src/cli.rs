@@ -123,6 +123,20 @@ pub struct Cli {
     #[arg(long, default_value = "/var/lib/jmcp/device-leases")]
     pub device_lease_dir: PathBuf,
 
+    /// Change-set lifecycle state file for two-person approval workflow.
+    #[arg(long, default_value = "/var/lib/jmcp/changeset-state.json")]
+    pub changeset_state_file: PathBuf,
+
+    /// Change-set approval timeout in seconds. After this window, unapproved
+    /// change sets expire and cannot be applied.
+    #[arg(long, default_value_t = 3600)]
+    pub changeset_approval_timeout_secs: u64,
+
+    /// Enable lab mode for change-set workflow: allows single-operator
+    /// waiver instead of requiring a second principal to approve.
+    #[arg(long)]
+    pub changeset_lab_mode: bool,
+
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]
     #[arg(

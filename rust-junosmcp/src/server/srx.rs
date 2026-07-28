@@ -836,7 +836,18 @@ mod scope_tests {
             transfer_cfg: transfer_cfg.clone(),
             device_leases,
         };
-        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg)
+        // In-memory coordinator: these SRX tests never exercise the change-set
+        // flow, and giving it no state path keeps them from touching disk.
+        let coordinator = Arc::new(
+            mecmcp_changeset::ChangesetCoordinator::load(
+                None,
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(900),
+                false,
+            )
+            .expect("in-memory changeset coordinator"),
+        );
+        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg, coordinator)
             .with_srx_runtime(authorization_required, Default::default())
     }
 
