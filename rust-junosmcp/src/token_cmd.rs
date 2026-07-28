@@ -11,18 +11,25 @@ pub fn run(action: TokenAction) -> Result<()> {
             name,
             devices,
             tools,
+            provider,
+            provider_tier,
+            on_behalf_of,
+            actor_type,
             server_pid,
         } => {
-            // Convert to mecmcp-runtime's TokenAction format
+            // Convert to mecmcp-runtime's TokenAction format. The provenance
+            // fields pass straight through: dropping them here is what made
+            // every Junos commit log read `(unknown) on-behalf-of=self`, even
+            // though the attribution machinery downstream was working.
             let runtime_action = mecmcp_runtime::cli::TokenAction::Add {
                 tokens_file,
                 name,
                 devices,
                 tools,
-                provider: None,
-                provider_tier: None,
-                on_behalf_of: None,
-                actor_type: None,
+                provider,
+                provider_tier,
+                on_behalf_of,
+                actor_type,
                 server_pid,
             };
             mecmcp_runtime::token_cmd::run(
