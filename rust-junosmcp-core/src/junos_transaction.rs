@@ -827,12 +827,21 @@ fn format_attribution(attribution: &Attribution) -> String {
         mecmcp_audit::ActorType::Unknown => "unknown",
     };
 
-    // If it's an agent with identity, include provider and model.
+    // If it's an agent with identity, include provider and — only when the
+    // caller actually asserted one — the model.
+    //
+    // `model_id` is always client-asserted: a token cannot vouch for which
+    // model ran, so attribution built from a token entry leaves it empty by
+    // design. Emitting `model=` unconditionally put a dangling, valueless key
+    // on every commit this server made (mecmcp#75). Omit the segment rather
+    // than record an empty claim.
     let agent_info = if let Some(ref agent) = attribution.agent {
-        format!(
-            " via {}-{} model={}",
-            agent.provider, agent.provider_tier, agent.model_id
-        )
+        let model = if agent.model_id.is_empty() {
+            String::new()
+        } else {
+            format!(" model={}", agent.model_id)
+        };
+        format!(" via {}-{}{}", agent.provider, agent.provider_tier, model)
     } else {
         String::new()
     };
@@ -846,6 +855,48 @@ fn format_attribution(attribution: &Attribution) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agent_attribution(model_id: &str) -> Attribution {
+        let mut attribution = Attribution::stdio();
+        attribution.actor_type = mecmcp_audit::ActorType::Agent;
+        attribution.on_behalf_of = Some("mharman".to_owned());
+        attribution.agent = Some(mecmcp_audit::AgentIdentity {
+            model_id: model_id.to_owned(),
+            session_id: String::new(),
+            client_name: None,
+            provider: "anthropic".to_owned(),
+            provider_tier: mecmcp_audit::Tier::Private,
+            skills_used: Vec::new(),
+        });
+        attribution
+    }
+
+    /// A token cannot vouch for which model ran, so token-built attribution
+    /// leaves `model_id` empty. The comment must then omit the segment rather
+    /// than trail a valueless `model=` (mecmcp#75).
+    #[test]
+    fn commit_comment_omits_an_unasserted_model() {
+        let comment = format_attribution(&agent_attribution(""));
+
+        assert!(
+            comment.contains("via anthropic-private"),
+            "provider must still appear: {comment}"
+        );
+        assert!(
+            !comment.contains("model="),
+            "an empty model must not be recorded as a claim: {comment}"
+        );
+    }
+
+    #[test]
+    fn commit_comment_keeps_a_model_the_caller_asserted() {
+        let comment = format_attribution(&agent_attribution("claude-opus-5"));
+
+        assert!(
+            comment.contains("via anthropic-private model=claude-opus-5"),
+            "an asserted model must survive: {comment}"
+        );
+    }
 
     #[test]
     fn normalise_candidate_trims_whitespace() {
