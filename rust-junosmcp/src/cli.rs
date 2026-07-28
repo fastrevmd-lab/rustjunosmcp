@@ -135,6 +135,14 @@ pub struct Cli {
     /// Enable lab mode for change-set workflow: allows single-operator
     /// waiver instead of requiring a second principal to approve.
     #[arg(long)]
+    /// Enable the lab-mode approval waiver in the change-set coordinator.
+    ///
+    /// NOT YET USABLE FROM JUNOS. The coordinator supports `waive_approval`
+    /// and this flag enables it there, but no Junos MCP tool calls it, so a
+    /// single operator still cannot move a plan to `Approved`. Setting this
+    /// today changes nothing observable. Tracked in issue #228; the flag is
+    /// kept rather than removed because the waiver itself is a requested
+    /// feature (mecmcp#54) and the gap is the tool, not the capability.
     pub changeset_lab_mode: bool,
 
     /// Directory used to stage collected SRX support bundles.

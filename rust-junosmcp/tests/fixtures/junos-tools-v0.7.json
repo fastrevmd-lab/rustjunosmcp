@@ -101,7 +101,6 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
         "change_set_id",
-        "principal",
         "expected_digest",
         "expected_fingerprint",
         "device"
@@ -109,10 +108,6 @@
       "properties": {
         "change_set_id": {
           "description": "Change-set ID to apply.",
-          "type": "string"
-        },
-        "principal": {
-          "description": "The principal applying. Should match the original owner.",
           "type": "string"
         },
         "expected_digest": {
@@ -138,7 +133,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [
         "change_set_id",
-        "approver",
+        "device",
         "expected_digest"
       ],
       "properties": {
@@ -146,8 +141,8 @@
           "description": "Change-set ID returned by create.",
           "type": "string"
         },
-        "approver": {
-          "description": "The principal approving this change set. Must be different from the\nowner. Usually extracted from the bearer token context.",
+        "device": {
+          "description": "Device name. Required because change sets are indexed by (id, device).",
           "type": "string"
         },
         "expected_digest": {
@@ -246,7 +241,6 @@
       },
       "required": [
         "device",
-        "owner",
         "expected_fingerprint",
         "actions"
       ],
@@ -254,10 +248,6 @@
       "properties": {
         "device": {
           "description": "Target device name.",
-          "type": "string"
-        },
-        "owner": {
-          "description": "The principal creating this change set. Usually extracted from the\nbearer token context. Required for approval enforcement.",
           "type": "string"
         },
         "expected_fingerprint": {
@@ -270,16 +260,6 @@
           "items": {
             "$ref": "#/$defs/JunosAction"
           }
-        },
-        "approval_timeout_secs": {
-          "description": "Optional approval window in seconds. Defaults to coordinator's\nconfigured window if omitted.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0,
-          "default": null
         }
       }
     }

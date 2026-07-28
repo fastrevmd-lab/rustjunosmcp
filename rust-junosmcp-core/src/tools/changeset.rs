@@ -6,7 +6,9 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
+use crate::helpers::excerpt;
 use crate::junos_transaction::{JunosAction, JunosTransaction};
+use crate::policy::{Decision, Policy};
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{ChangesetCoordinator, CommitOptions};
 use serde::Deserialize;
@@ -20,19 +22,12 @@ pub struct CreateChangeSetArgs {
     /// Target device name.
     #[serde(alias = "router_name", alias = "router")]
     pub device: String,
-    /// The principal creating this change set. Usually extracted from the
-    /// bearer token context. Required for approval enforcement.
-    pub owner: String,
     /// Expected device fingerprint before applying. If the device state
     /// changes after planning, application will be rejected.
     pub expected_fingerprint: String,
     /// List of actions to stage. Each action is either a payload or a
     /// rollback archive reference.
     pub actions: Vec<JunosAction>,
-    /// Optional approval window in seconds. Defaults to coordinator's
-    /// configured window if omitted.
-    #[serde(default)]
-    pub approval_timeout_secs: Option<u64>,
 }
 
 /// Arguments for `approve_junos_change_set`.
@@ -40,9 +35,9 @@ pub struct CreateChangeSetArgs {
 pub struct ApproveChangeSetArgs {
     /// Change-set ID returned by create.
     pub change_set_id: String,
-    /// The principal approving this change set. Must be different from the
-    /// owner. Usually extracted from the bearer token context.
-    pub approver: String,
+    /// Device name. Required because change sets are indexed by (id, device).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Expected plan digest. The approver must compute or be shown the exact
     /// digest and confirm it matches what they reviewed.
     pub expected_digest: String,
@@ -53,8 +48,6 @@ pub struct ApproveChangeSetArgs {
 pub struct ApplyChangeSetArgs {
     /// Change-set ID to apply.
     pub change_set_id: String,
-    /// The principal applying. Should match the original owner.
-    pub principal: String,
     /// Expected plan digest. Prevents applying a plan that was tampered with
     /// after approval.
     pub expected_digest: String,
@@ -81,34 +74,75 @@ pub async fn create_change_set(
     args: CreateChangeSetArgs,
     dm: Arc<DeviceManager>,
     coordinator: Arc<ChangesetCoordinator>,
+    policy: Arc<Policy>,
     attribution: Attribution,
 ) -> Result<Value, JmcpError> {
-    create_change_set_with_cancel(args, dm, coordinator, attribution, CancellationToken::new())
-        .await
+    create_change_set_with_cancel(
+        args,
+        dm,
+        coordinator,
+        policy,
+        attribution,
+        CancellationToken::new(),
+    )
+    .await
 }
 
 pub async fn create_change_set_with_cancel(
     args: CreateChangeSetArgs,
     dm: Arc<DeviceManager>,
     coordinator: Arc<ChangesetCoordinator>,
-    _attribution: Attribution,
+    policy: Arc<Policy>,
+    attribution: Attribution,
     _ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     // Validate the device exists.
     let _ = dm.inventory().get(&args.device)?;
 
+    // Derive the owner from the authenticated caller's principal.
+    let owner = attribution.principal.to_string();
+
+    // Check every action against the device's configuration policy.
+    for action in &args.actions {
+        if let Some(payload) = &action.payload {
+            let format = payload.format.as_deref().unwrap_or("set");
+            match policy.check_config(&args.device, format, &payload.text)? {
+                Decision::Allow => {}
+                Decision::Deny {
+                    rule,
+                    source,
+                    line_number,
+                } => {
+                    let pattern = rule.pattern.clone();
+                    let source_str = source.as_str();
+                    let denied_excerpt = excerpt(&payload.text);
+                    return Err(JmcpError::Denied {
+                        tool: "create_junos_change_set",
+                        router: args.device.clone(),
+                        pattern,
+                        rule_source: source_str,
+                        input_excerpt: denied_excerpt,
+                        line_number,
+                    });
+                }
+            }
+        }
+        // Rollback actions do not need policy checks - they reference pre-existing config.
+    }
+
     // The coordinator's create_change_set computes the digest over
     // (owner, device, expected_fingerprint, actions). It persists the plan
     // and returns the change_set_id and plan_digest.
-    // Policy signature placeholder - Junos doesn't have a policy signature
-    // concept exposed in this crate yet.
+    // Policy signature: we don't have a meaningful signature for Junos policy yet.
+    // The check_config above enforces the policy, so the coordinator knows the
+    // actions passed validation. For now, use a static marker.
     let policy_signature = "junos-default-v1".to_string();
 
     let result = coordinator
         .create_change_set(
             args.device,
             args.actions,
-            args.owner,
+            owner,
             args.expected_fingerprint,
             policy_signature,
         )
@@ -138,40 +172,20 @@ pub async fn approve_change_set_with_cancel(
     args: ApproveChangeSetArgs,
     coordinator: Arc<ChangesetCoordinator>,
     dm: Arc<DeviceManager>,
-    _attribution: Attribution,
+    attribution: Attribution,
     _ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
-    // We need the device name to look up the change set. In the current API, we have to
-    // try all devices or require the caller to provide it. For now, let's add device
-    // to ApproveChangeSetArgs.
-    // TEMPORARY: Since we need to add device to args anyway, let's do that.
-    // Actually, looking at the API, the approver needs to know which device they're
-    // approving a change for. So adding device to args makes sense.
-    // But that's a breaking change to the tool signature. For now, let's try each device
-    // in the inventory until we find the changeset.
-    let mut found_device = None;
-    for device_name in dm.inventory().names() {
-        if let Ok(_status) = coordinator
-            .change_set_status(args.change_set_id.clone(), device_name.clone())
-            .await
-        {
-            found_device = Some(device_name.clone());
-            break;
-        }
-    }
+    // Validate the device exists and is within scope.
+    let _ = dm.inventory().get(&args.device)?;
 
-    let device = found_device.ok_or_else(|| {
-        JmcpError::Validation(format!(
-            "change set {} not found on any device",
-            args.change_set_id
-        ))
-    })?;
+    // Derive the approver from the authenticated caller's principal.
+    let approver = attribution.principal.to_string();
 
     let result = coordinator
         .approve_change_set(
             args.change_set_id.clone(),
-            device,
-            args.approver,
+            args.device,
+            approver,
             args.expected_digest,
         )
         .await
@@ -190,20 +204,73 @@ pub async fn apply_change_set(
     args: ApplyChangeSetArgs,
     dm: Arc<DeviceManager>,
     coordinator: Arc<ChangesetCoordinator>,
+    policy: Arc<Policy>,
     attribution: Attribution,
 ) -> Result<Value, JmcpError> {
-    apply_change_set_with_cancel(args, dm, coordinator, attribution, CancellationToken::new()).await
+    apply_change_set_with_cancel(
+        args,
+        dm,
+        coordinator,
+        policy,
+        attribution,
+        CancellationToken::new(),
+    )
+    .await
 }
 
 pub async fn apply_change_set_with_cancel(
     args: ApplyChangeSetArgs,
     dm: Arc<DeviceManager>,
     coordinator: Arc<ChangesetCoordinator>,
+    policy: Arc<Policy>,
     attribution: Attribution,
     ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
-    // Validate the device exists.
-    let _ = dm.inventory().get(&args.device)?;
+    // Validate the device exists and capture endpoint components.
+    let inventory = dm.inventory();
+    let device_entry = inventory.get(&args.device)?;
+    let device_ip = device_entry.ip.clone();
+    let device_port = device_entry.port;
+
+    // Derive the principal from the authenticated caller.
+    let principal = attribution.principal.to_string();
+
+    // Retrieve the full change set record to validate actions against policy before staging.
+    let change_set_record = coordinator
+        .change_set(&args.change_set_id, &args.device)
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Deserialize the actions from the stored JSON and validate each against policy.
+    for action_value in &change_set_record.actions {
+        let action: JunosAction = serde_json::from_value(action_value.clone())
+            .map_err(|e| JmcpError::Validation(format!("failed to deserialize action: {e}")))?;
+
+        if let Some(payload) = &action.payload {
+            let format = payload.format.as_deref().unwrap_or("set");
+            match policy.check_config(&args.device, format, &payload.text)? {
+                Decision::Allow => {}
+                Decision::Deny {
+                    rule,
+                    source,
+                    line_number,
+                } => {
+                    let pattern = rule.pattern.clone();
+                    let source_str = source.as_str();
+                    let denied_excerpt = excerpt(&payload.text);
+                    return Err(JmcpError::Denied {
+                        tool: "apply_junos_change_set",
+                        router: args.device.clone(),
+                        pattern,
+                        rule_source: source_str,
+                        input_excerpt: denied_excerpt,
+                        line_number,
+                    });
+                }
+            }
+        }
+        // Rollback actions do not need policy checks.
+    }
 
     // Build the transaction backend.
     let transaction = JunosTransaction::new(dm.clone(), args.device.clone());
@@ -214,15 +281,18 @@ pub async fn apply_change_set_with_cancel(
     let primary_action = "merge";
     let primary_target: Option<&str> = None;
 
-    // The endpoint is the device name for Junos (used for guard locking).
-    let endpoint = args.device.clone();
+    // Construct a stable canonical endpoint URL for the coordinator's guard.
+    // Junos has no management URL in the PAN-OS sense, so we synthesize one
+    // from the device inventory entry: junos://<ip>:<port>. This is stable
+    // and deterministic for a given device entry.
+    let endpoint = format!("junos://{device_ip}:{device_port}");
 
     let result = coordinator
         .apply_change_set(
             args.change_set_id.clone(),
             args.device.clone(),
             endpoint,
-            args.principal.clone(),
+            principal.clone(),
             args.expected_digest,
             args.expected_fingerprint.clone(),
             &transaction,
@@ -235,15 +305,51 @@ pub async fn apply_change_set_with_cancel(
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
     // The apply_change_set call stages all actions and returns the staged
-    // handle. The caller (this tool) must then commit.
+    // handle. The caller (this tool) must then diff, validate, and commit.
     // Policy signature for commit - same as what we use for staging.
     let policy_signature = "junos-default-v1";
+
+    // Run diff to get the configuration difference.
+    let _diff = coordinator
+        .diff_operation(
+            &result.operation_id,
+            &args.device,
+            &principal,
+            &result.after_fingerprint,
+            &transaction,
+            &result.staged,
+            &ct,
+        )
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Run validation before committing.
+    let validation = coordinator
+        .validate_operation(
+            &result.operation_id,
+            &args.device,
+            &principal,
+            &result.after_fingerprint,
+            &transaction,
+            &result.staged,
+            &ct,
+        )
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Check if validation succeeded. If it failed, refuse to commit.
+    if !validation.valid {
+        return Err(JmcpError::Validation(format!(
+            "configuration validation failed: {}",
+            validation.details.as_deref().unwrap_or("no details")
+        )));
+    }
 
     let commit_result = coordinator
         .commit_operation(
             &result.operation_id,
             &args.device,
-            &args.principal,
+            &principal,
             &result.after_fingerprint,
             policy_signature,
             &transaction,
@@ -255,13 +361,54 @@ pub async fn apply_change_set_with_cancel(
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
-    Ok(json!({
-        "change_set_id": args.change_set_id,
-        "operation_id": result.operation_id,
-        "state": "Applied",
-        "commit_outcome": format!("{:?}", commit_result),
-        "message": "change set applied and committed"
-    }))
+    // Branch on the commit outcome and report honestly.
+    use mecmcp_changeset::CommitOutcome;
+    match commit_result {
+        CommitOutcome::Reconciled {
+            succeeded: true,
+            details,
+            ..
+        } => Ok(json!({
+            "change_set_id": args.change_set_id,
+            "operation_id": result.operation_id,
+            "state": "Applied",
+            "commit_outcome": "Reconciled",
+            "details": details,
+            "message": "change set applied and committed successfully"
+        })),
+        CommitOutcome::Reconciled {
+            succeeded: false,
+            details,
+            ..
+        } => Err(JmcpError::Validation(format!(
+            "commit failed: {}",
+            details.as_deref().unwrap_or("no details")
+        ))),
+        CommitOutcome::Indeterminate { reason } => Err(JmcpError::Validation(format!(
+            "commit outcome indeterminate, manual reconciliation required: {reason}"
+        ))),
+        CommitOutcome::Detached { job_id } => Ok(json!({
+            "change_set_id": args.change_set_id,
+            "operation_id": result.operation_id,
+            "state": "Committing",
+            "commit_outcome": "Detached",
+            "job_id": job_id,
+            "message": "commit detached, poll for completion"
+        })),
+        CommitOutcome::AwaitingConfirmation {
+            rollback_deadline_unix,
+            details,
+            ..
+        } => Ok(json!({
+            "change_set_id": args.change_set_id,
+            "operation_id": result.operation_id,
+            "state": "AwaitingConfirmation",
+            "commit_outcome": "AwaitingConfirmation",
+            "rollback_deadline_unix": rollback_deadline_unix,
+            "details": details,
+            "message": "commit awaiting confirmation; auto-rollback pending"
+        })),
+    }
 }
 
 /// Get the status of a change set.
@@ -305,12 +452,17 @@ mod tests {
         }
     }
 
+    fn test_policy(inv: Arc<Inventory>) -> Arc<Policy> {
+        Arc::new(Policy::build(&inv).unwrap())
+    }
+
     #[tokio::test]
     async fn create_change_set_unknown_device_fails() {
         let inv = inv_with(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        let dm = Arc::new(DeviceManager::new(inv));
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
         let state_dir = TempDir::new().unwrap();
         let coordinator = Arc::new(
             ChangesetCoordinator::load(
@@ -326,15 +478,14 @@ mod tests {
             create_change_set(
                 CreateChangeSetArgs {
                     device: "nope".into(),
-                    owner: "alice".into(),
                     expected_fingerprint:
                         "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                             .into(),
                     actions: vec![],
-                    approval_timeout_secs: None,
                 },
                 dm.clone(),
                 coordinator,
+                policy,
                 test_attribution("alice"),
             )
             .await;
@@ -347,7 +498,8 @@ mod tests {
         let inv = inv_with(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        let dm = Arc::new(DeviceManager::new(inv));
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
         let state_dir = TempDir::new().unwrap();
         let coordinator = Arc::new(
             ChangesetCoordinator::load(
@@ -371,15 +523,14 @@ mod tests {
             create_change_set(
                 CreateChangeSetArgs {
                     device: "r1".into(),
-                    owner: "alice".into(),
                     expected_fingerprint:
                         "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                             .into(),
                     actions: vec![action],
-                    approval_timeout_secs: None,
                 },
                 dm.clone(),
                 coordinator.clone(),
+                policy,
                 test_attribution("alice"),
             )
             .await
@@ -392,7 +543,7 @@ mod tests {
         let r = approve_change_set(
             ApproveChangeSetArgs {
                 change_set_id: change_set_id.into(),
-                approver: "alice".into(),
+                device: "r1".into(),
                 expected_digest: plan_digest.into(),
             },
             coordinator.clone(),
@@ -416,7 +567,8 @@ mod tests {
         let inv = inv_with(
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        let dm = Arc::new(DeviceManager::new(inv));
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
         let state_dir = TempDir::new().unwrap();
         let coordinator = Arc::new(
             ChangesetCoordinator::load(
@@ -440,15 +592,14 @@ mod tests {
             create_change_set(
                 CreateChangeSetArgs {
                     device: "r1".into(),
-                    owner: "alice".into(),
                     expected_fingerprint:
                         "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                             .into(),
                     actions: vec![action],
-                    approval_timeout_secs: None,
                 },
                 dm.clone(),
                 coordinator.clone(),
+                policy,
                 test_attribution("alice"),
             )
             .await
@@ -462,7 +613,7 @@ mod tests {
         let approve_result = approve_change_set(
             ApproveChangeSetArgs {
                 change_set_id: change_set_id.into(),
-                approver: "bob".into(),
+                device: "r1".into(),
                 expected_digest: plan_digest.into(),
             },
             coordinator.clone(),

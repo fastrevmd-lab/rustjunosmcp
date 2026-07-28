@@ -1180,14 +1180,21 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
 
-        let attribution = mecmcp_audit::Attribution::from_caller(
-            ctx.expect("create_junos_change_set requires caller context for principal tracking"),
-        );
+        // Change-set tools require an authenticated caller for two-person control.
+        let Some(ctx_val) = ctx else {
+            audit.deny("no_auth");
+            return Self::to_call_result(Err(rust_junosmcp_core::JmcpError::Validation(
+                "create_junos_change_set requires authentication; not available on stdio or with --allow-no-auth".into()
+            )));
+        };
+
+        let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
 
         let result = changeset::create_change_set_with_cancel(
             args,
             self.dm.clone(),
             self.coordinator.clone(),
+            self.policy.load_full(),
             attribution,
             ct,
         )
@@ -1210,16 +1217,31 @@ impl JmcpHandler {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(ctx, "approve_junos_change_set", "approve", vec![]);
+        let mut audit = audit_scope(
+            ctx,
+            "approve_junos_change_set",
+            "approve",
+            vec![args.device.clone()],
+        );
 
         if let Err(e) = self.check_tool_scope(ctx, "approve_junos_change_set") {
             audit.deny("tool_scope");
             return Self::scope_to_call_result(e);
         }
+        if let Err(e) = self.check_router_scope(ctx, "approve_junos_change_set", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
 
-        let attribution = mecmcp_audit::Attribution::from_caller(
-            ctx.expect("approve_junos_change_set requires caller context for principal tracking"),
-        );
+        // Change-set tools require an authenticated caller for two-person control.
+        let Some(ctx_val) = ctx else {
+            audit.deny("no_auth");
+            return Self::to_call_result(Err(rust_junosmcp_core::JmcpError::Validation(
+                "approve_junos_change_set requires authentication; not available on stdio or with --allow-no-auth".into()
+            )));
+        };
+
+        let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
 
         let result = changeset::approve_change_set_with_cancel(
             args,
@@ -1263,14 +1285,21 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
 
-        let attribution = mecmcp_audit::Attribution::from_caller(
-            ctx.expect("apply_junos_change_set requires caller context for principal tracking"),
-        );
+        // Change-set tools require an authenticated caller for two-person control.
+        let Some(ctx_val) = ctx else {
+            audit.deny("no_auth");
+            return Self::to_call_result(Err(rust_junosmcp_core::JmcpError::Validation(
+                "apply_junos_change_set requires authentication; not available on stdio or with --allow-no-auth".into()
+            )));
+        };
+
+        let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
 
         let result = changeset::apply_change_set_with_cancel(
             args,
             self.dm.clone(),
             self.coordinator.clone(),
+            self.policy.load_full(),
             attribution,
             ct,
         )
@@ -1292,10 +1321,19 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(ctx, "get_junos_change_set_status", "read", vec![]);
+        let mut audit = audit_scope(
+            ctx,
+            "get_junos_change_set_status",
+            "read",
+            vec![args.device.clone()],
+        );
 
         if let Err(e) = self.check_tool_scope(ctx, "get_junos_change_set_status") {
             audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "get_junos_change_set_status", &args.device) {
+            audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
 
