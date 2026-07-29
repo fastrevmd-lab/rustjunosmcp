@@ -6,6 +6,20 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-07-29
+
+### Fixed
+
+- **Confirmed commit is now reachable.** 0.13.0 shipped the implementation but
+  no way to ask for it, and its changelog said otherwise. `apply` takes
+  `confirm_timeout_mins` and `confirm_junos_change_set` cancels the rollback.
+
+- **`confirm_junos_change_set` is a write tool.** It was registered in the tool
+  and scope lists but not the write-tool registry, so a token holding a
+  wildcard `*` tool scope could have called it without being granted it by
+  name — confirming another principal's provisional commit. Wildcard tokens
+  now require it explicitly, like every other change-set mutation.
+
 ## [0.13.0] — 2026-07-29
 
 ### Added
