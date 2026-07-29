@@ -124,12 +124,26 @@ pub struct Cli {
     pub device_lease_dir: PathBuf,
 
     /// Change-set lifecycle state file for two-person approval workflow.
-    #[arg(long, default_value = "/var/lib/jmcp/changeset-state.json")]
+    ///
+    /// Spelled `--state-file` to match every other mecmcp server. The former
+    /// `--changeset-state-file` still works as an alias, so existing units keep
+    /// running (mecmcp#94).
+    #[arg(
+        long = "state-file",
+        alias = "changeset-state-file",
+        default_value = "/var/lib/jmcp/changeset-state.json"
+    )]
     pub changeset_state_file: PathBuf,
 
     /// Change-set approval timeout in seconds. After this window, unapproved
     /// change sets expire and cannot be applied.
-    #[arg(long, default_value_t = 3600)]
+    /// Spelled to match every other mecmcp server; the former
+    /// `--changeset-approval-timeout-secs` still works as an alias.
+    #[arg(
+        long = "approval-timeout-secs",
+        alias = "changeset-approval-timeout-secs",
+        default_value_t = 3600
+    )]
     pub changeset_approval_timeout_secs: u64,
 
     /// Run without two-person control: change sets are approved on creation.
