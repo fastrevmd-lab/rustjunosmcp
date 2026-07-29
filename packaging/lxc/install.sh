@@ -8,6 +8,7 @@ SERVICE_USER="${JMCP_SERVICE_USER:-jmcp}"
 SERVICE_GROUP="${JMCP_SERVICE_GROUP:-jmcp}"
 SKIP_USER_SETUP="${JMCP_INSTALL_SKIP_USER:-0}"
 SKIP_SYSTEMD_RELOAD="${JMCP_INSTALL_SKIP_SYSTEMD_RELOAD:-0}"
+SKIP_RUNTIME_DEPS="${JMCP_INSTALL_SKIP_RUNTIME_DEPS:-0}"
 
 fail() {
     echo ">> Installation refused: $*" >&2
@@ -122,6 +123,50 @@ fi
 if [[ "$INSTALL_ROOT" == "/" && "$SKIP_SYSTEMD_RELOAD" != "1" ]]; then
     command -v systemctl >/dev/null 2>&1 || fail "systemctl is required for a live install"
     systemctl daemon-reload
+fi
+
+# Runtime dependencies.
+#
+# `ssh`, `scp` and `tar` are not conveniences: transfer_file, fetch_file and
+# collect_jtac_support_bundle spawn them, so the server is partly broken
+# without them. They happen to be present in Debian's *standard* LXC template,
+# which is why nothing noticed — but that is luck of template choice, not a
+# guarantee, and a minimal template has none of them.
+#
+# `curl` is needed by the verification step in the README, and the Debian 13
+# standard template does not ship it (mecmcp#33).
+#
+# Installing here is deliberate for LXC and deliberate *not* for the container
+# images: an LXC already has a shell and a package manager, so curl changes
+# nothing about its attack surface, whereas adding an HTTP client to a
+# distroless image hands an attacker a pivot tool after an RCE.
+if [[ "$INSTALL_ROOT" == "/" && "$SKIP_RUNTIME_DEPS" != "1" ]]; then
+    missing=()
+    for cmd in curl ssh scp tar; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+
+    if (( ${#missing[@]} > 0 )); then
+        declare -A pkg_for=(
+            [curl]=curl [ssh]=openssh-client [scp]=openssh-client [tar]=tar
+        )
+        packages=()
+        for cmd in "${missing[@]}"; do packages+=("${pkg_for[$cmd]}"); done
+        # De-duplicate: ssh and scp both come from openssh-client.
+        mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
+
+        if command -v apt-get >/dev/null 2>&1; then
+            echo ">> Installing runtime dependencies: ${packages[*]}"
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates "${packages[@]}"
+        else
+            # Not fatal: a non-Debian host may satisfy these another way, and
+            # refusing to install over it would be worse than saying so.
+            echo ">> WARNING: missing ${missing[*]} and no apt-get to install them." >&2
+            echo ">> WARNING: install ${packages[*]} or these tools will fail at runtime." >&2
+        fi
+    fi
 fi
 
 echo ">> RustJunosMCP package installed."
