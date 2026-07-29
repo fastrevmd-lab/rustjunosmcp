@@ -57,6 +57,25 @@ pub struct ApplyChangeSetArgs {
     /// Target device endpoint (device name from inventory).
     #[serde(alias = "router_name", alias = "router")]
     pub device: String,
+    /// Optional confirmed-commit window, in whole minutes.
+    ///
+    /// When set, the device commits the change and schedules an automatic
+    /// rollback after this many minutes unless `confirm_junos_change_set` is
+    /// called first. Minutes, not seconds — that is what Junos schedules, and
+    /// it matches `rollback_config`'s existing `confirm_timeout_mins`.
+    ///
+    /// Omit for an ordinary commit with no rollback timer.
+    pub confirm_timeout_mins: Option<u32>,
+}
+
+/// Arguments for `confirm_junos_change_set`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConfirmChangeSetArgs {
+    /// Operation ID returned by `apply_junos_change_set`.
+    pub operation_id: String,
+    /// Device name. Change sets are indexed by (id, device).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
 }
 
 /// Arguments for `get_junos_change_set_status`.
@@ -337,6 +356,15 @@ pub async fn apply_change_set_with_cancel(
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
+    // A confirmed-commit window is expressed in whole minutes because that is
+    // what Junos schedules; the transaction layer refuses anything it cannot
+    // honour rather than rounding it.
+    let commit_options = CommitOptions {
+        confirm_timeout: args
+            .confirm_timeout_mins
+            .map(|mins| std::time::Duration::from_secs(u64::from(mins) * 60)),
+    };
+
     // Check if validation succeeded. If it failed, refuse to commit.
     if !validation.valid {
         return Err(JmcpError::Validation(format!(
@@ -355,7 +383,7 @@ pub async fn apply_change_set_with_cancel(
             &transaction,
             &result.staged,
             &attribution,
-            &CommitOptions::default(),
+            &commit_options,
             &ct,
         )
         .await
@@ -407,6 +435,102 @@ pub async fn apply_change_set_with_cancel(
             "rollback_deadline_unix": rollback_deadline_unix,
             "details": details,
             "message": "commit awaiting confirmation; auto-rollback pending"
+        })),
+    }
+}
+
+/// Confirm a provisional commit before the device rolls it back.
+///
+/// # Who may confirm
+///
+/// The **owner** — the principal that applied the change set — not the
+/// approver. Authorization already happened at approval: a second principal
+/// signed off on this exact plan, and `apply` executed it. Confirming does not
+/// change what was approved; it stops the safety timer on a change that is
+/// already live. That is execution, and execution is the owner's half of the
+/// two-person split throughout this server (the approver's token cannot apply
+/// either).
+///
+/// Requiring the approver here would also mean a change silently reverting
+/// because the reviewer had gone home, which turns a safety feature into an
+/// outage.
+pub async fn confirm_change_set(
+    args: ConfirmChangeSetArgs,
+    dm: Arc<DeviceManager>,
+    coordinator: Arc<ChangesetCoordinator>,
+    attribution: Attribution,
+) -> Result<Value, JmcpError> {
+    let inventory = dm.inventory();
+    inventory.get(&args.device)?;
+
+    let principal = attribution.principal.to_string();
+
+    // Scoped to (operation, principal, device), so one caller cannot confirm
+    // another's provisional commit.
+    let record = coordinator
+        .record(&args.operation_id, &principal, &args.device)
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    let Some(deadline) = record.rollback_deadline_unix else {
+        return Err(JmcpError::Validation(format!(
+            "operation {} has no pending confirmation; it was not committed with a \
+             confirm window",
+            args.operation_id
+        )));
+    };
+
+    // Report an expired window rather than issuing a confirming commit that
+    // would land on whatever the device rolled back to. The operator needs to
+    // know the change is already gone.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    if now >= deadline {
+        return Err(JmcpError::Validation(format!(
+            "the confirmation window for operation {} closed at {deadline}; the device \
+             has already rolled the change back",
+            args.operation_id
+        )));
+    }
+
+    let transaction = JunosTransaction::new(dm.clone(), args.device.clone());
+    let outcome = transaction
+        .confirm_commit(&args.operation_id, &attribution)
+        .await?;
+
+    use mecmcp_changeset::CommitOutcome;
+    match outcome {
+        CommitOutcome::Reconciled {
+            succeeded: true,
+            details,
+            ..
+        } => {
+            let mut confirmed = record;
+            confirmed.state = mecmcp_changeset::LifecycleState::Committed;
+            confirmed.rollback_deadline_unix = None;
+            confirmed.details = details.clone();
+            coordinator
+                .update(confirmed)
+                .await
+                .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+            Ok(json!({
+                "operation_id": args.operation_id,
+                "device": args.device,
+                "state": "Committed",
+                "details": details,
+                "message": "confirming commit accepted; the automatic rollback is cancelled"
+            }))
+        }
+        other => Ok(json!({
+            "operation_id": args.operation_id,
+            "device": args.device,
+            "state": "Committing",
+            "commit_outcome": format!("{other:?}"),
+            "rollback_deadline_unix": deadline,
+            "message": "the confirming commit did not report success; the rollback timer is still running"
         })),
     }
 }

@@ -10,9 +10,16 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
-- **Confirmed commit now works.** `apply` can request an automatic rollback
-  window, and the change reverts itself unless confirmed. Previously any
-  request for one was refused outright.
+- **Confirmed commit.** `apply_junos_change_set` takes an optional
+  `confirm_timeout_mins`: the device commits and schedules an automatic
+  rollback unless the new `confirm_junos_change_set` tool is called before the
+  deadline, which the apply response returns as `rollback_deadline_unix`.
+  Previously any request for a confirm window was refused outright.
+
+  Confirming is the **owner's** call, not the approver's. Authorization already
+  happened at approval and `apply` executed it; confirming only stops the
+  safety timer on a change that is already live. Requiring the approver would
+  mean changes silently reverting because the reviewer had gone home.
 
   Junos schedules the rollback in whole minutes, so a window that is not a
   whole number of minutes — or is under one minute — is refused rather than

@@ -333,6 +333,7 @@ const SERVER_TOOLS: &[&str] = &[
     "create_junos_change_set",
     "approve_junos_change_set",
     "apply_junos_change_set",
+    "confirm_junos_change_set",
     "get_junos_change_set_status",
     "get_junos_candidate_fingerprint",
 ];
@@ -346,9 +347,10 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_24() {
-        // 23 before the candidate-fingerprint tool (#231).
-        assert_eq!(SERVER_TOOLS.len(), 24);
+    fn server_tools_len_is_25() {
+        // 23 before the candidate-fingerprint tool (#231); 25 with the
+        // confirming-commit tool (#239).
+        assert_eq!(SERVER_TOOLS.len(), 25);
     }
 
     #[test]
@@ -1314,6 +1316,57 @@ impl JmcpHandler {
     }
 
     #[tool(
+        name = "confirm_junos_change_set",
+        description = "Confirm a provisional commit made with confirm_timeout_mins, cancelling the device's automatic rollback. Must be called by the principal that applied the change set, before the rollback deadline returned by apply_junos_change_set."
+    )]
+    async fn confirm_junos_change_set(
+        &self,
+        Parameters(args): Parameters<changeset::ConfirmChangeSetArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "confirm_junos_change_set",
+            "commit",
+            vec![args.device.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "confirm_junos_change_set") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "confirm_junos_change_set", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        // Same rule as the other change-set tools: the confirming principal must
+        // be identifiable, or the record cannot be matched to its owner.
+        let Some(ctx_val) = ctx else {
+            audit.deny("no_auth");
+            return Self::to_call_result(Err(rust_junosmcp_core::JmcpError::Validation(
+                "confirm_junos_change_set requires authentication; not available on stdio or with --allow-no-auth".into()
+            )));
+        };
+
+        let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
+
+        let result = changeset::confirm_change_set(
+            args,
+            self.dm.clone(),
+            self.coordinator.clone(),
+            attribution,
+        )
+        .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
         name = "get_junos_candidate_fingerprint",
         description = "Read the device's candidate-configuration fingerprint. Use this first: create_junos_change_set requires the fingerprint so the plan is bound to the exact candidate it was reviewed against. This is a read; it takes no lock and does not modify the candidate."
     )]
@@ -1483,14 +1536,37 @@ mod scope_tests {
             .collect()
     }
 
+    /// The tool surface is a public API, so schema changes must be deliberate.
+    ///
+    /// Regenerate after an intentional change:
+    ///
+    /// ```text
+    /// UPDATE_JUNOS_TOOL_BASELINE=1 cargo test --bins junos_schemas_match
+    /// ```
+    ///
+    /// Then read the diff. Adding a tool should add exactly one key; anything
+    /// else means an existing tool's schema moved, which is a breaking change
+    /// for clients and needs saying out loud.
     #[test]
     fn junos_schemas_match_pre_merge_baseline() {
+        let actual = normalized_tools(JmcpHandler::junos_tool_router().list_all());
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/junos-tools-v0.7.json"
+        );
+
+        if std::env::var("UPDATE_JUNOS_TOOL_BASELINE").is_ok() {
+            // Trailing newline so the regenerated file is clean for the
+            // end-of-file pre-commit hook.
+            let mut json = serde_json::to_string_pretty(&actual).unwrap();
+            json.push('\n');
+            std::fs::write(path, json).unwrap();
+            return;
+        }
+
         let expected: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(include_str!("../tests/fixtures/junos-tools-v0.7.json")).unwrap();
-        assert_eq!(
-            normalized_tools(JmcpHandler::junos_tool_router().list_all()),
-            expected
-        );
+        assert_eq!(actual, expected);
     }
 
     #[cfg(feature = "srx")]
@@ -1519,8 +1595,9 @@ mod scope_tests {
             .map(|name| (*name).to_string())
             .collect();
         assert_eq!(names, expected);
-        // 28 before Phase 5; the four change-set tools take it to 32.
-        assert_eq!(names.len(), 33);
+        // 28 before Phase 5; the change-set tools took it to 33, and
+        // `confirm_junos_change_set` makes 34 (#239).
+        assert_eq!(names.len(), 34);
     }
 
     #[test]

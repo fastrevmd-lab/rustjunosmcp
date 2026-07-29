@@ -26,6 +26,7 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "apply_junos_change_set",
     "approve_junos_change_set",
     "commit_check_config",
+    "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
     "execute_junos_command",
@@ -72,6 +73,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "check_srx_feature_license",
     "collect_jtac_support_bundle",
     "commit_check_config",
+    "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
     "execute_junos_command",
@@ -107,6 +109,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "add_device",
     "apply_junos_change_set",
     "approve_junos_change_set",
+    "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
     "load_and_commit_config",
@@ -166,6 +169,47 @@ mod tests {
                 KNOWN_TOOLS.contains(tool),
                 "WRITE_TOOLS entry '{tool}' not found in KNOWN_TOOLS"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod write_tool_registry_tests {
+    use super::*;
+
+    /// Every change-set tool that can alter the device must be a write tool.
+    ///
+    /// `WRITE_TOOLS` is what excludes a tool from a wildcard (`*`) scope, so a
+    /// tool missing here is reachable by any token that asked for everything,
+    /// without the operator ever granting it by name. `confirm_junos_change_set`
+    /// was added to the other two registries and not this one, and nothing
+    /// failed — a confirming commit makes a provisional change permanent, so
+    /// that was a real gap (#239).
+    #[test]
+    fn change_set_mutations_are_write_tools() {
+        for tool in [
+            "create_junos_change_set",
+            "approve_junos_change_set",
+            "apply_junos_change_set",
+            "confirm_junos_change_set",
+        ] {
+            assert!(
+                WRITE_TOOLS.contains(&tool),
+                "{tool} alters the device but is absent from WRITE_TOOLS, so a \
+                 wildcard token can call it without an explicit grant"
+            );
+        }
+    }
+
+    /// A read-only tool in `WRITE_TOOLS` would be denied to wildcard tokens that
+    /// legitimately should have it, so the boundary matters in both directions.
+    #[test]
+    fn read_only_change_set_tools_are_not_write_tools() {
+        for tool in [
+            "get_junos_change_set_status",
+            "get_junos_candidate_fingerprint",
+        ] {
+            assert!(!WRITE_TOOLS.contains(&tool), "{tool} only reads");
         }
     }
 }
