@@ -200,7 +200,7 @@ pub async fn create_change_set_with_cancel(
             "state": format!("{:?}", waived.state),
             "approver": waived.approver,
             "approval_waiver": waived.approval_waiver,
-            "message": "change set created and approval waived: this server runs in                         lab mode, so no second principal reviewed it"
+            "message": "change set created and approval waived: this server runs in lab mode, so no second principal reviewed it"
         }));
     }
 
