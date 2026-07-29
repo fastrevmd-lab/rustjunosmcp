@@ -6,6 +6,37 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-29
+
+### Added
+
+- **`--lab-mode` for single-operator environments.** Change sets are approved on
+  creation, so one engineer can plan and apply without a second principal.
+  Previously a lone operator could create a change set and never move it past
+  `Planned` — change sets were unusable in a one-person lab.
+
+  No approver is invented. A waived change set reports `approver: null`
+  alongside `approval_waiver: "lab-mode"`, so it stays distinguishable from one
+  a second person actually reviewed. The server warns at startup that
+  two-person control is relaxed.
+
+  The flow is unchanged from production: plan, then apply. There is no waive
+  tool and no extra argument — starting the service with the flag is the
+  decision.
+
+### Changed
+
+- **Change-set flags renamed to match every other mecmcp server.** An operator
+  who learns one server should not have to relearn the next:
+
+  | before | after |
+  |---|---|
+  | `--changeset-state-file` | `--state-file` |
+  | `--changeset-approval-timeout-secs` | `--approval-timeout-secs` |
+
+  **The old spellings still work** as aliases, so existing units and scripts
+  keep running. PAN-OS gains the same three flags in its 0.7.0.
+
 ## [0.13.1] — 2026-07-29
 
 ### Fixed
