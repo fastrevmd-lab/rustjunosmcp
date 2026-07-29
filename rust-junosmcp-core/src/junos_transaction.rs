@@ -82,6 +82,17 @@ pub struct JunosValidation {
 pub struct JunosTransaction {
     device_manager: Arc<DeviceManager>,
     router: String,
+    /// Session holding the candidate lock between `lock()` and `stage()`.
+    ///
+    /// A Junos candidate lock belongs to the NETCONF session that took it, so
+    /// closing the session releases it. To hold the lock across the coordinator's
+    /// fingerprint-read the transaction has to keep that session alive, which is
+    /// why it lives here rather than as a local in `stage()` (mecmcp#60, #80).
+    ///
+    /// `stage()` *takes* the session out of here rather than borrowing it, so
+    /// every existing cleanup path in that method still operates on an owned
+    /// local and is unchanged.
+    locked_session: tokio::sync::Mutex<Option<crate::device_manager::PooledDevice>>,
 }
 
 impl JunosTransaction {
@@ -89,6 +100,7 @@ impl JunosTransaction {
         Self {
             device_manager,
             router,
+            locked_session: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -101,20 +113,98 @@ impl DeviceTransaction for JunosTransaction {
     type Validation = JunosValidation;
     type Error = JmcpError;
 
+    fn requires_config_lock(&self) -> bool {
+        true
+    }
+
+    /// Take the Junos candidate lock and hold the session that owns it.
+    ///
+    /// The coordinator calls this before reading the fingerprint, so the check
+    /// and the staging that follows are atomic against other sessions — an
+    /// operator at the CLI or a second MCP process can no longer move the
+    /// candidate in between (mecmcp#60).
+    ///
+    /// Idempotent: a second call while the lock is already held is a no-op, so a
+    /// retry cannot strand a session.
+    async fn lock(&self, _comment: &str) -> Result<(), Self::Error> {
+        let mut held = self.locked_session.lock().await;
+        if held.is_some() {
+            return Ok(());
+        }
+
+        let mut dev = self.device_manager.open(&self.router).await?;
+        // Non-reusable before locking, matching `stage()`: a session carrying a
+        // lock must never go back to the pool for someone else to pick up.
+        dev.prevent_reuse();
+
+        let lock_result = {
+            let mut cfg = dev.config()?;
+            cfg.lock().await
+        };
+
+        if let Err(error) = lock_result {
+            // Nothing was locked, so the session is clean and may be pooled.
+            dev.allow_reuse();
+            return Err(error.into());
+        }
+
+        *held = Some(dev);
+        Ok(())
+    }
+
+    /// Release the candidate lock taken by [`lock`](Self::lock).
+    async fn unlock(&self) -> Result<mecmcp_changeset::UnlockOutcome, Self::Error> {
+        let Some(mut dev) = self.locked_session.lock().await.take() else {
+            // Nothing retained here. Either the lock was never taken, or `stage()`
+            // took the session and owns its lifecycle now. Junos releases a
+            // candidate lock when its session closes, so no lock of ours is held
+            // either way, and that is what the coordinator needs to know.
+            return Ok(mecmcp_changeset::UnlockOutcome::Released);
+        };
+
+        let unlock_result = {
+            let mut cfg = dev.config()?;
+            cfg.unlock().await
+        };
+
+        match unlock_result {
+            Ok(()) => {
+                dev.allow_reuse();
+                Ok(mecmcp_changeset::UnlockOutcome::Released)
+            }
+            // The session is dropped without `allow_reuse`, so it closes rather
+            // than returning to the pool — which releases the lock on the device
+            // regardless. The error still propagates: the caller asked for a
+            // confirmed release and did not get one.
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn fingerprint(&self) -> Result<String, Self::Error> {
         // Fetch the candidate database via <get-configuration database="candidate"/>.
         // Uses the rustez RPC executor to issue a raw NETCONF RPC with the
         // database attribute. The returned XML is normalised before hashing to
         // ensure determinism: Junos includes a changing `junos:changed-seconds`
         // timestamp attribute and can vary in whitespace.
-        let mut dev = self.device_manager.open(&self.router).await?;
-        let mut exec = dev.rpc()?;
-
-        // Issue the RPC with database="candidate" attribute using call_xml.
-        // The envelope must include the attribute on the element.
-        let candidate_xml = exec
-            .call_xml(r#"<get-configuration database="candidate"/>"#)
-            .await?;
+        // Read through the locked session when one is held, so the fingerprint
+        // the coordinator compares against is captured *inside* the lock. Reading
+        // on a separate pooled session would leave the same gap the lock exists
+        // to close: another session could move the candidate between this read
+        // and staging.
+        const CANDIDATE_RPC: &str = r#"<get-configuration database="candidate"/>"#;
+        let mut held = self.locked_session.lock().await;
+        let candidate_xml = match held.as_mut() {
+            Some(session) => {
+                let mut exec = session.rpc()?;
+                exec.call_xml(CANDIDATE_RPC).await?
+            }
+            None => {
+                let mut dev = self.device_manager.open(&self.router).await?;
+                let mut exec = dev.rpc()?;
+                exec.call_xml(CANDIDATE_RPC).await?
+            }
+        };
+        drop(held);
 
         // Normalise: strip junos: namespace attributes (including the timestamp),
         // then apply line-based normalisation for deterministic hashing.
@@ -153,16 +243,26 @@ impl DeviceTransaction for JunosTransaction {
         // Open a session and lock the candidate. Load each action's payload or
         // rollback source. Capture the diff. The session is retained (not pooled)
         // until commit or discard so validate and commit see the same candidate.
-        let mut dev = self.device_manager.open(&self.router).await?;
+        // Take the session `lock()` left behind, if there is one. Taking rather
+        // than borrowing keeps `dev` an owned local, so every cleanup path below
+        // is exactly as it was before the lock primitive existed (#80).
+        let (mut dev, already_locked) = match self.locked_session.lock().await.take() {
+            Some(session) => (session, true),
+            None => {
+                let mut dev = self.device_manager.open(&self.router).await?;
 
-        // Defect #2: Mark session non-reusable before locking. It will be restored
-        // to reusable only after all cleanup (rollback + unlock) succeeds.
-        dev.prevent_reuse();
+                // Defect #2: Mark session non-reusable before locking. It will be
+                // restored to reusable only after all cleanup (rollback + unlock)
+                // succeeds.
+                dev.prevent_reuse();
+                (dev, false)
+            }
+        };
 
         let mut cfg = dev.config()?;
 
-        // Lock the candidate.
-        if let Err(error) = cfg.lock().await {
+        // Lock the candidate, unless `lock()` already did it on this session.
+        if !already_locked && let Err(error) = cfg.lock().await {
             // Lock failed before any load. Session is clean; allow pooling.
             dev.allow_reuse();
             return Err(error.into());
@@ -1027,6 +1127,25 @@ mod tests {
             message.contains("action 1"),
             "the error should identify which action failed, got: {message}"
         );
+    }
+
+    /// Junos must ask for the device lock, or the coordinator never calls
+    /// `lock()` and the fingerprint-to-stage window stays open (mecmcp#60, #80).
+    /// The default is `false`, so this is easy to lose silently in a refactor.
+    #[test]
+    fn junos_requires_the_device_config_lock() {
+        assert!(
+            offline_transaction().requires_config_lock(),
+            "Junos must opt into the device lock"
+        );
+    }
+
+    /// A fresh transaction holds no session, so `unlock()` reports the honest
+    /// answer — no lock of ours is held — rather than erroring.
+    #[tokio::test]
+    async fn unlock_without_a_held_session_reports_released() {
+        let outcome = offline_transaction().unlock().await.expect("unlock");
+        assert_eq!(outcome, mecmcp_changeset::UnlockOutcome::Released);
     }
 
     /// Junos schedules the rollback in whole minutes. Passing the trait's
