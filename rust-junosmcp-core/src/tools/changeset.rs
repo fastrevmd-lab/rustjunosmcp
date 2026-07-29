@@ -157,6 +157,10 @@ pub async fn create_change_set_with_cancel(
     // actions passed validation. For now, use a static marker.
     let policy_signature = "junos-default-v1".to_string();
 
+    // Cloned before the call consumes them; the lab-mode waiver below needs both.
+    let device_name = args.device.clone();
+    let owner_principal = owner.clone();
+
     let result = coordinator
         .create_change_set(
             args.device,
@@ -167,6 +171,38 @@ pub async fn create_change_set_with_cancel(
         )
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Single-operator servers waive approval here rather than exposing a tool to
+    // do it. Starting the service with `--lab-mode` is already the deliberate
+    // decision to run without a second reviewer, so requiring a per-change-set
+    // waive call afterwards would be ceremony protecting nobody. The digest
+    // confirmation such a call would carry is already enforced where it matters:
+    // `apply` requires `expected_digest`, and apply is what touches the device
+    // (mecmcp#94).
+    //
+    // The flow stays identical to production — plan, then apply. Only the record
+    // differs, and it differs honestly: no approver is invented, and
+    // `approval_waiver` says why it is approvable.
+    if coordinator.lab_mode() {
+        let waived = coordinator
+            .waive_approval(
+                result.change_set_id.clone(),
+                device_name.clone(),
+                owner_principal.clone(),
+                result.digest.clone(),
+            )
+            .await
+            .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+        return Ok(json!({
+            "change_set_id": waived.change_set_id,
+            "plan_digest": waived.digest,
+            "state": format!("{:?}", waived.state),
+            "approver": waived.approver,
+            "approval_waiver": waived.approval_waiver,
+            "message": "change set created and approval waived: this server runs in                         lab mode, so no second principal reviewed it"
+        }));
+    }
 
     Ok(json!({
         "change_set_id": result.change_set_id,

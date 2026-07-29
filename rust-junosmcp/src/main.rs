@@ -186,12 +186,23 @@ async fn main() -> Result<()> {
         transfer_cfg: transfer_cfg.clone(),
         device_leases,
     };
+    // Lab mode removes two-person control, so say so where an operator will
+    // actually see it. Reading it off flags typed weeks ago is not visibility.
+    if args.lab_mode {
+        tracing::warn!(
+            target: "audit",
+            "lab mode enabled: change sets are approved on creation with no second \
+             principal. Records carry approval_waiver=lab-mode. Do not run this against \
+             production devices."
+        );
+    }
+
     let coordinator = std::sync::Arc::new(
         mecmcp_changeset::ChangesetCoordinator::load(
             Some(&args.changeset_state_file),
             mecmcp_changeset::OperationLimits::default(),
             std::time::Duration::from_secs(args.changeset_approval_timeout_secs),
-            args.changeset_lab_mode,
+            args.lab_mode,
         )
         .with_context(|| {
             format!(
