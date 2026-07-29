@@ -31,6 +31,25 @@ fn add_token(tokens_path: &std::path::Path, name: &str, routers: &str, tools: &s
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
+/// An out-of-scope router refuses the **whole** batch, deliberately.
+///
+/// Paired with `batch_returns_per_router_error_rows_on_unreachable_ips`, which
+/// asserts the opposite for a router that is merely unreachable. The two
+/// together pin an asymmetry that is easy to mistake for an accident (#220):
+///
+/// | failure | response |
+/// |---|---|
+/// | caller not authorized for a target | 403, nothing executes |
+/// | target unreachable at runtime | 200, per-router error row |
+///
+/// The distinction is authorization versus runtime failure. Executing the
+/// in-scope subset of a request that names a router the caller may not touch
+/// would mean partially honouring an unauthorized request, so the batch is
+/// refused before dispatch — even though that costs the results for every
+/// other router named.
+///
+/// Changing either half is a user-visible contract change and belongs in the
+/// CHANGELOG, not just in this file.
 #[test]
 fn batch_router_scope_first_failure_rejects_call() {
     ensure_built();
@@ -66,6 +85,12 @@ fn batch_router_scope_first_failure_rejects_call() {
     assert_eq!(r.body["error"], "insufficient_scope");
 }
 
+/// An unreachable router yields a per-router error row, not a failed batch.
+///
+/// The runtime half of the contract described on
+/// `batch_router_scope_first_failure_rejects_call`. A device being down is not
+/// an authorization problem, so the other routers still run and the caller gets
+/// their results alongside the failure (#220).
 #[test]
 fn batch_returns_per_router_error_rows_on_unreachable_ips() {
     ensure_built();

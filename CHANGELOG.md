@@ -6,6 +6,27 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A batch call naming a router your token may not access is now refused
+  outright, instead of running the routers you *are* allowed and reporting an
+  error row for the rest.** The call returns HTTP 403 `insufficient_scope` and
+  nothing executes on any device.
+
+  This affects `execute_junos_command_batch` and the other batch tools. If you
+  send fifty routers and one is outside your token's scope, you get no results
+  at all — previously you got forty-nine results and one error row. Split the
+  request, or widen the token.
+
+  Unreachable devices are unchanged: those still come back as per-router error
+  rows inside a 200, and the rest of the batch still runs. The distinction is
+  deliberate — a device being down is a runtime failure, while asking for a
+  device you may not touch is an authorization failure, and partially honouring
+  an unauthorized request is the thing worth avoiding.
+
+  The behaviour arrived with the HTTP scope preflight and went undocumented at
+  the time (#220).
+
 ## [0.12.0] — 2026-07-27
 
 ### Changed
