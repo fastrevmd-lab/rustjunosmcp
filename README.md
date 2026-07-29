@@ -110,7 +110,8 @@ parallel with a configurable concurrency cap.
 
 - **NETCONF session pooling** — `PooledDevice` RAII guard with per-router single-slot pool (300s idle timeout, 30s SSH keepalive, background reaper). Eliminates SSH handshake overhead on sequential commands.
 - **Tool reliability fixes** — XML wrapper stripping for `get_junos_config` and `junos_config_diff`, corrected `show configuration | compare rollback N` command, timeout now covers SSH connect + NETCONF handshake (not just CLI execution).
-- **Batch partial results** — `execute_junos_command_batch` returns inline error rows for unknown routers instead of aborting the entire batch. Blocklist violations remain strict.
+- **Batch partial results** — `execute_junos_command_batch` returns inline error rows for unknown or unreachable routers instead of aborting the entire batch. Blocklist violations remain strict.
+- **Batch scope violations are not partial** — if any router in the request is outside the token's scope, the call is refused with HTTP 403 `insufficient_scope` and *no* router executes. This differs from the unreachable case above on purpose: a device being down is a runtime failure, whereas naming a device the caller may not touch is an authorization failure, and no part of an unauthorized request is honoured. Split the request or widen the token.
 - **Confirmed commits** — `load_and_commit_config` gains `confirm_timeout_mins` parameter for `commit confirmed N` with auto-rollback safety net.
 - **crates.io dependency** — `rustez` switched from path dep to crates.io 0.10.1; CI no longer requires sibling repo checkout.
 
