@@ -1603,8 +1603,9 @@ mod scope_tests {
     #[test]
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_eighteen_tools() {
-        // 19 before Phase 5; the four change-set tools take it to 23.
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 24);
+        // 19 before Phase 5; the change-set tools took it to 24, and
+        // `confirm_junos_change_set` makes 25 (#239).
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 25);
     }
 
     #[test]
