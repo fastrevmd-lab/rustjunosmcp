@@ -6,6 +6,50 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-29
+
+### Added
+
+- **Confirmed commit now works.** `apply` can request an automatic rollback
+  window, and the change reverts itself unless confirmed. Previously any
+  request for one was refused outright.
+
+  Junos schedules the rollback in whole minutes, so a window that is not a
+  whole number of minutes — or is under one minute — is refused rather than
+  rounded. Being told a deadline the device will not honour is worse than
+  being told no. Verified on vSRX 24.4R1.9, including that the change survives
+  the session that made it and can be confirmed from a different one.
+
+- **`token add` accepts provenance flags** — `--provider`, `--provider-tier`,
+  `--on-behalf-of`, `--actor-type`. These were silently discarded, so every
+  commit this server made was attributed on the device as
+  `(unknown) on-behalf-of=self`. Commit comments now carry the real principal.
+
+- **`get_junos_candidate_fingerprint`** exposes the candidate fingerprint the
+  change-set tools compare against.
+
+### Changed
+
+- **The device configuration lock is now held across the fingerprint check and
+  staging.** Another session — an operator at the CLI, a second MCP process —
+  can no longer move the candidate in the window between the two. Previously
+  the lock was taken inside staging, after the check it was meant to protect.
+
+- **A batch call naming a router your token may not access is refused
+  outright**, instead of running the routers you are allowed and reporting an
+  error row for the rest. Returns 403 `insufficient_scope`; nothing executes.
+  Unreachable devices are unchanged and still produce per-router error rows.
+  See the entry under Unreleased for the full reasoning (#220).
+
+- Commit comments omit the `model=` field when no model was asserted, rather
+  than emitting a dangling `model=`.
+
+### Fixed
+
+- Token files keep their owner across `token add`/`rotate`/`revoke`. Minting a
+  token as root previously left `tokens.json` root-owned and the service
+  refused to start with a bare permission error.
+
 ### Changed
 
 - **A batch call naming a router your token may not access is now refused
