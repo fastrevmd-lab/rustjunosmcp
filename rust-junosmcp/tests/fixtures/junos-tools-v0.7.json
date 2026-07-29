@@ -121,6 +121,15 @@
         "device": {
           "description": "Target device endpoint (device name from inventory).",
           "type": "string"
+        },
+        "confirm_timeout_mins": {
+          "description": "Optional confirmed-commit window, in whole minutes.\n\nWhen set, the device commits the change and schedules an automatic\nrollback after this many minutes unless `confirm_junos_change_set` is\ncalled first. Minutes, not seconds — that is what Junos schedules, and\nit matches `rollback_config`'s existing `confirm_timeout_mins`.\n\nOmit for an ordinary commit with no rollback timer.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "type": "object"
@@ -185,6 +194,28 @@
           "default": 360
         }
       }
+    }
+  },
+  "confirm_junos_change_set": {
+    "name": "confirm_junos_change_set",
+    "description": "Confirm a provisional commit made with confirm_timeout_mins, cancelling the device's automatic rollback. Must be called by the principal that applied the change set, before the rollback deadline returned by apply_junos_change_set.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "operation_id",
+        "device"
+      ],
+      "properties": {
+        "operation_id": {
+          "description": "Operation ID returned by `apply_junos_change_set`.",
+          "type": "string"
+        },
+        "device": {
+          "description": "Device name. Change sets are indexed by (id, device).",
+          "type": "string"
+        }
+      },
+      "type": "object"
     }
   },
   "create_junos_change_set": {
