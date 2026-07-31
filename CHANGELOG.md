@@ -6,6 +6,29 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-07-31
+
+### Fixed
+
+- **A call the server refuses is now recorded.** Every handler opened its audit
+  scope as its first statement, but arguments are deserialized *before* the
+  handler body runs — so a call rejected for an unrecognised argument returned
+  an error to the caller having recorded nothing: no audit event, nothing in the
+  journal, nothing in the audit file.
+
+  That gap was created by 0.15.0 mattering more than it used to. Making
+  unrecognised arguments an error rather than a silent fallback to broader
+  behaviour was the point of that release, but it means an integration can start
+  failing against it with no server-side trace — so "zero errors" read as
+  "nobody was refused" when it meant "refusals are not recorded".
+
+  Refusals now emit an audit record with `error_kind=dispatch_rejected`, naming
+  the tool and carrying the message that identifies the offending field. Calls
+  to a tool that does not exist are recorded the same way. Arguments are not
+  recorded — they are caller-controlled and may carry configuration payloads —
+  and an unrecognised tool name is recorded as `unknown_tool` rather than
+  echoed. (#268)
+
 ## [0.15.0] — 2026-07-31
 
 ### Added
