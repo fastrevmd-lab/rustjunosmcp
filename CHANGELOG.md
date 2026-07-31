@@ -36,6 +36,26 @@ All notable user-facing changes are recorded here. Format loosely follows
   any default client only because nothing reported progress; that is now fixed,
   and shortening the budget a real commit may legitimately need would trade one
   failure mode for another.
+### Changed
+
+- **`collect_jtac_support_bundle` no longer spawns `tar`.** The archive is built
+  in-process with the `tar` and `flate2` crates.
+
+  This is a process holding bearer credentials for a firewall fleet: every
+  `Command::new` is an execution boundary, and the image has to carry the
+  utilities purely so one tool works — exactly the pivot an attacker wants after
+  an RCE. Both security properties of the old invocation are kept and now have
+  tests naming them: the archive pathname is never handed to the archiver, and a
+  pre-existing file or symlink at the destination is refused rather than
+  followed. One property is new — `tar-rs` follows symlinks by default where GNU
+  tar does not, so it is explicitly turned off; otherwise a symlink under the
+  staging directory would pull its target's contents into the bundle. (#212)
+
+  Tarball bytes are not identical to the previous output: gzip settings and tar
+  metadata differ between implementations. The contents and layout are the same.
+
+  `transfer_file` and `fetch_file` still spawn `scp`, so the container image
+  still needs `openssh-client` and distroless (#201) stays blocked.
 
 
 ### Fixed
