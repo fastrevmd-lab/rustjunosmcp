@@ -1011,10 +1011,17 @@ mod archive_security_tests {
         .unwrap()
     }
 
-    fn entries(tarball: &std::path::Path) -> Vec<(String, tar::EntryType)> {
+    /// The uncompressed archive bytes.
+    fn decompressed(tarball: &std::path::Path) -> Vec<u8> {
+        let mut out = Vec::new();
         let file = fs::File::open(tarball).unwrap();
-        let decoder = flate2::read::GzDecoder::new(file);
-        tar::Archive::new(decoder)
+        std::io::copy(&mut flate2::read::GzDecoder::new(file), &mut out).unwrap();
+        out
+    }
+
+    fn entries(tarball: &std::path::Path) -> Vec<(String, tar::EntryType)> {
+        let bytes = decompressed(tarball);
+        tar::Archive::new(bytes.as_slice())
             .entries()
             .unwrap()
             .map(|entry| {
@@ -1129,15 +1136,10 @@ mod archive_security_tests {
              {secret:?}'s contents in the bundle"
         );
 
-        let raw = fs::read(paths.tarball_path()).unwrap();
-        let mut decoded = Vec::new();
-        std::io::copy(
-            &mut flate2::read::GzDecoder::new(raw.as_slice()),
-            &mut decoded,
-        )
-        .unwrap();
         assert!(
-            !decoded.windows(11).any(|w| w == b"SECRET-DATA"),
+            !decompressed(paths.tarball_path())
+                .windows(11)
+                .any(|w| w == b"SECRET-DATA"),
             "the target's contents must not appear anywhere in the archive"
         );
     }
