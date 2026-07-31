@@ -7,11 +7,40 @@ use rustez::{ConfigManager, ConfigPayload};
 use rustnetconf::error::{NetconfError, RpcError};
 use rustnetconf::types::ErrorTag;
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default budget for each cleanup phase (rollback, unlock, session close).
+pub const DEFAULT_CLEANUP_TIMEOUT_SECS: u64 = 30;
+
+/// Configured cleanup budget, in seconds. Set once at startup from the CLI.
+///
+/// An atomic rather than a constructor argument because this is a deployment
+/// tuning knob, not per-call state: threading it through `DeviceManager` would
+/// touch every call site to make one number configurable.
+static CLEANUP_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(DEFAULT_CLEANUP_TIMEOUT_SECS);
+
+/// Override the per-phase cleanup budget. Call once, before serving.
+pub fn set_cleanup_timeout_secs(secs: u64) {
+    CLEANUP_TIMEOUT_SECS.store(secs, Ordering::Relaxed);
+}
+
+fn cleanup_timeout() -> Duration {
+    Duration::from_secs(CLEANUP_TIMEOUT_SECS.load(Ordering::Relaxed))
+}
+
+/// Worst-case wall clock for one candidate transaction against `operation_timeout`.
+///
+/// A stalled device can burn the operation budget, then the rollback budget,
+/// then the unlock budget, in series — the aggregate a client's idle timeout has
+/// to clear if it is to hear the outcome rather than give up and report that the
+/// server "sent no response" (#257).
+#[must_use]
+pub fn worst_case_duration(operation_timeout: Duration) -> Duration {
+    operation_timeout + cleanup_timeout() * 2
+}
 
 #[derive(Debug)]
 pub(crate) enum CandidateMode {
@@ -145,7 +174,7 @@ pub(crate) async fn run(
 
     let execution = {
         let mut cfg = dev.config()?;
-        execute(&mut cfg, request, deadline, timeout, CLEANUP_TIMEOUT, ct).await
+        execute(&mut cfg, request, deadline, timeout, cleanup_timeout(), ct).await
     };
 
     if execution.reusable {
@@ -154,7 +183,7 @@ pub(crate) async fn run(
         // close() takes ownership of the underlying client on its first poll,
         // so even a close-session timeout drops the transport and releases any
         // remote candidate lock before a later request opens a new session.
-        match tokio::time::timeout(CLEANUP_TIMEOUT, dev.close()).await {
+        match tokio::time::timeout(cleanup_timeout(), dev.close()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 tracing::warn!(router, error = %error, "failed to close tainted NETCONF session")
