@@ -174,7 +174,7 @@ pub fn validate_output_caps(
     max_lines: Option<u32>,
     max_bytes: Option<u32>,
 ) -> Result<(), JmcpError> {
-    if let Some(0) = max_lines {
+    if max_lines == Some(0) {
         return Err(JmcpError::Validation(
             "max_lines must be at least 1; a cap of 0 asks for no output at all".into(),
         ));

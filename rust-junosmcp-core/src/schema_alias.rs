@@ -15,9 +15,6 @@
 use schemars::Schema;
 use serde_json::{Map, Value, json};
 
-/// One canonical property and the alternative names serde accepts for it.
-pub type AliasGroup<'a> = (&'a str, &'a [&'a str]);
-
 /// Mirror serde aliases into a generated schema.
 ///
 /// For each `(canonical, aliases)` group this:
@@ -41,7 +38,7 @@ pub type AliasGroup<'a> = (&'a str, &'a [&'a str]);
 /// # Panics
 ///
 /// In debug builds, if a group names a property the schema does not define.
-pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
+pub fn describe_aliases(schema: &mut Schema, groups: &[(&str, &[&str])]) {
     // Snapshot first: aliases are copied from the *original* properties, so a
     // group cannot pick up a subschema another group just inserted.
     let Some(original) = schema.get("properties").and_then(Value::as_object).cloned() else {
@@ -62,12 +59,14 @@ pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
             continue;
         };
 
-        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
-            for alias in *aliases {
-                let mut copy = subschema.clone();
-                annotate_as_alias(&mut copy, alias, canonical);
-                properties.insert((*alias).to_string(), copy);
-            }
+        let properties = schema
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+            .expect("`properties` was read above");
+        for alias in *aliases {
+            let mut copy = subschema.clone();
+            annotate_as_alias(&mut copy, canonical);
+            properties.insert((*alias).to_string(), copy);
         }
 
         let mut names = vec![(*canonical).to_string()];
@@ -131,21 +130,17 @@ pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
 
 /// Record in the copied subschema that it is an alternative spelling, so the
 /// duplicate properties read as intentional to anyone inspecting the schema.
-fn annotate_as_alias(subschema: &mut Value, alias: &str, canonical: &str) {
+///
+/// A subschema that is not an object (`true`/`false`) has nowhere to put a
+/// description; the alias property itself is what matters.
+fn annotate_as_alias(subschema: &mut Value, canonical: &str) {
     let note = format!("Alias for `{canonical}`; accepted for backward compatibility.");
-    match subschema {
-        Value::Object(fields) => {
-            let description = match fields.get("description").and_then(Value::as_str) {
-                Some(existing) => format!("{existing}\n\n{note}"),
-                None => note,
-            };
-            fields.insert("description".to_string(), Value::String(description));
-        }
-        // A subschema that is not an object (`true`/`false`) has nowhere to put
-        // a description; the alias property itself is what matters.
-        _ => {
-            let _ = alias;
-        }
+    if let Value::Object(fields) = subschema {
+        let description = match fields.get("description").and_then(Value::as_str) {
+            Some(existing) => format!("{existing}\n\n{note}"),
+            None => note,
+        };
+        fields.insert("description".to_string(), Value::String(description));
     }
 }
 

@@ -219,14 +219,15 @@ fn apply_byte_cap(s: String, max_bytes: Option<u32>, tail: bool) -> String {
     let reserved = byte_marker(s.len()).len() + 1; // + the separating newline
     let content_budget = cap.saturating_sub(reserved);
 
+    // `content_budget < cap < s.len()`, so both cuts are in range.
     let out = if tail {
-        let mut start = s.len() - content_budget.min(s.len());
-        while start < s.len() && !s.is_char_boundary(start) {
+        let mut start = s.len() - content_budget;
+        while !s.is_char_boundary(start) {
             start += 1;
         }
         format!("{}\n{}", byte_marker(start), &s[start..])
     } else {
-        let mut end = content_budget.min(s.len());
+        let mut end = content_budget;
         while end > 0 && !s.is_char_boundary(end) {
             end -= 1;
         }
@@ -292,16 +293,12 @@ fn apply_line_cap(s: String, max_lines: Option<u32>, tail: bool) -> String {
     // and it is load-bearing: the byte cap runs afterwards and preserves the
     // suffix in tail mode, so a marker at the end would be what survives while
     // the newest lines — the ones `tail` was asked for — got cut.
+    let body = kept.join("\n");
     if tail {
-        let mut out = marker;
-        out.push('\n');
-        out.push_str(&kept.join("\n"));
-        return out;
+        format!("{marker}\n{body}")
+    } else {
+        format!("{body}\n{marker}")
     }
-    let mut out = kept.join("\n");
-    out.push('\n');
-    out.push_str(&marker);
-    out
 }
 
 #[cfg(test)]
