@@ -650,6 +650,48 @@ async fn collect_per_type(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Compress `scratch` into the prepared tarball path, entries rooted at the
+/// scratch directory's own name.
+///
+/// Replaces a `tar -czf - -C <router_dir> -- <scratch>` spawn whose stdout was
+/// redirected into an already-opened file. That redirection was doing security
+/// work, and this keeps both halves of it (#212):
+///
+/// * **The archive pathname is never handed to the archiver.** It writes into
+///   the `File` `PreparedBundlePaths::create_tarball` opened, so no
+///   caller-controlled value can steer where bytes land.
+/// * **`create_new` makes a pre-existing symlink at the destination an error**,
+///   not something to follow through to whatever it points at.
+///
+/// One property is *new*: `tar-rs` follows symlinks by default where GNU tar
+/// does not. Left alone, a symlink under the scratch directory would have had
+/// its target's contents pulled into the bundle — reading files the collection
+/// step never chose to collect. `follow_symlinks(false)` matches the old
+/// behaviour and is the safer of the two.
+///
+/// # Errors
+///
+/// Returns [`SrxError::InvalidInput`] if the destination cannot be created
+/// exclusively, or if archiving or compression fails.
+fn write_bundle_archive(paths: &PreparedBundlePaths, scratch: &Path) -> Result<(), SrxError> {
+    let tarball_file = paths.create_tarball()?;
+    let encoder = flate2::write::GzEncoder::new(tarball_file, flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    archive.follow_symlinks(false);
+
+    let archive_root = scratch
+        .file_name()
+        .ok_or_else(|| SrxError::InvalidInput("scratch dir has no name".into()))?;
+    archive
+        .append_dir_all(archive_root, scratch)
+        .map_err(|e| SrxError::InvalidInput(format!("build bundle archive: {e}")))?;
+    archive
+        .into_inner()
+        .map_err(|e| SrxError::InvalidInput(format!("finish bundle archive: {e}")))?
+        .finish()
+        .map_err(|e| SrxError::InvalidInput(format!("finish bundle compression: {e}")))?;
+    Ok(())
+}
 /// Write `manifest.json` into the scratch dir, tar the scratch dir into the
 /// per-router LXC staging area, clean up the scratch dir, enforce the
 /// staging cap, and compute the tarball's size + sha256. Shared by the
@@ -666,7 +708,6 @@ fn finalize_lxc_bundle(
 ) -> Result<SupportBundleData, SrxError> {
     paths.ensure_confined()?;
     let scratch = paths.scratch_dir().to_path_buf();
-    let router_dir = paths.router_dir().to_path_buf();
     let tarball_path = paths.tarball_path().to_path_buf();
 
     // Write manifest.json into the scratch dir so it lands in the tarball.
@@ -686,27 +727,7 @@ fn finalize_lxc_bundle(
     )
     .map_err(|e| SrxError::InvalidInput(format!("write manifest: {e}")))?;
 
-    // Stream tar output into an already-opened create-new file. This keeps
-    // caller-controlled data out of the archive pathname and prevents tar
-    // from following a pre-existing symlink at the destination.
-    let tarball_file = paths.create_tarball()?;
-    let out = std::process::Command::new("tar")
-        .arg("-czf")
-        .arg("-")
-        .arg("-C")
-        .arg(&router_dir)
-        .arg("--")
-        .arg(scratch.file_name().expect("scratch dir name"))
-        .stdout(std::process::Stdio::from(tarball_file))
-        .output()
-        .map_err(|e| SrxError::InvalidInput(format!("tar invoke failed: {e}")))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        return Err(SrxError::InvalidInput(format!(
-            "tar exited {}: {stderr}",
-            out.status
-        )));
-    }
+    write_bundle_archive(paths, &scratch)?;
 
     // Enforce staging cap (LRU eviction) — stub today.
     let _ = enforce_staging_cap(paths.staging_max_bytes());
@@ -971,5 +992,153 @@ mod tests {
         assert_eq!(data.filesystem_id, filesystem_id);
         drop(paths);
         assert!(!scratch.exists(), "scratch dir should be cleaned up");
+    }
+}
+
+#[cfg(test)]
+mod archive_security_tests {
+    use super::{PreparedBundlePaths, write_bundle_archive};
+    use crate::workflows::support_bundle::staging::DEFAULT_STAGING_MAX_BYTES;
+    use std::fs;
+
+    fn prepared(temp: &tempfile::TempDir) -> PreparedBundlePaths {
+        PreparedBundlePaths::prepare_under(
+            temp.path(),
+            DEFAULT_STAGING_MAX_BYTES,
+            "vSRX-test10",
+            "srxmcp-archive-test",
+        )
+        .unwrap()
+    }
+
+    fn entries(tarball: &std::path::Path) -> Vec<(String, tar::EntryType)> {
+        let file = fs::File::open(tarball).unwrap();
+        let decoder = flate2::read::GzDecoder::new(file);
+        tar::Archive::new(decoder)
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.path().unwrap().to_string_lossy().into_owned(),
+                    entry.header().entry_type(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_archive_is_rooted_at_the_scratch_directory_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = prepared(&temp);
+        fs::write(paths.scratch_dir().join("manifest.json"), b"{}").unwrap();
+
+        let scratch = paths.scratch_dir().to_path_buf();
+        write_bundle_archive(&paths, &scratch).unwrap();
+        paths.commit_tarball();
+
+        let root = scratch.file_name().unwrap().to_string_lossy().into_owned();
+        let names: Vec<String> = entries(paths.tarball_path())
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|name| name == &format!("{root}/manifest.json")),
+            "entries must sit under the scratch dir name, as `tar -C <router_dir> -- <scratch>` \
+             produced. got: {names:?}"
+        );
+    }
+
+    /// #212 acceptance: the pathname-injection protection must survive. The
+    /// archiver never receives the destination path — it writes into the `File`
+    /// `create_tarball` opened — so nothing a caller controls can steer where
+    /// the bytes land.
+    #[test]
+    fn a_destination_that_already_exists_is_refused_rather_than_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = prepared(&temp);
+        let scratch = paths.scratch_dir().to_path_buf();
+        fs::write(paths.tarball_path(), b"pre-existing").unwrap();
+
+        let err = write_bundle_archive(&paths, &scratch)
+            .expect_err("an existing destination must not be written through");
+        assert!(
+            format!("{err}").contains("create bundle tarball securely"),
+            "got: {err}"
+        );
+        assert_eq!(
+            fs::read(paths.tarball_path()).unwrap(),
+            b"pre-existing",
+            "the existing file must be left untouched"
+        );
+    }
+
+    /// #212 acceptance: the symlink-at-destination protection must survive.
+    /// `create_new` refuses rather than following the link, so a symlink
+    /// planted at the tarball path cannot redirect the write.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_at_the_destination_is_refused_rather_than_followed() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = prepared(&temp);
+        let scratch = paths.scratch_dir().to_path_buf();
+
+        let victim = temp.path().join("victim.txt");
+        fs::write(&victim, b"do not clobber").unwrap();
+        std::os::unix::fs::symlink(&victim, paths.tarball_path()).unwrap();
+
+        write_bundle_archive(&paths, &scratch)
+            .expect_err("a symlinked destination must not be written through");
+        assert_eq!(
+            fs::read(&victim).unwrap(),
+            b"do not clobber",
+            "writing through the symlink would have destroyed the target"
+        );
+    }
+
+    /// New with `tar-rs`, which follows symlinks by default where GNU tar does
+    /// not. Following one would pull a file's contents into the bundle that the
+    /// collection step never chose to collect — on a device-diagnostics archive
+    /// that is an exfiltration primitive, not a convenience.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_inside_the_scratch_dir_is_stored_as_a_link_not_its_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = prepared(&temp);
+        let scratch = paths.scratch_dir().to_path_buf();
+
+        let secret = temp.path().join("secret.txt");
+        fs::write(&secret, b"SECRET-DATA").unwrap();
+        std::os::unix::fs::symlink(&secret, scratch.join("link.txt")).unwrap();
+
+        write_bundle_archive(&paths, &scratch).unwrap();
+        paths.commit_tarball();
+
+        let root = scratch.file_name().unwrap().to_string_lossy().into_owned();
+        let found = entries(paths.tarball_path());
+        let link = found
+            .iter()
+            .find(|(name, _)| name == &format!("{root}/link.txt"))
+            .expect("the symlink should be archived");
+        assert_eq!(
+            link.1,
+            tar::EntryType::Symlink,
+            "the link must be stored as a link; storing its target would put \
+             {secret:?}'s contents in the bundle"
+        );
+
+        let raw = fs::read(paths.tarball_path()).unwrap();
+        let mut decoded = Vec::new();
+        std::io::copy(
+            &mut flate2::read::GzDecoder::new(raw.as_slice()),
+            &mut decoded,
+        )
+        .unwrap();
+        assert!(
+            !decoded.windows(11).any(|w| w == b"SECRET-DATA"),
+            "the target's contents must not appear anywhere in the archive"
+        );
     }
 }
