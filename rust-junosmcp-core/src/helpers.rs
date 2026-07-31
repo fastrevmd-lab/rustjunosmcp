@@ -190,6 +190,24 @@ pub fn validate_output_caps(
     Ok(())
 }
 
+/// Write a test fixture with mode 0600.
+///
+/// The inventory is read through a hardened reader (mecmcp 0.3.8+) that refuses
+/// a group- or world-accessible file, and `std::fs::write` yields whatever the
+/// umask allows — 0644 on a default setup. Fixtures must therefore restrict
+/// themselves the way a real deployment does.
+#[cfg(test)]
+pub(crate) fn write_restricted_fixture(path: impl AsRef<std::path::Path>, contents: &str) {
+    let path = path.as_ref();
+    std::fs::write(path, contents).expect("write fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .expect("restrict fixture permissions");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

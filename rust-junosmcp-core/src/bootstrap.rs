@@ -98,11 +98,10 @@ mod tests {
     fn load_inventory_reads_file_and_hashes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             &path,
             r#"{"r1":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        )
-        .unwrap();
+        );
         let (inv, hash) = load_inventory(&path).unwrap();
         assert!(!inv.names().is_empty());
         assert_eq!(hash.len(), 32);

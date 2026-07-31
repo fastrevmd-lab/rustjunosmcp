@@ -330,7 +330,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let inv_path = dir.path().join("devices.json");
         let json = r#"{"core-1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#;
-        std::fs::write(&inv_path, json).unwrap();
+        crate::helpers::write_restricted_fixture(&inv_path, json);
         let inv = Arc::new(Inventory::load(&inv_path).unwrap());
         let hash = crate::inventory::hash_file(&inv_path).unwrap();
         let dm = Arc::new(DeviceManager::with_path(
@@ -362,7 +362,7 @@ mod tests {
         // Use a tempdir so the inventory file stays alive after setup.
         let dir = tempfile::TempDir::new().unwrap();
         let inv_path = dir.path().join("devices.json");
-        std::fs::write(&inv_path, r#"{}"#).unwrap();
+        crate::helpers::write_restricted_fixture(&inv_path, r#"{}"#);
         let inv = Arc::new(Inventory::load(&inv_path).unwrap());
         let hash = crate::inventory::hash_file(&inv_path).unwrap();
         let dm = Arc::new(DeviceManager::with_path(
@@ -374,11 +374,10 @@ mod tests {
         ));
 
         // Mutate the file from underneath us, but leave the in-memory hash stale.
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             dm.inventory_path(),
             r#"{"sneaky":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        )
-        .unwrap();
+        );
         let r = handle(args_full(), dm).await;
         assert!(matches!(r, Err(JmcpError::InventoryDriftedOnDisk)));
     }

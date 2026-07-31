@@ -48,11 +48,33 @@ pub fn ensure_built() {
     assert!(status.success(), "cargo build failed");
 }
 
+/// Write `contents` to `path` with mode 0600.
+///
+/// Use this for any file the server itself reads as configuration — inventory
+/// and tokens. Since mecmcp 0.3.8 both go through a hardened reader that
+/// refuses a group- or world-accessible file, and `std::fs::write` gives
+/// whatever the umask allows (0644 on a default setup).
+///
+/// The failure it prevents is unhelpfully indirect: the server exits during
+/// startup, before answering `initialize`, so the test reports a 15s response
+/// timeout and says nothing about permissions. `write_inventory_temp` never hit
+/// it because `NamedTempFile` is already 0600.
+#[allow(dead_code)]
+pub fn write_restricted(path: &Path, contents: &str) {
+    std::fs::write(path, contents).expect("write config fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .expect("restrict config fixture permissions");
+    }
+}
+
 /// Write `json` to `dir/name` and return the full path.
 #[allow(dead_code)]
 pub fn write_inventory_in(dir: &Path, name: &str, json: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, json).expect("write inventory");
+    write_restricted(&path, json);
     path
 }
 

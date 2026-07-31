@@ -143,11 +143,10 @@ fn tls_handshake_completes_and_auth_works() {
     ensure_built();
     let dir = tempfile::tempdir().unwrap();
     let inv = dir.path().join("inv.json");
-    std::fs::write(
+    common::write_restricted(
         &inv,
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let toks = dir.path().join("tokens.json");
     let (cert, key) = write_self_signed(dir.path());
 
@@ -217,13 +216,12 @@ fn tls_rejects_request_without_token() {
     ensure_built();
     let dir = tempfile::tempdir().unwrap();
     let inv = dir.path().join("inv.json");
-    std::fs::write(
+    common::write_restricted(
         &inv,
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let toks = dir.path().join("tokens.json");
-    std::fs::write(&toks, r#"{"version":1,"tokens":[]}"#).unwrap();
+    common::write_restricted(&toks, r#"{"version":1,"tokens":[]}"#);
     // Token files must be mode 0600 (mecmcp-auth permission check)
     #[cfg(unix)]
     {
