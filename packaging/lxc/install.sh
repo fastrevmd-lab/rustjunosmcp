@@ -127,11 +127,16 @@ fi
 
 # Runtime dependencies.
 #
-# `ssh`, `scp` and `tar` are not conveniences: transfer_file, fetch_file and
-# collect_jtac_support_bundle spawn them, so the server is partly broken
-# without them. They happen to be present in Debian's *standard* LXC template,
-# which is why nothing noticed — but that is luck of template choice, not a
-# guarantee, and a minimal template has none of them.
+# `ssh` and `scp` are not conveniences: transfer_file and fetch_file spawn
+# them, so the server is partly broken without them. They happen to be present
+# in Debian's *standard* LXC template, which is why nothing noticed — but that
+# is luck of template choice, not a guarantee, and a minimal template has
+# neither.
+#
+# `tar` was here for collect_jtac_support_bundle, which no longer spawns it —
+# the bundle is built in-process with the `tar` and `flate2` crates (#212). It
+# is also redundant on its own terms: the operator has already used tar to
+# unpack the release archive that contains this script.
 #
 # `curl` is needed by the verification step in the README, and the Debian 13
 # standard template does not ship it (mecmcp#33).
@@ -142,13 +147,13 @@ fi
 # distroless image hands an attacker a pivot tool after an RCE.
 if [[ "$INSTALL_ROOT" == "/" && "$SKIP_RUNTIME_DEPS" != "1" ]]; then
     missing=()
-    for cmd in curl ssh scp tar; do
+    for cmd in curl ssh scp; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
 
     if (( ${#missing[@]} > 0 )); then
         declare -A pkg_for=(
-            [curl]=curl [ssh]=openssh-client [scp]=openssh-client [tar]=tar
+            [curl]=curl [ssh]=openssh-client [scp]=openssh-client
         )
         packages=()
         for cmd in "${missing[@]}"; do packages+=("${pkg_for[$cmd]}"); done
