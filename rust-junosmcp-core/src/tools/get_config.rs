@@ -4,6 +4,7 @@ use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{
     excerpt, strip_config_xml_wrapper, validate_config_path, validate_input_length,
+    validate_output_caps,
 };
 use crate::policy::{Decision, Policy};
 use crate::tools::GetConfigArgs;
@@ -16,6 +17,8 @@ pub async fn handle(
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
+    validate_output_caps(args.max_lines, args.max_bytes)?;
+
     // Validate config_path if provided
     if let Some(ref path) = args.config_path {
         validate_input_length("config_path", path)?;

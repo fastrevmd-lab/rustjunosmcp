@@ -2,7 +2,7 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::{excerpt, validate_input_length};
+use crate::helpers::{excerpt, validate_input_length, validate_output_caps};
 use crate::policy::{Decision, Policy};
 use crate::tools::ExecutePfeArgs;
 use serde_json::{Value, json};
@@ -15,6 +15,7 @@ pub async fn handle(
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
     validate_input_length("pfe_command", &args.pfe_command)?;
+    validate_output_caps(args.max_lines, args.max_bytes)?;
     // Reject quote-injection inputs before we build the wrapper.
     if args.pfe_command.contains('"') {
         return Err(JmcpError::BadPfeCommand(

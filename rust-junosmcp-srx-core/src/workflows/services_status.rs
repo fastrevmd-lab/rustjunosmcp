@@ -48,6 +48,7 @@ struct SubCall {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = rust_junosmcp_core::schema_alias::device_router_name_alias)]
 pub struct ServicesStatusArgs {
     #[serde(alias = "router_name")]
     pub router: String,

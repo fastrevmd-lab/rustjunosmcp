@@ -64,6 +64,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = rust_junosmcp_core::schema_alias::device_router_name_alias)]
 pub struct VpnLifecycleArgs {
     #[serde(alias = "router_name")]
     pub router: String,

@@ -188,6 +188,13 @@ fn apply_pipe_modifiers(command: &str, raw: String) -> String {
 }
 
 /// Truncate to at most `max_bytes` on a UTF-8 char boundary, appending a marker.
+///
+/// The marker is counted against the budget, not added on top of it: `max_bytes`
+/// is advertised as a hard cap, and a caller sizing a context window cannot use
+/// a limit that is overshot by however long the marker happens to be. When the
+/// budget is too small to hold both content and marker, the marker wins — an
+/// empty-looking response that says it was truncated is honest, whereas silently
+/// returning content over budget is not.
 fn apply_byte_cap(s: String, max_bytes: Option<u32>) -> String {
     let Some(cap) = max_bytes.map(|c| c as usize) else {
         return s;
@@ -195,17 +202,39 @@ fn apply_byte_cap(s: String, max_bytes: Option<u32>) -> String {
     if s.len() <= cap {
         return s;
     }
-    let mut end = cap;
+
+    // Marker length depends on the omitted count, which depends on where the cut
+    // lands, which depends on the marker length. Compute against the worst case
+    // (everything omitted) so one pass is always within budget.
+    let marker_len = marker(s.len()).len();
+    let content_budget = cap.saturating_sub(marker_len);
+
+    let mut end = content_budget.min(s.len());
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
-    let omitted = s.len() - end;
+
     let mut out = s[..end].to_string();
-    out.push_str(&format!("\n… (truncated, {omitted} bytes omitted)"));
+    out.push_str(&marker(s.len() - end));
+    debug_assert!(
+        out.len() <= cap || cap < marker_len,
+        "byte cap overshot: {} > {cap}",
+        out.len()
+    );
     out
 }
 
+/// The byte-cap truncation marker. Kept in one place so its length can be
+/// reserved from the budget before the cut is made.
+fn marker(omitted: usize) -> String {
+    format!("\n… (truncated, {omitted} bytes omitted)")
+}
+
 /// Keep the first `max_lines` lines (or the last N when `tail`), with a marker.
+///
+/// As with the byte cap, the marker line counts against `max_lines` rather than
+/// being added beyond it, so a response never exceeds the line budget the caller
+/// asked for. A cap of 1 therefore yields the marker alone.
 fn apply_line_cap(s: String, max_lines: Option<u32>, tail: bool) -> String {
     let Some(cap) = max_lines.map(|c| c as usize) else {
         return s;
@@ -214,14 +243,22 @@ fn apply_line_cap(s: String, max_lines: Option<u32>, tail: bool) -> String {
     if lines.len() <= cap {
         return s;
     }
-    let more = lines.len() - cap;
-    let kept: Vec<&str> = if tail {
-        lines[lines.len() - cap..].to_vec()
+
+    let content_budget = cap.saturating_sub(1); // one line for the marker
+    let more = lines.len() - content_budget;
+    let kept: &[&str] = if tail {
+        &lines[lines.len() - content_budget..]
     } else {
-        lines[..cap].to_vec()
+        &lines[..content_budget]
     };
+
+    let marker = format!("… (truncated, {more} more lines)");
+    if kept.is_empty() {
+        return marker;
+    }
     let mut out = kept.join("\n");
-    out.push_str(&format!("\n… (truncated, {more} more lines)"));
+    out.push('\n');
+    out.push_str(&marker);
     out
 }
 
@@ -281,6 +318,9 @@ mod tests {
         );
     }
 
+    /// The marker line counts against `max_lines`: a cap of 5 yields 4 content
+    /// lines plus the marker, for 5 lines total. Previously it yielded 6, so a
+    /// caller sizing a budget got one line more than it asked for.
     #[test]
     fn max_lines_head_with_marker() {
         let raw = (1..=10)
@@ -288,8 +328,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let out = process_output("show x", raw, Some(5), none(), false);
-        assert!(out.starts_with("1\n2\n3\n4\n5"), "got: {out}");
-        assert!(out.contains("… (truncated, 5 more lines)"), "got: {out}");
+        assert_eq!(out.lines().count(), 5, "cap must include the marker: {out}");
+        assert!(out.starts_with("1\n2\n3\n4"), "got: {out}");
+        assert!(out.contains("… (truncated, 6 more lines)"), "got: {out}");
     }
 
     #[test]
@@ -299,22 +340,65 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let out = process_output("show x", raw, Some(3), none(), true);
+        assert_eq!(out.lines().count(), 3, "cap must include the marker: {out}");
         let body: Vec<&str> = out.lines().filter(|l| !l.contains("truncated")).collect();
-        assert_eq!(body, vec!["8", "9", "10"]);
+        assert_eq!(body, vec!["9", "10"]);
     }
 
+    /// The property that matters, over a range of caps and inputs: the response
+    /// never exceeds what the caller asked for.
+    #[test]
+    fn caps_are_never_exceeded() {
+        let raw = (1..=200)
+            .map(|n| format!("line {n} with some padding"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for cap in [1_u32, 2, 3, 17, 199, 200, 201] {
+            for tail in [false, true] {
+                let out = process_output("show x", raw.clone(), Some(cap), none(), tail);
+                assert!(
+                    out.lines().count() <= cap as usize,
+                    "max_lines={cap} tail={tail} produced {} lines",
+                    out.lines().count()
+                );
+            }
+        }
+
+        for cap in [64_u32, 65, 100, 1000, 5000, 100_000] {
+            let out = process_output("show x", raw.clone(), none(), Some(cap), false);
+            assert!(
+                out.len() <= cap as usize,
+                "max_bytes={cap} produced {} bytes",
+                out.len()
+            );
+        }
+    }
+
+    /// The cut must land on a char boundary. `MIN_MAX_BYTES` is the smallest
+    /// cap a tool accepts, so the budget is sized just past the marker to leave
+    /// a content allowance that straddles a multibyte char.
     #[test]
     fn max_bytes_cuts_on_char_boundary() {
-        // Multibyte char (é = 2 bytes) straddling the cap must not split.
-        let raw = "aéb".to_string(); // bytes: 'a'(1) 'é'(2) 'b'(1) = 4 bytes
-        let out = process_output("show x", raw, none(), Some(2), false);
-        // cap=2 lands mid-'é'; must back off to a boundary (keep just "a").
-        assert!(out.starts_with('a'));
+        // 65 ASCII bytes, then a two-byte 'é' occupying bytes 65..67, then
+        // enough trailing bytes that the cap actually bites.
+        let raw = format!("{}é{}", "x".repeat(65), "y".repeat(256));
+        // The implementation reserves the worst-case marker (everything
+        // omitted) from the budget, so mirror that to land the cut at byte 66 —
+        // one byte into 'é'.
+        let cap = super::marker(raw.len()).len() + 66;
+        let out = process_output("show x", raw, none(), Some(cap as u32), false);
+
         assert!(
-            !out.starts_with("aé"),
-            "must not include a split char: {out}"
+            out.is_char_boundary(out.len()),
+            "output must be valid UTF-8"
+        );
+        assert!(
+            !out.contains('é'),
+            "must back off rather than include a split char: {out}"
         );
         assert!(out.contains("bytes omitted"), "got: {out}");
+        assert!(out.len() <= cap, "cap must include the marker: {out}");
     }
 
     #[test]
@@ -334,10 +418,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let out = process_output("show x | last 20", raw, Some(5), none(), false);
+        assert_eq!(out.lines().count(), 5, "cap must include the marker: {out}");
         let body: Vec<&str> = out.lines().filter(|l| !l.contains("truncated")).collect();
-        assert_eq!(body.len(), 5);
-        // last 20 of 1..=30 = 11..=30; head 5 = 11,12,13,14,15
-        assert_eq!(body, vec!["11", "12", "13", "14", "15"]);
+        // last 20 of 1..=30 = 11..=30; head 4 (the 5th line is the marker).
+        assert_eq!(body, vec!["11", "12", "13", "14"]);
     }
 
     // NEW tests proving the fix for #177 — match/except server-side filtering

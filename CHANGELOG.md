@@ -35,11 +35,31 @@ All notable user-facing changes are recorded here. Format loosely follows
   apply-time check remains as defence in depth; it is no longer reachable
   through the public API. (#254)
 
+- **Output caps are now exact.** `max_lines` and `max_bytes` counted only the
+  content and then added the truncation marker on top, so a response could
+  exceed the cap the caller asked for — by a line, or by however many bytes the
+  marker ran to. The marker is now inside the budget.
+
+  A cap too small to hold the marker is refused up front rather than silently
+  overshot: `max_lines` must be at least 1 and `max_bytes` at least 64, and the
+  error says so. Affects `execute_junos_command`, `execute_junos_pfe_command`,
+  and `execute_junos_command_batch` as well as `get_junos_config`.
+
 ### Added
 
 - **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
   output caps `execute_junos_command` already supported. A caller that needs a
   bounded response can now get one. (#253)
+
+### Changed
+
+- **Tool schemas describe the argument aliases the server accepts.** `schemars`
+  cannot see `#[serde(alias = ...)]`, so closing the schemas would otherwise
+  have advertised long-accepted spellings — `router`, `router_name`, `routers`,
+  `max_concurrent_routers` — as invalid to any client that validates before
+  calling. Each alias now appears as a property, and a required field with
+  aliases is published as an `anyOf` over its accepted names rather than a bare
+  `required` entry naming only the canonical one.
 
 ## [0.14.0] — 2026-07-29
 

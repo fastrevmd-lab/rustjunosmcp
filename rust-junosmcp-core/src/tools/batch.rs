@@ -76,6 +76,8 @@ pub async fn handle_with_runner(
     policy: Arc<Policy>,
     runner: Arc<dyn BatchRunner>,
 ) -> Result<Value, JmcpError> {
+    crate::helpers::validate_output_caps(args.max_lines, args.max_bytes)?;
+
     if args.devices.is_empty() {
         return Err(JmcpError::InventoryInvalid(
             "execute_junos_command_batch: devices must be non-empty".into(),

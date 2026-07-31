@@ -75,12 +75,46 @@ where
     })
 }
 
+/// `device` aliases plus `config_path`'s `filter` spelling.
+fn get_config_aliases(schema: &mut schemars::Schema) {
+    crate::schema_alias::describe_aliases(
+        schema,
+        &[
+            ("device", &["router_name", "router"]),
+            ("config_path", &["filter"]),
+        ],
+    );
+}
+
+/// The batch tool pluralises, so its aliases differ from every other tool's.
+fn batch_aliases(schema: &mut schemars::Schema) {
+    crate::schema_alias::describe_aliases(
+        schema,
+        &[
+            ("devices", &["routers", "router", "router_name"]),
+            ("max_concurrent_devices", &["max_concurrent_routers"]),
+        ],
+    );
+}
+
+/// The template tool names its targets `device_name`/`device_names`.
+fn template_aliases(schema: &mut schemars::Schema) {
+    crate::schema_alias::describe_aliases(
+        schema,
+        &[
+            ("device_name", &["router_name", "router"]),
+            ("device_names", &["router_names"]),
+        ],
+    );
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyArgs {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ExecuteCommandArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -103,6 +137,7 @@ pub struct ExecuteCommandArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = get_config_aliases)]
 pub struct GetConfigArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -132,6 +167,7 @@ pub struct GetConfigArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ConfigDiffArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -146,6 +182,7 @@ pub struct ConfigDiffArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct GatherFactsArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -157,6 +194,7 @@ pub struct GatherFactsArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct LoadCommitArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -181,6 +219,7 @@ pub struct LoadCommitArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct CommitCheckArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -197,6 +236,7 @@ pub struct CommitCheckArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct DiscardCandidateArgs {
     /// The target device.
     #[serde(alias = "router_name", alias = "router")]
@@ -208,6 +248,7 @@ pub struct DiscardCandidateArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct RollbackConfigArgs {
     /// The target device.
     #[serde(alias = "router_name", alias = "router")]
@@ -236,6 +277,7 @@ pub struct RollbackConfigArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ExecutePfeArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -260,6 +302,7 @@ pub struct ExecutePfeArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = batch_aliases)]
 pub struct ExecuteBatchArgs {
     /// Devices to execute against. Must be non-empty. Accepts a list, or a
     /// single device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.
@@ -297,6 +340,7 @@ pub struct ExecuteBatchArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = template_aliases)]
 pub struct TemplateArgs {
     /// Jinja2 template content as a string (inline; no file path).
     /// Capped at 64 KiB.
@@ -359,6 +403,7 @@ pub struct ReloadDevicesArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct TransferFileArgs {
     /// Target device name (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -378,6 +423,7 @@ pub struct TransferFileArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct FetchFileArgs {
     /// Source device name (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -402,6 +448,7 @@ pub struct FetchFileArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ListStagedFilesArgs {
     /// Optional device name. If present, also lists the device's /var/tmp/.
     #[serde(default, alias = "router_name", alias = "router")]
@@ -413,6 +460,7 @@ pub struct ListStagedFilesArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct UpgradeJunosArgs {
     /// Target device (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -865,6 +913,71 @@ mod unknown_field_tripwire {
         };
     }
 
+    /// A closed schema must describe every alias its deserializer accepts.
+    ///
+    /// `deny_unknown_fields` publishes `additionalProperties: false`, which is a
+    /// promise that the listed properties are the accepted ones. `schemars` has
+    /// no visibility into `#[serde(alias = ...)]`, so without the
+    /// `#[schemars(transform = ...)]` groups a client that validates before
+    /// calling would refuse to send `router_name` — a spelling this server has
+    /// accepted since before the rename. The failure is invisible to any client
+    /// that does not validate, which is why it needs a test.
+    #[test]
+    fn every_accepted_alias_is_described_in_the_schema() {
+        fn check<T: JsonSchema>(name: &str, aliases: &[&str]) {
+            let schema = schemars::schema_for!(T);
+            let value = serde_json::to_value(&schema).expect("schema serializes");
+            crate::schema_alias::assert_describes_keys(
+                value.as_object().expect("schema is an object"),
+                name,
+                aliases,
+            );
+        }
+
+        const DEVICE: &[&str] = &["router_name", "router"];
+        check::<ExecuteCommandArgs>("ExecuteCommandArgs", DEVICE);
+        check::<GetConfigArgs>("GetConfigArgs", &["router_name", "router", "filter"]);
+        check::<ConfigDiffArgs>("ConfigDiffArgs", DEVICE);
+        check::<GatherFactsArgs>("GatherFactsArgs", DEVICE);
+        check::<LoadCommitArgs>("LoadCommitArgs", DEVICE);
+        check::<CommitCheckArgs>("CommitCheckArgs", DEVICE);
+        check::<DiscardCandidateArgs>("DiscardCandidateArgs", DEVICE);
+        check::<RollbackConfigArgs>("RollbackConfigArgs", DEVICE);
+        check::<ExecutePfeArgs>("ExecutePfeArgs", DEVICE);
+        check::<TransferFileArgs>("TransferFileArgs", DEVICE);
+        check::<FetchFileArgs>("FetchFileArgs", DEVICE);
+        check::<ListStagedFilesArgs>("ListStagedFilesArgs", DEVICE);
+        check::<UpgradeJunosArgs>("UpgradeJunosArgs", DEVICE);
+        check::<ExecuteBatchArgs>(
+            "ExecuteBatchArgs",
+            &["routers", "router", "router_name", "max_concurrent_routers"],
+        );
+        check::<TemplateArgs>("TemplateArgs", &["router_name", "router", "router_names"]);
+        check::<changeset::CreateChangeSetArgs>("CreateChangeSetArgs", DEVICE);
+        check::<changeset::ApproveChangeSetArgs>("ApproveChangeSetArgs", DEVICE);
+        check::<changeset::ApplyChangeSetArgs>("ApplyChangeSetArgs", DEVICE);
+        check::<changeset::ConfirmChangeSetArgs>("ConfirmChangeSetArgs", DEVICE);
+        check::<changeset::GetChangeSetStatusArgs>("GetChangeSetStatusArgs", DEVICE);
+    }
+
+    /// Supplying only the alias must satisfy the schema. A bare
+    /// `required: ["device"]` alongside `additionalProperties: false` would
+    /// reject a call the server accepts at runtime.
+    #[test]
+    fn an_alias_alone_satisfies_the_required_constraint() {
+        let schema = serde_json::to_value(schemars::schema_for!(GatherFactsArgs)).unwrap();
+        assert!(
+            schema.get("required").is_none(),
+            "`device` is aliased, so a bare `required` list would exclude the aliases: {schema}"
+        );
+        let choices = schema["allOf"][0]["anyOf"].as_array().expect("anyOf group");
+        let names: Vec<&str> = choices
+            .iter()
+            .map(|choice| choice["required"][0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["device", "router_name", "router"]);
+    }
+
     #[test]
     fn every_tool_argument_type_denies_unknown_fields() {
         assert_denies_unknown_fields!(
@@ -895,5 +1008,45 @@ mod unknown_field_tripwire {
             crate::junos_transaction::JunosAction,
             crate::junos_transaction::ConfigPayloadSpec,
         );
+    }
+}
+
+#[cfg(test)]
+mod output_cap_validation_tests {
+    use crate::error::JmcpError;
+    use crate::helpers::{MIN_MAX_BYTES, validate_output_caps};
+
+    #[test]
+    fn absent_caps_are_fine() {
+        assert!(validate_output_caps(None, None).is_ok());
+    }
+
+    #[test]
+    fn a_zero_line_cap_is_refused() {
+        match validate_output_caps(Some(0), None) {
+            Err(JmcpError::Validation(msg)) => assert!(msg.contains("max_lines"), "got: {msg}"),
+            other => panic!("expected max_lines=0 to be refused, got {other:?}"),
+        }
+    }
+
+    /// Below the floor the truncation marker cannot fit, so the cap could only
+    /// be honoured by overshooting it — which is the defect, not the fix.
+    #[test]
+    fn a_byte_cap_too_small_for_the_marker_is_refused() {
+        match validate_output_caps(None, Some(MIN_MAX_BYTES - 1)) {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(msg.contains("max_bytes"), "got: {msg}");
+                assert!(
+                    msg.contains(&MIN_MAX_BYTES.to_string()),
+                    "the error must state the floor, got: {msg}"
+                );
+            }
+            other => panic!("expected an undersized max_bytes to be refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_floor_itself_is_accepted() {
+        assert!(validate_output_caps(Some(1), Some(MIN_MAX_BYTES)).is_ok());
     }
 }

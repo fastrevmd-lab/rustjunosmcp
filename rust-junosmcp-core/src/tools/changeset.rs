@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// Arguments for `create_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct CreateChangeSetArgs {
     /// Target device name.
     #[serde(alias = "router_name", alias = "router")]
@@ -34,6 +35,7 @@ pub struct CreateChangeSetArgs {
 /// Arguments for `approve_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ApproveChangeSetArgs {
     /// Change-set ID returned by create.
     pub change_set_id: String,
@@ -48,6 +50,7 @@ pub struct ApproveChangeSetArgs {
 /// Arguments for `apply_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ApplyChangeSetArgs {
     /// Change-set ID to apply.
     pub change_set_id: String,
@@ -74,6 +77,7 @@ pub struct ApplyChangeSetArgs {
 /// Arguments for `confirm_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct ConfirmChangeSetArgs {
     /// Operation ID returned by `apply_junos_change_set`.
     pub operation_id: String,
@@ -85,6 +89,7 @@ pub struct ConfirmChangeSetArgs {
 /// Arguments for `get_junos_change_set_status`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct GetChangeSetStatusArgs {
     /// Change-set ID to query.
     pub change_set_id: String,
