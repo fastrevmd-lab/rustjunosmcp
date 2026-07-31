@@ -15,22 +15,24 @@ RUN cargo build --release --bin rust-junosmcp
 #
 # `docs/PACKAGING.md` §1 sets `gcr.io/distroless/cc-debian13:nonroot` as the
 # standard, and rustpanosmcp runs on it. This repo cannot, because distroless
-# has no shell and no utilities, and two production paths spawn external
-# binaries:
+# has no shell and no utilities, and one production path still spawns an
+# external binary:
 #
-#   rust-junosmcp-core/src/tools/transfer_file.rs:1002,1017  `scp`
+#   rust-junosmcp-core/src/tools/transfer_file.rs  `scp`
 #     (OpenSshScpRunner — powers transfer_file and fetch_file)
-#   rust-junosmcp-srx-core/src/workflows/support_bundle/mod.rs:691  `tar`
-#     (powers collect_jtac_support_bundle)
 #
 # The `openssh-client` install below exists for exactly that. On distroless
-# those tools would build and start fine, then fail the first time someone
+# those two tools would build and start fine, then fail the first time someone
 # used them — the worst place to find out.
 #
-# So this moves to Debian 13 instead, matching the LXC's distro generation so
-# there is one CVE surface to track rather than two. Adopting distroless
-# requires removing the spawns first (SFTP over the SSH connection the server
-# already holds; a Rust archive crate instead of tar), tracked separately.
+# The `tar` spawn that used to sit alongside it is gone: the support bundle is
+# archived in-process with the `tar` and `flate2` crates (#212).
+#
+# So this stays on Debian 13, matching the LXC's distro generation so there is
+# one CVE surface to track rather than two. Adopting distroless needs the last
+# spawn removed — SFTP over the SSH connection the server already holds — which
+# is blocked upstream on rustnetconf#47 (it exposes neither SFTP nor the russh
+# handle). Tracked in #201 and #212.
 #
 # glibc rule: builder generation must be <= runtime generation. The builder is
 # bookworm (12) and this is trixie (13), so the direction is safe. Moving the
