@@ -526,7 +526,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "get_junos_config",
-        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage for targeted queries. Invalid paths return an error rather than silently falling back to the full config."
+        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config."
     )]
     async fn get_junos_config(
         &self,
@@ -1569,15 +1569,33 @@ mod scope_tests {
         assert_eq!(actual, expected);
     }
 
+    /// Same contract as `junos_schemas_match_pre_merge_baseline`, and the same
+    /// regeneration path — the SRX tools are as much a public API as the Junos
+    /// ones, so they get the same escape hatch rather than a hand-edited
+    /// fixture:
+    ///
+    /// ```text
+    /// UPDATE_SRX_TOOL_BASELINE=1 cargo test --bins srx_schemas_match
+    /// ```
     #[cfg(feature = "srx")]
     #[test]
     fn srx_schemas_match_pre_merge_baseline() {
+        let actual = normalized_tools(JmcpHandler::srx_tool_router().list_all());
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/srx-tools-v0.3.6.json"
+        );
+
+        if std::env::var("UPDATE_SRX_TOOL_BASELINE").is_ok() {
+            let mut json = serde_json::to_string_pretty(&actual).unwrap();
+            json.push('\n');
+            std::fs::write(path, json).unwrap();
+            return;
+        }
+
         let expected: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(include_str!("../tests/fixtures/srx-tools-v0.3.6.json")).unwrap();
-        assert_eq!(
-            normalized_tools(JmcpHandler::srx_tool_router().list_all()),
-            expected
-        );
+        assert_eq!(actual, expected);
     }
 
     #[test]

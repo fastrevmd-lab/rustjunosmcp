@@ -91,7 +91,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "apply_junos_change_set": {
@@ -99,12 +100,33 @@
     "description": "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
+      ],
       "required": [
         "change_set_id",
         "expected_digest",
-        "expected_fingerprint",
-        "device"
+        "expected_fingerprint"
       ],
+      "type": "object",
       "properties": {
         "change_set_id": {
           "description": "Change-set ID to apply.",
@@ -130,9 +152,17 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "router_name": {
+          "description": "Target device endpoint (device name from inventory).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device endpoint (device name from inventory).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
-      "type": "object"
+      "additionalProperties": false
     }
   },
   "approve_junos_change_set": {
@@ -140,11 +170,32 @@
     "description": "Approve a change set created by a different principal. The approver must provide the exact plan digest to confirm they reviewed the plan. After approval, the owner can apply the change set.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
+      ],
       "required": [
         "change_set_id",
-        "device",
         "expected_digest"
       ],
+      "type": "object",
       "properties": {
         "change_set_id": {
           "description": "Change-set ID returned by create.",
@@ -157,9 +208,17 @@
         "expected_digest": {
           "description": "Expected plan digest. The approver must compute or be shown the exact\ndigest and confirm it matches what they reviewed.",
           "type": "string"
+        },
+        "router_name": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
-      "type": "object"
+      "additionalProperties": false
     }
   },
   "commit_check_config": {
@@ -167,9 +226,26 @@
     "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "config_text"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -192,8 +268,20 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "config_text"
+      ]
     }
   },
   "confirm_junos_change_set": {
@@ -201,10 +289,31 @@
     "description": "Confirm a provisional commit made with confirm_timeout_mins, cancelling the device's automatic rollback. Must be called by the principal that applied the change set, before the rollback deadline returned by apply_junos_change_set.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "operation_id",
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
+      "required": [
+        "operation_id"
+      ],
+      "type": "object",
       "properties": {
         "operation_id": {
           "description": "Operation ID returned by `apply_junos_change_set`.",
@@ -213,9 +322,17 @@
         "device": {
           "description": "Device name. Change sets are indexed by (id, device).",
           "type": "string"
+        },
+        "router_name": {
+          "description": "Device name. Change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Device name. Change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
-      "type": "object"
+      "additionalProperties": false
     }
   },
   "create_junos_change_set": {
@@ -248,7 +365,8 @@
               "format": "uint32",
               "minimum": 0
             }
-          }
+          },
+          "additionalProperties": false
         },
         "ConfigPayloadSpec": {
           "description": "Serializable config payload specification.",
@@ -265,15 +383,32 @@
               ]
             }
           },
+          "additionalProperties": false,
           "required": [
             "text"
           ]
         }
       },
-      "required": [
-        "device",
-        "expected_fingerprint",
-        "actions"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -291,8 +426,21 @@
           "items": {
             "$ref": "#/$defs/JunosAction"
           }
+        },
+        "router_name": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "expected_fingerprint",
+        "actions"
+      ]
     }
   },
   "discard_candidate": {
@@ -300,8 +448,26 @@
     "description": "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified').",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -315,8 +481,17 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The target device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The target device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "execute_junos_command": {
@@ -324,9 +499,26 @@
     "description": "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "command"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -346,31 +538,43 @@
           "default": 360
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
           "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
     }
   },
   "execute_junos_command_batch": {
@@ -378,18 +582,55 @@
     "description": "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "devices",
-        "commands"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "devices"
+              ]
+            },
+            {
+              "required": [
+                "routers"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "max_concurrent_devices",
+              "max_concurrent_routers"
+            ]
+          }
+        }
       ],
       "type": "object",
       "properties": {
         "devices": {
           "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "commands": {
           "description": "Operational CLI commands to run sequentially per device. Must be non-empty.",
@@ -423,31 +664,84 @@
           "default": 16
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
           "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
           "type": "boolean",
           "default": false
+        },
+        "routers": {
+          "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "router": {
+          "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "router_name": {
+          "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "max_concurrent_routers": {
+          "description": "Maximum number of devices in flight concurrently.\n\nAlias for `max_concurrent_devices`; accepted for backward compatibility.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 16
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commands"
+      ]
     }
   },
   "execute_junos_pfe_command": {
@@ -455,10 +749,26 @@
     "description": "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "fpc_target",
-        "pfe_command"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -482,31 +792,44 @@
           "default": 360
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
           "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fpc_target",
+        "pfe_command"
+      ]
     }
   },
   "fetch_file": {
@@ -514,9 +837,26 @@
     "description": "Download a file from a Junos device's /var/tmp/<basename> to the host staging directory, with sha256 verification. Mirror of transfer_file.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "remote_path"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -552,8 +892,20 @@
           "format": "uint64",
           "minimum": 0,
           "default": 600
+        },
+        "router_name": {
+          "description": "Source device name (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Source device name (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "remote_path"
+      ]
     }
   },
   "gather_device_facts": {
@@ -561,8 +913,26 @@
     "description": "Gather Junos device facts from the device",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -576,8 +946,17 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "get_device_list": {
@@ -585,6 +964,7 @@
     "description": "Get the Junos devices visible to this caller. Returns [] when the caller's device scope has no current inventory matches.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "type": "object"
     }
   },
@@ -593,16 +973,43 @@
     "description": "Read the device's candidate-configuration fingerprint. Use this first: create_junos_change_set requires the fingerprint so the plan is bound to the exact candidate it was reviewed against. This is a read; it takes no lock and does not modify the candidate.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
+      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "device": {
           "description": "Target device name.",
           "type": "string"
+        },
+        "router_name": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      },
-      "type": "object"
+      }
     }
   },
   "get_junos_change_set_status": {
@@ -610,10 +1017,31 @@
     "description": "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "change_set_id",
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
+      "required": [
+        "change_set_id"
+      ],
+      "type": "object",
       "properties": {
         "change_set_id": {
           "description": "Change-set ID to query.",
@@ -622,18 +1050,52 @@
         "device": {
           "description": "Device name. Required because change sets are indexed by (id, device).",
           "type": "string"
+        },
+        "router_name": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
-      "type": "object"
+      "additionalProperties": false
     }
   },
   "get_junos_config": {
     "name": "get_junos_config",
-    "description": "Get the configuration of the device. Returns the full running config by default. Pass config_path (e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage for targeted queries. Invalid paths return an error rather than silently falling back to the full config.",
+    "description": "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "config_path",
+              "filter"
+            ]
+          }
+        }
       ],
       "type": "object",
       "properties": {
@@ -649,14 +1111,56 @@
           "default": 360
         },
         "config_path": {
-          "description": "Optional configuration hierarchy path to retrieve only a subtree of the config.\nExamples: \"system services\", \"security policies\", \"interfaces ge-0/0/0\".\nIf omitted, returns the full device configuration.",
+          "description": "Optional configuration hierarchy path to retrieve only a subtree of the config.\nExamples: \"system services\", \"security policies\", \"interfaces ge-0/0/0\".\nAlso accepted as `filter`. If omitted, returns the full device configuration.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "max_lines": {
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1,
+          "default": null
+        },
+        "max_bytes": {
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 64,
+          "default": null
+        },
+        "tail": {
+          "description": "With `max_lines`, keep the LAST N lines instead of the first N.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "filter": {
+          "description": "Optional configuration hierarchy path to retrieve only a subtree of the config.\nExamples: \"system services\", \"security policies\", \"interfaces ge-0/0/0\".\nAlso accepted as `filter`. If omitted, returns the full device configuration.\n\nAlias for `config_path`; accepted for backward compatibility.",
           "type": [
             "string",
             "null"
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "get_router_list": {
@@ -664,6 +1168,7 @@
     "description": "DEPRECATED: Use get_device_list instead. Get the Junos routers visible to this caller. Returns [] when the caller's router scope has no current inventory matches.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "type": "object"
     }
   },
@@ -672,8 +1177,26 @@
     "description": "Get the configuration diff against a rollback version",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -693,8 +1216,17 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "list_staged_files": {
@@ -702,6 +1234,33 @@
     "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when device is supplied",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "device",
+              "router_name"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "router_name",
+              "router"
+            ]
+          }
+        }
+      ],
+      "type": "object",
       "properties": {
         "device": {
           "description": "Optional device name. If present, also lists the device's /var/tmp/.",
@@ -717,9 +1276,25 @@
           "format": "uint64",
           "minimum": 0,
           "default": 30
+        },
+        "router_name": {
+          "description": "Optional device name. If present, also lists the device's /var/tmp/.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "router": {
+          "description": "Optional device name. If present, also lists the device's /var/tmp/.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
-      "type": "object"
+      "additionalProperties": false
     }
   },
   "load_and_commit_config": {
@@ -727,9 +1302,26 @@
     "description": "Load and commit configuration on a Junos device",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "config_text"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -768,8 +1360,20 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "config_text"
+      ]
     }
   },
   "reload_devices": {
@@ -777,6 +1381,8 @@
     "description": "Reload the inventory. With no args, re-reads the current --device-mapping. With file_name, swaps to a new inventory file. Reports added/removed/changed device names.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "file_name": {
           "description": "Optional path to a different inventory file. If omitted, re-reads\nthe current --device-mapping.",
@@ -786,8 +1392,7 @@
           ],
           "default": null
         }
-      },
-      "type": "object"
+      }
     }
   },
   "render_and_apply_j2_template": {
@@ -795,9 +1400,39 @@
     "description": "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more devices; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "template_content",
-        "vars_content"
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "device_name",
+              "router_name"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device_name",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "router_name",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device_names",
+              "router_names"
+            ]
+          }
+        }
       ],
       "type": "object",
       "properties": {
@@ -857,8 +1492,40 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "Single device to apply to. Mutually exclusive with `device_names`.\n\nAlias for `device_name`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "router": {
+          "description": "Single device to apply to. Mutually exclusive with `device_names`.\n\nAlias for `device_name`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "router_names": {
+          "description": "Multiple devices to apply to. Mutually exclusive with `device_name`.\n\nAlias for `device_names`; accepted for backward compatibility.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "template_content",
+        "vars_content"
+      ]
     }
   },
   "rollback_config": {
@@ -866,9 +1533,26 @@
     "description": "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "version"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -911,8 +1595,20 @@
           "format": "uint64",
           "minimum": 0,
           "default": 360
+        },
+        "router_name": {
+          "description": "The target device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The target device.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ]
     }
   },
   "transfer_file": {
@@ -920,9 +1616,26 @@
     "description": "Push a local file from the staging dir to /var/tmp/ on a Junos device via SCP. Idempotent on matching SHA-256.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "source_path"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -950,8 +1663,20 @@
           "format": "uint64",
           "minimum": 0,
           "default": 600
+        },
+        "router_name": {
+          "description": "Target device name (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device name (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source_path"
+      ]
     }
   },
   "upgrade_junos": {
@@ -959,10 +1684,26 @@
     "description": "DESTRUCTIVE: installs a new Junos image and REBOOTS the device. Outage ~5-7 min. Requires confirm=true to proceed; first call with confirm=false returns a ConfirmationRequired error containing the upgrade plan (current version, target version, image, free disk, estimated outage). v1 supports standalone devices only; chassis clusters are refused.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device",
-        "source_path",
-        "target_version"
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -996,8 +1737,21 @@
           "format": "uint64",
           "minimum": 0,
           "default": 480
+        },
+        "router_name": {
+          "description": "Target device (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device (must exist in inventory and use ssh_key auth).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
         }
-      }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source_path",
+        "target_version"
+      ]
     }
   }
 }

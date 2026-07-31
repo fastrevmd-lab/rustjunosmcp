@@ -803,6 +803,7 @@ impl JmcpHandler {
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SrxmcpStatusArgs {}
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]

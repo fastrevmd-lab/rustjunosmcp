@@ -2,7 +2,7 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::{excerpt, validate_input_length};
+use crate::helpers::{excerpt, validate_input_length, validate_output_caps};
 use crate::policy::{Decision, Policy};
 use crate::tools::ExecuteCommandArgs;
 use serde_json::{Value, json};
@@ -15,6 +15,7 @@ pub async fn handle(
     policy: Arc<Policy>,
 ) -> Result<Value, JmcpError> {
     validate_input_length("command", &args.command)?;
+    validate_output_caps(args.max_lines, args.max_bytes)?;
     // Fail fast on unknown devices so the policy check has a valid target.
     let _ = dm.inventory().get(&args.device)?;
 

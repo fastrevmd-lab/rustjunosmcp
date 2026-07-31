@@ -152,6 +152,44 @@ pub fn validate_config_path(path: &str) -> Result<(), JmcpError> {
     Ok(())
 }
 
+/// Smallest `max_bytes` a caller may request.
+///
+/// The truncation marker has to fit inside the budget for `max_bytes` to be the
+/// hard cap it is advertised as, and the marker is around 40 bytes at its
+/// longest. Rather than silently overshoot a budget too small to hold it — or
+/// return a marker with no content and call that a success — a request below
+/// this floor is refused with an error that says what the floor is.
+pub const MIN_MAX_BYTES: u32 = 64;
+
+/// Reject output caps too small to be honoured exactly.
+///
+/// `max_lines` of 0 is meaningless rather than merely small: it asks for no
+/// output at all, which no response can distinguish from a device that returned
+/// nothing.
+///
+/// # Errors
+///
+/// Returns [`JmcpError::Validation`] naming the offending field and its floor.
+pub fn validate_output_caps(
+    max_lines: Option<u32>,
+    max_bytes: Option<u32>,
+) -> Result<(), JmcpError> {
+    if max_lines == Some(0) {
+        return Err(JmcpError::Validation(
+            "max_lines must be at least 1; a cap of 0 asks for no output at all".into(),
+        ));
+    }
+    if let Some(bytes) = max_bytes
+        && bytes < MIN_MAX_BYTES
+    {
+        return Err(JmcpError::Validation(format!(
+            "max_bytes must be at least {MIN_MAX_BYTES}; a smaller budget cannot \
+             hold the truncation marker, so the cap could not be honoured exactly"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,6 +6,74 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tool arguments the server does not recognise are now an error rather than
+  silently dropped.** Every tool argument type carries
+  `#[serde(deny_unknown_fields)]`, and the advertised JSON schemas say so with
+  `additionalProperties: false`, so a client can catch the mistake before it
+  makes the call.
+
+  This is a security fix, not tidiness. A caller asking `get_junos_config` for
+  one stanza under the plausible-but-wrong name `filter` had the field dropped
+  and received the device's **entire configuration** — including
+  `system root-authentication`'s password hash and SSH keys — in a response
+  shaped exactly like a successful narrow query. `filter` is the obvious name
+  for that parameter, so it is now an accepted alias for `config_path` as well.
+  Wherever a dropped argument means "do the broader thing", ignoring it silently
+  hands the caller more than it asked for. (#253)
+
+- **`create_junos_change_set` rejects malformed actions instead of approving
+  them.** An action with neither `payload` nor `rollback_source` — or with both
+  — is now refused before anything is persisted, digested, or approved. The
+  error names the offending index and the field the caller got wrong.
+
+  Previously such an action was stored, digested, and (under `--lab-mode`)
+  approved, and failed only at apply. That recorded an approval over an empty
+  plan in the audit trail and occupied the principal's one pending change-set
+  slot on the device until someone thought to call apply and watch it fail. The
+  apply-time check remains as defence in depth; it is no longer reachable
+  through the public API. (#254)
+
+- **Output caps are now exact.** `max_lines` and `max_bytes` counted only the
+  content and then added the truncation marker on top, so a response could
+  exceed the cap the caller asked for — by a line, or by however many bytes the
+  marker ran to. The marker is now inside the budget, and the byte cap is
+  applied last so that setting both caps cannot push the result back over the
+  byte budget.
+
+  A cap too small to hold the marker is refused up front rather than silently
+  overshot: `max_lines` must be at least 1 and `max_bytes` at least 64, both now
+  advertised as schema minima so a client sees the limit before it calls.
+  Affects `execute_junos_command`, `execute_junos_pfe_command`, and
+  `execute_junos_command_batch` as well as `get_junos_config`.
+
+  With `tail: true` every cap now agrees on which end to keep: the byte cap
+  trims the oldest bytes rather than the newest, and the line-truncation marker
+  is printed above the retained tail instead of below it.
+
+### Added
+
+- **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
+  output caps `execute_junos_command` already supported. A caller that needs a
+  bounded response can now get one. (#253)
+
+### Changed
+
+- **Tool schemas describe the argument aliases the server accepts.** `schemars`
+  cannot see `#[serde(alias = ...)]`, so closing the schemas would otherwise
+  have advertised long-accepted spellings — `router`, `router_name`, `routers`,
+  `max_concurrent_routers` — as invalid to any client that validates before
+  calling. Each alias now appears as a property, and a required field with
+  aliases is published as an `anyOf` over its accepted names rather than a bare
+  `required` entry naming only the canonical one.
+
+  `execute_junos_command_batch`'s device targets are also published as
+  string-or-array, matching the documented single-device form the deserializer
+  has always accepted. Because serde maps every spelling onto one field and
+  rejects a second as a duplicate, the schemas also say that only one spelling
+  may be supplied.
+
 ## [0.14.0] — 2026-07-29
 
 ### Added

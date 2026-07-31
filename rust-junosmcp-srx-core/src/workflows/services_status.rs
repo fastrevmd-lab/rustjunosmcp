@@ -47,6 +47,8 @@ struct SubCall {
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct ServicesStatusArgs {
     #[serde(alias = "router_name")]
     pub router: String,

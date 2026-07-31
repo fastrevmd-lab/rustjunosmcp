@@ -86,6 +86,8 @@ pub enum AppidAction {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct AppidPackageArgs {
     #[serde(alias = "router_name")]
     pub router: String,

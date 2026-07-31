@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod junos_transaction;
 pub mod output;
 pub mod policy;
+pub mod schema_alias;
 pub mod tools;
 
 // Re-export mecmcp-device primitives
