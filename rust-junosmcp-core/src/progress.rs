@@ -14,8 +14,9 @@
 use rmcp::Peer;
 use rmcp::model::{Meta, ProgressNotificationParam, ProgressToken};
 use rmcp::service::RoleServer;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
 
 /// How often a running device operation reports that it is still alive.
 ///
@@ -55,7 +56,7 @@ impl ProgressHeartbeat {
         device: Option<String>,
     ) -> Self {
         let Some(token) = meta.get_progress_token() else {
-            return Self { task: None };
+            return Self::inert();
         };
         Self::with_interval(
             peer,
@@ -65,16 +66,21 @@ impl ProgressHeartbeat {
         )
     }
 
-    /// Start a heartbeat with an explicit interval and label. Separated from
-    /// [`Self::start`] so tests can drive it faster than 30s.
-    pub fn with_interval(
+    /// Start a heartbeat with an explicit interval and label.
+    fn with_interval(
         peer: Peer<RoleServer>,
         token: ProgressToken,
         interval: Duration,
         label: String,
     ) -> Self {
+        let started = Instant::now();
         let task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            // Default `Burst` would bank missed ticks and fire them back to back
+            // if a notification ever took longer than the interval to send —
+            // turning a slow client into a burst of notifications aimed at that
+            // same slow client. Delay just resumes the cadence.
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             // The first tick of a tokio interval completes immediately; the
             // caller has just started, so there is nothing to report yet.
             ticker.tick().await;
@@ -84,13 +90,16 @@ impl ProgressHeartbeat {
                 ticker.tick().await;
                 ticks += 1;
 
-                // `progress` must strictly increase. The elapsed-tick count
-                // does, and no honest `total` exists — we do not know how long
-                // a device will take, and inventing one would let a client
-                // render a progress bar that means nothing.
-                let elapsed = interval.as_secs().saturating_mul(ticks);
+                // `progress` must strictly increase. The tick count does, and
+                // no honest `total` exists — we do not know how long a device
+                // will take, and inventing one would let a client render a
+                // progress bar that means nothing.
+                //
+                // Elapsed is measured, not derived from the tick count: a
+                // delayed tick would otherwise make the message claim less time
+                // has passed than actually has.
                 let param = ProgressNotificationParam::new(token.clone(), ticks as f64)
-                    .with_message(message(&label, elapsed));
+                    .with_message(message(&label, started.elapsed().as_secs()));
 
                 // A send error means the client is gone. Nothing left to tell.
                 if peer.notify_progress(param).await.is_err() {
@@ -99,6 +108,19 @@ impl ProgressHeartbeat {
             }
         });
         Self { task: Some(task) }
+    }
+
+    /// A heartbeat that emits nothing: the client asked for no progress.
+    fn inert() -> Self {
+        Self { task: None }
+    }
+
+    /// Whether this guard is emitting. Exists for the tests below; production
+    /// code must not branch on it, which `cfg(test)` enforces rather than
+    /// merely asks.
+    #[cfg(test)]
+    fn is_active(&self) -> bool {
+        self.task.is_some()
     }
 }
 
@@ -114,20 +136,6 @@ fn label(tool: &str, device: Option<&str>) -> String {
 /// because "still running" alone does not tell an operator whether to wait.
 fn message(label: &str, elapsed_secs: u64) -> String {
     format!("{label}: still running after {elapsed_secs}s")
-}
-
-impl ProgressHeartbeat {
-    /// An inert heartbeat, for call paths with no peer to notify.
-    pub fn inert() -> Self {
-        Self { task: None }
-    }
-
-    /// Whether this guard is actually emitting. Test-facing; production code
-    /// should not branch on it.
-    #[must_use]
-    pub fn is_active(&self) -> bool {
-        self.task.is_some()
-    }
 }
 
 impl Drop for ProgressHeartbeat {
