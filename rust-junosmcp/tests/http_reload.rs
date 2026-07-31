@@ -20,11 +20,10 @@ fn sighup_reloads_token_store() {
     ensure_built();
     let dir = tempfile::tempdir().unwrap();
     let inv = dir.path().join("inv.json");
-    std::fs::write(
+    common::write_restricted(
         &inv,
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let toks = dir.path().join("tokens.json");
 
     // Mint a wildcard token via the subcommand.
@@ -117,11 +116,10 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
     ensure_built();
     let dir = tempfile::tempdir().unwrap();
     let inv = dir.path().join("inv.json");
-    std::fs::write(
+    common::write_restricted(
         &inv,
         r#"{"r1":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let tokens = dir.path().join("tokens.json");
     // Token must explicitly grant reload_devices (a write tool) to reach
     // the inventory-readonly flag check. Wildcard tool scope no longer grants it.
@@ -167,11 +165,10 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
         before.body
     );
 
-    std::fs::write(
+    common::write_restricted(
         &inv,
         r#"{"r2":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let pid = server.child.id() as i32;
     let pid = rustix::process::Pid::from_raw(pid).expect("valid PID");
     rustix::process::kill_process(pid, rustix::process::Signal::Hup).expect("kill(SIGHUP)");

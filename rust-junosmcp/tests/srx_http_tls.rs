@@ -134,11 +134,10 @@ fn fixture() -> (
     ensure_built();
     let dir = tempfile::tempdir().unwrap();
     let inventory = dir.path().join("devices.json");
-    std::fs::write(
+    common::write_restricted(
         &inventory,
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
-    )
-    .unwrap();
+    );
     let tokens = dir.path().join("tokens.json");
     let secret = TokenStoreFile::add(
         &tokens,

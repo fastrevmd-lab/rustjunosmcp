@@ -187,8 +187,8 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let p1 = dir.path().join("inventory.json");
         let p2 = dir.path().join("inventory2.json");
-        std::fs::write(&p1, first_json).unwrap();
-        std::fs::write(&p2, second_json).unwrap();
+        crate::helpers::write_restricted_fixture(&p1, first_json);
+        crate::helpers::write_restricted_fixture(&p2, second_json);
         (dir, p1, "inventory2.json".to_string())
     }
 
@@ -200,11 +200,11 @@ mod tests {
         let dm = dm_at(f.path(), false);
 
         // Edit the file externally.
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             f.path(),
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}},
                  "r2":{"ip":"127.0.0.2","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        ).unwrap();
+        );
 
         let r = handle(ReloadDevicesArgs::default(), dm.clone())
             .await
@@ -271,11 +271,10 @@ mod tests {
         );
         let dm = dm_at(f.path(), true);
 
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             f.path(),
             r#"{"r2":{"ip":"127.0.0.2","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        )
-        .unwrap();
+        );
 
         let result = reload_current_from_disk(dm.clone()).await.unwrap();
         assert_eq!(result["new_router_count"], 1);
@@ -376,19 +375,17 @@ mod tests {
     async fn reload_rejects_symlink_escape() {
         let inv_dir = tempfile::TempDir::new().unwrap();
         let inv_path = inv_dir.path().join("inventory.json");
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             &inv_path,
             r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        )
-        .unwrap();
+        );
 
         let outside_dir = tempfile::TempDir::new().unwrap();
         let outside_target = outside_dir.path().join("evil.json");
-        std::fs::write(
+        crate::helpers::write_restricted_fixture(
             &outside_target,
             r#"{"r99":{"ip":"127.0.0.99","username":"u","auth":{"type":"password","password":"x"}}}"#,
-        )
-        .unwrap();
+        );
 
         // Sibling symlink inside the inventory dir pointing outside.
         let escape = inv_dir.path().join("escape.json");
