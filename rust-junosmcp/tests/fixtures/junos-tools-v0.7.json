@@ -102,7 +102,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -172,7 +172,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -228,7 +228,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -291,7 +291,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -391,7 +391,7 @@
       },
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -450,7 +450,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -501,7 +501,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -584,7 +584,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "devices"
@@ -606,6 +606,14 @@
               ]
             }
           ]
+        },
+        {
+          "not": {
+            "required": [
+              "max_concurrent_devices",
+              "max_concurrent_routers"
+            ]
+          }
         }
       ],
       "type": "object",
@@ -743,7 +751,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -831,7 +839,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -907,7 +915,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -967,7 +975,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1011,7 +1019,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1062,7 +1070,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1079,6 +1087,14 @@
               ]
             }
           ]
+        },
+        {
+          "not": {
+            "required": [
+              "config_path",
+              "filter"
+            ]
+          }
         }
       ],
       "type": "object",
@@ -1163,7 +1179,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1218,7 +1234,32 @@
     "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when device is supplied",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "device",
+              "router_name"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "router_name",
+              "router"
+            ]
+          }
+        }
+      ],
       "type": "object",
       "properties": {
         "device": {
@@ -1252,7 +1293,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "load_and_commit_config": {
@@ -1262,7 +1304,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1358,9 +1400,39 @@
     "description": "Render a Jinja2 template (inline) with JSON vars. Optionally commit the rendered config to one or more devices; supports dry-run. (YAML vars are no longer accepted as of v0.5.2.)",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "template_content",
-        "vars_content"
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "device_name",
+              "router_name"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device_name",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "router_name",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device_names",
+              "router_names"
+            ]
+          }
+        }
       ],
       "type": "object",
       "properties": {
@@ -1449,7 +1521,11 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "template_content",
+        "vars_content"
+      ]
     }
   },
   "rollback_config": {
@@ -1459,7 +1535,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1542,7 +1618,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"
@@ -1610,7 +1686,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
         {
-          "anyOf": [
+          "oneOf": [
             {
               "required": [
                 "device"

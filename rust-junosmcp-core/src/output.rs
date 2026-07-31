@@ -19,7 +19,7 @@ pub fn process_output(
 ) -> String {
     let piped = apply_pipe_modifiers(command, raw);
     let line_capped = apply_line_cap(piped, max_lines, tail);
-    apply_byte_cap(line_capped, max_bytes)
+    apply_byte_cap(line_capped, max_bytes, tail)
 }
 
 /// Apply the `| match`, `| except`, `| count`, and `| last N` modifiers rustez
@@ -193,15 +193,19 @@ fn apply_pipe_modifiers(command: &str, raw: String) -> String {
     out
 }
 
-/// Truncate to at most `max_bytes` on a UTF-8 char boundary, appending a marker.
+/// Truncate to at most `max_bytes` on a UTF-8 char boundary, with a marker.
 ///
 /// The marker is counted against the budget, not added on top of it: `max_bytes`
 /// is advertised as a hard cap, and a caller sizing a context window cannot use
-/// a limit that is overshot by however long the marker happens to be. When the
-/// budget is too small to hold both content and marker, the marker wins — an
-/// empty-looking response that says it was truncated is honest, whereas silently
-/// returning content over budget is not.
-fn apply_byte_cap(s: String, max_bytes: Option<u32>) -> String {
+/// a limit that is overshot by however long the marker happens to be. Requests
+/// below `helpers::MIN_MAX_BYTES` are refused by the tools precisely so the
+/// marker always fits.
+///
+/// `tail` selects which end survives. A caller who asked for the last N lines
+/// wants the newest output, so trimming to fit the byte budget has to drop the
+/// oldest bytes — cutting the prefix, not the suffix — and the marker moves to
+/// the front to say so.
+fn apply_byte_cap(s: String, max_bytes: Option<u32>, tail: bool) -> String {
     let Some(cap) = max_bytes.map(|c| c as usize) else {
         return s;
     };
@@ -209,31 +213,38 @@ fn apply_byte_cap(s: String, max_bytes: Option<u32>) -> String {
         return s;
     }
 
-    // Marker length depends on the omitted count, which depends on where the cut
-    // lands, which depends on the marker length. Compute against the worst case
-    // (everything omitted) so one pass is always within budget.
-    let marker_len = marker(s.len()).len();
-    let content_budget = cap.saturating_sub(marker_len);
+    // The marker's length depends on the omitted count, which depends on where
+    // the cut lands, which depends on the marker's length. Reserve the worst
+    // case (everything omitted) so a single pass is always within budget.
+    let reserved = byte_marker(s.len()).len() + 1; // + the separating newline
+    let content_budget = cap.saturating_sub(reserved);
 
-    let mut end = content_budget.min(s.len());
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let out = if tail {
+        let mut start = s.len() - content_budget.min(s.len());
+        while start < s.len() && !s.is_char_boundary(start) {
+            start += 1;
+        }
+        format!("{}\n{}", byte_marker(start), &s[start..])
+    } else {
+        let mut end = content_budget.min(s.len());
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\n{}", &s[..end], byte_marker(s.len() - end))
+    };
 
-    let mut out = s[..end].to_string();
-    out.push_str(&marker(s.len() - end));
     debug_assert!(
-        out.len() <= cap || cap < marker_len,
+        out.len() <= cap || cap < reserved,
         "byte cap overshot: {} > {cap}",
         out.len()
     );
     out
 }
 
-/// The byte-cap truncation marker. Kept in one place so its length can be
-/// reserved from the budget before the cut is made.
-fn marker(omitted: usize) -> String {
-    format!("\n… (truncated, {omitted} bytes omitted)")
+/// The byte-cap truncation marker, without its separating newline. Kept in one
+/// place so its length can be reserved from the budget before the cut is made.
+fn byte_marker(omitted: usize) -> String {
+    format!("… (truncated, {omitted} bytes omitted)")
 }
 
 /// Keep the first `max_lines` lines (or the last N when `tail`), with a marker.
@@ -241,26 +252,51 @@ fn marker(omitted: usize) -> String {
 /// As with the byte cap, the marker line counts against `max_lines` rather than
 /// being added beyond it, so a response never exceeds the line budget the caller
 /// asked for. A cap of 1 therefore yields the marker alone.
+///
+/// Deliberately does not collect every line: this runs before the byte cap, so
+/// on a large response the working set would otherwise scale with the device's
+/// output rather than with the caller's budget. Counting is allocation-free and
+/// the tail path keeps a ring bounded by the budget.
 fn apply_line_cap(s: String, max_lines: Option<u32>, tail: bool) -> String {
     let Some(cap) = max_lines.map(|c| c as usize) else {
         return s;
     };
-    let lines: Vec<&str> = s.lines().collect();
-    if lines.len() <= cap {
+    let total = s.lines().count();
+    if total <= cap {
         return s;
     }
 
     let content_budget = cap.saturating_sub(1); // one line for the marker
-    let more = lines.len() - content_budget;
-    let kept: &[&str] = if tail {
-        &lines[lines.len() - content_budget..]
+    let more = total - content_budget;
+    let marker = format!("… (truncated, {more} more lines)");
+    if content_budget == 0 {
+        return marker;
+    }
+
+    let kept: Vec<&str> = if tail {
+        let mut ring: std::collections::VecDeque<&str> =
+            std::collections::VecDeque::with_capacity(content_budget);
+        for line in s.lines() {
+            if ring.len() == content_budget {
+                ring.pop_front();
+            }
+            ring.push_back(line);
+        }
+        ring.into_iter().collect()
     } else {
-        &lines[..content_budget]
+        s.lines().take(content_budget).collect()
     };
 
-    let marker = format!("… (truncated, {more} more lines)");
-    if kept.is_empty() {
-        return marker;
+    // In tail mode the omitted lines are the *older* ones, so the marker belongs
+    // above what survives. That is how a reader expects elided output to read,
+    // and it is load-bearing: the byte cap runs afterwards and preserves the
+    // suffix in tail mode, so a marker at the end would be what survives while
+    // the newest lines — the ones `tail` was asked for — got cut.
+    if tail {
+        let mut out = marker;
+        out.push('\n');
+        out.push_str(&kept.join("\n"));
+        return out;
     }
     let mut out = kept.join("\n");
     out.push('\n');
@@ -392,7 +428,7 @@ mod tests {
         // The implementation reserves the worst-case marker (everything
         // omitted) from the budget, so mirror that to land the cut at byte 66 —
         // one byte into 'é'.
-        let cap = super::marker(raw.len()).len() + 66;
+        let cap = super::byte_marker(raw.len()).len() + 1 + 66;
         let out = process_output("show x", raw, none(), Some(cap as u32), false);
 
         assert!(
@@ -679,5 +715,49 @@ mod combined_cap_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tail_cap_tests {
+    use super::process_output;
+
+    /// Regression: with both caps tight and `tail` set, the byte cap trimmed
+    /// from the front of the string — discarding exactly the newest lines the
+    /// caller asked for and keeping the oldest. `tail` means "the end of the
+    /// output"; every cap has to agree on which end that is.
+    #[test]
+    fn tail_keeps_the_newest_lines_when_the_byte_cap_also_bites() {
+        let raw = (1..=20)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = process_output("show x", raw, Some(19), Some(64), true);
+
+        assert!(out.len() <= 64, "byte cap: {} bytes — {out:?}", out.len());
+        assert!(
+            out.contains("line 20"),
+            "the newest line must survive: {out:?}"
+        );
+        assert!(
+            !out.contains("line 1\n"),
+            "the oldest lines are what should be dropped: {out:?}"
+        );
+    }
+
+    /// The line cap runs before the byte cap, so it must not build a working set
+    /// proportional to the device's output. This does not measure allocation —
+    /// it pins the behaviour that lets the implementation stay bounded: a tail
+    /// request only ever needs the last `max_lines` lines.
+    #[test]
+    fn a_tail_cap_over_a_large_response_returns_only_the_budget() {
+        let raw = (1..=100_000)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = process_output("show x", raw, Some(5), None, true);
+
+        assert_eq!(out.lines().count(), 5);
+        assert!(out.contains("line 100000"), "got: {out:?}");
     }
 }

@@ -24,9 +24,12 @@ pub type AliasGroup<'a> = (&'a str, &'a [&'a str]);
 ///
 /// - copies the canonical property's subschema under each alias name, noting in
 ///   the description which property it is an alias for, and
-/// - if `canonical` appears in `required`, moves that requirement into an
-///   `anyOf` over the whole group, because supplying any one of the names
-///   satisfies the deserializer.
+/// - if `canonical` appears in `required`, moves that requirement into a
+///   `oneOf` over the whole group — any one of the names satisfies the
+///   deserializer, and only one of them may be supplied, since serde maps them
+///   all onto the same field and rejects a second as a duplicate; or
+/// - if the group is optional, publishes the same mutual exclusion as pairwise
+///   `not` constraints.
 ///
 /// A group naming a property the schema does not have is a bug in the caller —
 /// the transform silently does nothing, which is exactly the failure it exists
@@ -67,21 +70,43 @@ pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
             }
         }
 
-        // `required` names one spelling; any of the group's names will do.
-        if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
-            let was_required = required
-                .iter()
-                .any(|name| name.as_str() == Some(*canonical));
-            if was_required {
-                required.retain(|name| name.as_str() != Some(*canonical));
-                let mut names = vec![(*canonical).to_string()];
-                names.extend(aliases.iter().map(|alias| (*alias).to_string()));
-                required_choices.push(json!({
-                    "anyOf": names
-                        .into_iter()
-                        .map(|name| json!({ "required": [name] }))
-                        .collect::<Vec<_>>()
-                }));
+        let mut names = vec![(*canonical).to_string()];
+        names.extend(aliases.iter().map(|alias| (*alias).to_string()));
+
+        let was_required = schema
+            .get_mut("required")
+            .and_then(Value::as_array_mut)
+            .is_some_and(|required| {
+                let present = required
+                    .iter()
+                    .any(|name| name.as_str() == Some(*canonical));
+                if present {
+                    required.retain(|name| name.as_str() != Some(*canonical));
+                }
+                present
+            });
+
+        if was_required {
+            // `oneOf`, not `anyOf`: serde maps every spelling onto the same
+            // field, so supplying two of them is a duplicate-field error at
+            // runtime. `anyOf` would validate that request and the server would
+            // then reject it. `oneOf` means exactly one branch may match, which
+            // is precisely "one spelling, and it is not optional".
+            required_choices.push(json!({
+                "oneOf": names
+                    .into_iter()
+                    .map(|name| json!({ "required": [name] }))
+                    .collect::<Vec<_>>()
+            }));
+        } else {
+            // Optional group: nothing has to be supplied, but supplying two
+            // spellings is the same duplicate-field error. Exclude each pair.
+            for (index, first) in names.iter().enumerate() {
+                for second in &names[index + 1..] {
+                    required_choices.push(json!({
+                        "not": { "required": [first, second] }
+                    }));
+                }
             }
         }
     }
@@ -97,9 +122,9 @@ pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
 
     if !required_choices.is_empty() {
         // Always `allOf`, even for a single group, so the shape does not depend
-        // on how many aliased-required properties a struct happens to have.
-        // Safe alongside `additionalProperties: false`: these subschemas carry
-        // only `required`, never `properties`.
+        // on how many aliased properties a struct happens to have. Safe
+        // alongside `additionalProperties: false`: these subschemas carry only
+        // `required`, never `properties`.
         schema.insert("allOf".to_string(), Value::Array(required_choices));
     }
 }
@@ -216,8 +241,8 @@ mod tests {
 
         let choices = schema.get("allOf").unwrap().as_array().unwrap();
         assert_eq!(choices.len(), 1);
-        let any_of = choices[0].get("anyOf").unwrap().as_array().unwrap();
-        let names: Vec<&str> = any_of
+        let one_of = choices[0].get("oneOf").unwrap().as_array().unwrap();
+        let names: Vec<&str> = one_of
             .iter()
             .map(|choice| choice["required"][0].as_str().unwrap())
             .collect();
@@ -259,9 +284,11 @@ mod tests {
                 .unwrap()
                 .contains_key("timeout_secs")
         );
-        assert!(
-            schema.get("allOf").is_none(),
-            "an optional property does not constrain `required`"
+        // Optional, so nothing becomes required — but the two spellings still
+        // may not both be supplied.
+        assert_eq!(
+            schema.get("allOf").unwrap().as_array().unwrap(),
+            &vec![json!({ "not": { "required": ["timeout", "timeout_secs"] } })]
         );
         assert_eq!(
             schema.get("required").unwrap().as_array().unwrap(),
@@ -273,6 +300,7 @@ mod tests {
     /// no-op while the schema still closes — aliases quietly disappear and
     /// nothing else fails. Debug builds refuse it so tests catch the mistake.
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "which this schema does not define")]
     fn an_unknown_canonical_name_trips_a_debug_assert() {
         let mut schema = object_schema();

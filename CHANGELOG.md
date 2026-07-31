@@ -48,6 +48,10 @@ All notable user-facing changes are recorded here. Format loosely follows
   Affects `execute_junos_command`, `execute_junos_pfe_command`, and
   `execute_junos_command_batch` as well as `get_junos_config`.
 
+  With `tail: true` every cap now agrees on which end to keep: the byte cap
+  trims the oldest bytes rather than the newest, and the line-truncation marker
+  is printed above the retained tail instead of below it.
+
 ### Added
 
 - **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
@@ -66,7 +70,9 @@ All notable user-facing changes are recorded here. Format loosely follows
 
   `execute_junos_command_batch`'s device targets are also published as
   string-or-array, matching the documented single-device form the deserializer
-  has always accepted.
+  has always accepted. Because serde maps every spelling onto one field and
+  rejects a second as a duplicate, the schemas also say that only one spelling
+  may be supplied.
 
 ## [0.14.0] — 2026-07-29
 

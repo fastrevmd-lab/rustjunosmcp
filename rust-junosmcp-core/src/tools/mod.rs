@@ -1055,7 +1055,9 @@ mod unknown_field_tripwire {
 
     /// Supplying only the alias must satisfy the schema. A bare
     /// `required: ["device"]` alongside `additionalProperties: false` would
-    /// reject a call the server accepts at runtime.
+    /// reject a call the server accepts at runtime — and `oneOf` rather than
+    /// `anyOf`, because serde rejects two spellings of the same field as a
+    /// duplicate, so a schema that allowed both would validate a doomed call.
     #[test]
     fn an_alias_alone_satisfies_the_required_constraint() {
         let schema = serde_json::to_value(schemars::schema_for!(GatherFactsArgs)).unwrap();
@@ -1063,7 +1065,7 @@ mod unknown_field_tripwire {
             schema.get("required").is_none(),
             "`device` is aliased, so a bare `required` list would exclude the aliases: {schema}"
         );
-        let choices = schema["allOf"][0]["anyOf"].as_array().expect("anyOf group");
+        let choices = schema["allOf"][0]["oneOf"].as_array().expect("oneOf group");
         let names: Vec<&str> = choices
             .iter()
             .map(|choice| choice["required"][0].as_str().unwrap())
