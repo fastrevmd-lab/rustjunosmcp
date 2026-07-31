@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ClusterHealthArgs {
     #[serde(alias = "router_name")]
     pub router: String,

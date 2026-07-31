@@ -33,6 +33,7 @@
           "default": false
         }
       },
+      "additionalProperties": false,
       "required": [
         "router",
         "feature"
@@ -124,6 +125,7 @@
           "default": 1800
         }
       },
+      "additionalProperties": false,
       "required": [
         "router",
         "problem_type"
@@ -147,7 +149,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "get_srx_security_services_status": {
@@ -167,7 +170,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "manage_appid_signature_package": {
@@ -230,6 +234,7 @@
           "default": false
         }
       },
+      "additionalProperties": false,
       "required": [
         "router",
         "action"
@@ -296,6 +301,7 @@
           "default": false
         }
       },
+      "additionalProperties": false,
       "required": [
         "router",
         "action"
@@ -307,6 +313,7 @@
     "description": "Diagnostic — returns this server's version, endpoint name, and uptime in seconds.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "type": "object"
     }
   },
@@ -335,7 +342,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "vpn_lifecycle_report": {
@@ -369,7 +377,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     }
   }
 }

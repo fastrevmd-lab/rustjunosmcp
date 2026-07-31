@@ -63,6 +63,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub struct VpnLifecycleArgs {
     #[serde(alias = "router_name")]
     pub router: String,

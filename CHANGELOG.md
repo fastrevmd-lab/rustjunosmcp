@@ -6,6 +6,41 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tool arguments the server does not recognise are now an error rather than
+  silently dropped.** Every tool argument type carries
+  `#[serde(deny_unknown_fields)]`, and the advertised JSON schemas say so with
+  `additionalProperties: false`, so a client can catch the mistake before it
+  makes the call.
+
+  This is a security fix, not tidiness. A caller asking `get_junos_config` for
+  one stanza under the plausible-but-wrong name `filter` had the field dropped
+  and received the device's **entire configuration** — including
+  `system root-authentication`'s password hash and SSH keys — in a response
+  shaped exactly like a successful narrow query. `filter` is the obvious name
+  for that parameter, so it is now an accepted alias for `config_path` as well.
+  Wherever a dropped argument means "do the broader thing", ignoring it silently
+  hands the caller more than it asked for. (#253)
+
+- **`create_junos_change_set` rejects malformed actions instead of approving
+  them.** An action with neither `payload` nor `rollback_source` — or with both
+  — is now refused before anything is persisted, digested, or approved. The
+  error names the offending index and the field the caller got wrong.
+
+  Previously such an action was stored, digested, and (under `--lab-mode`)
+  approved, and failed only at apply. That recorded an approval over an empty
+  plan in the audit trail and occupied the principal's one pending change-set
+  slot on the device until someone thought to call apply and watch it fail. The
+  apply-time check remains as defence in depth; it is no longer reachable
+  through the public API. (#254)
+
+### Added
+
+- **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
+  output caps `execute_junos_command` already supported. A caller that needs a
+  bounded response can now get one. (#253)
+
 ## [0.14.0] — 2026-07-29
 
 ### Added

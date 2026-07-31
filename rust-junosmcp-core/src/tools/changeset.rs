@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Arguments for `create_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateChangeSetArgs {
     /// Target device name.
     #[serde(alias = "router_name", alias = "router")]
@@ -32,6 +33,7 @@ pub struct CreateChangeSetArgs {
 
 /// Arguments for `approve_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ApproveChangeSetArgs {
     /// Change-set ID returned by create.
     pub change_set_id: String,
@@ -45,6 +47,7 @@ pub struct ApproveChangeSetArgs {
 
 /// Arguments for `apply_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyChangeSetArgs {
     /// Change-set ID to apply.
     pub change_set_id: String,
@@ -70,6 +73,7 @@ pub struct ApplyChangeSetArgs {
 
 /// Arguments for `confirm_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmChangeSetArgs {
     /// Operation ID returned by `apply_junos_change_set`.
     pub operation_id: String,
@@ -80,6 +84,7 @@ pub struct ConfirmChangeSetArgs {
 
 /// Arguments for `get_junos_change_set_status`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetChangeSetStatusArgs {
     /// Change-set ID to query.
     pub change_set_id: String,
@@ -120,6 +125,16 @@ pub async fn create_change_set_with_cancel(
 
     // Derive the owner from the authenticated caller's principal.
     let owner = attribution.principal.to_string();
+
+    // Reject malformed actions before anything is persisted, digested, or
+    // approved. An action that satisfies no valid shape used to survive create,
+    // burn the approval, and occupy this principal's one pending change-set
+    // slot until someone thought to call apply and watch it fail (#254).
+    for (index, action) in args.actions.iter().enumerate() {
+        action
+            .validate_shape(index)
+            .map_err(JmcpError::Validation)?;
+    }
 
     // Check every action against the device's configuration policy.
     for action in &args.actions {
@@ -587,6 +602,7 @@ pub async fn get_change_set_status(
 
 /// Arguments for `get_junos_candidate_fingerprint`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CandidateFingerprintArgs {
     /// Target device name.
     #[serde(alias = "router_name", alias = "router")]
@@ -685,6 +701,149 @@ mod tests {
             .await;
 
         assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
+    }
+
+    fn test_coordinator(state_dir: &TempDir) -> Arc<ChangesetCoordinator> {
+        Arc::new(
+            ChangesetCoordinator::load(
+                Some(&state_dir.path().join("changeset-state.json")),
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(300),
+                false,
+            )
+            .unwrap(),
+        )
+    }
+
+    /// #254: an action satisfying no valid shape used to be accepted, digested,
+    /// and (in lab mode) approved, failing only at apply. The negative
+    /// assertion at the end is the part that matters most: the rejected create
+    /// must not leave a record occupying this principal's one pending
+    /// change-set slot on the device.
+    #[tokio::test]
+    async fn create_change_set_rejects_action_with_neither_payload_nor_rollback() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FINGERPRINT: &str =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        let r = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: None,
+                    rollback_source: None,
+                }],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy.clone(),
+            test_attribution("alice"),
+        )
+        .await;
+
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(
+                    msg.contains("action 0") && msg.contains("payload"),
+                    "the error must name the offending action and the field the \
+                     caller got wrong, got: {msg}"
+                );
+            }
+            other => panic!("expected create to reject an empty action, got {other:?}"),
+        }
+
+        // The slot must still be free: a well-formed create by the same
+        // principal on the same device has to succeed immediately.
+        let ok = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "set system host-name test".into(),
+                        format: Some("set".into()),
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            ok.is_ok(),
+            "a rejected create must not consume the pending change-set slot, got {ok:?}"
+        );
+    }
+
+    /// The doc on `JunosAction` says *exactly* one, so both set is as invalid
+    /// as neither.
+    #[tokio::test]
+    async fn create_change_set_rejects_action_with_both_payload_and_rollback() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+
+        let r =
+            create_change_set(
+                CreateChangeSetArgs {
+                    device: "r1".into(),
+                    expected_fingerprint:
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .into(),
+                    actions: vec![JunosAction {
+                        payload: Some(ConfigPayloadSpec {
+                            text: "set system host-name test".into(),
+                            format: Some("set".into()),
+                        }),
+                        rollback_source: Some(1),
+                    }],
+                },
+                dm,
+                coordinator,
+                policy,
+                test_attribution("alice"),
+            )
+            .await;
+
+        match r {
+            Err(JmcpError::Validation(msg)) => {
+                assert!(
+                    msg.contains("action 0") && msg.contains("both"),
+                    "got: {msg}"
+                );
+            }
+            other => panic!("expected create to reject a both-fields action, got {other:?}"),
+        }
+    }
+
+    /// The call that produced #254, verbatim. Before `deny_unknown_fields`
+    /// every field here was dropped and the action deserialized to `{}`.
+    #[test]
+    fn mistyped_action_fields_are_rejected_rather_than_dropped() {
+        let err = serde_json::from_str::<JunosAction>(
+            r#"{"action":"set","config_text":"set system host-name x","format":"set"}"#,
+        )
+        .expect_err("a mistyped action must not deserialize to an empty action");
+
+        assert!(
+            err.to_string().contains("action"),
+            "the error must name the unknown field so the caller can fix it, got: {err}"
+        );
     }
 
     #[tokio::test]

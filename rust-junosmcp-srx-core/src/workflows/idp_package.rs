@@ -87,6 +87,7 @@ pub enum IdpAction {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdpPackageArgs {
     #[serde(alias = "router_name")]
     pub router: String,

@@ -76,9 +76,11 @@ where
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct EmptyArgs {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteCommandArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -100,6 +102,7 @@ pub struct ExecuteCommandArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetConfigArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -109,12 +112,26 @@ pub struct GetConfigArgs {
     pub timeout: u64,
     /// Optional configuration hierarchy path to retrieve only a subtree of the config.
     /// Examples: "system services", "security policies", "interfaces ge-0/0/0".
-    /// If omitted, returns the full device configuration.
-    #[serde(default)]
+    /// Also accepted as `filter`. If omitted, returns the full device configuration.
+    // `filter` is aliased because it is the obvious name for this parameter:
+    // before `deny_unknown_fields`, a caller who guessed it had the field
+    // dropped and received the entire configuration — `## SECRET-DATA`
+    // included — in place of the subtree they asked for (#253).
+    #[serde(default, alias = "filter")]
     pub config_path: Option<String>,
+    /// Cap output to at most N lines (head; use `tail` for the last N).
+    #[serde(default)]
+    pub max_lines: Option<u32>,
+    /// Hard byte cap on returned output.
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
+    /// With `max_lines`, keep the LAST N lines instead of the first N.
+    #[serde(default)]
+    pub tail: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigDiffArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -128,6 +145,7 @@ pub struct ConfigDiffArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GatherFactsArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -138,6 +156,7 @@ pub struct GatherFactsArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LoadCommitArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -161,6 +180,7 @@ pub struct LoadCommitArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CommitCheckArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -176,6 +196,7 @@ pub struct CommitCheckArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DiscardCandidateArgs {
     /// The target device.
     #[serde(alias = "router_name", alias = "router")]
@@ -186,6 +207,7 @@ pub struct DiscardCandidateArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RollbackConfigArgs {
     /// The target device.
     #[serde(alias = "router_name", alias = "router")]
@@ -213,6 +235,7 @@ pub struct RollbackConfigArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutePfeArgs {
     /// The name of the device.
     #[serde(alias = "router_name", alias = "router")]
@@ -236,6 +259,7 @@ pub struct ExecutePfeArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteBatchArgs {
     /// Devices to execute against. Must be non-empty. Accepts a list, or a
     /// single device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.
@@ -272,6 +296,7 @@ pub struct ExecuteBatchArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TemplateArgs {
     /// Jinja2 template content as a string (inline; no file path).
     /// Capped at 64 KiB.
@@ -304,6 +329,7 @@ pub struct TemplateArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AddDeviceArgs {
     /// Device name/identifier in the inventory map.
     #[serde(default)]
@@ -323,6 +349,7 @@ pub struct AddDeviceArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ReloadDevicesArgs {
     /// Optional path to a different inventory file. If omitted, re-reads
     /// the current --device-mapping.
@@ -331,6 +358,7 @@ pub struct ReloadDevicesArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TransferFileArgs {
     /// Target device name (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -349,6 +377,7 @@ pub struct TransferFileArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FetchFileArgs {
     /// Source device name (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -372,6 +401,7 @@ pub struct FetchFileArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListStagedFilesArgs {
     /// Optional device name. If present, also lists the device's /var/tmp/.
     #[serde(default, alias = "router_name", alias = "router")]
@@ -382,6 +412,7 @@ pub struct ListStagedFilesArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpgradeJunosArgs {
     /// Target device (must exist in inventory and use ssh_key auth).
     #[serde(alias = "router_name", alias = "router")]
@@ -796,6 +827,73 @@ mod tests {
         assert_eq!(
             via_router_name.devices,
             vec!["a".to_string(), "b".to_string()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod unknown_field_tripwire {
+    use super::*;
+
+    /// Every tool argument type must reject arguments it does not understand.
+    ///
+    /// This is a tripwire, not a style check. The failure mode it guards
+    /// against is #253: `get_junos_config` dropped an unrecognised `filter` and
+    /// returned the device's entire configuration — root password hash and SSH
+    /// keys included — shaped exactly like a successful narrow query. Whenever
+    /// a dropped argument means "do the broader thing", silently ignoring it is
+    /// a privilege-escalation-shaped bug, and #254 is the same defect in the
+    /// change-set path.
+    ///
+    /// A new tool argument struct without `#[serde(deny_unknown_fields)]` fails
+    /// here rather than in production.
+    fn asserts_additional_properties_false<T: JsonSchema>(name: &str) {
+        let schema = schemars::schema_for!(T);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        assert_eq!(
+            value.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "{name} must carry #[serde(deny_unknown_fields)] so an argument the \
+             tool does not understand is an error rather than a silent fallback \
+             to broader behaviour. Schema was: {value}"
+        );
+    }
+
+    macro_rules! assert_denies_unknown_fields {
+        ($($t:ty),+ $(,)?) => {
+            $( asserts_additional_properties_false::<$t>(stringify!($t)); )+
+        };
+    }
+
+    #[test]
+    fn every_tool_argument_type_denies_unknown_fields() {
+        assert_denies_unknown_fields!(
+            EmptyArgs,
+            ExecuteCommandArgs,
+            GetConfigArgs,
+            ConfigDiffArgs,
+            GatherFactsArgs,
+            LoadCommitArgs,
+            CommitCheckArgs,
+            DiscardCandidateArgs,
+            RollbackConfigArgs,
+            ExecutePfeArgs,
+            ExecuteBatchArgs,
+            TemplateArgs,
+            AddDeviceArgs,
+            ReloadDevicesArgs,
+            TransferFileArgs,
+            FetchFileArgs,
+            ListStagedFilesArgs,
+            UpgradeJunosArgs,
+            crate::tools::changeset::CreateChangeSetArgs,
+            crate::tools::changeset::ApproveChangeSetArgs,
+            crate::tools::changeset::ApplyChangeSetArgs,
+            crate::tools::changeset::ConfirmChangeSetArgs,
+            crate::tools::changeset::GetChangeSetStatusArgs,
+            crate::tools::changeset::CandidateFingerprintArgs,
+            crate::junos_transaction::JunosAction,
+            crate::junos_transaction::ConfigPayloadSpec,
         );
     }
 }

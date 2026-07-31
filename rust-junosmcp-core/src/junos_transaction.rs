@@ -17,7 +17,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Junos-specific action: a config payload or a rollback archive reference.
+// `deny_unknown_fields` is load-bearing, not tidiness. Both fields are
+// `Option`, so `{}` is a structurally valid `JunosAction`; without it a caller
+// who mistypes `payload` — say `{"action":"set","config_text":"..."}` — has
+// every field silently dropped and ends up with an empty, *approved* change
+// set that only fails at apply (#254). Deliberately a `//` comment: this
+// struct's doc comment is published to clients in the tool schema, and the
+// rationale is for maintainers.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JunosAction {
     /// Configuration payload to load. Exactly one of `payload` or
     /// `rollback_source` must be set.
@@ -29,8 +37,45 @@ pub struct JunosAction {
     pub rollback_source: Option<u32>,
 }
 
+impl JunosAction {
+    /// Enforce the "exactly one of `payload` or `rollback_source`" invariant the
+    /// field docs state.
+    ///
+    /// Serde cannot express it — both fields are `Option` — so it is checked
+    /// here and called from `create_junos_change_set` before anything is
+    /// persisted, digested, or approved. The equivalent check at apply time
+    /// stays as defence in depth; this one makes it unreachable through the
+    /// public API (#254).
+    ///
+    /// `index` is the caller's position in the `actions` array and appears in
+    /// the message, since that is what the caller can act on.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description of the violation when neither or both fields are
+    /// set.
+    pub fn validate_shape(&self, index: usize) -> Result<(), String> {
+        match (&self.payload, self.rollback_source) {
+            (Some(_), None) | (None, Some(_)) => Ok(()),
+            (None, None) => Err(format!(
+                "action {index} has neither `payload` nor `rollback_source`; \
+                 exactly one is required. If you meant to load configuration, \
+                 the field is `payload`, an object of the form \
+                 {{\"text\": \"<config>\", \"format\": \"set\"|\"text\"|\"xml\"}}"
+            )),
+            (Some(_), Some(_)) => Err(format!(
+                "action {index} sets both `payload` and `rollback_source`; \
+                 exactly one is required"
+            )),
+        }
+    }
+}
+
 /// Serializable config payload specification.
+// `deny_unknown_fields` for the same reason as [`JunosAction`]: a mistyped key
+// here silently produced an action that passed create and failed at apply.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigPayloadSpec {
     pub text: String,
     /// Format: "set", "text", or "xml". Defaults to "set" if omitted.

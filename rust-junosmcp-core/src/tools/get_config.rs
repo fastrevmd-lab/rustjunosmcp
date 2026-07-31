@@ -63,7 +63,21 @@ pub async fn handle(
     })
     .await
     .map_err(|_| JmcpError::Timeout(timeout))??;
-    Ok(json!(strip_config_xml_wrapper(&result)))
+
+    // Apply the same output caps the operational-command tools honour. Without
+    // them a caller that asks for a bounded response has no way to get one, and
+    // a full `show configuration` is large enough to matter (#253). Caps are
+    // applied after the XML wrapper is stripped so a line budget counts
+    // configuration lines, not markup.
+    let stripped = strip_config_xml_wrapper(&result);
+    let capped = crate::output::process_output(
+        &command,
+        stripped,
+        args.max_lines,
+        args.max_bytes,
+        args.tail,
+    );
+    Ok(json!(capped))
 }
 
 #[cfg(test)]
@@ -99,6 +113,9 @@ mod tests {
                 device: "nope".into(),
                 timeout: 5,
                 config_path: None,
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -125,6 +142,44 @@ mod tests {
         assert_eq!(args.config_path, Some("system services".to_string()));
     }
 
+    /// #253: `filter` is the name callers reach for. It used to be dropped
+    /// silently, and the caller got the whole configuration — `## SECRET-DATA`
+    /// included — in place of the one stanza they asked for.
+    #[test]
+    fn filter_is_accepted_as_an_alias_for_config_path() {
+        let args: GetConfigArgs =
+            serde_json::from_str(r#"{"device": "r1", "filter": "routing-options"}"#).unwrap();
+        assert_eq!(args.config_path, Some("routing-options".to_string()));
+    }
+
+    /// The general form of #253: an argument this tool does not understand must
+    /// be an error, because the fallback is "return everything", and everything
+    /// includes credential material the caller did not ask for. Failing closed
+    /// is the whole point.
+    #[test]
+    fn an_unknown_argument_is_rejected_rather_than_ignored() {
+        let err = serde_json::from_str::<GetConfigArgs>(
+            r#"{"device": "r1", "stanza": "routing-options"}"#,
+        )
+        .expect_err("an unrecognised argument must not be silently dropped");
+
+        assert!(
+            err.to_string().contains("stanza"),
+            "the error must name the field the caller got wrong, got: {err}"
+        );
+    }
+
+    #[test]
+    fn output_caps_are_accepted() {
+        let args: GetConfigArgs = serde_json::from_str(
+            r#"{"device": "r1", "max_lines": 25, "max_bytes": 4096, "tail": true}"#,
+        )
+        .unwrap();
+        assert_eq!(args.max_lines, Some(25));
+        assert_eq!(args.max_bytes, Some(4096));
+        assert!(args.tail);
+    }
+
     #[tokio::test]
     async fn config_path_exceeding_max_length_is_rejected() {
         // config_path over MAX_INPUT_LEN (1 MB) should fail validation
@@ -138,6 +193,9 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some(huge_path),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -158,6 +216,9 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system services | save /tmp/x".to_string()),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -186,6 +247,9 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("foo; bar".to_string()),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -214,6 +278,9 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system\nservices".to_string()),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -242,6 +309,9 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("\nsystem services".to_string()),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,
@@ -289,6 +359,9 @@ mod tests {
                 timeout: 5,
                 // Passes the allowlist cleanly — no metacharacters at all.
                 config_path: Some("secrets".to_string()),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
             },
             dm,
             policy,

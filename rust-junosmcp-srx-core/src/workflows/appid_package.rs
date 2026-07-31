@@ -86,6 +86,7 @@ pub enum AppidAction {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AppidPackageArgs {
     #[serde(alias = "router_name")]
     pub router: String,

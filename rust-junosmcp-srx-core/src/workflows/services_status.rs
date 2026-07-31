@@ -47,6 +47,7 @@ struct SubCall {
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ServicesStatusArgs {
     #[serde(alias = "router_name")]
     pub router: String,

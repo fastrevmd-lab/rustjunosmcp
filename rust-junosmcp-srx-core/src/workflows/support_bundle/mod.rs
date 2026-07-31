@@ -112,6 +112,7 @@ impl ProblemTypeArg {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SupportBundleArgs {
     #[serde(alias = "router_name")]
     pub router: String,
