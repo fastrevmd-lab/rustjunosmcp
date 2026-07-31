@@ -1466,6 +1466,78 @@ fn device_hint(arguments: Option<&serde_json::Map<String, serde_json::Value>>) -
     None
 }
 
+/// Resolve a caller-supplied tool name to the `&'static str` the audit layer
+/// needs, without leaking or allocating a static.
+///
+/// A name that matches no known tool is recorded as `unknown_tool` rather than
+/// echoed back: the string is caller-controlled, and an audit field is the last
+/// place to put unbounded caller input.
+fn static_tool_name(name: &str) -> &'static str {
+    rust_junosmcp_auth::KNOWN_TOOLS
+        .iter()
+        .copied()
+        .find(|known| *known == name)
+        .unwrap_or("unknown_tool")
+}
+
+/// rmcp's own prefix for an argument-deserialization failure.
+///
+/// Mirrored rather than imported because rmcp keeps it private
+/// (`handler::server::router::tool::TOOL_ARGUMENT_DESERIALIZATION_ERROR_PREFIX`).
+/// It is load-bearing: rmcp converts that one error into an `Ok` result with
+/// `is_error`, indistinguishable at this layer from an error a handler chose to
+/// return — and a handler's error is already audited. The prefix is the only
+/// signal separating them.
+///
+/// If rmcp changes the wording, `rejected_call_audit.rs` fails rather than this
+/// silently going back to recording nothing.
+const RMCP_ARGUMENT_ERROR_PREFIX: &str = "failed to deserialize parameters:";
+
+/// The message from a result rmcp produced for a bad argument, or `None` if this
+/// result came from a handler.
+fn argument_rejection_message(result: &CallToolResult) -> Option<&str> {
+    if result.is_error != Some(true) {
+        return None;
+    }
+    result.content.iter().find_map(|block| {
+        let text = block.as_text()?.text.as_str();
+        text.starts_with(RMCP_ARGUMENT_ERROR_PREFIX).then_some(text)
+    })
+}
+
+/// Record a call the router refused before any handler ran.
+///
+/// Every handler builds its own `AuditScope` as its first statement, so an
+/// accepted call is already accounted for. A call rejected during dispatch —
+/// bad parameters, or a tool that does not exist — never reaches a handler and
+/// was therefore invisible: no audit record, nothing in the journal, nothing in
+/// the audit file (#268).
+///
+/// That gap matters because #253 deliberately made unrecognised arguments an
+/// error rather than a silent fallback to broader behaviour. Without this, an
+/// integration can start failing against a new release and the server-side
+/// record shows nothing at all, so "zero errors" reads as "nobody was refused"
+/// when it means "refusals are not recorded".
+///
+/// The error message is recorded; the arguments are not. rmcp's message names
+/// the offending field, which is the actionable part, while the values are
+/// caller-controlled and may carry configuration payloads.
+fn record_rejected_call(
+    caller: Option<&rust_junosmcp_auth::CallerCtx>,
+    tool: &str,
+    device: Option<String>,
+    message: &str,
+) {
+    let mut audit = audit_scope(
+        caller,
+        static_tool_name(tool),
+        "reject",
+        device.into_iter().collect(),
+    );
+    audit.fail_kind("dispatch_rejected", message);
+    // Emitted on drop.
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
@@ -1503,14 +1575,34 @@ impl ServerHandler for JmcpHandler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let tool = request.name.to_string();
+        let device = device_hint(request.arguments.as_ref());
         let _heartbeat = ProgressHeartbeat::start(
             context.peer.clone(),
             &context.meta,
-            request.name.to_string(),
-            device_hint(request.arguments.as_ref()),
+            tool.clone(),
+            device.clone(),
         );
+        // Cloned before `context` is moved into the call context below. Only
+        // needed on the rejection path, but that path cannot reach back for it.
+        let caller = caller_ctx(&context.extensions).cloned();
+
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.tool_router.call(tcc).await
+        let result = self.tool_router.call(tcc).await;
+
+        // Two shapes reach here without a handler having run, and neither
+        // recorded itself. See `record_rejected_call`.
+        match &result {
+            Err(error) => {
+                record_rejected_call(caller.as_ref(), &tool, device, &error.message);
+            }
+            Ok(call_result) => {
+                if let Some(message) = argument_rejection_message(call_result) {
+                    record_rejected_call(caller.as_ref(), &tool, device, message);
+                }
+            }
+        }
+        result
     }
 
     /// Advertise only the tools this caller may invoke.
@@ -2103,6 +2195,44 @@ mod scope_tests {
                     );
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod rejected_call_audit_tests {
+    use super::static_tool_name;
+
+    #[test]
+    fn a_known_tool_resolves_to_its_static_name() {
+        assert_eq!(static_tool_name("get_junos_config"), "get_junos_config");
+        assert_eq!(
+            static_tool_name("load_and_commit_config"),
+            "load_and_commit_config"
+        );
+    }
+
+    /// The name comes off the wire, so it is caller-controlled. Echoing it into
+    /// an audit field would put unbounded caller input in the audit trail; a
+    /// fixed placeholder says "someone called something we do not have" without
+    /// that.
+    #[test]
+    fn an_unknown_tool_name_is_not_echoed_into_the_audit_record() {
+        assert_eq!(static_tool_name("does_not_exist"), "unknown_tool");
+        assert_eq!(static_tool_name(""), "unknown_tool");
+        assert_eq!(static_tool_name(&"x".repeat(10_000)), "unknown_tool");
+    }
+
+    /// Every name the audit layer can be handed must be one of the statics, so
+    /// the `&'static str` the scope requires never has to be leaked.
+    #[test]
+    fn every_known_tool_is_resolvable() {
+        for tool in rust_junosmcp_auth::KNOWN_TOOLS {
+            assert_eq!(
+                static_tool_name(tool),
+                *tool,
+                "{tool} must resolve to itself"
+            );
         }
     }
 }
