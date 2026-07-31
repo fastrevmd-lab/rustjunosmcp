@@ -608,6 +608,7 @@ pub async fn get_change_set_status(
 /// Arguments for `get_junos_candidate_fingerprint`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
 pub struct CandidateFingerprintArgs {
     /// Target device name.
     #[serde(alias = "router_name", alias = "router")]

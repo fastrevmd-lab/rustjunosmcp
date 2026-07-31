@@ -2,8 +2,14 @@
 //! `| count`, and `| last N` pipe modifiers that rustez drops in NETCONF
 //! translation (#105, #177), then apply optional size caps (#106). Pure — no I/O.
 
-/// See module docs. Order: honor pipe modifiers → byte cap → line cap.
+/// See module docs. Order: honor pipe modifiers → line cap → byte cap.
 /// Returns `raw` unchanged when nothing applies.
+///
+/// The byte cap runs **last** so it is the outermost bound. Applying it first
+/// let the line cap append its own marker afterwards and push the result back
+/// over `max_bytes` — with both caps set, the byte budget was not a budget.
+/// Running it last can cost the line marker its tail, which is the right
+/// trade: `max_bytes` is the limit a caller sizes a context window against.
 pub fn process_output(
     command: &str,
     raw: String,
@@ -12,8 +18,8 @@ pub fn process_output(
     tail: bool,
 ) -> String {
     let piped = apply_pipe_modifiers(command, raw);
-    let byte_capped = apply_byte_cap(piped, max_bytes);
-    apply_line_cap(byte_capped, max_lines, tail)
+    let line_capped = apply_line_cap(piped, max_lines, tail);
+    apply_byte_cap(line_capped, max_bytes)
 }
 
 /// Apply the `| match`, `| except`, `| count`, and `| last N` modifiers rustez
@@ -627,5 +633,51 @@ line without"#
         let raw = "ge-0/0/0 up\nge-0/0/1 down".to_string();
         let out = process_output("show x | match 0/0", raw, None, None, false);
         assert_eq!(out, "ge-0/0/0 up\nge-0/0/1 down\n");
+    }
+}
+
+#[cfg(test)]
+mod combined_cap_tests {
+    use super::process_output;
+
+    /// Regression: with both caps set, the byte cap ran first and the line cap
+    /// then appended its marker on top, pushing the result back over the byte
+    /// budget. The byte cap is the outermost bound and must be applied last.
+    #[test]
+    fn both_caps_together_respect_the_byte_budget() {
+        let raw = "x\n".repeat(32);
+        let out = process_output("show x", raw, Some(31), Some(64), false);
+        assert!(
+            out.len() <= 64,
+            "byte cap must survive line capping: {} bytes — {out:?}",
+            out.len()
+        );
+        assert!(out.lines().count() <= 31, "line cap must hold too: {out:?}");
+    }
+
+    #[test]
+    fn both_caps_hold_across_a_range_of_budgets() {
+        let raw = (1..=400)
+            .map(|n| format!("line {n} padded out a little"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for lines in [1_u32, 5, 50, 399, 400, 401] {
+            for bytes in [64_u32, 100, 1000, 20_000] {
+                for tail in [false, true] {
+                    let out = process_output("show x", raw.clone(), Some(lines), Some(bytes), tail);
+                    assert!(
+                        out.len() <= bytes as usize,
+                        "max_bytes={bytes} max_lines={lines} tail={tail}: {} bytes",
+                        out.len()
+                    );
+                    assert!(
+                        out.lines().count() <= lines as usize,
+                        "max_bytes={bytes} max_lines={lines} tail={tail}: {} lines",
+                        out.lines().count()
+                    );
+                }
+            }
+        }
     }
 }

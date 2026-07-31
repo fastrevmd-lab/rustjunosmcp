@@ -75,6 +75,17 @@ where
     })
 }
 
+/// Schema for a field that deserializes from either a string or an array of
+/// strings, matching [`string_or_vec`].
+fn string_or_string_array(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+        ]
+    })
+}
+
 /// `device` aliases plus `config_path`'s `filter` spelling.
 fn get_config_aliases(schema: &mut schemars::Schema) {
     crate::schema_alias::describe_aliases(
@@ -125,10 +136,14 @@ pub struct ExecuteCommandArgs {
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     /// Cap output to at most N lines (head; use `tail` for the last N).
+    /// Includes the truncation marker, so the response never exceeds N lines.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub max_lines: Option<u32>,
-    /// Hard byte cap on returned output.
+    /// Hard byte cap on returned output, inclusive of the truncation marker.
+    /// Must leave room for that marker; see `helpers::MIN_MAX_BYTES`.
     #[serde(default)]
+    #[schemars(range(min = 64))]
     pub max_bytes: Option<u32>,
     /// With `max_lines`, keep the LAST N lines instead of the first N.
     #[serde(default)]
@@ -155,10 +170,14 @@ pub struct GetConfigArgs {
     #[serde(default, alias = "filter")]
     pub config_path: Option<String>,
     /// Cap output to at most N lines (head; use `tail` for the last N).
+    /// Includes the truncation marker, so the response never exceeds N lines.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub max_lines: Option<u32>,
-    /// Hard byte cap on returned output.
+    /// Hard byte cap on returned output, inclusive of the truncation marker.
+    /// Must leave room for that marker; see `helpers::MIN_MAX_BYTES`.
     #[serde(default)]
+    #[schemars(range(min = 64))]
     pub max_bytes: Option<u32>,
     /// With `max_lines`, keep the LAST N lines instead of the first N.
     #[serde(default)]
@@ -290,10 +309,14 @@ pub struct ExecutePfeArgs {
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     /// Cap output to at most N lines (head; use `tail` for the last N).
+    /// Includes the truncation marker, so the response never exceeds N lines.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub max_lines: Option<u32>,
-    /// Hard byte cap on returned output.
+    /// Hard byte cap on returned output, inclusive of the truncation marker.
+    /// Must leave room for that marker; see `helpers::MIN_MAX_BYTES`.
     #[serde(default)]
+    #[schemars(range(min = 64))]
     pub max_bytes: Option<u32>,
     /// With `max_lines`, keep the LAST N lines instead of the first N.
     #[serde(default)]
@@ -312,6 +335,11 @@ pub struct ExecuteBatchArgs {
         alias = "router_name",
         deserialize_with = "string_or_vec"
     )]
+    // `string_or_vec` accepts a bare string as well as an array, so the derived
+    // `Vec<String>` schema understates what the tool takes. Harmless while the
+    // schema was open; with `additionalProperties: false` a validating client
+    // would refuse the documented one-device form.
+    #[schemars(schema_with = "string_or_string_array")]
     pub devices: Vec<String>,
     /// Operational CLI commands to run sequentially per device. Must be non-empty.
     pub commands: Vec<String>,
@@ -328,10 +356,14 @@ pub struct ExecuteBatchArgs {
     )]
     pub max_concurrent_devices: u32,
     /// Cap output to at most N lines (head; use `tail` for the last N).
+    /// Includes the truncation marker, so the response never exceeds N lines.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub max_lines: Option<u32>,
-    /// Hard byte cap on returned output.
+    /// Hard byte cap on returned output, inclusive of the truncation marker.
+    /// Must leave room for that marker; see `helpers::MIN_MAX_BYTES`.
     #[serde(default)]
+    #[schemars(range(min = 64))]
     pub max_bytes: Option<u32>,
     /// With `max_lines`, keep the LAST N lines instead of the first N.
     #[serde(default)]
@@ -958,6 +990,67 @@ mod unknown_field_tripwire {
         check::<changeset::ApplyChangeSetArgs>("ApplyChangeSetArgs", DEVICE);
         check::<changeset::ConfirmChangeSetArgs>("ConfirmChangeSetArgs", DEVICE);
         check::<changeset::GetChangeSetStatusArgs>("GetChangeSetStatusArgs", DEVICE);
+        check::<changeset::CandidateFingerprintArgs>("CandidateFingerprintArgs", DEVICE);
+    }
+
+    /// The advertised minima must match what the server enforces. A schema that
+    /// says `minimum: 0` while the handler refuses anything under 64 lets a
+    /// client build a request that validates and is then rejected — the exact
+    /// schema/behaviour divergence these tripwires exist to catch.
+    #[test]
+    fn advertised_cap_minima_match_the_enforced_ones() {
+        use crate::helpers::MIN_MAX_BYTES;
+
+        fn minima_of<T: JsonSchema>(name: &str) -> (u64, u64) {
+            let schema = serde_json::to_value(schemars::schema_for!(T)).unwrap();
+            let properties = &schema["properties"];
+            let read = |field: &str| {
+                properties[field]["minimum"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{name}.{field} must publish a minimum"))
+            };
+            (read("max_lines"), read("max_bytes"))
+        }
+
+        for (name, (lines, bytes)) in [
+            (
+                "ExecuteCommandArgs",
+                minima_of::<ExecuteCommandArgs>("ExecuteCommandArgs"),
+            ),
+            ("GetConfigArgs", minima_of::<GetConfigArgs>("GetConfigArgs")),
+            (
+                "ExecutePfeArgs",
+                minima_of::<ExecutePfeArgs>("ExecutePfeArgs"),
+            ),
+            (
+                "ExecuteBatchArgs",
+                minima_of::<ExecuteBatchArgs>("ExecuteBatchArgs"),
+            ),
+        ] {
+            assert_eq!(lines, 1, "{name}.max_lines minimum");
+            assert_eq!(
+                bytes,
+                u64::from(MIN_MAX_BYTES),
+                "{name}.max_bytes minimum must track helpers::MIN_MAX_BYTES"
+            );
+        }
+    }
+
+    /// The batch tool documents a single device name as an accepted form, so
+    /// the schema for `devices` and its aliases must not say "array only".
+    #[test]
+    fn batch_targets_accept_a_bare_string_in_the_schema() {
+        let schema = serde_json::to_value(schemars::schema_for!(ExecuteBatchArgs)).unwrap();
+        for field in ["devices", "routers", "router", "router_name"] {
+            let any_of = schema["properties"][field]["anyOf"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{field} must accept a string or an array"));
+            let types: Vec<&str> = any_of
+                .iter()
+                .map(|variant| variant["type"].as_str().unwrap())
+                .collect();
+            assert_eq!(types, vec!["string", "array"], "{field}");
+        }
     }
 
     /// Supplying only the alias must satisfy the schema. A bare

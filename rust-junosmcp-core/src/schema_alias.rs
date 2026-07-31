@@ -28,10 +28,16 @@ pub type AliasGroup<'a> = (&'a str, &'a [&'a str]);
 ///   `anyOf` over the whole group, because supplying any one of the names
 ///   satisfies the deserializer.
 ///
-/// Groups naming a property the schema does not have are ignored, so a renamed
-/// field degrades to "alias not advertised" rather than a malformed schema.
+/// A group naming a property the schema does not have is a bug in the caller —
+/// the transform silently does nothing, which is exactly the failure it exists
+/// to prevent. It trips a `debug_assert` so tests catch it, and degrades to
+/// "alias not advertised" in release rather than producing a malformed schema.
 ///
 /// Intended as a `#[schemars(transform = ...)]` target; see [`device_aliases`].
+///
+/// # Panics
+///
+/// In debug builds, if a group names a property the schema does not define.
 pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
     // Snapshot first: aliases are copied from the *original* properties, so a
     // group cannot pick up a subschema another group just inserted.
@@ -43,6 +49,13 @@ pub fn describe_aliases(schema: &mut Schema, groups: &[AliasGroup<'_>]) {
 
     for (canonical, aliases) in groups {
         let Some(subschema) = original.get(*canonical) else {
+            debug_assert!(
+                false,
+                "alias group names `{canonical}`, which this schema does not define. \
+                 The transform would silently do nothing and the aliases {aliases:?} \
+                 would stay unadvertised. Known properties: {:?}",
+                original.keys().collect::<Vec<_>>()
+            );
             continue;
         };
 
@@ -117,10 +130,11 @@ pub fn device_aliases(schema: &mut Schema) {
     describe_aliases(schema, &[("device", &["router_name", "router"])]);
 }
 
-/// `device` with only the `router_name` spelling, as the SRX workflow argument
-/// types declare it.
-pub fn device_router_name_alias(schema: &mut Schema) {
-    describe_aliases(schema, &[("device", &["router_name"])]);
+/// The SRX workflow argument types kept `router` as the canonical field name
+/// and alias it as `router_name` — the mirror image of the Junos tools, whose
+/// canonical name is `device`.
+pub fn router_name_alias(schema: &mut Schema) {
+    describe_aliases(schema, &[("router", &["router_name"])]);
 }
 
 /// Assert that a schema describes every key its deserializer accepts.
@@ -255,13 +269,13 @@ mod tests {
         );
     }
 
+    /// Naming a property the schema does not define makes the whole transform a
+    /// no-op while the schema still closes — aliases quietly disappear and
+    /// nothing else fails. Debug builds refuse it so tests catch the mistake.
     #[test]
-    fn an_unknown_canonical_name_is_ignored() {
+    #[should_panic(expected = "which this schema does not define")]
+    fn an_unknown_canonical_name_trips_a_debug_assert() {
         let mut schema = object_schema();
         describe_aliases(&mut schema, &[("nonexistent", &["whatever"])]);
-
-        let properties = schema.get("properties").unwrap().as_object().unwrap();
-        assert!(!properties.contains_key("whatever"));
-        assert_eq!(properties.len(), 2, "the schema must be left untouched");
     }
 }

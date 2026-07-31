@@ -538,23 +538,23 @@
           "default": 360
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
@@ -612,10 +612,17 @@
       "properties": {
         "devices": {
           "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "commands": {
           "description": "Operational CLI commands to run sequentially per device. Must be non-empty.",
@@ -649,23 +656,23 @@
           "default": 16
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
@@ -675,24 +682,45 @@
         },
         "routers": {
           "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "router": {
           "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "router_name": {
           "description": "Devices to execute against. Must be non-empty. Accepts a list, or a\nsingle device name; the keys `routers` / `router` / `router_name` are also accepted for backward compatibility.\n\nAlias for `devices`; accepted for backward compatibility.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "max_concurrent_routers": {
           "description": "Maximum number of devices in flight concurrently.\n\nAlias for `max_concurrent_devices`; accepted for backward compatibility.",
@@ -756,23 +784,23 @@
           "default": 360
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {
@@ -937,14 +965,40 @@
     "description": "Read the device's candidate-configuration fingerprint. Use this first: create_junos_change_set requires the fingerprint so the plan is bound to the exact candidate it was reviewed against. This is a read; it takes no lock and does not modify the candidate.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "device"
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
       ],
       "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
           "description": "Target device name.",
+          "type": "string"
+        },
+        "router_name": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Target device name.\n\nAlias for `device`; accepted for backward compatibility.",
           "type": "string"
         }
       }
@@ -1049,23 +1103,23 @@
           "default": null
         },
         "max_lines": {
-          "description": "Cap output to at most N lines (head; use `tail` for the last N).",
+          "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "default": null
         },
         "max_bytes": {
-          "description": "Hard byte cap on returned output.",
+          "description": "Hard byte cap on returned output, inclusive of the truncation marker.\nMust leave room for that marker; see `helpers::MIN_MAX_BYTES`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 64,
           "default": null
         },
         "tail": {

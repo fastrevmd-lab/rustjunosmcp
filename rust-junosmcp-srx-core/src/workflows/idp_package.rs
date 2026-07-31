@@ -88,7 +88,7 @@ pub enum IdpAction {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(transform = rust_junosmcp_core::schema_alias::device_router_name_alias)]
+#[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct IdpPackageArgs {
     #[serde(alias = "router_name")]
     pub router: String,

@@ -38,12 +38,15 @@ All notable user-facing changes are recorded here. Format loosely follows
 - **Output caps are now exact.** `max_lines` and `max_bytes` counted only the
   content and then added the truncation marker on top, so a response could
   exceed the cap the caller asked for — by a line, or by however many bytes the
-  marker ran to. The marker is now inside the budget.
+  marker ran to. The marker is now inside the budget, and the byte cap is
+  applied last so that setting both caps cannot push the result back over the
+  byte budget.
 
   A cap too small to hold the marker is refused up front rather than silently
-  overshot: `max_lines` must be at least 1 and `max_bytes` at least 64, and the
-  error says so. Affects `execute_junos_command`, `execute_junos_pfe_command`,
-  and `execute_junos_command_batch` as well as `get_junos_config`.
+  overshot: `max_lines` must be at least 1 and `max_bytes` at least 64, both now
+  advertised as schema minima so a client sees the limit before it calls.
+  Affects `execute_junos_command`, `execute_junos_pfe_command`, and
+  `execute_junos_command_batch` as well as `get_junos_config`.
 
 ### Added
 
@@ -60,6 +63,10 @@ All notable user-facing changes are recorded here. Format loosely follows
   calling. Each alias now appears as a property, and a required field with
   aliases is published as an `anyOf` over its accepted names rather than a bare
   `required` entry naming only the canonical one.
+
+  `execute_junos_command_batch`'s device targets are also published as
+  string-or-array, matching the documented single-device form the deserializer
+  has always accepted.
 
 ## [0.14.0] — 2026-07-29
 

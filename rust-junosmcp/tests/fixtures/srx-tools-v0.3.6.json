@@ -31,12 +31,31 @@
         "include_raw": {
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
-        "router",
         "feature"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ]
     }
   },
@@ -123,12 +142,31 @@
           "format": "uint64",
           "minimum": 0,
           "default": 1800
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
-        "router",
         "problem_type"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ]
     }
   },
@@ -137,8 +175,21 @@
     "description": "Chassis-cluster topology + health snapshot. Returns state=not_configured for standalone SRX devices.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "router"
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -148,6 +199,10 @@
         "include_raw": {
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -158,8 +213,21 @@
     "description": "Reports the health and version of up to five SRX security services (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. Each sub-service is independently classified as active or not_configured. The overall state is not_configured only when all five sub-services are absent.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "router"
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -169,6 +237,10 @@
         "include_raw": {
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -232,12 +304,31 @@
           "description": "Append raw RPC replies to the response for debugging.",
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
-        "router",
         "action"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ]
     }
   },
@@ -299,12 +390,31 @@
           "description": "Append raw RPC replies to the response for debugging.",
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
-        "router",
         "action"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ]
     }
   },
@@ -322,8 +432,21 @@
     "description": "Runs 8 chassis-cluster diagnostic RPCs (cluster status, interfaces, information, data-plane / control-plane statistics, per-RE software, alarms, uptime) and emits an ordered findings list with a rolled-up verdict (pass / warn / fail). Standalone SRX devices short-circuit to state=not_configured. Each Finding has check_id (red_led, disabled_secondary, control_link_failure, major_alarm, minor_alarm, recent_reboot, version_skew), severity, message, and optional structured detail. Verdict precedence: fail > warn > pass. Pass-through cluster_status snapshot is included when the cluster RPC succeeded. include_raw=true appends concatenated raw RPC XML.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "router"
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -341,6 +464,10 @@
             "null"
           ],
           "default": null
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -351,8 +478,21 @@
     "description": "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, and correlations when VPN is configured (even if no SAs are currently up). Returns state=not_configured only when both IKE and IPsec RPCs report that the security stanza is absent. Optionally filter by `peer` (substring match against both IKE remote address and IPsec gateway) and/or `tunnel` (substring match against IPsec remote gateway — the brief-style IPsec RPC does not surface the st0 interface name).",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "required": [
-        "router"
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
       ],
       "type": "object",
       "properties": {
@@ -376,6 +516,10 @@
         "include_raw": {
           "type": "boolean",
           "default": false
+        },
+        "router_name": {
+          "description": "Alias for `router`; accepted for backward compatibility.",
+          "type": "string"
         }
       },
       "additionalProperties": false
