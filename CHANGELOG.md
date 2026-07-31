@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-07-31
+
 ### Added
 
 - **Progress notifications for every tool call.** A device operation that runs
@@ -36,7 +38,22 @@ All notable user-facing changes are recorded here. Format loosely follows
   any default client only because nothing reported progress; that is now fixed,
   and shortening the budget a real commit may legitimately need would trade one
   failure mode for another.
+
+- **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
+  output caps `execute_junos_command` already supported. A caller that needs a
+  bounded response can now get one. (#253)
+
 ### Changed
+
+- **Dependencies: mecmcp 0.3.8** (from `changeset-v0.3.7`), which brings a
+  hardened file reader, a hardened change-set state read, and two overflow
+  fixes it exposed.
+
+  **`devices.json` and `tokens.json` must be mode 0600.** The hardened reader
+  refuses a group- or world-accessible file, and the server exits at startup
+  rather than running with credentials exposed. `packaging/lxc/install.sh`
+  already sets both to 0600, so installer-managed deployments need no action;
+  a hand-managed one needs `chmod 600` on both before upgrading.
 
 - **`collect_jtac_support_bundle` no longer spawns `tar`.** The archive is built
   in-process with the `tar` and `flate2` crates.
@@ -57,6 +74,19 @@ All notable user-facing changes are recorded here. Format loosely follows
   `transfer_file` and `fetch_file` still spawn `scp`, so the container image
   still needs `openssh-client` and distroless (#201) stays blocked.
 
+- **Tool schemas describe the argument aliases the server accepts.** `schemars`
+  cannot see `#[serde(alias = ...)]`, so closing the schemas would otherwise
+  have advertised long-accepted spellings — `router`, `router_name`, `routers`,
+  `max_concurrent_routers` — as invalid to any client that validates before
+  calling. Each alias now appears as a property, and a required field with
+  aliases is published as an `anyOf` over its accepted names rather than a bare
+  `required` entry naming only the canonical one.
+
+  `execute_junos_command_batch`'s device targets are also published as
+  string-or-array, matching the documented single-device form the deserializer
+  has always accepted. Because serde maps every spelling onto one field and
+  rejects a second as a duplicate, the schemas also say that only one spelling
+  may be supplied.
 
 ### Fixed
 
@@ -103,28 +133,6 @@ All notable user-facing changes are recorded here. Format loosely follows
   With `tail: true` every cap now agrees on which end to keep: the byte cap
   trims the oldest bytes rather than the newest, and the line-truncation marker
   is printed above the retained tail instead of below it.
-
-### Added
-
-- **`get_junos_config` honours `max_lines`, `max_bytes`, and `tail`**, the same
-  output caps `execute_junos_command` already supported. A caller that needs a
-  bounded response can now get one. (#253)
-
-### Changed
-
-- **Tool schemas describe the argument aliases the server accepts.** `schemars`
-  cannot see `#[serde(alias = ...)]`, so closing the schemas would otherwise
-  have advertised long-accepted spellings — `router`, `router_name`, `routers`,
-  `max_concurrent_routers` — as invalid to any client that validates before
-  calling. Each alias now appears as a property, and a required field with
-  aliases is published as an `anyOf` over its accepted names rather than a bare
-  `required` entry naming only the canonical one.
-
-  `execute_junos_command_batch`'s device targets are also published as
-  string-or-array, matching the documented single-device form the deserializer
-  has always accepted. Because serde maps every spelling onto one field and
-  rejects a second as a duplicate, the schemas also say that only one spelling
-  may be supplied.
 
 ## [0.14.0] — 2026-07-29
 
