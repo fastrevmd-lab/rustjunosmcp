@@ -146,6 +146,18 @@ pub struct Cli {
     )]
     pub changeset_approval_timeout_secs: u64,
 
+    /// Budget in seconds for each post-operation cleanup phase on a device:
+    /// rollback, unlock, and session close.
+    ///
+    /// A stalled device can burn the operation budget and then each cleanup
+    /// budget in series, so the worst case for one configuration call is
+    /// `timeout + 2 × this`. With the defaults that is `360 + 2 × 30 = 420s`,
+    /// which exceeds the 300s idle timeout typical of MCP clients. Progress
+    /// notifications keep a client attached across that window; lower this, or
+    /// raise the client's timeout, if yours does not honour them (#257).
+    #[arg(long = "cleanup-timeout-secs", default_value_t = rust_junosmcp_core::tools::DEFAULT_CLEANUP_TIMEOUT_SECS)]
+    pub cleanup_timeout_secs: u64,
+
     /// Run without two-person control: change sets are approved on creation.
     ///
     /// For single-operator environments — a lab with one engineer — where

@@ -7,6 +7,9 @@ use serde::Deserialize;
 pub mod add_device;
 pub mod batch;
 pub(crate) mod candidate_transaction;
+pub use candidate_transaction::{
+    DEFAULT_CLEANUP_TIMEOUT_SECS, set_cleanup_timeout_secs, worst_case_duration,
+};
 pub mod changeset;
 pub mod commit_check;
 pub mod config_diff;

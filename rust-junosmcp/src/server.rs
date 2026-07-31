@@ -8,13 +8,14 @@ use mecmcp_audit::AuditScope;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Extensions, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo,
+    CallToolRequestParams, CallToolResult, ContentBlock, Extensions, Implementation,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use rust_junosmcp_core::{
     DeviceManager, Policy,
+    progress::ProgressHeartbeat,
     tools::{
         AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
         ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
@@ -1437,6 +1438,34 @@ impl JmcpHandler {
     }
 }
 
+/// Pull the target device out of a tool's raw arguments, for the progress
+/// message only.
+///
+/// Reads the canonical name and the accepted aliases, since this runs before
+/// the arguments are deserialized into a typed struct. Best-effort by design: a
+/// tool with no device argument, or one whose arguments failed to parse, still
+/// gets a heartbeat — just one that does not name a device.
+fn device_hint(arguments: Option<&serde_json::Map<String, serde_json::Value>>) -> Option<String> {
+    let arguments = arguments?;
+    for key in ["device", "router", "router_name", "device_name"] {
+        if let Some(value) = arguments.get(key).and_then(serde_json::Value::as_str) {
+            return Some(value.to_string());
+        }
+    }
+    // Batch tools take a list; name the first target rather than nothing.
+    for key in ["devices", "routers", "device_names", "router_names"] {
+        if let Some(first) = arguments
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|list| list.first())
+            .and_then(serde_json::Value::as_str)
+        {
+            return Some(first.to_string());
+        }
+    }
+    None
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
@@ -1456,10 +1485,38 @@ impl ServerHandler for JmcpHandler {
             .with_instructions(instructions)
     }
 
+    /// Report liveness while a tool waits on a device.
+    ///
+    /// Defined by hand for the same reason as `list_tools` below: the
+    /// `#[tool_handler]` attribute only generates a method the impl does not
+    /// already have. The body is the generated one plus a heartbeat guard.
+    ///
+    /// Doing it here rather than in each handler is deliberate. Every tool on
+    /// this server can block on a device, and a tool added later would silently
+    /// not report progress if this lived in 34 hand-edited call sites. One
+    /// interception point cannot drift (#257).
+    ///
+    /// The guard is inert unless the client supplied a `progressToken`, and the
+    /// first notification is 30s in, so a fast read never emits anything.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let _heartbeat = ProgressHeartbeat::start(
+            context.peer.clone(),
+            &context.meta,
+            request.name.to_string(),
+            device_hint(request.arguments.as_ref()),
+        );
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+
     /// Advertise only the tools this caller may invoke.
     ///
     /// Defining this by hand suppresses the one `#[tool_handler]` would
-    /// generate; the attribute still generates `call_tool` and `get_tool`.
+    /// generate; the attribute still generates `get_tool`.
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -2047,5 +2104,94 @@ mod scope_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::device_hint;
+    use serde_json::json;
+
+    fn args(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn the_canonical_device_key_is_used() {
+        assert_eq!(
+            device_hint(Some(&args(json!({"device": "vsrx-ci"})))),
+            Some("vsrx-ci".to_string())
+        );
+    }
+
+    /// This runs before the arguments are deserialized, so it cannot rely on
+    /// serde's aliasing — it has to know the accepted spellings itself.
+    #[test]
+    fn the_accepted_aliases_are_recognised() {
+        for key in ["router", "router_name", "device_name"] {
+            assert_eq!(
+                device_hint(Some(&args(json!({key: "vsrx-ci"})))),
+                Some("vsrx-ci".to_string()),
+                "alias {key} should name the device in the progress message"
+            );
+        }
+    }
+
+    #[test]
+    fn a_batch_call_names_its_first_target() {
+        assert_eq!(
+            device_hint(Some(&args(json!({"devices": ["r1", "r2"]})))),
+            Some("r1".to_string())
+        );
+    }
+
+    /// Best-effort by design: a tool with no device argument still gets a
+    /// heartbeat, just one that does not name a device. Returning `None` here
+    /// must never be mistaken for "do not report progress".
+    #[test]
+    fn absent_or_unusable_arguments_yield_no_hint() {
+        assert_eq!(device_hint(None), None);
+        assert_eq!(device_hint(Some(&args(json!({})))), None);
+        assert_eq!(device_hint(Some(&args(json!({"device": 42})))), None);
+        assert_eq!(device_hint(Some(&args(json!({"devices": []})))), None);
+    }
+}
+
+#[cfg(test)]
+mod timeout_budget_tests {
+    use rust_junosmcp_core::tools::{
+        DEFAULT_CLEANUP_TIMEOUT_SECS, set_cleanup_timeout_secs, worst_case_duration,
+    };
+    use std::time::Duration;
+
+    /// The arithmetic behind #257: a stalled device burns the operation budget,
+    /// then rollback, then unlock. With the shipped defaults that is 420s,
+    /// against the 300s idle timeout a typical MCP client applies — so without
+    /// progress notifications a stalled call is *guaranteed* to outlive its
+    /// caller. This pins the number the startup log and `--cleanup-timeout-secs`
+    /// help text both quote.
+    #[test]
+    fn the_default_worst_case_exceeds_a_typical_client_timeout() {
+        set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
+        let worst_case = worst_case_duration(Duration::from_secs(360));
+
+        assert_eq!(worst_case, Duration::from_secs(420));
+        assert!(
+            worst_case > Duration::from_secs(300),
+            "if this ever stops being true, the --cleanup-timeout-secs help text \
+             and the startup log both need rewording"
+        );
+    }
+
+    /// Lowering the knob is the documented remedy for a client that does not
+    /// honour progress notifications.
+    #[test]
+    fn lowering_the_cleanup_budget_lowers_the_worst_case() {
+        set_cleanup_timeout_secs(5);
+        assert_eq!(
+            worst_case_duration(Duration::from_secs(120)),
+            Duration::from_secs(130)
+        );
+        set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
     }
 }

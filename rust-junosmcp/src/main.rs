@@ -186,6 +186,19 @@ async fn main() -> Result<()> {
         transfer_cfg: transfer_cfg.clone(),
         device_leases,
     };
+    rust_junosmcp_core::tools::set_cleanup_timeout_secs(args.cleanup_timeout_secs);
+    // State the aggregate at startup rather than leaving an operator to derive
+    // it. The mismatch between this and a client's idle timeout is what turns a
+    // stalled device into "sent no response" with no other explanation (#257).
+    tracing::info!(
+        cleanup_timeout_secs = args.cleanup_timeout_secs,
+        worst_case_secs =
+            rust_junosmcp_core::tools::worst_case_duration(std::time::Duration::from_secs(360))
+                .as_secs(),
+        "device operation budget: a stalled 360s call can run to the worst case \
+         before returning; a client idle timeout below that will abandon it"
+    );
+
     // Lab mode removes two-person control, so say so where an operator will
     // actually see it. Reading it off flags typed weeks ago is not visibility.
     if args.lab_mode {

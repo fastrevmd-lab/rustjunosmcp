@@ -6,6 +6,38 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Progress notifications for every tool call.** A device operation that runs
+  longer than 30s now reports that it is still alive, once every 30s, naming the
+  tool, the device, and how long it has been going.
+
+  Without them a client cannot tell "the server is patiently waiting on a
+  device" from "the server is dead", so it applies an idle timeout and gives up.
+  The operator then sees `tool "load_and_commit_config" sent no response or
+  progress for 300s` — the least informative message available — while the
+  server holds a precise diagnosis (`primary=operation timed out after 360s;
+  rollback=cleanup timed out after 30s; unlock=cleanup timed out after 30s`)
+  that only ever reaches the audit log. (#257)
+
+  Emitted only when the client supplies a `progressToken`, as MCP requires.
+  Clients that do not ask are unaffected.
+
+- **`--cleanup-timeout-secs`** sets the budget for each post-operation cleanup
+  phase on a device — rollback, unlock, session close — previously a hardcoded
+  30s. The worst case for one configuration call is `timeout + 2 × this`, which
+  the server now states at startup rather than leaving an operator to derive it:
+  with the defaults, a stalled 360s call can run 420s, against the 300s idle
+  timeout typical of MCP clients. Progress notifications keep a client attached
+  across that window; lowering this is the remedy for a client that ignores
+  them. (#257)
+
+  The 360s default operation timeout is unchanged. It was long enough to outlive
+  any default client only because nothing reported progress; that is now fixed,
+  and shortening the budget a real commit may legitimately need would trade one
+  failure mode for another.
+
+
 ### Fixed
 
 - **Tool arguments the server does not recognise are now an error rather than
