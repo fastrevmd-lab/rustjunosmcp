@@ -126,8 +126,20 @@ fn device_value_in_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
 /// reaches the server with a foreign `Host`. So "off" would be most dangerous
 /// exactly where it looked safest. Name the authority clients actually send with
 /// `--allowed-host` instead; it is repeatable and precise.
-fn build_http_config(allowed_hosts: Vec<String>) -> StreamableHttpServerConfig {
-    let mut cfg = StreamableHttpServerConfig::default(); // loopback defaults
+///
+/// Built from `mecmcp_transport::streamable_http_server_config` rather than
+/// `StreamableHttpServerConfig::default()`. rmcp 3 added its own
+/// `max_request_body_bytes` defaulting to 4 MiB, enforced *inside* rmcp after
+/// our `apply_body_limit` layer has already accepted the request — so on
+/// `default()` every request between 4 MiB and `--max-request-body-bytes`
+/// (10 MiB here) would 413 from a limit that appears nowhere in our config.
+/// `load_and_commit_config` carries whole device configurations, which is
+/// exactly the payload that gets large.
+fn build_http_config(
+    allowed_hosts: Vec<String>,
+    limits: &LimitsConfig,
+) -> StreamableHttpServerConfig {
+    let mut cfg = mecmcp_transport::streamable_http_server_config(limits);
     cfg.allowed_hosts.extend(allowed_hosts);
     cfg
 }
@@ -175,7 +187,7 @@ pub async fn serve(
         Some(session_mgr.tracker()),
     );
 
-    let http_cfg = build_http_config(allowed_hosts);
+    let http_cfg = build_http_config(allowed_hosts, &limits);
     let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 

@@ -6,6 +6,37 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-05
+
+### Changed — breaking
+
+- **rmcp 2 → 3.1.1, on mecmcp 0.5.0.** rmcp 3 implements the 2026-07-28 MCP
+  revision. This is not a cutover: `legacy_session_mode` defaults to `true`, so
+  the `initialize` handshake and `Mcp-Session-Id` remain the default path and
+  clients declaring `2026-07-28` are served statelessly per request. Both
+  protocols are served at once, so existing clients are unaffected.
+
+  Source changes were small: `rmcp::model::Meta` became `RequestMetaObject`, and
+  `ServerHandler::call_tool` now returns `CallToolResponse` — an enum whose other
+  variants are the SEP-2322 input-required round-trip and the SEP-2663 task
+  handle. Every tool here completes in one call, so the response is always
+  `Complete`; the match is explicit rather than an unwrap so that adding a
+  non-completing tool later cannot silently skip the audit record on the
+  argument-rejection path.
+
+### Fixed
+
+- **rmcp 3's own 4 MiB request-body cap no longer silently overrides
+  `--max-request-body-bytes`.** rmcp 3 added `max_request_body_bytes` to
+  `StreamableHttpServerConfig`, enforced *inside* rmcp after this server's
+  `apply_body_limit` layer has already accepted the request. On the previous
+  `StreamableHttpServerConfig::default()` every request between 4 MiB and the
+  configured limit (10 MiB by default) would have failed with a 413 attributable
+  to no setting the operator could see. `load_and_commit_config` carries whole
+  device configurations, which is exactly the payload that gets large. The
+  config now comes from `mecmcp_transport::streamable_http_server_config`, which
+  derives the cap from `LimitsConfig`.
+
 ## [0.15.3] — 2026-08-05
 
 ### Removed — breaking
