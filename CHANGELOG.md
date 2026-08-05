@@ -6,6 +6,26 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.15.3] — 2026-08-05
+
+### Removed — breaking
+
+- **`--disable-host-check` is gone, and is now rejected at startup.** The flag
+  turned the streamable-http `Host` allowlist off entirely, reintroducing
+  RUSTSEC-2026-0189. Its documented framing — "only set this if you understand
+  the tradeoff" — had the risk backwards. DNS rebinding *targets* loopback-bound
+  services: a browser resolves an attacker-controlled name to `127.0.0.1` and
+  reaches the server with a foreign `Host`, and the allowlist is the only thing
+  that refuses it. So the flag was most dangerous in the setup that looked most
+  harmless, and a deployment that used it for convenience on loopback was the
+  exposed one. rustpanosmcp never had an equivalent escape hatch.
+
+  The flag is *rejected* rather than ignored, so a unit file that still carries
+  it fails loudly at startup instead of running unprotected. Anyone relying on it
+  should name the authority their clients actually send with `--allowed-host`,
+  which is repeatable and precise. The deployed LXC 609 override already does
+  this (`--allowed-host 192.168.1.194`) and is unaffected.
+
 ## [0.15.1] — 2026-07-31
 
 ### Fixed

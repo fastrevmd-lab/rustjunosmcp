@@ -407,17 +407,42 @@ fn allowed_host_flag_permits_custom_host() {
     );
 }
 
+/// The Host allowlist has no off switch. `--disable-host-check` was removed in
+/// 0.15.3: DNS rebinding (RUSTSEC-2026-0189) targets loopback-bound services, so
+/// disabling the gate was most dangerous exactly where it looked safest. The flag
+/// must be *rejected*, not silently ignored — an operator whose unit file still
+/// carries it needs to find out at startup, not by being unprotected.
 #[test]
-fn disable_host_check_allows_any_host() {
+fn disable_host_check_flag_is_rejected() {
+    ensure_built();
+    let out = Command::new(binary_path())
+        .args(["--transport", "streamable-http", "--disable-host-check"])
+        .output()
+        .expect("run binary");
+    assert!(
+        !out.status.success(),
+        "--disable-host-check must be rejected, not accepted"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("--disable-host-check"),
+        "clap should name the removed flag; got: {stderr}"
+    );
+}
+
+/// The replacement path: a foreign Host is refused, and `--allowed-host` is the
+/// only way to admit one.
+#[test]
+fn foreign_host_is_rejected_with_no_escape_hatch() {
     ensure_built();
     let inv = write_inv(
         r#"{"r1":{"ip":"203.0.113.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
-    let s = spawn_no_auth(inv.path(), &["--disable-host-check"]);
+    let s = spawn_no_auth(inv.path(), &[]);
     let code = post_init_with_host(s.port, "anything.example");
-    assert_eq!(
+    assert_ne!(
         code, 200,
-        "--disable-host-check must bypass rmcp's Host check"
+        "an unlisted Host must not reach initialize (DNS-rebinding guard)"
     );
 }
 

@@ -197,12 +197,6 @@ pub struct Cli {
     #[arg(long)]
     pub ssh_accept_new_host_keys: bool,
 
-    /// Disable the streamable-http Host allowlist entirely (accept any Host).
-    /// Reintroduces the RUSTSEC-2026-0189 exposure; bearer auth still applies.
-    /// Off by default.
-    #[arg(long)]
-    pub disable_host_check: bool,
-
     /// Expose unauthenticated Prometheus metrics at /metrics (streamable-http only).
     #[arg(long)]
     pub enable_metrics: bool,
