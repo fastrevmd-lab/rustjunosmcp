@@ -340,7 +340,6 @@ async fn main() -> Result<()> {
                 addr,
                 token_store,
                 args.allowed_host.clone(),
-                args.disable_host_check,
                 args.enable_metrics,
                 limits,
                 #[cfg(feature = "tls")]

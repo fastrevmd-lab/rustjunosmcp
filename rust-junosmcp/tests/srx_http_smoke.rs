@@ -159,15 +159,17 @@ fn allowed_host_flag_permits_custom_host() {
     );
 }
 
+/// See `http_smoke::disable_host_check_flag_is_rejected` — the flag was removed in
+/// 0.15.3. Here we assert the SRX surface keeps the gate closed for an unlisted Host.
 #[test]
-fn disable_host_check_allows_any_host() {
+fn foreign_host_is_rejected_with_no_escape_hatch() {
     ensure_built();
     let inv = placeholder_inv();
-    let s = spawn_no_auth(inv.path(), &["--disable-host-check"]);
+    let s = spawn_no_auth(inv.path(), &[]);
     let code = post_init_with_host(s.port, "anything.example");
-    assert_eq!(
+    assert_ne!(
         code, 200,
-        "--disable-host-check must bypass rmcp's Host check"
+        "an unlisted Host must not reach initialize (DNS-rebinding guard)"
     );
 }
 

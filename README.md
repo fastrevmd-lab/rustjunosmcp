@@ -672,9 +672,13 @@ cargo run -- \
   --allowed-host jmcp.lab.internal
 ```
 
-`--disable-host-check` turns the allowlist off entirely (accept any `Host`),
-reintroducing the DNS-rebinding exposure; bearer auth still applies. Off by
-default — only set this if you understand the tradeoff.
+There is no way to turn the allowlist off. `--disable-host-check` was removed in
+0.15.3 and is now rejected at startup. The allowlist is the DNS-rebinding guard
+(RUSTSEC-2026-0189), and rebinding targets loopback-bound services specifically —
+a browser resolves an attacker-controlled name to `127.0.0.1` and reaches the
+server with a foreign `Host`. "Off" was therefore most dangerous exactly where it
+looked safest. If a client sends an authority the server does not know, name it
+with `--allowed-host`; the flag is repeatable.
 
 ### Hot reload
 
@@ -964,9 +968,6 @@ Options:
           Additional Host authorities to accept on the streamable-http
           endpoint, beyond the loopback defaults (localhost, 127.0.0.1, ::1).
           Repeatable
-      --disable-host-check
-          Disable the streamable-http Host allowlist entirely (accept any
-          Host). Off by default
   -h, --help
           Print help
   -V, --version

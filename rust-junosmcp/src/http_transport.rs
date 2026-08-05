@@ -118,18 +118,15 @@ fn device_value_in_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
 
 /// Build the streamable-http server config, applying the Host allowlist policy.
 /// Default = rmcp's loopback-only allowlist (localhost/127.0.0.1/::1); each
-/// `--allowed-host` value extends it. `--disable-host-check` turns the gate off.
-fn build_http_config(
-    allowed_hosts: Vec<String>,
-    disable_host_check: bool,
-) -> StreamableHttpServerConfig {
-    if disable_host_check {
-        tracing::warn!(
-            "--disable-host-check: streamable-http Host allowlist DISABLED; accepting any Host header. \
-             This reintroduces RUSTSEC-2026-0189 (DNS rebinding); bearer auth still applies."
-        );
-        return StreamableHttpServerConfig::default().disable_allowed_hosts();
-    }
+/// `--allowed-host` value extends it.
+///
+/// There is deliberately no way to turn the gate off. The allowlist is the
+/// DNS-rebinding guard (RUSTSEC-2026-0189), and rebinding targets loopback-bound
+/// services specifically — a browser resolves an attacker domain to 127.0.0.1 and
+/// reaches the server with a foreign `Host`. So "off" would be most dangerous
+/// exactly where it looked safest. Name the authority clients actually send with
+/// `--allowed-host` instead; it is repeatable and precise.
+fn build_http_config(allowed_hosts: Vec<String>) -> StreamableHttpServerConfig {
     let mut cfg = StreamableHttpServerConfig::default(); // loopback defaults
     cfg.allowed_hosts.extend(allowed_hosts);
     cfg
@@ -141,7 +138,6 @@ pub async fn serve(
     addr: SocketAddr,
     token_store: Option<Arc<rust_junosmcp_auth::TokenStoreFile>>,
     allowed_hosts: Vec<String>,
-    disable_host_check: bool,
     enable_metrics: bool,
     limits: LimitsConfig,
     #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
@@ -179,7 +175,7 @@ pub async fn serve(
         Some(session_mgr.tracker()),
     );
 
-    let http_cfg = build_http_config(allowed_hosts, disable_host_check);
+    let http_cfg = build_http_config(allowed_hosts);
     let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 
