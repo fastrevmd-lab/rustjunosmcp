@@ -1728,10 +1728,11 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "hmac",
+ "log",
  "mecmcp-auth",
  "metrics",
  "serde",
@@ -1740,14 +1741,15 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-journald",
+ "tracing-log",
  "tracing-subscriber",
  "uuid",
 ]
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1764,8 +1766,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1784,8 +1786,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-device"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "async-trait",
  "rustix 1.1.4",
@@ -1800,8 +1802,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-inventory"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "mecmcp-secret",
  "serde",
@@ -1814,8 +1816,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-policy"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "globset",
  "serde",
@@ -1824,8 +1826,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "anyhow",
  "clap",
@@ -1838,8 +1840,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-secret"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",
@@ -1848,8 +1850,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.3.8"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.8#0c65963fd33f3c9ee88dd153672ccc9109ac6093"
+version = "0.3.9"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.3.9#811cfce309a5b62651d534a6deca693328c12212"
 dependencies = [
  "axum",
  "dashmap",
@@ -2769,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2808,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "arc-swap",
  "axum",
@@ -2822,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2863,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-srx-core"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "base64ct",
  "flate2",
