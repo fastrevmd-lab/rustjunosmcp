@@ -2,7 +2,7 @@
 
 use crate::cli::TokenAction;
 use anyhow::{Context, Result};
-use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
+use rust_junosmcp_auth::{KnownNames, NoGrant, ScopeSet, TokenStoreFile};
 
 pub fn run(action: TokenAction) -> Result<()> {
     match action {
@@ -84,8 +84,19 @@ pub fn run(action: TokenAction) -> Result<()> {
             let devices_scope = devices.map(parse_scope).transpose()?;
             let tools_scope = tools.map(parse_scope).transpose()?;
             let known = build_known_names();
-            TokenStoreFile::set_scopes(&tokens_file, &name, devices_scope, tools_scope, &known)
-                .with_context(|| format!("setting scopes for '{name}'"))?;
+            // `None` for the grant: mecmcp 0.3.9 added the parameter so a
+            // consumer with a real `Grant` can replace it here, and `None` means
+            // "leave whatever is stored alone". This server is `NoGrant` — it has
+            // no mutation-authority object to widen — so it always passes `None`.
+            TokenStoreFile::set_scopes(
+                &tokens_file,
+                &name,
+                devices_scope,
+                tools_scope,
+                None::<NoGrant>,
+                &known,
+            )
+            .with_context(|| format!("setting scopes for '{name}'"))?;
 
             // Read back and display the resulting scopes
             let store_file = TokenStoreFile::load(&tokens_file)
