@@ -12,7 +12,7 @@
 //! well-behaved client attached for the whole operation.
 
 use rmcp::Peer;
-use rmcp::model::{Meta, ProgressNotificationParam, ProgressToken};
+use rmcp::model::{ProgressNotificationParam, ProgressToken, RequestMetaObject};
 use rmcp::service::RoleServer;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
@@ -51,7 +51,7 @@ impl ProgressHeartbeat {
     /// obliged to understand.
     pub fn start(
         peer: Peer<RoleServer>,
-        meta: &Meta,
+        meta: &RequestMetaObject,
         tool: String,
         device: Option<String>,
     ) -> Self {
@@ -155,7 +155,7 @@ mod tests {
     /// anyway would be sending messages no client is obliged to understand.
     #[test]
     fn a_request_without_a_progress_token_gets_no_heartbeat() {
-        assert!(Meta::default().get_progress_token().is_none());
+        assert!(RequestMetaObject::default().get_progress_token().is_none());
     }
 
     #[test]

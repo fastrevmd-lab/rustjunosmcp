@@ -1574,7 +1574,7 @@ impl ServerHandler for JmcpHandler {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         let tool = request.name.to_string();
         let device = device_hint(request.arguments.as_ref());
         let _heartbeat = ProgressHeartbeat::start(
@@ -1596,11 +1596,19 @@ impl ServerHandler for JmcpHandler {
             Err(error) => {
                 record_rejected_call(caller.as_ref(), &tool, device, &error.message);
             }
-            Ok(call_result) => {
+            // rmcp 3 widened this to `CallToolResponse`, whose other variants
+            // are the SEP-2322 input-required round-trip and the SEP-2663 task
+            // handle. Only `Complete` can carry rmcp's argument-deserialisation
+            // rejection, and no tool here returns the other two — but match
+            // rather than unwrap, so adding one later cannot silently skip the
+            // audit record this exists to produce. Revisit when `add_device`
+            // elicitation moves to the round-trip model (#168).
+            Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
                 if let Some(message) = argument_rejection_message(call_result) {
                     record_rejected_call(caller.as_ref(), &tool, device, message);
                 }
             }
+            Ok(_) => {}
         }
         result
     }
