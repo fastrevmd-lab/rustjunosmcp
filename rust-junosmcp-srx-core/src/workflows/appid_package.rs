@@ -1,6 +1,6 @@
 //! `manage_appid_signature_package` — AppID signature-package lifecycle.
 //!
-//! Phase 2 / v0.2.1 — sibling of [`idp_package`]. Structurally parallel to
+//! Phase 2 / v0.2.1 — sibling of [`super::idp_package`]. Structurally parallel to
 //! the IDP workflow, but the RPC layout is different:
 //!
 //! * **All AppID RPCs are flat single-element** — no composite parent/child

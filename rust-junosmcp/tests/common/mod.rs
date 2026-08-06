@@ -16,20 +16,16 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Absolute path to the freshly-built `rust-junosmcp` binary.
+///
+/// Uses `CARGO_BIN_EXE_rust-junosmcp`, which Cargo sets for integration tests
+/// and honours custom `CARGO_TARGET_DIR`.
 pub fn binary_path() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop(); // workspace root
-    p.push("target");
-    p.push(if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    });
-    p.push("rust-junosmcp");
-    p
+    PathBuf::from(env!("CARGO_BIN_EXE_rust-junosmcp"))
 }
 
 /// Build the binary if it isn't already built. Cargo no-ops when up-to-date.
+///
+/// Honours `CARGO_TARGET_DIR` if set, matching the behaviour of `binary_path()`.
 pub fn ensure_built() {
     let mut command = Command::new("cargo");
     command.args(["build", "-p", "rust-junosmcp", "--no-default-features"]);
@@ -43,6 +39,11 @@ pub fn ensure_built() {
     .join(",");
     if !features.is_empty() {
         command.args(["--features", &features]);
+    }
+    // Inherit CARGO_TARGET_DIR from the environment so the build writes to the
+    // same target directory that `env!("CARGO_BIN_EXE_rust-junosmcp")` reads from.
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        command.env("CARGO_TARGET_DIR", target_dir);
     }
     let status = command.status().expect("cargo build");
     assert!(status.success(), "cargo build failed");

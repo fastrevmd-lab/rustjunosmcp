@@ -397,7 +397,7 @@ impl DeviceManager {
     /// keepalive probe then fails with "session expired" / "keepalive probe
     /// failed". Rather than surface that as a hard error to the caller, the
     /// dead session is dropped, a fresh one is opened (which itself retries
-    /// connect-time transients via [`Self::connect_fresh`]), and the command is
+    /// connect-time transients via [`Self::open_fresh`]), and the command is
     /// run again. Genuine command/RPC errors are non-transient and propagate
     /// without a retry.
     pub async fn run_cli(&self, router_name: &str, command: &str) -> Result<String, JmcpError> {
