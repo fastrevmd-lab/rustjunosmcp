@@ -22,6 +22,8 @@
 //! same key set from config-style log syntax. [`redact_log_artefact`] routes
 //! each artefact to the right pass based on XML well-formedness (#89).
 
+#![deny(clippy::indexing_slicing, clippy::string_slice)]
+
 /// Element names whose text content is replaced with `<REDACTED>`.
 /// Matching is exact on the local element name (namespace-stripped).
 pub const REDACT_ELEMENT_NAMES: &[&str] = &[
@@ -171,6 +173,7 @@ pub fn redact_log_text(input: &str) -> String {
 /// Characters that form part of a Junos identifier token. Used for whole-word
 /// matching of key names (so `community` does not match inside `community-name`
 /// and `secret` does not match inside `secretary`).
+#[allow(clippy::indexing_slicing)] // called with bounds-checked byte offsets
 fn is_word_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
 }
@@ -180,7 +183,11 @@ fn is_word_char(byte: u8) -> bool {
 /// a digit. Such tokens never occur in ordinary prose.
 fn is_junos_hash(token: &str) -> bool {
     let bytes = token.as_bytes();
-    bytes.len() >= 2 && bytes[0] == b'$' && bytes[1].is_ascii_digit()
+    // SOUND: bounds check prevents out-of-bounds.
+    #[allow(clippy::indexing_slicing)]
+    {
+        bytes.len() >= 2 && bytes[0] == b'$' && bytes[1].is_ascii_digit()
+    }
 }
 
 /// Redact a single log line (which may include a trailing `\n`).
@@ -195,19 +202,29 @@ fn redact_log_line(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut idx = 0;
     while idx < bytes.len() {
+        // SOUND: `idx > 0` guard ensures `idx - 1` is valid.
+        #[allow(clippy::indexing_slicing)]
         let at_boundary = idx == 0 || !is_word_char(bytes[idx - 1]);
         let mut matched = false;
         if at_boundary {
             for key in REDACT_ELEMENT_NAMES {
                 let klen = key.len();
                 let end = idx + klen;
+                // SOUND: `idx` is always a char boundary (advances by ch.len_utf8()),
+                // `klen` is the byte length of an ASCII key, so `end` is also a char
+                // boundary. The `end <= bytes.len()` guard prevents out-of-bounds.
+                #[allow(clippy::indexing_slicing)]
                 if end <= bytes.len()
-                    && &line[idx..end] == *key
+                    && &bytes[idx..end] == key.as_bytes()
                     && (end == bytes.len() || !is_word_char(bytes[end]))
                 {
                     let set_context = audit_context || set_statement_precedes(line, idx);
                     if let Some((value_start, value_end)) = redactable_value(line, end, set_context)
                     {
+                        // SOUND: `idx` is a char boundary, `value_start` comes from
+                        // `value_token` which guarantees char boundaries (scans for
+                        // ASCII delimiters or line.len()).
+                        #[allow(clippy::string_slice)]
                         out.push_str(&line[idx..value_start]);
                         out.push_str(REDACTED_MARKER);
                         idx = value_end;
@@ -219,6 +236,8 @@ fn redact_log_line(line: &str) -> String {
         }
         if !matched {
             // Push the current char (respecting UTF-8 boundaries).
+            // SOUND: `idx` is always a char boundary (loop invariant).
+            #[allow(clippy::string_slice)]
             let ch = line[idx..]
                 .chars()
                 .next()
@@ -262,11 +281,15 @@ fn is_config_identifier(token: &str) -> bool {
 /// community VALUE ...`), while leaving prose like "we set the secret aside"
 /// untouched because the intervening "the" is a stopword (#92).
 fn set_statement_precedes(line: &str, key_start: usize) -> bool {
+    // SOUND: `key_start` is `idx` from the caller, which is always a char boundary.
+    #[allow(clippy::string_slice)]
     let prefix = &line[..key_start];
     let tokens: Vec<&str> = prefix.split_whitespace().collect();
     let Some(set_idx) = tokens.iter().rposition(|&token| token == "set") else {
         return false;
     };
+    // SOUND: `set_idx` comes from `rposition`, so it is a valid index.
+    #[allow(clippy::indexing_slicing)]
     tokens[set_idx + 1..]
         .iter()
         .all(|&token| is_config_identifier(token) && !SET_CONTEXT_STOPWORDS.contains(&token))
@@ -281,12 +304,17 @@ fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(
     let mut pos = after_key;
 
     // Equals form: optional spaces, `=`, optional spaces, then the value.
+    // SOUND: all byte indexing is bounds-checked against bytes.len().
+    #[allow(clippy::indexing_slicing)]
     let mut scan = pos;
+    #[allow(clippy::indexing_slicing)]
     while scan < bytes.len() && (bytes[scan] == b' ' || bytes[scan] == b'\t') {
         scan += 1;
     }
+    #[allow(clippy::indexing_slicing)]
     if scan < bytes.len() && bytes[scan] == b'=' {
         scan += 1;
+        #[allow(clippy::indexing_slicing)]
         while scan < bytes.len() && (bytes[scan] == b' ' || bytes[scan] == b'\t') {
             scan += 1;
         }
@@ -294,9 +322,12 @@ fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(
     }
 
     // Space form: require at least one space after the key.
+    // SOUND: bounds-checked against bytes.len().
+    #[allow(clippy::indexing_slicing)]
     if pos >= bytes.len() || (bytes[pos] != b' ' && bytes[pos] != b'\t') {
         return None;
     }
+    #[allow(clippy::indexing_slicing)]
     while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
         pos += 1;
     }
@@ -307,9 +338,14 @@ fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(
     // Optional format qualifier (e.g. `ascii-text`): preserved, value follows.
     let mut qualifier_present = false;
     let (tok_start, tok_end) = token_bounds(line, pos);
+    // SOUND: `token_bounds` guarantees char boundaries (scans for ASCII
+    // delimiters or line.len()).
+    #[allow(clippy::string_slice)]
     if VALUE_QUALIFIERS.contains(&&line[tok_start..tok_end]) {
         qualifier_present = true;
         pos = tok_end;
+        // SOUND: bounds-checked against bytes.len().
+        #[allow(clippy::indexing_slicing)]
         while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
             pos += 1;
         }
@@ -319,8 +355,14 @@ fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(
     }
 
     let (value_start, value_end) = value_token(line, pos)?;
+    // SOUND: bounds checks prevent out-of-bounds indexing.
+    #[allow(clippy::indexing_slicing)]
     let quoted = bytes[value_start] == b'"' || bytes[value_start] == b'\'';
+    #[allow(clippy::indexing_slicing)]
     let terminated = value_end < bytes.len() && bytes[value_end] == b';';
+    // SOUND: `value_token` guarantees char boundaries (scans for ASCII
+    // delimiters or line.len()).
+    #[allow(clippy::string_slice)]
     let hash = is_junos_hash(&line[value_start..value_end]);
 
     if quoted || qualifier_present || terminated || hash || set_context {
@@ -338,15 +380,23 @@ fn value_token(line: &str, pos: usize) -> Option<(usize, usize)> {
     if pos >= bytes.len() {
         return None;
     }
+    // SOUND: bounds-checked above.
+    #[allow(clippy::indexing_slicing)]
     let first = bytes[pos];
     if first == b'"' || first == b'\'' {
         let mut end = pos + 1;
+        // SOUND: bounds-checked against bytes.len().
+        #[allow(clippy::indexing_slicing)]
         while end < bytes.len() && bytes[end] != first {
             end += 1;
         }
+        // SOUND: bounds-checked.
+        #[allow(clippy::indexing_slicing)]
         if end < bytes.len() {
             end += 1; // include the closing quote
         }
+        // `end` is always a char boundary: either `bytes.len()` or one byte
+        // past an ASCII quote (`"` or `'`), both of which are char boundaries.
         return Some((pos, end));
     }
     let (start, end) = token_bounds(line, pos);
@@ -361,6 +411,8 @@ fn value_token(line: &str, pos: usize) -> Option<(usize, usize)> {
 fn token_bounds(line: &str, pos: usize) -> (usize, usize) {
     let bytes = line.as_bytes();
     let mut end = pos;
+    // SOUND: all byte indexing is bounds-checked against bytes.len().
+    #[allow(clippy::indexing_slicing)]
     while end < bytes.len()
         && bytes[end] != b' '
         && bytes[end] != b'\t'
@@ -370,6 +422,8 @@ fn token_bounds(line: &str, pos: usize) -> (usize, usize) {
     {
         end += 1;
     }
+    // `end` is always a char boundary: either `bytes.len()` or pointing to an
+    // ASCII delimiter (space, tab, newline, carriage return, or semicolon).
     (pos, end)
 }
 
@@ -715,5 +769,82 @@ mod tests {
             !out.contains(REDACTED_MARKER),
             "unexpected redaction: {out}"
         );
+    }
+
+    // ── #273: non-ASCII adjacent to a near-miss key must not panic ────────────
+
+    // Each key in REDACT_ELEMENT_NAMES gets a regression test with a multi-byte
+    // char straddling the byte after a `klen - 1` prefix match. The function
+    // must return (not panic) and leave the input unchanged (a near-miss is not
+    // a match).
+
+    #[test]
+    fn log_near_miss_pre_shared_key_with_multibyte_char() {
+        // "pre-shared-ke" is 13 bytes, one short of "pre-shared-key" (14 bytes).
+        // The multi-byte char 'é' (2 bytes) starts at byte 14, so idx + klen = 15
+        // lands inside it. The old code sliced `line[idx..15]` and panicked.
+        let line = " pre-shared-keé";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    #[test]
+    fn log_near_miss_secret_with_multibyte_char() {
+        // "secre" is 5 bytes, one short of "secret" (6 bytes).
+        // The multi-byte char 'é' (2 bytes) starts at byte 6, so idx + klen = 7
+        // lands inside it. The old code sliced `line[idx..7]` and panicked.
+        let line = " secreé";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    #[test]
+    fn log_near_miss_simple_password_with_multibyte_char() {
+        // "simple-passwor" is 14 bytes, one short of "simple-password" (15 bytes).
+        // The multi-byte char 'é' (2 bytes) starts at byte 15, so idx + klen = 16
+        // lands inside it. The old code sliced `line[idx..16]` and panicked.
+        let line = " simple-passworé";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    #[test]
+    fn log_near_miss_encrypted_password_with_multibyte_char() {
+        // "encrypted-passwor" is 17 bytes, one short of "encrypted-password" (18).
+        // The multi-byte char 'é' (2 bytes) starts at byte 18, so idx + klen = 19
+        // lands inside it. The old code sliced `line[idx..19]` and panicked.
+        let line = " encrypted-passworé";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    #[test]
+    fn log_near_miss_community_with_multibyte_char() {
+        // "communit" is 8 bytes, one short of "community" (9 bytes).
+        // The multi-byte char 'é' (2 bytes) starts at byte 9, so idx + klen = 10
+        // lands inside it. The old code sliced `line[idx..10]` and panicked.
+        let line = " communité";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    #[test]
+    fn log_near_miss_hmac_key_with_multibyte_char() {
+        // "hmac-ke" is 7 bytes, one short of "hmac-key" (8 bytes).
+        // The multi-byte char 'é' (2 bytes) starts at byte 8, so idx + klen = 9
+        // lands inside it. The old code sliced `line[idx..9]` and panicked.
+        let line = " hmac-keé";
+        let out = redact_log_line(line);
+        assert_eq!(out, line, "near-miss must not be redacted: {out}");
+    }
+
+    // A real key followed by non-ASCII in the value must still redact.
+    #[test]
+    fn log_redacts_real_key_with_non_ascii_value() {
+        let line = "set snmp community \"välue123\"";
+        let out = redact_log_text(line);
+        assert!(!out.contains("välue123"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.contains("community"), "key dropped: {out}");
     }
 }
