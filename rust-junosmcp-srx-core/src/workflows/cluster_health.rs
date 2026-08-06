@@ -8,7 +8,7 @@
 //!
 //! Sub-RPCs run sequentially (strategy B) because the per-router pool lock
 //! prevents concurrent acquisitions for the same device. Each sub-RPC is
-//! tolerant of failure via the [`SubCall`] capture pattern: a single
+//! tolerant of failure via the `SubCall` capture pattern: a single
 //! missing RPC degrades only its own checks instead of aborting the
 //! workflow.
 

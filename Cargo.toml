@@ -41,7 +41,7 @@ unsafe_code  = "forbid"
 all         = { level = "warn", priority = -1 }
 dbg_macro   = "deny"
 todo        = "deny"
-unwrap_used = "warn"
+unwrap_used = "deny"
 
 [workspace.dependencies]
 tokio        = { version = "1", features = ["full"] }

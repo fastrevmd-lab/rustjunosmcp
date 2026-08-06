@@ -34,7 +34,7 @@
 //!   dir), size-capped by `max_log_bytes_per_file` and count-capped by
 //!   `max_log_files`, then staged into `logs/<device-path>`.
 //!
-//! Both paths share [`finalize_lxc_bundle`] for manifest write + tarball
+//! Both paths share `finalize_lxc_bundle` for manifest write + tarball
 //! assembly + sha256, and both report `bundle.location = "lxc_staging"`.
 //! The response carries an LXC-side `path` and the LLM is instructed to
 //! read it directly off LXC 601 (no `fetch_file` chain).
