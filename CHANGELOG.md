@@ -6,6 +6,67 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-08-07
+
+Hardening release. The server no longer spawns any external process, and the
+container image is distroless as a direct result.
+
+### Changed — breaking
+
+- **`mecmcp` moves to 0.6.1**, which brings the bearer-boundary extraction.
+  `ScopePreflight::check` now takes `CallerScopes<'_>` instead of `&CallerCtx`;
+  `apply_rate_limit` is split into `apply_ip_rate_limit` (outside the boundary,
+  so unauthenticated requests are still metered) and `apply_token_rate_limit`;
+  `concurrency_middleware` is split into token and target halves. Consumers of
+  this crate's HTTP transport wiring see these; the tool surface is unchanged.
+- **The container image no longer has a shell, `apt`, or `openssh-client`**
+  (#201). Anything that shelled into the image — including custom healthchecks
+  or debugging entrypoints — must move to a helper image. `HEALTHCHECK` is
+  removed, since `kill -0 1` needed a shell; supervise the process from the
+  orchestrator instead.
+
+### Added
+
+- **`host_key_revoked`** — a new stable error code, distinct from
+  `host_key_mismatch`. A key marked `@revoked` in `known_hosts` is now refused
+  rather than accepted; a mismatch means the device key changed and warrants
+  investigation, while a revocation means an operator already judged that key
+  compromised. Previously the underlying verifier ignored marker lines entirely.
+
+### Changed
+
+- **`transfer_file` and `fetch_file` no longer spawn `scp`** (#212). They use
+  `mecmcp-scp`'s native SCP1 client over the SSH exec channel — the same wire
+  protocol `scp -O` was forcing, because Junos disables SFTP-over-SSH.
+  `grep -rn "Command::new" rust-junosmcp*/src/` now returns nothing.
+  Verified on hardware: a transfer to a real SRX succeeded with
+  `PATH=/nonexistent`, so `scp` was unreachable throughout.
+  The error taxonomy is unchanged — `unsupported_auth`, `insufficient_disk`,
+  `verify_mismatch`, `host_key_mismatch` and `connect_timeout` are still
+  produced for the same conditions, and host-key checking stays strict by
+  default.
+- **Runtime image is `gcr.io/distroless/cc-debian13:nonroot`**, digest-pinned
+  (#201). The builder version now derives from `rust-toolchain.toml` rather than
+  a separately maintained literal, and the compose example runs `read_only: true`
+  with explicit writable mounts.
+- `russh` 0.62.4 → 0.62.5, which carries **CVE-2026-68930**, a channel-ID
+  validation bypass (#271).
+
+### Fixed
+
+- **`collect_jtac_support_bundle` no longer panics on non-ASCII log content**
+  (#273). `redact_log_line` sliced a `&str` at a byte offset that was not
+  guaranteed to be a char boundary, so a log line where a near-miss of a
+  redaction keyword was followed by a multi-byte character aborted the
+  collection — in the redaction pass, on device-controlled data, which is
+  exactly the input class it exists to handle.
+
+### Internal
+
+- `clippy::unwrap_used` raised to `deny`; the shipping-code count was already
+  zero once measured with clippy rather than grep (#193). The integration test
+  harness now honours `CARGO_TARGET_DIR`.
+
 ## [0.16.0] — 2026-08-05
 
 ### Changed — breaking
