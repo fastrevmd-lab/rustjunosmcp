@@ -76,6 +76,14 @@ pub enum JmcpError {
         known_hosts_file: PathBuf,
     },
 
+    #[error(
+        "host key revoked [code=host_key_revoked]: router '{router}' key is marked @revoked in {known_hosts_file}; the key is compromised and must not be trusted"
+    )]
+    HostKeyRevoked {
+        router: String,
+        known_hosts_file: PathBuf,
+    },
+
     #[error("device probe failed [code=device_probe_failed] (phase={phase}): {message}")]
     DeviceProbeFailed { phase: String, message: String },
 
@@ -339,6 +347,7 @@ impl JmcpError {
             Self::ScpDependencyUnavailable { .. } => "dependency_unavailable",
             Self::ConnectTimeout(_) => "timeout",
             Self::HostKeyMismatch { .. } => "host_key_mismatch",
+            Self::HostKeyRevoked { .. } => "host_key_revoked",
             Self::DeviceProbeFailed { .. } => "device_probe_failed",
             Self::VerifyMismatch { .. } => "verify_mismatch",
             Self::LocalDestExistsDiffers { .. } => "conflict",

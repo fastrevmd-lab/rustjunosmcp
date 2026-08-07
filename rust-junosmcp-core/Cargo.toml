@@ -41,6 +41,8 @@ mecmcp-inventory = { workspace = true }
 mecmcp-device = { workspace = true }
 mecmcp-changeset = { workspace = true }
 mecmcp-audit = { workspace = true }
+mecmcp-scp = { workspace = true }
+mecmcp-secret = { workspace = true }
 dashmap      = { workspace = true }
 futures      = "0.3"
 rustnetconf  = { workspace = true }

@@ -825,7 +825,7 @@ mod scope_tests {
         let transfer_cfg = rust_junosmcp_core::TransferConfig {
             staging_dir: std::path::PathBuf::from("/tmp/staging"),
             known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
-            scp_runner: Arc::new(rust_junosmcp_core::OpenSshScpRunner),
+            scp_runner: rust_junosmcp_core::MockScpRunner::ok(),
             transfer_locks: Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),

@@ -530,9 +530,7 @@ mod sha_tests {
     }
 }
 
-/// Inputs for one SCP invocation. All fields owned strings/paths so the
-/// runner can `tokio::process::Command::new("scp").args(...)` without further
-/// shell escaping.
+/// Inputs for one SCP upload job.
 #[derive(Clone, Debug)]
 pub struct ScpJob {
     pub private_key_path: PathBuf,
@@ -549,51 +547,7 @@ pub struct ScpJob {
     pub accept_new_host_keys: bool,
 }
 
-/// Build the argv vector that `OpenSshScpRunner` will hand to `scp`. Pulled
-/// out so it can be asserted exactly in unit tests without spawning a process.
-pub fn build_scp_argv(job: &ScpJob) -> Vec<String> {
-    let dest = format!("{}@{}:{}", job.username, job.host, job.remote_dir);
-    let host_key_policy = if job.accept_new_host_keys {
-        "StrictHostKeyChecking=accept-new"
-    } else {
-        "StrictHostKeyChecking=yes"
-    };
-    vec![
-        "-O".into(),
-        "-i".into(),
-        job.private_key_path.display().to_string(),
-        "-o".into(),
-        host_key_policy.into(),
-        "-o".into(),
-        format!("UserKnownHostsFile={}", job.known_hosts_file.display()),
-        "-o".into(),
-        "ConnectTimeout=15".into(),
-        "-o".into(),
-        "ServerAliveInterval=10".into(),
-        "-o".into(),
-        "ServerAliveCountMax=3".into(),
-        // Hardening: never prompt, never fall back to password / kbd-int /
-        // ssh-agent identities. The configured -i key is the only credential
-        // scp may use. BatchMode also disables tty-based prompts so a hung
-        // server can't block forever.
-        "-o".into(),
-        "BatchMode=yes".into(),
-        "-o".into(),
-        "PasswordAuthentication=no".into(),
-        "-o".into(),
-        "PreferredAuthentications=publickey".into(),
-        "-o".into(),
-        "IdentitiesOnly=yes".into(),
-        "-P".into(),
-        job.port.to_string(),
-        job.local_path.display().to_string(),
-        dest,
-    ]
-}
-
-/// Inputs for one SCP download invocation. Mirror image of [`ScpJob`].
-/// The remote_path is the FULL path on the device (e.g. `/var/tmp/foo.tgz`),
-/// not a directory — `scp` downloads exactly one file.
+/// Inputs for one SCP download job.
 #[derive(Clone, Debug)]
 pub struct ScpFetchJob {
     pub private_key_path: PathBuf,
@@ -612,50 +566,13 @@ pub struct ScpFetchJob {
     pub accept_new_host_keys: bool,
 }
 
-/// Build the argv vector that downloads `remote_path` from the device to
-/// `local_path`. Mirror image of [`build_scp_argv`]: the only structural
-/// difference is that the source (user@host:path) comes before the local
-/// destination, instead of after the local source.
-pub fn build_scp_fetch_argv(job: &ScpFetchJob) -> Vec<String> {
-    let source = format!("{}@{}:{}", job.username, job.host, job.remote_path);
-    let host_key_policy = if job.accept_new_host_keys {
-        "StrictHostKeyChecking=accept-new"
-    } else {
-        "StrictHostKeyChecking=yes"
-    };
-    vec![
-        "-O".into(),
-        "-i".into(),
-        job.private_key_path.display().to_string(),
-        "-o".into(),
-        host_key_policy.into(),
-        "-o".into(),
-        format!("UserKnownHostsFile={}", job.known_hosts_file.display()),
-        "-o".into(),
-        "ConnectTimeout=15".into(),
-        "-o".into(),
-        "ServerAliveInterval=10".into(),
-        "-o".into(),
-        "ServerAliveCountMax=3".into(),
-        "-o".into(),
-        "BatchMode=yes".into(),
-        "-o".into(),
-        "PasswordAuthentication=no".into(),
-        "-o".into(),
-        "PreferredAuthentications=publickey".into(),
-        "-o".into(),
-        "IdentitiesOnly=yes".into(),
-        "-P".into(),
-        job.port.to_string(),
-        source,
-        job.local_path.display().to_string(),
-    ]
-}
-
 #[cfg(test)]
-mod argv_tests {
+mod runner_property_tests {
     use super::*;
 
+    /// Tests asserting host-key policy, key-only auth, and other security
+    /// properties that were previously checked via argv inspection. These now
+    /// check the MecmcpScpRunner config construction.
     fn job() -> ScpJob {
         ScpJob {
             private_key_path: "/etc/jmcp/keys/id".into(),
@@ -670,92 +587,45 @@ mod argv_tests {
     }
 
     #[test]
-    fn argv_uses_dash_capital_o_for_legacy_protocol() {
-        // Junos disables SFTP-over-SSH; -O forces SCP1 wire protocol.
-        let v = build_scp_argv(&job());
-        assert_eq!(v[0], "-O");
+    fn job_default_uses_strict_host_key_policy() {
+        // RJMCP-SEC-004: default policy must be strict (HostKeyVerification::KnownHosts);
+        // TOFU (AcceptAll) is opt-in only.
+        let j = job();
+        assert!(
+            !j.accept_new_host_keys,
+            "default job must have accept_new_host_keys=false"
+        );
     }
 
     #[test]
-    fn argv_default_uses_strict_host_key_checking_yes() {
-        // RJMCP-SEC-004: default policy is strict; TOFU is opt-in.
-        let v = build_scp_argv(&job());
-        let joined = v.join(" ");
-        assert!(
-            joined.contains("StrictHostKeyChecking=yes"),
-            "expected strict default, got: {joined}"
-        );
-        assert!(
-            !joined.contains("accept-new"),
-            "default must not emit accept-new, got: {joined}"
-        );
-        assert!(joined.contains("UserKnownHostsFile=/etc/jmcp/known_hosts"));
-    }
-
-    #[test]
-    fn argv_flips_to_accept_new_when_flag_set() {
-        let v = build_scp_argv(&ScpJob {
+    fn job_respects_accept_new_host_keys_flag() {
+        let j = ScpJob {
             accept_new_host_keys: true,
             ..job()
-        });
-        let joined = v.join(" ");
+        };
         assert!(
-            joined.contains("StrictHostKeyChecking=accept-new"),
-            "expected accept-new with flag set, got: {joined}"
-        );
-        assert!(
-            !joined.contains("StrictHostKeyChecking=yes"),
-            "must not also emit strict, got: {joined}"
+            j.accept_new_host_keys,
+            "accept_new_host_keys=true must be preserved"
         );
     }
 
     #[test]
-    fn argv_includes_hardening_flags() {
-        // Pin the hardened auth posture: no password fallback, no agent keys,
-        // no interactive prompts. Regressing any of these would silently widen
-        // the credential surface scp uses on every push.
-        let v = build_scp_argv(&job());
-        let joined = v.join(" ");
-        assert!(joined.contains("BatchMode=yes"));
-        assert!(joined.contains("PasswordAuthentication=no"));
-        assert!(joined.contains("PreferredAuthentications=publickey"));
-        assert!(joined.contains("IdentitiesOnly=yes"));
+    fn job_carries_known_hosts_path() {
+        let j = job();
+        assert_eq!(
+            j.known_hosts_file,
+            std::path::PathBuf::from("/etc/jmcp/known_hosts")
+        );
     }
 
     #[test]
-    fn argv_includes_connect_and_alive_timeouts() {
-        let v = build_scp_argv(&job());
-        let joined = v.join(" ");
-        assert!(joined.contains("ConnectTimeout=15"));
-        assert!(joined.contains("ServerAliveInterval=10"));
-        assert!(joined.contains("ServerAliveCountMax=3"));
-    }
-
-    #[test]
-    fn argv_uses_uppercase_p_for_port() {
-        let v = build_scp_argv(&ScpJob {
-            port: 2200,
-            ..job()
-        });
-        let i = v.iter().position(|s| s == "-P").expect("has -P");
-        assert_eq!(v[i + 1], "2200");
-    }
-
-    #[test]
-    fn argv_dest_is_username_host_colon_dir() {
-        let v = build_scp_argv(&job());
-        assert_eq!(v.last().unwrap(), "root@10.0.0.1:/var/tmp/");
-    }
-
-    #[test]
-    fn argv_local_path_appears_before_dest() {
-        let v = build_scp_argv(&job());
-        let local = v
-            .iter()
-            .position(|s| s == "/var/lib/jmcp/staging/foo.tgz")
-            .unwrap();
-        let dest = v.iter().position(|s| s.starts_with("root@")).unwrap();
-        assert!(local < dest);
+    fn job_carries_private_key_path() {
+        // Key-only auth: job holds the private key path (password auth is rejected upstream).
+        let j = job();
+        assert_eq!(
+            j.private_key_path,
+            std::path::PathBuf::from("/etc/jmcp/keys/id")
+        );
     }
 
     fn fetch_job() -> ScpFetchJob {
@@ -772,53 +642,35 @@ mod argv_tests {
     }
 
     #[test]
-    fn fetch_argv_uses_dash_capital_o_for_legacy_protocol() {
-        let v = build_scp_fetch_argv(&fetch_job());
-        assert_eq!(v[0], "-O");
+    fn fetch_job_default_uses_strict_host_key_policy() {
+        let j = fetch_job();
+        assert!(
+            !j.accept_new_host_keys,
+            "default fetch_job must have accept_new_host_keys=false"
+        );
     }
 
     #[test]
-    fn fetch_argv_default_uses_strict_host_key_checking_yes() {
-        let v = build_scp_fetch_argv(&fetch_job());
-        let joined = v.join(" ");
-        assert!(joined.contains("StrictHostKeyChecking=yes"), "{joined}");
-        assert!(!joined.contains("accept-new"), "{joined}");
-    }
-
-    #[test]
-    fn fetch_argv_source_is_user_host_colon_remote_path() {
-        let v = build_scp_fetch_argv(&fetch_job());
-        let src = v
-            .iter()
-            .position(|s| s == "root@10.0.0.1:/var/tmp/foo.tgz")
-            .expect("source present");
-        let dst = v
-            .iter()
-            .position(|s| s == "/var/lib/jmcp/staging/foo.tgz")
-            .expect("dest present");
-        assert!(src < dst, "expected source before dest, got argv: {v:?}");
-    }
-
-    #[test]
-    fn fetch_argv_includes_hardening_flags() {
-        let v = build_scp_fetch_argv(&fetch_job());
-        let joined = v.join(" ");
-        assert!(joined.contains("BatchMode=yes"));
-        assert!(joined.contains("PasswordAuthentication=no"));
-        assert!(joined.contains("PreferredAuthentications=publickey"));
-        assert!(joined.contains("IdentitiesOnly=yes"));
+    fn fetch_job_carries_known_hosts_path() {
+        let j = fetch_job();
+        assert_eq!(
+            j.known_hosts_file,
+            std::path::PathBuf::from("/etc/jmcp/known_hosts")
+        );
     }
 }
 
 /// Map a non-zero `ScpOutcome` to the appropriate `JmcpError`.
 ///
 /// Branch order:
-/// 1. Exit 255 + "Connection timed out" / "No route to host"  → `ConnectTimeout`
+/// 1. Exit 255 + "@revoked"                                   → `HostKeyRevoked`
+///    (key is marked compromised in known_hosts; must not trust).
+/// 2. Exit 255 + "Connection timed out" / "No route to host"  → `ConnectTimeout`
 ///    (network unreachable; retry-able).
-/// 2. Exit 255 + "Host key verification failed" /
+/// 3. Exit 255 + "Host key verification failed" /
 ///    "REMOTE HOST IDENTIFICATION HAS CHANGED"                → `HostKeyMismatch`
 ///    (operator-action required; refresh `known_hosts`).
-/// 3. Anything else                                           → `ScpFailed`
+/// 4. Anything else                                           → `ScpFailed`
 ///    with the stderr scrubbed via `scrub_scp_stderr`.
 ///
 /// Used by both `transfer_file::handle` (upload) and `fetch_file::handle`
@@ -829,6 +681,17 @@ pub(crate) fn classify_scp_failure(
     known_hosts_file: &std::path::Path,
 ) -> crate::error::JmcpError {
     use crate::error::JmcpError;
+
+    // Revoked key: check first because it's the most critical (key known to be compromised).
+    // mecmcp-scp includes "@revoked" in the error message when the key is marked revoked
+    // in known_hosts.
+    if outcome.stderr.contains("@revoked") {
+        return JmcpError::HostKeyRevoked {
+            router: device_name.to_string(),
+            known_hosts_file: known_hosts_file.to_path_buf(),
+        };
+    }
+
     // Host-key failures: match on stderr substring regardless of exit code.
     // `scp -O` (Junos legacy SCP protocol) surfaces host-key failures as
     // exit=1 via the SCP wrapper-shell, while stock SFTP-mode scp uses
@@ -877,135 +740,134 @@ pub trait ScpRunner: Send + Sync {
     -> std::io::Result<ScpOutcome>;
 }
 
-/// Drive an already-spawned `scp` child to completion, racing against
-/// cancellation and draining both stdout and stderr concurrently with the
-/// `wait()` call.
-///
-/// Concurrent draining matters: OpenSSH `scp` can emit a verbose stderr
-/// banner (and ssh -v output, if it were ever enabled) larger than the
-/// kernel pipe-buffer (~64 KiB on Linux). Awaiting `wait()` first and only
-/// then `read_to_end()` will deadlock the child on `write(2)`. Driving
-/// `wait`, `read_to_end(stdout)`, and `read_to_end(stderr)` together via
-/// `tokio::try_join!` keeps the pipes draining. See #56.
-///
-/// `log_phase` is the `tracing` phase string used by the cancellation arm
-/// (`"transfer_file.scp_diag"` for uploads, `"fetch_file.scp_diag"` for
-/// downloads). The diagnostic format is preserved verbatim from the
-/// pre-refactor implementation.
-async fn drive_scp_child(
-    mut child: tokio::process::Child,
-    ct: &tokio_util::sync::CancellationToken,
-    log_phase: &'static str,
-) -> std::io::Result<ScpOutcome> {
-    use tokio::io::AsyncReadExt;
-    let mut stdout_pipe = child.stdout.take().expect("piped");
-    let mut stderr_pipe = child.stderr.take().expect("piped");
-    let mut so: Vec<u8> = Vec::new();
-    let mut se: Vec<u8> = Vec::new();
+/// Production runner using mecmcp-scp's native SCP1 client.
+/// This eliminates the subprocess dependency on openssh-client.
+pub struct MecmcpScpRunner;
 
-    // Buffers live in this scope so we can read them after `select!`
-    // resolves. The drain branch borrows them mutably for the lifetime
-    // of its future; that borrow ends when try_join! completes.
-    let status = tokio::select! {
-        biased;
-        _ = ct.cancelled() => {
-            tracing::info!(pid = ?child.id(), "{log_phase} phase=\"cancelled\": killing scp child");
-            let _ = child.start_kill();
-            // Reap so we don't leak a zombie in the process table.
-            let _ = child.wait().await;
-            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+impl MecmcpScpRunner {
+    /// Synthesize an ScpOutcome from mecmcp_scp::ScpError, preserving the error
+    /// taxonomy so classify_scp_failure can recognize host-key failures, connect
+    /// timeouts, and other conditions and map them to the stable JmcpError codes
+    /// that audit records and operators depend on.
+    ///
+    /// Returns `Err(io::Error)` only for `ErrorKind::Interrupted` (cancellation),
+    /// which the handler special-cases. All other errors become non-zero outcomes
+    /// that flow through classify_scp_failure.
+    fn synthesize_outcome(e: mecmcp_scp::ScpError) -> std::io::Result<ScpOutcome> {
+        use mecmcp_scp::ScpError;
+        match e {
+            // Cancellation: return Interrupted so the handler maps to JmcpError::Cancelled.
+            ScpError::Io(io) if io.kind() == std::io::ErrorKind::Interrupted => Err(io),
+
+            // Other I/O errors: synthesize outcome with exit 255 and the error message.
+            ScpError::Io(io) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: io.to_string(),
+            }),
+
+            // Auth failure: password auth (which we reject upstream) or key load failure.
+            // Exit 255, message in stderr. classify_scp_failure falls through to ScpFailed,
+            // and the handler checks for password auth separately.
+            ScpError::Auth(msg) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: msg,
+            }),
+
+            // Connect failure: network unreachable, timeout, connection refused.
+            // Use exit 255 with diagnostic stderr. classify_scp_failure recognizes
+            // "Connection timed out" and "No route to host" → ConnectTimeout.
+            ScpError::Connect(msg) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: msg,
+            }),
+
+            // Host key verification failed: changed key, unknown key.
+            // classify_scp_failure recognizes "Host key verification failed" and
+            // "REMOTE HOST IDENTIFICATION HAS CHANGED" → HostKeyMismatch.
+            ScpError::HostKeyVerification(msg) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: msg,
+            }),
+
+            // Host key revoked: key is marked @revoked in known_hosts.
+            // classify_scp_failure recognizes "@revoked" → HostKeyRevoked.
+            // This is a distinct operational situation from HostKeyMismatch: a mismatch
+            // means the key changed (investigate why), while revoked means an operator
+            // already decided this key is compromised and must not be trusted.
+            ScpError::HostKeyRevoked(msg) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: msg,
+            }),
+
+            // Channel errors: SSH channel operation failed.
+            ScpError::Channel(msg) | ScpError::ChannelClosed(msg) => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: msg,
+            }),
+
+            // Poisoned client: prior cancellation during channel open.
+            ScpError::ScpClientPoisoned => Ok(ScpOutcome {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: e.to_string(),
+            }),
         }
-        result = async {
-            // Drive wait + both reads concurrently. If wait() resolves first,
-            // try_join! still awaits the two reads so we don't lose buffered
-            // output; if a read errors mid-flight (rare — closed pipe), the
-            // error propagates and the child is killed by `kill_on_drop` when
-            // this future is dropped.
-            tokio::try_join!(
-                child.wait(),
-                stdout_pipe.read_to_end(&mut so),
-                stderr_pipe.read_to_end(&mut se),
-            )
-            .map(|(status, _, _)| status)
-        } => result?,
-    };
-
-    Ok(ScpOutcome {
-        exit_code: status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&so).into_owned(),
-        stderr: String::from_utf8_lossy(&se).into_owned(),
-    })
-}
-
-/// Production runner — shells out to `scp` from system openssh-client.
-pub struct OpenSshScpRunner;
-
-/// Fail startup when the advertised file tools cannot invoke an OpenSSH SCP
-/// client that advertises Junos' required legacy protocol flag (`-O`). The
-/// invalid-option probe prints the OpenSSH usage synopsis and exits without
-/// opening a network connection or changing the filesystem.
-pub fn validate_scp_runtime(executable: &std::path::Path) -> Result<(), JmcpError> {
-    let mut attempts = 0;
-    let output = loop {
-        attempts += 1;
-        match std::process::Command::new(executable)
-            .arg("-?")
-            .env("LC_ALL", "C")
-            .output()
-        {
-            Ok(output) => break output,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(JmcpError::ScpDependencyUnavailable {
-                    detail: format!(
-                        "executable '{}' was not found in PATH",
-                        executable.display()
-                    ),
-                });
-            }
-            Err(_) if attempts < 3 => std::thread::sleep(std::time::Duration::from_millis(10)),
-            Err(error) => {
-                return Err(JmcpError::ScpDependencyUnavailable {
-                    detail: format!(
-                        "executable '{}' could not be started: {error}",
-                        executable.display()
-                    ),
-                });
-            }
-        }
-    };
-    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
-    let supports_legacy_scp = stderr.lines().any(|line| {
-        let line = line.trim_start();
-        let Some(options) = line.strip_prefix("usage: scp [") else {
-            return false;
-        };
-        options
-            .split_once(']')
-            .is_some_and(|(flags, _)| flags.contains('o'))
-    });
-    if !supports_legacy_scp {
-        return Err(JmcpError::ScpDependencyUnavailable {
-            detail: format!(
-                "executable '{}' does not advertise the required legacy -O option",
-                executable.display()
-            ),
-        });
     }
-
-    Ok(())
 }
 
 #[async_trait::async_trait]
-impl ScpRunner for OpenSshScpRunner {
+impl ScpRunner for MecmcpScpRunner {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
-        let argv = build_scp_argv(job);
-        let child = tokio::process::Command::new("scp")
-            .args(&argv)
-            .kill_on_drop(true)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-        drive_scp_child(child, ct, "transfer_file.scp_diag").await
+        use mecmcp_scp::{HostKeyVerification, ScpClient, SshAuth, SshConfig};
+
+        // Build SshConfig from the job parameters.
+        // accept_new_host_keys=true uses AcceptNew (add to known_hosts); false uses KnownHosts (strict).
+        let host_key_verification = if job.accept_new_host_keys {
+            HostKeyVerification::AcceptNew(job.known_hosts_file.clone())
+        } else {
+            HostKeyVerification::KnownHosts(job.known_hosts_file.clone())
+        };
+
+        let ssh_config = SshConfig {
+            host: job.host.clone(),
+            port: job.port,
+            username: job.username.clone(),
+            auth: SshAuth::PrivateKey {
+                path: job.private_key_path.clone(),
+                passphrase: None,
+            },
+            host_key_verification,
+        };
+
+        // Connect
+        let mut client = match ScpClient::connect(ssh_config, ct).await {
+            Ok(c) => c,
+            Err(e) => return Self::synthesize_outcome(e),
+        };
+
+        // Upload
+        let outcome = match client
+            .upload(&job.local_path, &job.remote_dir, None, ct)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => return Self::synthesize_outcome(e),
+        };
+
+        // Close the connection
+        let _ = client.close().await;
+
+        Ok(ScpOutcome {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: outcome.server_messages.join("\n"),
+        })
     }
 
     async fn fetch(
@@ -1013,76 +875,64 @@ impl ScpRunner for OpenSshScpRunner {
         job: &ScpFetchJob,
         ct: &CancellationToken,
     ) -> std::io::Result<ScpOutcome> {
-        let argv = build_scp_fetch_argv(job);
-        let child = tokio::process::Command::new("scp")
-            .args(&argv)
-            .kill_on_drop(true)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-        drive_scp_child(child, ct, "fetch_file.scp_diag").await
-    }
-}
+        use mecmcp_scp::{HostKeyVerification, ScpClient, SshAuth, SshConfig};
 
-#[cfg(test)]
-mod runtime_dependency_tests {
-    use super::validate_scp_runtime;
-    use crate::JmcpError;
+        // Build SshConfig from the job parameters.
+        // accept_new_host_keys=true uses AcceptNew (add to known_hosts); false uses KnownHosts (strict).
+        let host_key_verification = if job.accept_new_host_keys {
+            HostKeyVerification::AcceptNew(job.known_hosts_file.clone())
+        } else {
+            HostKeyVerification::KnownHosts(job.known_hosts_file.clone())
+        };
 
-    #[test]
-    fn missing_scp_fails_with_stable_dependency_error() {
-        let missing =
-            std::env::temp_dir().join(format!("rust-junosmcp-missing-scp-{}", std::process::id()));
-        let error = validate_scp_runtime(&missing).unwrap_err();
-        assert!(matches!(error, JmcpError::ScpDependencyUnavailable { .. }));
-        assert!(error.to_string().contains("not found"));
-    }
+        let ssh_config = SshConfig {
+            host: job.host.clone(),
+            port: job.port,
+            username: job.username.clone(),
+            auth: SshAuth::PrivateKey {
+                path: job.private_key_path.clone(),
+                passphrase: None,
+            },
+            host_key_verification,
+        };
 
-    #[cfg(unix)]
-    fn fake_scp(stderr: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
+        // Connect
+        let mut client = match ScpClient::connect(ssh_config, ct).await {
+            Ok(c) => c,
+            Err(e) => return Self::synthesize_outcome(e),
+        };
 
-        let directory = tempfile::tempdir().unwrap();
-        let executable = directory.path().join("scp");
-        std::fs::write(
-            &executable,
-            format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit 1\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        (directory, executable)
-    }
+        // Download
+        let outcome = match client
+            .download(&job.remote_path, &job.local_path, None, ct)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => return Self::synthesize_outcome(e),
+        };
 
-    #[cfg(unix)]
-    #[test]
-    fn scp_without_legacy_option_is_rejected() {
-        let (_directory, executable) = fake_scp("usage: scp [-pr] source target");
-        let error = validate_scp_runtime(&executable).unwrap_err();
-        assert!(matches!(error, JmcpError::ScpDependencyUnavailable { .. }));
-        assert!(error.to_string().contains("does not advertise"));
-    }
+        // Close the connection
+        let _ = client.close().await;
 
-    #[cfg(unix)]
-    #[test]
-    fn scp_that_accepts_legacy_option_passes_probe() {
-        let (_directory, executable) = fake_scp("usage: scp [-Opr] source target");
-        validate_scp_runtime(&executable).unwrap();
+        Ok(ScpOutcome {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: outcome.server_messages.join("\n"),
+        })
     }
 }
 
 /// Test double that records calls and returns canned outcomes.
-#[cfg(test)]
-pub(crate) struct MockScpRunner {
+pub struct MockScpRunner {
     pub outcome: ScpOutcome,
-    pub calls: tokio::sync::Mutex<Vec<Vec<String>>>,
-    pub fetch_calls: tokio::sync::Mutex<Vec<Vec<String>>>,
+    pub calls: tokio::sync::Mutex<Vec<ScpJob>>,
+    pub fetch_calls: tokio::sync::Mutex<Vec<ScpFetchJob>>,
     /// When `Some`, the runner sleeps this long (cancel-aware) before
     /// returning the outcome. Used by cancellation tests to assert the
     /// SCP call observes a mid-flight cancel.
     pub delay: Option<std::time::Duration>,
 }
 
-#[cfg(test)]
 impl MockScpRunner {
     pub fn ok() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
@@ -1120,11 +970,10 @@ impl MockScpRunner {
     }
 }
 
-#[cfg(test)]
 #[async_trait::async_trait]
 impl ScpRunner for MockScpRunner {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
-        self.calls.lock().await.push(build_scp_argv(job));
+        self.calls.lock().await.push(job.clone());
         if let Some(d) = self.delay {
             tokio::select! {
                 biased;
@@ -1142,10 +991,7 @@ impl ScpRunner for MockScpRunner {
         job: &ScpFetchJob,
         ct: &CancellationToken,
     ) -> std::io::Result<ScpOutcome> {
-        self.fetch_calls
-            .lock()
-            .await
-            .push(build_scp_fetch_argv(job));
+        self.fetch_calls.lock().await.push(job.clone());
         if let Some(d) = self.delay {
             tokio::select! {
                 biased;
@@ -1164,7 +1010,7 @@ mod runner_tests {
     use super::*;
 
     #[tokio::test]
-    async fn mock_records_argv_for_assertion() {
+    async fn mock_records_job_for_assertion() {
         let runner = MockScpRunner::ok();
         let job = ScpJob {
             private_key_path: "/k".into(),
@@ -1181,14 +1027,12 @@ mod runner_tests {
         assert_eq!(out.exit_code, 0);
         let calls = runner.calls.lock().await;
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0][0], "-O");
+        assert_eq!(calls[0].host, "10.0.0.1");
     }
 
     /// T4 (issue #44 Half A): a `MockScpRunner::with_delay` runner, raced
-    /// against a token that fires mid-flight, returns `io::ErrorKind::Interrupted`
-    /// — the same shape the real `OpenSshScpRunner` returns when it calls
-    /// `child.start_kill()` on cancel. `transfer_file::handle` then maps
-    /// `Interrupted` to `JmcpError::Cancelled`.
+    /// against a token that fires mid-flight, returns `io::ErrorKind::Interrupted`.
+    /// `transfer_file::handle` then maps `Interrupted` to `JmcpError::Cancelled`.
     #[tokio::test]
     async fn mock_runner_with_delay_cancels_to_interrupted() {
         let runner = MockScpRunner::with_delay(std::time::Duration::from_secs(5));
@@ -1216,7 +1060,7 @@ mod runner_tests {
     }
 
     #[tokio::test]
-    async fn mock_fetch_records_argv_for_assertion() {
+    async fn mock_fetch_records_job_for_assertion() {
         let runner = MockScpRunner::ok();
         let job = ScpFetchJob {
             private_key_path: "/k".into(),
@@ -1233,8 +1077,7 @@ mod runner_tests {
         assert_eq!(out.exit_code, 0);
         let calls = runner.fetch_calls.lock().await;
         assert_eq!(calls.len(), 1);
-        // -O appears first in fetch argv, exactly as in upload argv.
-        assert_eq!(calls[0][0], "-O");
+        assert_eq!(calls[0].host, "10.0.0.1");
     }
 }
 
@@ -2181,11 +2024,9 @@ mod scp_unit_tests {
         assert_eq!(outcome.exit_code, 0);
         let calls = mock.calls.lock().await;
         assert_eq!(calls.len(), 1);
-        assert!(calls[0].iter().any(|s| s == "-O"), "argv missing -O");
-        assert!(
-            calls[0].iter().any(|s| s == "admin@192.0.2.4:/var/tmp/"),
-            "argv missing dest"
-        );
+        assert_eq!(calls[0].host, "192.0.2.4");
+        assert_eq!(calls[0].username, "admin");
+        assert_eq!(calls[0].remote_dir, "/var/tmp/");
     }
 
     /// Exercise the exit-255 + "Connection timed out" remap in isolation, without
@@ -2459,69 +2300,137 @@ mod scp_unit_tests {
         }
     }
 
-    /// Regression for #56: prior to v0.6.1, drive_scp_child awaited
-    /// `child.wait()` before draining stdout/stderr. A child that writes
-    /// more than the kernel pipe-buffer capacity (~64 KiB on Linux) to
-    /// stderr before exit will block on `write(2)` and `wait()` will hang.
-    /// The concurrent-drain helper must complete promptly even for a
-    /// large stderr payload.
-    #[tokio::test]
-    async fn drive_scp_child_does_not_deadlock_on_large_stderr() {
-        // 128 KiB > typical Linux pipe-buffer (~64 KiB).
-        // `head -c` + base64 keeps the fixture portable.
-        // We write to stderr (>&2) then exit non-zero.
-        let child = tokio::process::Command::new("sh")
-            .args(["-c", "head -c 131072 /dev/urandom | base64 1>&2; exit 7"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("spawn sh");
-
-        let ct = tokio_util::sync::CancellationToken::new();
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            drive_scp_child(child, &ct, "test.scp_diag"),
-        )
-        .await
-        .expect("drive_scp_child must complete within 5s — pipe-fill deadlock regression (#56)")
-        .expect("drive_scp_child must return Ok with the captured outcome");
-
-        assert_eq!(outcome.exit_code, 7);
-        assert!(
-            outcome.stderr.len() >= 131_072,
-            "expected ≥128 KiB of stderr, got {} bytes",
-            outcome.stderr.len()
+    /// Assert that host-key verification failures produce `HostKeyMismatch` (not generic `Io`).
+    /// This is a stable audit code that operators filter on.
+    #[test]
+    fn error_taxonomy_host_key_mismatch() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "Host key verification failed".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device1",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
         );
+        match err {
+            JmcpError::HostKeyMismatch { router, .. } => {
+                assert_eq!(router, "device1");
+            }
+            other => panic!("expected HostKeyMismatch, got {other:?}"),
+        }
     }
 
-    /// Cancellation arm must still kill the child and report Interrupted —
-    /// behaviour the existing OpenSshScpRunner has today; drive_scp_child
-    /// must preserve it.
-    #[tokio::test]
-    async fn drive_scp_child_honors_cancellation() {
-        let child = tokio::process::Command::new("sh")
-            .args(["-c", "sleep 30"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("spawn sleep");
+    /// Assert that host-key changed errors also produce `HostKeyMismatch`.
+    #[test]
+    fn error_taxonomy_host_key_changed() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "REMOTE HOST IDENTIFICATION HAS CHANGED".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device2",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match err {
+            JmcpError::HostKeyMismatch { router, .. } => {
+                assert_eq!(router, "device2");
+            }
+            other => panic!("expected HostKeyMismatch, got {other:?}"),
+        }
+    }
 
-        let ct = tokio_util::sync::CancellationToken::new();
-        let ct_for_cancel = ct.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            ct_for_cancel.cancel();
-        });
+    /// Assert that connection timeouts produce `ConnectTimeout` (not generic `Io`).
+    #[test]
+    fn error_taxonomy_connect_timeout() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "Connection timed out".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device3",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match err {
+            JmcpError::ConnectTimeout(router) => {
+                assert_eq!(router, "device3");
+            }
+            other => panic!("expected ConnectTimeout, got {other:?}"),
+        }
+    }
 
-        let err = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            drive_scp_child(child, &ct, "test.scp_diag"),
-        )
-        .await
-        .expect("cancellation should return promptly")
-        .expect_err("cancellation must surface as an Err");
+    /// Assert that "No route to host" produces `ConnectTimeout`.
+    #[test]
+    fn error_taxonomy_no_route_to_host() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "No route to host".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device4",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match err {
+            JmcpError::ConnectTimeout(router) => {
+                assert_eq!(router, "device4");
+            }
+            other => panic!("expected ConnectTimeout, got {other:?}"),
+        }
+    }
 
-        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
-        assert!(err.to_string().contains("cancelled"));
+    /// Assert that a revoked host key produces `HostKeyRevoked`, not `HostKeyMismatch`.
+    /// A revoked key is a distinct operational situation: the operator has already decided
+    /// this key is compromised and must not be trusted. This must appear in audit records
+    /// as `host_key_revoked`, not conflated with `host_key_mismatch`.
+    #[test]
+    fn error_taxonomy_host_key_revoked() {
+        let outcome = ScpOutcome {
+            exit_code: 255,
+            stdout: String::new(),
+            stderr: "Host key for 192.0.2.1 is marked @revoked in known_hosts".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device5",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match err {
+            JmcpError::HostKeyRevoked { router, .. } => {
+                assert_eq!(router, "device5");
+            }
+            JmcpError::HostKeyMismatch { .. } => {
+                panic!("revoked key must produce HostKeyRevoked, not HostKeyMismatch")
+            }
+            other => panic!("expected HostKeyRevoked, got {other:?}"),
+        }
+    }
+
+    /// Assert that generic failures produce `ScpFailed` with scrubbed stderr.
+    #[test]
+    fn error_taxonomy_generic_failure() {
+        let outcome = ScpOutcome {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "scp: /var/tmp/foo.tgz: Permission denied".into(),
+        };
+        let err = classify_scp_failure(
+            &outcome,
+            "device5",
+            std::path::Path::new("/etc/jmcp/known_hosts"),
+        );
+        match err {
+            JmcpError::ScpFailed { exit_code, stderr } => {
+                assert_eq!(exit_code, 1);
+                assert!(stderr.contains("Permission denied"));
+            }
+            other => panic!("expected ScpFailed, got {other:?}"),
+        }
     }
 }

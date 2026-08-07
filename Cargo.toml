@@ -57,24 +57,25 @@ anyhow       = "1"
 rustez       = "0.13"
 # `version` is redundant for resolution alongside `tag`, but cargo-deny reads a
 # versionless dependency as a wildcard and rejects it under [bans].
-# All four mecmcp crates MUST resolve to the same git ref. Cargo keys a git
+# All mecmcp crates MUST resolve to the same git ref. Cargo keys a git
 # dependency on its source, not just its version, so two different refs produce
 # two copies of mecmcp-auth in the graph — and two distinct `CallerCtx` types
 # with different TypeIds. `Extensions::get::<CallerCtx>()` then silently returns
 # None, and every per-token limit stops enforcing while still logging as
 # configured. That is not theoretical: it already happened in this repo.
 #
-# mecmcp-runtime exists only on feat/phase-3b-runtime-crate branch (not yet
-# merged, not yet tagged). All four deps point at that branch for now.
-# BLOCKER: re-pin to a release tag before merge.
-mecmcp-audit = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-auth  = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-transport = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-runtime = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-policy = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-inventory = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
-mecmcp-device = { version = "0.3.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.3.9" }
-mecmcp-changeset = { version = "0.5.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.5.0" }
+# Temporary git dependency on mecmcp rev 52a2caf (post-0.6.0, adds mecmcp-scp).
+# Re-pin to a release tag when mecmcp publishes the next version.
+mecmcp-audit = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-auth  = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-transport = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-runtime = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-policy = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-inventory = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-device = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-changeset = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-scp = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
+mecmcp-secret = { version = "0.6.1", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.6.1" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

@@ -19,7 +19,7 @@
 //! responsible for any cleanup between runs.
 
 use rust_junosmcp_core::{
-    DeviceManager, Inventory, OpenSshScpRunner, TransferConfig,
+    DeviceManager, Inventory, MecmcpScpRunner, TransferConfig,
     policy::Policy,
     tools::{
         ConfigDiffArgs, ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, GatherFactsArgs,
@@ -352,7 +352,7 @@ fn setup_real_transfer_env() -> (Arc<DeviceManager>, TransferConfig, String) {
     let cfg = TransferConfig {
         staging_dir,
         known_hosts_file: std::path::PathBuf::from("/etc/jmcp/known_hosts"),
-        scp_runner: Arc::new(OpenSshScpRunner),
+        scp_runner: Arc::new(MecmcpScpRunner),
         transfer_locks: Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),

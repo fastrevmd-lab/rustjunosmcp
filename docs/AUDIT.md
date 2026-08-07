@@ -74,6 +74,7 @@ Emitted by the base Junos tools and inherited by SRX workflows through their
 | `lease_error` | Lease acquisition or candidate cleanup failed. |
 | `verify_mismatch` | Post-op checksum or version verification mismatch. |
 | `host_key_mismatch` | SSH host-key verification rejected the device. |
+| `host_key_revoked` | SSH host key is marked @revoked in known_hosts (key compromised). |
 | `confirmation_required` | Operation needs re-call with `confirm=true`. |
 | `commit_confirmed_active` | A pending commit-confirmed rollback window blocks the operation. |
 | `insufficient_disk` | Not enough free space on the device. |
