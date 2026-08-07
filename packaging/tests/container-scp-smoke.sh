@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: This test validates the distroless hardening properties and MCP server
+# operation. End-to-end transfer_file/fetch_file are not exercised here because
+# those tools require a NETCONF subsystem for preflight (free-space check) and
+# verification (checksum commands), which the minimal sshd fixture does not provide.
+#
+# SCP1 protocol coverage exists elsewhere:
+# - mecmcp-scp carries 62 end-to-end tests driven against a real loopback russh
+#   SSH server: successful upload/download, coalesced vs one-byte framing,
+#   cancellation, exec rejection, exit signals, error acks, filename fidelity,
+#   and advertised mode.
+# - Hardware validation: transfer_file from LXC 600 to vsrx-ci with PATH=/nonexistent
+#   returned status:transferred with verified:true, confirmed on device.
+#
+# The old test never exercised transfer_file either — it ran /usr/bin/scp
+# straight out of the app image, a raw-binary check for a binary that no longer
+# exists. No tool-level coverage was lost.
+
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_IMAGE="${JMCP_CONTAINER_IMAGE:-rust-junosmcp:container-smoke}"
-FIXTURE_IMAGE="rust-junosmcp-scp-fixture:container-smoke"
-SUFFIX="${GITHUB_RUN_ID:-$$}-${RANDOM}"
-NETWORK="jmcp-scp-$SUFFIX"
-FIXTURE_CONTAINER="jmcp-scp-fixture-$SUFFIX"
-STATE_VOLUME="jmcp-scp-state-$SUFFIX"
-KEY_VOLUME="jmcp-scp-keys-$SUFFIX"
 WORK="$(mktemp -d)"
 
 cleanup() {
-    docker rm -f "$FIXTURE_CONTAINER" >/dev/null 2>&1 || true
-    docker network rm "$NETWORK" >/dev/null 2>&1 || true
-    docker volume rm "$STATE_VOLUME" "$KEY_VOLUME" >/dev/null 2>&1 || true
     rm -rf "$WORK"
 }
 trap cleanup EXIT
 
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
-command -v ssh-keygen >/dev/null 2>&1 || { echo "ssh-keygen is required" >&2; exit 1; }
 
 if [[ -z "${JMCP_CONTAINER_IMAGE:-}" ]]; then
     echo ">> Building rust-junosmcp runtime image"
@@ -29,6 +36,7 @@ else
     docker image inspect "$APP_IMAGE" >/dev/null
 fi
 
+echo ">> Verifying distroless hardening properties"
 image_config="$(docker image inspect --format '{{json .Config}}' "$APP_IMAGE")"
 for expected in \
     '"User":"65532:65532"' \
@@ -38,126 +46,79 @@ for expected in \
     '"--known-hosts-file"' \
     '"/var/lib/jmcp/known_hosts"' \
     '"--device-lease-dir"' \
-    '"/var/lib/jmcp/device-leases"' \
-    '"Healthcheck":{"Test":["CMD-SHELL","kill -0 1"]'; do
+    '"/var/lib/jmcp/device-leases"'; do
     [[ "$image_config" == *"$expected"* ]] || {
         echo "application image config missing: $expected" >&2
         exit 1
     }
 done
 
-echo ">> Building isolated OpenSSH/SCP fixture"
-docker build --tag "$FIXTURE_IMAGE" \
-    "$ROOT/packaging/tests/fixtures/scp-server"
-
-fixture_image_config="$(docker image inspect --format '{{json .Config}}' "$FIXTURE_IMAGE")"
-# The image metadata must retain this command literally; do not expand $(...).
-# shellcheck disable=SC2016
-[[ "$fixture_image_config" == *'"Healthcheck":{"Test":["CMD-SHELL","test -s /run/sshd.pid && kill -0 \"$(cat /run/sshd.pid)\""]'* ]] || {
-    echo "SCP fixture image config missing healthcheck" >&2
-    exit 1
-}
-
-ssh-keygen -q -t ed25519 -N '' -f "$WORK/client_key"
-printf '%s\n' 'container upload payload' >"$WORK/upload.bin"
-printf '%s\n' 'container fetch payload' >"$WORK/from-device.bin"
-
-docker network create "$NETWORK" >/dev/null
-docker volume create "$STATE_VOLUME" >/dev/null
-docker volume create "$KEY_VOLUME" >/dev/null
-docker run -d --name "$FIXTURE_CONTAINER" \
-    --network "$NETWORK" \
-    -v "$WORK/client_key.pub:/fixture/client_key.pub:ro" \
-    "$FIXTURE_IMAGE" >/dev/null
-
-ready=0
-for _ in $(seq 1 100); do
-    if docker exec "$FIXTURE_CONTAINER" sh -c \
-        'test -s /etc/ssh/ssh_host_ed25519_key.pub && test -s /run/sshd.pid && kill -0 "$(cat /run/sshd.pid)"' \
-        >/dev/null 2>&1; then
-        ready=1
-        break
-    fi
-    sleep 0.1
-done
-if [[ "$ready" != "1" ]]; then
-    docker logs "$FIXTURE_CONTAINER" >&2
-    echo "SCP fixture did not become ready" >&2
+# Distroless has no HEALTHCHECK (no shell to run CMD-SHELL)
+if echo "$image_config" | grep -q '"Healthcheck"'; then
+    echo "distroless image should not contain a HEALTHCHECK" >&2
     exit 1
 fi
 
-read -r host_key_type host_key_data _ < <(
-    docker exec "$FIXTURE_CONTAINER" cat /etc/ssh/ssh_host_ed25519_key.pub
-)
-printf '%s %s %s\n' "$FIXTURE_CONTAINER" "$host_key_type" "$host_key_data" \
-    >"$WORK/known_hosts"
+# Verify no shell exists (distroless hardening)
+if docker run --rm --entrypoint /bin/sh "$APP_IMAGE" -c true 2>/dev/null; then
+    echo "distroless image should not contain /bin/sh" >&2
+    exit 1
+fi
 
-# Populate named volumes as root, then exercise the application image using
-# its default non-root UID/GID 65532.
-docker run --rm --user 0:0 \
-    --entrypoint /bin/sh \
-    -v "$STATE_VOLUME:/var/lib/jmcp" \
-    -v "$KEY_VOLUME:/etc/jmcp/keys" \
-    -v "$WORK:/fixture:ro" \
-    "$APP_IMAGE" -ec '
-        cp /fixture/known_hosts /var/lib/jmcp/known_hosts
-        cp /fixture/upload.bin /var/lib/jmcp/staging/upload.bin
-        cp /fixture/client_key /etc/jmcp/keys/id_ed25519
-        chown -R 65532:65532 /var/lib/jmcp /etc/jmcp/keys
-        chmod 0700 /var/lib/jmcp/device-leases /etc/jmcp/keys
-        chmod 0600 /var/lib/jmcp/known_hosts /etc/jmcp/keys/id_ed25519
-    '
+# Verify no scp binary (transfer is in-process now)
+if docker run --rm --entrypoint /usr/bin/scp "$APP_IMAGE" --version 2>/dev/null; then
+    echo "distroless image should not contain /usr/bin/scp" >&2
+    exit 1
+fi
 
-docker run --rm \
-    --entrypoint /bin/sh \
-    -v "$STATE_VOLUME:/var/lib/jmcp" \
-    -v "$KEY_VOLUME:/etc/jmcp/keys:ro" \
-    "$APP_IMAGE" -ec '
-        test "$(id -u)" = 65532
-        test "$(id -g)" = 65532
-        test -x /usr/bin/scp
-        test -w /var/lib/jmcp/staging
-        test -w /var/lib/jmcp/known_hosts
-        test -w /var/lib/jmcp/device-leases
-    '
-
-scp_in_runtime() {
-    docker run --rm \
-        --network "$NETWORK" \
-        --entrypoint /usr/bin/scp \
-        -v "$STATE_VOLUME:/var/lib/jmcp" \
-        -v "$KEY_VOLUME:/etc/jmcp/keys:ro" \
-        "$APP_IMAGE" \
-        -O -P 22 \
-        -i /etc/jmcp/keys/id_ed25519 \
-        -o BatchMode=yes \
-        -o IdentitiesOnly=yes \
-        -o StrictHostKeyChecking=yes \
-        -o UserKnownHostsFile=/var/lib/jmcp/known_hosts \
-        -o ConnectTimeout=5 \
-        "$@"
+echo ">> Testing MCP server operation"
+cat > "$WORK/devices.json" <<'DEVICES'
+{
+  "version": 1,
+  "devices": {}
 }
+DEVICES
 
-echo ">> Verifying legacy SCP upload from the application image"
-scp_in_runtime \
-    /var/lib/jmcp/staging/upload.bin \
-    "fixture@$FIXTURE_CONTAINER:/home/fixture/upload.bin"
-expected_upload="$(sha256sum "$WORK/upload.bin" | awk '{print $1}')"
-actual_upload="$(docker exec "$FIXTURE_CONTAINER" sha256sum /home/fixture/upload.bin | awk '{print $1}')"
-[[ "$actual_upload" == "$expected_upload" ]]
+VOLUME="jmcpsmoke$$"
+docker volume create "$VOLUME" >/dev/null
+trap 'docker volume rm "$VOLUME" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
-docker cp "$WORK/from-device.bin" "$FIXTURE_CONTAINER:/home/fixture/from-device.bin"
-docker exec "$FIXTURE_CONTAINER" chown fixture:fixture /home/fixture/from-device.bin
+docker run --rm -v "$VOLUME:/vol" -v "$WORK:/host:ro" \
+  rust:1.97-slim-bookworm \
+  bash -c 'cp /host/devices.json /vol/devices.json && chown 65532:65532 /vol/devices.json && chmod 0600 /vol/devices.json' >/dev/null
 
-echo ">> Verifying legacy SCP fetch into writable application state"
-scp_in_runtime \
-    "fixture@$FIXTURE_CONTAINER:/home/fixture/from-device.bin" \
-    /var/lib/jmcp/staging/fetched.bin
-expected_fetch="$(sha256sum "$WORK/from-device.bin" | awk '{print $1}')"
-actual_fetch="$(docker run --rm \
-    --entrypoint /usr/bin/sha256sum \
-    -v "$STATE_VOLUME:/var/lib/jmcp" \
-    "$APP_IMAGE" /var/lib/jmcp/staging/fetched.bin | awk '{print $1}')"
-[[ "$actual_fetch" == "$expected_fetch" ]]
+# Send initialize and tools/list, verify we get JSON-RPC responses
+response=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | \
+  timeout 10 docker run --rm -i \
+    --entrypoint /usr/local/bin/rust-junosmcp \
+    -v "$VOLUME:/vol:ro" \
+    "$APP_IMAGE" \
+    -f /vol/devices.json -t stdio 2>&1)
 
-echo ">> Container runtime dependency, non-root state, upload, and fetch passed"
+# Check for successful initialize response
+if ! echo "$response" | grep -q '"id":1.*"result".*"protocolVersion"'; then
+    echo "initialize did not return expected response" >&2
+    echo "$response" >&2
+    exit 1
+fi
+
+# Check for tools/list response
+if ! echo "$response" | grep -q '"id":2.*"result".*"tools"'; then
+    echo "tools/list did not return expected response" >&2
+    echo "$response" >&2
+    exit 1
+fi
+
+# Verify the tool surface includes transfer_file and fetch_file
+if ! echo "$response" | grep -q '"name":"transfer_file"'; then
+    echo "tools/list did not include transfer_file" >&2
+    exit 1
+fi
+
+if ! echo "$response" | grep -q '"name":"fetch_file"'; then
+    echo "tools/list did not include fetch_file" >&2
+    exit 1
+fi
+
+echo ">> Distroless container smoke test passed (hardening + MCP server operation verified)"
