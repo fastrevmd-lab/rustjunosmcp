@@ -12,7 +12,7 @@
 //!   cargo test -p rust-junosmcp-core --test integration_upgrade_junos -- --nocapture
 
 use rust_junosmcp_core::tools::UpgradeJunosArgs;
-use rust_junosmcp_core::tools::transfer_file::{OpenSshScpRunner, TransferConfig, TransferLocks};
+use rust_junosmcp_core::tools::transfer_file::{MecmcpScpRunner, TransferConfig, TransferLocks};
 use rust_junosmcp_core::tools::upgrade_junos::{UpgradeConfig, handle};
 use rust_junosmcp_core::{DeviceLeaseManager, DeviceManager, Inventory};
 use std::sync::Arc;
@@ -42,7 +42,7 @@ async fn live_upgrade_round_trip() {
     let transfer_cfg = TransferConfig {
         staging_dir: staging_dir.into(),
         known_hosts_file: "/etc/jmcp/known_hosts".into(),
-        scp_runner: Arc::new(OpenSshScpRunner),
+        scp_runner: Arc::new(MecmcpScpRunner),
         transfer_locks: Arc::new(TransferLocks::default()),
         // Integration test is `#[ignore]`-gated and runs against a real
         // lab device whose host key is pre-pinned; accept-new is safe.

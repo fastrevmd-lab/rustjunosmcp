@@ -1637,9 +1637,7 @@ mod scope_tests {
         rust_junosmcp_core::TransferConfig {
             staging_dir: std::path::PathBuf::from("/tmp/staging"),
             known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
-            scp_runner: std::sync::Arc::new(
-                rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner,
-            ),
+            scp_runner: rust_junosmcp_core::MockScpRunner::ok(),
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
@@ -1893,7 +1891,6 @@ mod scope_tests {
     #[test]
     fn handler_carries_transfer_config() {
         use rust_junosmcp_core::TransferConfig;
-        use rust_junosmcp_core::tools::transfer_file::OpenSshScpRunner;
 
         let inv = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inv.clone()));
@@ -1901,7 +1898,7 @@ mod scope_tests {
         let cfg = TransferConfig {
             staging_dir: std::path::PathBuf::from("/tmp/x"),
             known_hosts_file: std::path::PathBuf::from("/tmp/khosts"),
-            scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+            scp_runner: rust_junosmcp_core::MockScpRunner::ok(),
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),

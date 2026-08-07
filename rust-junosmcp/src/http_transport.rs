@@ -13,12 +13,12 @@ use anyhow::{Context, Result};
 use axum::Router;
 use mecmcp_transport::{
     ConcurrencyState, LimitedSessionManager, LimitsConfig, OptionalPreflight, PrometheusRuntime,
-    ScopePreflight, TransportIdentity, apply_body_limit, apply_rate_limit, concurrency_middleware,
+    ScopePreflight, TransportIdentity, apply_body_limit, apply_ip_rate_limit,
+    apply_token_rate_limit, target_concurrency_middleware, token_concurrency_middleware,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use rust_junosmcp_auth::CallerCtx as SharedCallerCtx;
 use rust_junosmcp_auth::tower::{AuthState, auth_layer};
 use serde_json::Value;
 use std::net::SocketAddr;
@@ -37,7 +37,7 @@ use std::sync::Arc;
 struct JunosPreflight;
 
 impl ScopePreflight for JunosPreflight {
-    fn check(&self, body: &[u8], caller: &SharedCallerCtx) -> Result<(), String> {
+    fn check(&self, body: &[u8], caller: mecmcp_transport::CallerScopes<'_>) -> Result<(), String> {
         if request_exceeds_scope(body, caller) {
             Err("insufficient_scope".to_owned())
         } else {
@@ -46,7 +46,7 @@ impl ScopePreflight for JunosPreflight {
     }
 }
 
-fn request_exceeds_scope(bytes: &[u8], caller: &SharedCallerCtx) -> bool {
+fn request_exceeds_scope(bytes: &[u8], caller: mecmcp_transport::CallerScopes<'_>) -> bool {
     if bytes.is_empty() {
         return false;
     }
@@ -56,12 +56,12 @@ fn request_exceeds_scope(bytes: &[u8], caller: &SharedCallerCtx) -> bool {
     match value {
         Value::Array(values) => values
             .iter()
-            .any(|value| tool_call_exceeds_scope(value, caller)),
-        value => tool_call_exceeds_scope(&value, caller),
+            .any(|value| tool_call_exceeds_scope(value, &caller)),
+        value => tool_call_exceeds_scope(&value, &caller),
     }
 }
 
-fn tool_call_exceeds_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
+fn tool_call_exceeds_scope(value: &Value, caller: &mecmcp_transport::CallerScopes<'_>) -> bool {
     if value.get("method").and_then(Value::as_str) != Some("tools/call") {
         return false;
     }
@@ -97,7 +97,7 @@ fn tool_call_exceeds_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
     false
 }
 
-fn device_value_in_scope(value: &Value, caller: &SharedCallerCtx) -> bool {
+fn device_value_in_scope(value: &Value, caller: &mecmcp_transport::CallerScopes<'_>) -> bool {
     match value {
         Value::String(device) => caller.devices.allows(device),
         Value::Array(devices) => {
@@ -191,15 +191,21 @@ pub async fn serve(
     let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
     let rmcp_router = Router::new().nest_service("/mcp", svc);
 
-    // Innermost added layer: concurrency (auth and rate run first in request order).
+    // Innermost layers (closest to handler): target concurrency runs after
+    // authorization and body limit (buffering layer).
     let app = rmcp_router.layer(axum::middleware::from_fn_with_state(
-        conc,
-        concurrency_middleware,
+        conc.clone(),
+        target_concurrency_middleware,
     ));
 
-    // Rate limiting wraps concurrency but remains inside auth, so CallerCtx exists
-    // and an over-rate request acquires no concurrency/session capacity.
-    let app = apply_rate_limit(app, &limits);
+    // Token concurrency: non-buffering, runs before body limit.
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        conc,
+        token_concurrency_middleware,
+    ));
+
+    // Per-token rate limiting: runs after authentication, before concurrency.
+    let app = apply_token_rate_limit(app, &limits);
 
     // Auth runs before rate limiting and concurrency so CallerCtx is present.
     // Preflight is integrated into auth: it runs after bearer authentication
@@ -218,8 +224,15 @@ pub async fn serve(
         app
     };
 
-    // Body limit outermost: reject oversized bodies before buffering.
+    // Body limit: outermost application middleware, rejects oversized bodies
+    // before buffering and before authentication. This matches the old behavior
+    // where body limit ran first.
     let app = apply_body_limit(app, &limits);
+
+    // Per-IP rate limiting: applied after body limit, runs before authentication
+    // so unauthenticated requests (which have no token to charge) are metered
+    // per source IP.
+    let app = apply_ip_rate_limit(app, &limits);
     let app = if let Some(runtime) = metrics_runtime.as_ref() {
         app.merge(runtime.router())
     } else {

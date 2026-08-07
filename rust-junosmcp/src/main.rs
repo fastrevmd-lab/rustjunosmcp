@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use cli::{Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp_auth::TokenStoreFile;
-use rust_junosmcp_core::{DeviceManager, OpenSshScpRunner, Policy, TransferConfig};
+use rust_junosmcp_core::{DeviceManager, MecmcpScpRunner, Policy, TransferConfig};
 use server::JmcpHandler;
 use std::sync::Arc;
 
@@ -90,10 +90,6 @@ async fn main() -> Result<()> {
         anyhow::bail!("--enable-metrics requires --transport streamable-http");
     }
 
-    rust_junosmcp_core::tools::transfer_file::validate_scp_runtime(std::path::Path::new("scp"))
-        .map_err(anyhow::Error::from)
-        .context("checking file-transfer runtime dependency")?;
-
     let inv_path = args.device_mapping.clone();
     let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
         .map_err(anyhow::Error::from)
@@ -166,7 +162,7 @@ async fn main() -> Result<()> {
     let transfer_cfg = TransferConfig {
         staging_dir: args.staging_dir.clone(),
         known_hosts_file: args.known_hosts_file.clone(),
-        scp_runner: std::sync::Arc::new(OpenSshScpRunner),
+        scp_runner: std::sync::Arc::new(MecmcpScpRunner),
         // Process-wide per-router serialization (issue #26, L4).
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),

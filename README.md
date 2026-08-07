@@ -119,7 +119,7 @@ parallel with a configurable concurrency cap.
 
 - **`transfer_file`** — idempotent SCP push (`scp -O`, since Junos disables OpenSSH SFTP) of a host-staged file to `/var/tmp/<basename>` on a Junos device. Pre-flight free-space check on `/var` (`local_size + 32 MiB` headroom), SHA-256 verify, post-transfer checksum re-validation with delete-on-mismatch. SSH-key auth only — password-auth devices rejected with `[code=unsupported_auth]`.
 - **`list_staged_files`** — lists host staging dir always, plus device `/var/tmp/` listing when `router_name` is supplied.
-- **Stable error codes** — every transfer failure carries an LLM-readable `[code=...]` Display tag (`bad_source_path`, `insufficient_disk`, `unsupported_auth`, `dest_exists_differs`, `scp_failed`, `connect_timeout`, `verify_mismatch`, `outer_timeout`, `device_probe_failed`).
+- **Stable error codes** — every transfer failure carries an LLM-readable `[code=...]` Display tag (`bad_source_path`, `insufficient_disk`, `unsupported_auth`, `dest_exists_differs`, `scp_failed`, `connect_timeout`, `host_key_mismatch`, `host_key_revoked`, `verify_mismatch`, `outer_timeout`, `device_probe_failed`).
 - **New CLI flags** — `--staging-dir` (default `/var/lib/jmcp/staging`) and `--known-hosts-file` (default `/etc/jmcp/known_hosts`).
 - **Packaging** — `install.sh` provisions the new on-disk surface owned by `jmcp:jmcp`. See the File transfers section below for details.
 - Tool count: 11 → 13.
