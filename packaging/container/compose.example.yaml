@@ -4,11 +4,9 @@
 # and explicit writable mounts. Copy this, adjust the image tag and the paths,
 # and treat it as a starting point rather than a drop-in.
 #
-# The image is NOT distroless — it carries a shell, `scp`, and `tar`, because
-# transfer_file, fetch_file, and collect_jtac_support_bundle spawn `scp` and
-# `tar`. See the comment on the runtime FROM line in the Dockerfile. That makes
-# `read_only: true` and a non-root user more load-bearing here than they would
-# be on a distroless base, not less.
+# The image is distroless (gcr.io/distroless/cc-debian13:nonroot) — no shell,
+# no package manager, just the binary and glibc. All file transfers run in-process
+# via the native SCP1 client (#212).
 
 services:
   rust-junosmcp:
