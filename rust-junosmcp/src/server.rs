@@ -1466,8 +1466,8 @@ impl JmcpHandler {
         // already scoped. So an out-of-scope device in the filter simply returns
         // zero records rather than an error.
 
-        let result = changeset::list_change_sets(args, self.coordinator.clone(), self.dm.clone())
-            .await;
+        let result =
+            changeset::list_change_sets(args, self.coordinator.clone(), self.dm.clone()).await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),

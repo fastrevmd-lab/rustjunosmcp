@@ -1125,10 +1125,7 @@ mod tests {
         .unwrap();
         let all_arr = all.as_array().unwrap();
         assert_eq!(all_arr.len(), 2, "both change sets should be listed");
-        let ids: Vec<&str> = all_arr
-            .iter()
-            .map(|r| r["id"].as_str().unwrap())
-            .collect();
+        let ids: Vec<&str> = all_arr.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert!(ids.contains(&r1_id) && ids.contains(&r2_id));
 
         // List filtered by device: only r1's change set should appear.
