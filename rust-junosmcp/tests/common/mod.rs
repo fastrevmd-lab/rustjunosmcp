@@ -9,10 +9,10 @@
 //!   JSON-RPC, parse SSE, assert HTTP behavior (auth, sessions, etc.).
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Absolute path to the freshly-built `rust-junosmcp` binary.
@@ -23,31 +23,28 @@ pub fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust-junosmcp"))
 }
 
-/// Build the binary if it isn't already built. Cargo no-ops when up-to-date.
+/// No-op. Cargo has already built the binary by the time this runs.
 ///
-/// Honours `CARGO_TARGET_DIR` if set, matching the behaviour of `binary_path()`.
-pub fn ensure_built() {
-    let mut command = Command::new("cargo");
-    command.args(["build", "-p", "rust-junosmcp", "--no-default-features"]);
-    let features = [
-        cfg!(feature = "tls").then_some("tls"),
-        cfg!(feature = "srx").then_some("srx"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(",");
-    if !features.is_empty() {
-        command.args(["--features", &features]);
-    }
-    // Inherit CARGO_TARGET_DIR from the environment so the build writes to the
-    // same target directory that `env!("CARGO_BIN_EXE_rust-junosmcp")` reads from.
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        command.env("CARGO_TARGET_DIR", target_dir);
-    }
-    let status = command.status().expect("cargo build");
-    assert!(status.success(), "cargo build failed");
-}
+/// Kept as a function so the ~40 call sites need not all change at once, and
+/// because "make sure the binary exists" reads as a reasonable thing for a test
+/// to want. It is not: `binary_path()` uses `CARGO_BIN_EXE_rust-junosmcp`, which
+/// Cargo sets **and guarantees is built** before any integration test runs.
+///
+/// This used to shell out to `cargo build` from inside every test binary. Two
+/// problems, both real:
+///
+/// 1. **It could deadlock the suite.** `cargo test` runs test binaries
+///    concurrently, so each one launched its own `cargo` contending for the same
+///    build-directory lock. On a 2-core CI runner that stalled a single CI step
+///    for 36 minutes, against a 4–7 minute total for the whole workflow on main.
+/// 2. **It could build a different binary than the one under test.** It
+///    reassembled the feature list by hand from `cfg!(feature = ...)`, so any
+///    drift between that list and the real build would have tests exercising a
+///    binary nobody asked for.
+///
+/// Do not reintroduce a build step here. If the binary is genuinely missing,
+/// that is a Cargo bug, and `binary_path()` failing loudly is the right outcome.
+pub fn ensure_built() {}
 
 /// Write `contents` to `path` with mode 0600.
 ///
@@ -110,7 +107,7 @@ pub fn write_inventory_temp(devices: &[(&str, &str, u16, &str, &str)]) -> tempfi
 pub struct StdioChild {
     pub child: Child,
     pub stdin: ChildStdin,
-    pub reader: BufReader<ChildStdout>,
+    pub lines: BoundedLines,
     pub next_id: i64,
     _device_lease_dir: tempfile::TempDir,
 }
@@ -128,23 +125,20 @@ fn send(stdin: &mut ChildStdin, msg: &Value) {
     stdin.flush().expect("flush stdin");
 }
 
-fn read_response_with_id(reader: &mut BufReader<ChildStdout>, id: i64) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).unwrap_or(0);
-        if n == 0 {
-            break;
-        }
-        let v: Value = match serde_json::from_str(line.trim()) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if v.get("id") == Some(&json!(id)) {
-            return v;
-        }
+/// Read stdout until the JSON-RPC response with `id` arrives, bounded at 15s.
+///
+/// Bounded via `BoundedLines` rather than a deadline around `read_line`: if the
+/// child stops writing, `read_line` never returns and the deadline never gets
+/// looked at again. See #281.
+fn read_response_with_id(lines: &BoundedLines, id: i64) -> Value {
+    let wanted = json!(id);
+    let found = lines.wait_for_line(Duration::from_secs(15), |line| {
+        serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v.get("id") == Some(&wanted))
+    });
+    match found {
+        Some(line) => serde_json::from_str(line.trim()).expect("jsonrpc response"),
+        None => panic!("did not receive response with id={id} within 15s"),
     }
-    panic!("did not receive response with id={id} within 15s");
 }
 
 /// Spawn the server with `-t stdio` plus any extra CLI args (for example
@@ -172,7 +166,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
 
     let mut stdin = child.stdin.take().expect("take stdin");
     let stdout = child.stdout.take().expect("take stdout");
-    let mut reader = BufReader::new(stdout);
+    let lines = BoundedLines::spawn(BufReader::new(stdout));
 
     send(
         &mut stdin,
@@ -185,7 +179,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
             }
         }),
     );
-    let _ = read_response_with_id(&mut reader, 0);
+    let _ = read_response_with_id(&lines, 0);
 
     send(
         &mut stdin,
@@ -195,7 +189,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
     StdioChild {
         child,
         stdin,
-        reader,
+        lines,
         next_id: 2,
         _device_lease_dir: device_lease_dir,
     }
@@ -221,7 +215,7 @@ pub fn call_tool(child: &mut StdioChild, name: &str, args: Value) -> Value {
         }),
     );
 
-    let resp = read_response_with_id(&mut child.reader, id);
+    let resp = read_response_with_id(&child.lines, id);
     let result = resp
         .get("result")
         .cloned()
@@ -272,47 +266,129 @@ impl Drop for Server {
     }
 }
 
+/// Lines read from a child pipe on a worker thread, so waits can be bounded.
+///
+/// **Use this instead of looping on `read_line` with a deadline.** A deadline
+/// checked *between* `read_line` calls does not bind: the failure it guards
+/// against — the awaited line never arriving — leaves `read_line` blocked
+/// forever, so control never returns to the check. The test then hangs rather
+/// than failing, and a hang reports nothing at all: no test name, no assertion,
+/// no exit code.
+///
+/// This repo has now been bitten by that shape three times (see #281), each in
+/// a separately hand-written loop. Hence one primitive rather than another copy.
+pub struct BoundedLines {
+    rx: std::sync::mpsc::Receiver<Option<String>>,
+    worker: std::thread::JoinHandle<()>,
+}
+
+impl BoundedLines {
+    pub fn spawn<R: std::io::BufRead + Send + 'static>(mut reader: R) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+        let worker = std::thread::spawn(move || {
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => {
+                        let _ = tx.send(None);
+                        return;
+                    }
+                    Ok(_) => {
+                        // A failed send means the waiter is done. Keep reading
+                        // and discarding rather than returning: this thread is
+                        // also the drain that stops the child's pipe filling.
+                        let _ = tx.send(Some(line));
+                    }
+                }
+            }
+        });
+        Self { rx, worker }
+    }
+
+    /// Wait up to `timeout` for a line satisfying `matches`, returning it.
+    ///
+    /// `None` means the timeout expired, the pipe hit EOF, or the child died —
+    /// never "still waiting".
+    pub fn wait_for_line(
+        &self,
+        timeout: Duration,
+        matches: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let deadline = Instant::now() + timeout;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.rx.recv_timeout(remaining) {
+                Ok(Some(line)) if matches(&line) => return Some(line),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => return None,
+            }
+        }
+        None
+    }
+
+    /// As [`Self::wait_for_line`] when only "did it arrive" matters.
+    pub fn wait_for(&self, timeout: Duration, matches: impl Fn(&str) -> bool) -> bool {
+        self.wait_for_line(timeout, matches).is_some()
+    }
+
+    /// Stop waiting and leave the worker draining the pipe until EOF.
+    ///
+    /// Deliberately does **not** join. The worker blocks inside `read_line`, so
+    /// it only observes a dropped receiver on its *next* send — if the child has
+    /// gone quiet after the line we were waiting for, a join never returns. That
+    /// is a hang, in the very helper written to prevent hangs, and it stalled
+    /// `enabled_metrics_are_unauthenticated_bounded_and_live` under load on a
+    /// 2-core runner (the process sat in `futex_wait`).
+    ///
+    /// The returned handle keeps the thread's ownership tied to the caller's
+    /// lifetime without ever blocking on it; the thread exits at EOF, which
+    /// happens when the child is killed.
+    #[must_use]
+    pub fn into_drain(self) -> std::thread::JoinHandle<()> {
+        drop(self.rx);
+        self.worker
+    }
+}
+
+/// Block until `port` accepts a TCP connection, or panic at the deadline.
+///
+/// The stderr readiness line is logged *before* `serve_router` binds the
+/// listener, so "the server said it is listening" and "the socket accepts" are
+/// not the same moment. On a fast machine that gap closes before any test
+/// notices; on a loaded 2-core runner it does not, and the test fails with
+/// `Connection refused` on an ephemeral port that looks for all the world like
+/// a port-allocation race.
+pub fn wait_for_port(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("port {port} not accepting connections within {timeout:?}");
+}
+
 /// Wait for the "streamable-http listening" readiness line on the child's
 /// stderr, then spawn a drain thread and return the guarded Server. Panics if
 /// the server doesn't announce within 15s.
 fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir) -> Server {
     let stderr = child.stderr.take().unwrap();
-    let mut reader = BufReader::new(stderr);
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut ready = false;
-    loop {
-        if Instant::now() > deadline {
-            break;
-        }
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF: process died
-            Ok(_) => {
-                if line.contains("streamable-http listening") {
-                    ready = true;
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    if !ready {
+    let lines = BoundedLines::spawn(BufReader::new(stderr));
+
+    if !lines.wait_for(Duration::from_secs(15), |line| {
+        line.contains("streamable-http listening")
+    }) {
         let _ = child.kill();
-        panic!("server did not start within 15s");
+        panic!(
+            "server did not print the 'streamable-http listening' readiness line within 15s \
+             (if the server still works, the log line was renamed — see http_transport.rs)"
+        );
     }
-    // Spawn a drain thread so the child's stderr pipe never fills and the
-    // BufReader (and underlying ChildStderr) is kept alive for the test's
-    // duration.
-    let drain = std::thread::spawn(move || {
-        let mut sink = String::new();
-        loop {
-            sink.clear();
-            match reader.read_line(&mut sink) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-        }
-    });
+    // The BoundedLines worker is already reading this pipe, so it *is* the
+    // drain — a second thread on the same reader is neither possible nor needed.
+    let drain = lines.into_drain();
+    // The readiness line precedes the bind; wait for the socket itself.
+    wait_for_port(port, Duration::from_secs(15));
     Server {
         child,
         port,
@@ -438,8 +514,24 @@ pub struct GetResult {
     pub body: String,
 }
 
+/// A ureq agent with a finite overall timeout.
+///
+/// Bare `ureq::get`/`post`/`delete` have **no** timeout, so a request that stalls
+/// hangs the test for as long as the runner allows — and a hung suite is far
+/// worse than a failed one, because it reports nothing at all. The whole
+/// workspace run stalled for 40 minutes on a single request this way, while the
+/// same test passed in 0.02s on its own.
+///
+/// 90s is deliberately generous: the batch tests dial unreachable IPs and take
+/// ~23s legitimately. This bounds a hang, it does not police latency.
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(90))
+        .build()
+}
+
 pub fn http_get(port: u16, path: &str, bearer: Option<&str>, host: Option<&str>) -> GetResult {
-    let mut request = ureq::get(&format!("http://127.0.0.1:{port}{path}"));
+    let mut request = agent().get(&format!("http://127.0.0.1:{port}{path}"));
     if let Some(bearer) = bearer {
         request = request.set("Authorization", &format!("Bearer {bearer}"));
     }
@@ -463,10 +555,22 @@ pub fn http_get(port: u16, path: &str, bearer: Option<&str>, host: Option<&str>)
 
 /// POST raw body bytes and return just the HTTP status code (for testing
 /// body-limit rejections before the JSON-RPC layer).
-pub fn http_post_raw(port: u16, _bearer: &str, _session_id: Option<&str>, body: &str) -> u16 {
-    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+/// POST a raw body and return only the status.
+///
+/// The bearer and session id are now actually sent. They used to be ignored,
+/// which was invisible while the body limit sat outside authentication: an
+/// oversized anonymous request still got its 413. Under mecmcp's order —
+/// authenticate, then body limit — the same request is 401, and every caller
+/// here passes a real token precisely because it wants to reach the limit.
+pub fn http_post_raw(port: u16, bearer: &str, session_id: Option<&str>, body: &str) -> u16 {
+    let mut req = agent()
+        .post(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Accept", "application/json, text/event-stream")
-        .set("Content-Type", "application/json");
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {bearer}"));
+    if let Some(sid) = session_id {
+        req = req.set("Mcp-Session-Id", sid);
+    }
     match req.send_string(body) {
         Ok(resp) => resp.status(),
         Err(ureq::Error::Status(code, _)) => code,
@@ -491,7 +595,7 @@ pub fn http_post(
     session_id: Option<&str>,
     body: Value,
 ) -> PostResult {
-    let mut req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"));
+    let mut req = agent().post(&format!("http://127.0.0.1:{port}/mcp"));
     if let Some(b) = bearer {
         req = req.set("Authorization", &format!("Bearer {b}"));
     }
@@ -537,7 +641,8 @@ pub fn http_post(
 }
 
 pub fn close_session(port: u16, bearer: &str, session_id: &str) -> u16 {
-    let request = ureq::delete(&format!("http://127.0.0.1:{port}/mcp"))
+    let request = agent()
+        .delete(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Authorization", &format!("Bearer {bearer}"))
         .set("Mcp-Session-Id", session_id);
     match request.call() {
@@ -598,7 +703,8 @@ pub fn init_body() -> Value {
 
 /// POST an `initialize` with an explicit Host header; return the HTTP status.
 pub fn post_init_with_host(port: u16, host: &str) -> u16 {
-    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+    let req = agent()
+        .post(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Accept", "application/json, text/event-stream")
         .set("Host", host);
     match req.send_json(init_body()) {

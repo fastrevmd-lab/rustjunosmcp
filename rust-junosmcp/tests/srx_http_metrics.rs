@@ -53,7 +53,11 @@ fn enabled_metrics_are_unauthenticated_bounded_and_live() {
         &["--enable-metrics", "--max-request-body-bytes", "512"],
     );
 
-    let initial = http_get(server.port, "/metrics", None, Some("untrusted.example"));
+    // Unauthenticated (no bearer), but the Host must still be an allowed one:
+    // mecmcp 0.7 applies the Host allowlist to the whole router, and `/metrics`
+    // is the one unauthenticated route, so it is the prime DNS-rebinding target.
+    // See http_metrics.rs::metrics_reject_a_foreign_host for the other half.
+    let initial = http_get(server.port, "/metrics", None, None);
     assert_eq!(initial.code, 200);
     assert_eq!(
         initial.content_type,

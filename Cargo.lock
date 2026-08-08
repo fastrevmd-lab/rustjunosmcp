@@ -1744,8 +1744,8 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "hmac 0.13.0",
  "log",
@@ -1764,8 +1764,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1782,8 +1782,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1802,8 +1802,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-device"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "async-trait",
  "rustix 1.1.4",
@@ -1818,8 +1818,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-inventory"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "mecmcp-secret",
  "serde",
@@ -1832,8 +1832,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-policy"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "globset",
  "serde",
@@ -1842,8 +1842,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "anyhow",
  "clap",
@@ -1851,13 +1851,14 @@ dependencies = [
  "rustix 1.1.4",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
 [[package]]
 name = "mecmcp-scp"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1875,8 +1876,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-secret"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",
@@ -1885,10 +1886,11 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.6.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.6.1#e362b0818772671cf91d42c5e33c98a2df8e86c6"
+version = "0.7.3"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
  "axum",
+ "axum-server",
  "dashmap",
  "futures",
  "http",
@@ -2815,6 +2817,7 @@ dependencies = [
  "clap",
  "http",
  "mecmcp-audit",
+ "mecmcp-auth",
  "mecmcp-changeset",
  "mecmcp-runtime",
  "mecmcp-transport",

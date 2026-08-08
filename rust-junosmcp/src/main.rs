@@ -2,8 +2,6 @@
 
 mod cli;
 mod env_compat;
-mod http_transport;
-mod server;
 #[cfg(feature = "tls")]
 mod tls;
 mod token_cmd;
@@ -11,9 +9,9 @@ mod token_cmd;
 use anyhow::{Context, Result};
 use cli::{Command, Transport};
 use rmcp::ServiceExt;
+use rust_junosmcp::server::JmcpHandler;
 use rust_junosmcp_auth::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, MecmcpScpRunner, Policy, TransferConfig};
-use server::JmcpHandler;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -331,15 +329,44 @@ async fn main() -> Result<()> {
                 session_max_lifetime_secs: args.session_max_lifetime_secs,
             };
 
-            http_transport::serve(
+            // Install graceful shutdown handler for SIGINT/SIGTERM.
+            // mecmcp-runtime 0.7.0: GracefulShutdown::new() returns Result.
+            let shutdown_coordinator = mecmcp_runtime::shutdown::GracefulShutdown::new()
+                .context("installing shutdown signal handlers")?;
+
+            // The shutdown token is passed to both the router builder (which gives it to
+            // rmcp for SSE session termination) and serve_router (which uses it to drain
+            // in-flight HTTP connections). Using separate tokens would leave SSE streams
+            // live past the drain timeout.
+            let shutdown_token = tokio_util::sync::CancellationToken::new();
+
+            // Wire the shutdown coordinator to the token so SIGTERM/SIGINT trigger it.
+            let shutdown_signal = shutdown_coordinator.subscribe();
+            let shutdown_token_clone = shutdown_token.clone();
+            tokio::spawn(async move {
+                shutdown_signal.await;
+                shutdown_token_clone.cancel();
+            });
+
+            // Shutdown timeout: give in-flight requests 10s to complete.
+            // rmcp terminates SSE sessions immediately on the same token, so this
+            // timeout only bounds stuck connections (e.g., slow clients, network issues).
+            let shutdown_timeout = std::time::Duration::from_secs(10);
+
+            rust_junosmcp::http_transport::serve_http(
                 handler,
                 addr,
                 token_store,
                 args.allowed_host.clone(),
-                args.enable_metrics,
+                Vec::new(), // allowed_origins: empty by default (no browser CORS)
                 limits,
+                args.enable_metrics,
                 #[cfg(feature = "tls")]
                 tls_cfg,
+                #[cfg(not(feature = "tls"))]
+                None,
+                shutdown_token,
+                shutdown_timeout,
             )
             .await?;
         }
