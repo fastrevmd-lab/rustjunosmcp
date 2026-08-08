@@ -9,10 +9,10 @@
 //!   JSON-RPC, parse SSE, assert HTTP behavior (auth, sessions, etc.).
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Absolute path to the freshly-built `rust-junosmcp` binary.
@@ -107,7 +107,7 @@ pub fn write_inventory_temp(devices: &[(&str, &str, u16, &str, &str)]) -> tempfi
 pub struct StdioChild {
     pub child: Child,
     pub stdin: ChildStdin,
-    pub lines: BoundedLines<BufReader<ChildStdout>>,
+    pub lines: BoundedLines,
     pub next_id: i64,
     _device_lease_dir: tempfile::TempDir,
 }
@@ -130,7 +130,7 @@ fn send(stdin: &mut ChildStdin, msg: &Value) {
 /// Bounded via `BoundedLines` rather than a deadline around `read_line`: if the
 /// child stops writing, `read_line` never returns and the deadline never gets
 /// looked at again. See #281.
-fn read_response_with_id(lines: &BoundedLines<BufReader<ChildStdout>>, id: i64) -> Value {
+fn read_response_with_id(lines: &BoundedLines, id: i64) -> Value {
     let wanted = json!(id);
     let found = lines.wait_for_line(Duration::from_secs(15), |line| {
         serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v.get("id") == Some(&wanted))
@@ -277,13 +277,13 @@ impl Drop for Server {
 ///
 /// This repo has now been bitten by that shape three times (see #281), each in
 /// a separately hand-written loop. Hence one primitive rather than another copy.
-pub struct BoundedLines<R: std::io::BufRead + Send + 'static> {
+pub struct BoundedLines {
     rx: std::sync::mpsc::Receiver<Option<String>>,
-    worker: std::thread::JoinHandle<R>,
+    worker: std::thread::JoinHandle<()>,
 }
 
-impl<R: std::io::BufRead + Send + 'static> BoundedLines<R> {
-    pub fn spawn(mut reader: R) -> Self {
+impl BoundedLines {
+    pub fn spawn<R: std::io::BufRead + Send + 'static>(mut reader: R) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
         let worker = std::thread::spawn(move || {
             loop {
@@ -291,12 +291,13 @@ impl<R: std::io::BufRead + Send + 'static> BoundedLines<R> {
                 match reader.read_line(&mut line) {
                     Ok(0) | Err(_) => {
                         let _ = tx.send(None);
-                        return reader;
+                        return;
                     }
                     Ok(_) => {
-                        if tx.send(Some(line)).is_err() {
-                            return reader;
-                        }
+                        // A failed send means the waiter is done. Keep reading
+                        // and discarding rather than returning: this thread is
+                        // also the drain that stops the child's pipe filling.
+                        let _ = tx.send(Some(line));
                     }
                 }
             }
@@ -329,11 +330,42 @@ impl<R: std::io::BufRead + Send + 'static> BoundedLines<R> {
         self.wait_for_line(timeout, matches).is_some()
     }
 
-    /// Reclaim the reader once waiting is done (e.g. to keep draining it).
-    pub fn into_reader(self) -> R {
+    /// Stop waiting and leave the worker draining the pipe until EOF.
+    ///
+    /// Deliberately does **not** join. The worker blocks inside `read_line`, so
+    /// it only observes a dropped receiver on its *next* send — if the child has
+    /// gone quiet after the line we were waiting for, a join never returns. That
+    /// is a hang, in the very helper written to prevent hangs, and it stalled
+    /// `enabled_metrics_are_unauthenticated_bounded_and_live` under load on a
+    /// 2-core runner (the process sat in `futex_wait`).
+    ///
+    /// The returned handle keeps the thread's ownership tied to the caller's
+    /// lifetime without ever blocking on it; the thread exits at EOF, which
+    /// happens when the child is killed.
+    #[must_use]
+    pub fn into_drain(self) -> std::thread::JoinHandle<()> {
         drop(self.rx);
-        self.worker.join().expect("pipe reader thread")
+        self.worker
     }
+}
+
+/// Block until `port` accepts a TCP connection, or panic at the deadline.
+///
+/// The stderr readiness line is logged *before* `serve_router` binds the
+/// listener, so "the server said it is listening" and "the socket accepts" are
+/// not the same moment. On a fast machine that gap closes before any test
+/// notices; on a loaded 2-core runner it does not, and the test fails with
+/// `Connection refused` on an ephemeral port that looks for all the world like
+/// a port-allocation race.
+pub fn wait_for_port(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("port {port} not accepting connections within {timeout:?}");
 }
 
 /// Wait for the "streamable-http listening" readiness line on the child's
@@ -352,20 +384,11 @@ fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir
              (if the server still works, the log line was renamed — see http_transport.rs)"
         );
     }
-    let mut reader = lines.into_reader();
-    // Spawn a drain thread so the child's stderr pipe never fills and the
-    // BufReader (and underlying ChildStderr) is kept alive for the test's
-    // duration.
-    let drain = std::thread::spawn(move || {
-        let mut sink = String::new();
-        loop {
-            sink.clear();
-            match reader.read_line(&mut sink) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-        }
-    });
+    // The BoundedLines worker is already reading this pipe, so it *is* the
+    // drain — a second thread on the same reader is neither possible nor needed.
+    let drain = lines.into_drain();
+    // The readiness line precedes the bind; wait for the socket itself.
+    wait_for_port(port, Duration::from_secs(15));
     Server {
         child,
         port,

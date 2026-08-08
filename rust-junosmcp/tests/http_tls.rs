@@ -6,26 +6,17 @@
 #![cfg(feature = "tls")]
 
 mod common;
-use common::{BoundedLines, Server, binary_path, ensure_built, parse_first_sse_data, pick_port};
+use common::{
+    BoundedLines, Server, binary_path, ensure_built, parse_first_sse_data, pick_port, wait_for_port,
+};
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Poll until TCP connections to `port` are accepted, or panic after `timeout`.
-fn wait_for_port(port: u16, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    panic!("port {port} not accepting connections within {timeout:?}");
-}
-
 fn write_self_signed(dir: &Path) -> (PathBuf, PathBuf) {
     let issued = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_path = dir.join("cert.pem");
@@ -90,17 +81,10 @@ fn spawn_tls(inv_path: &Path, tokens_path: &Path, cert: &Path, key: &Path) -> Se
              (if the server still works, the log line was renamed — see http_transport.rs)"
         );
     }
-    let mut reader = lines.into_reader();
-    let drain = std::thread::spawn(move || {
-        let mut sink = String::new();
-        loop {
-            sink.clear();
-            match reader.read_line(&mut sink) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-        }
-    });
+    // The BoundedLines worker already owns this pipe and keeps reading it, so it
+    // is the drain. Do not join it — it blocks in `read_line` and would only
+    // notice a dropped receiver on its next send. See `common::into_drain`.
+    let drain = lines.into_drain();
     // Wait for the TLS socket to actually accept connections — the stderr
     // readiness line can fire before the listener is fully ready.
     wait_for_port(port, Duration::from_secs(5));
