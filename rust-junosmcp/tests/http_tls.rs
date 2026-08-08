@@ -6,7 +6,7 @@
 #![cfg(feature = "tls")]
 
 mod common;
-use common::{Server, binary_path, ensure_built, parse_first_sse_data, pick_port};
+use common::{BoundedLines, Server, binary_path, ensure_built, parse_first_sse_data, pick_port};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -75,31 +75,22 @@ fn spawn_tls(inv_path: &Path, tokens_path: &Path, cert: &Path, key: &Path) -> Se
         .spawn()
         .expect("spawn");
     let stderr = child.stderr.take().unwrap();
-    let mut reader = BufReader::new(stderr);
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut ready = false;
-    loop {
-        if Instant::now() > deadline {
-            break;
-        }
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                // Matches both "(TLS)" and the plain HTTP variant; for this
-                // test only the TLS line is emitted.
-                if line.contains("streamable-http listening") {
-                    ready = true;
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    if !ready {
+    // Bounded on a worker thread — a deadline checked between `read_line` calls
+    // cannot fire, because the missing line is exactly what leaves `read_line`
+    // blocked. See `common::BoundedLines`.
+    let lines = BoundedLines::spawn(BufReader::new(stderr));
+    // Matches both "(TLS)" and the plain HTTP variant; for this test only the
+    // TLS line is emitted.
+    if !lines.wait_for(Duration::from_secs(15), |line| {
+        line.contains("streamable-http listening")
+    }) {
         let _ = child.kill();
-        panic!("server did not start within 15s");
+        panic!(
+            "server did not print the 'streamable-http listening' readiness line within 15s \
+             (if the server still works, the log line was renamed — see http_transport.rs)"
+        );
     }
+    let mut reader = lines.into_reader();
     let drain = std::thread::spawn(move || {
         let mut sink = String::new();
         loop {

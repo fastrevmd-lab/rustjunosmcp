@@ -23,31 +23,28 @@ pub fn binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rust-junosmcp"))
 }
 
-/// Build the binary if it isn't already built. Cargo no-ops when up-to-date.
+/// No-op. Cargo has already built the binary by the time this runs.
 ///
-/// Honours `CARGO_TARGET_DIR` if set, matching the behaviour of `binary_path()`.
-pub fn ensure_built() {
-    let mut command = Command::new("cargo");
-    command.args(["build", "-p", "rust-junosmcp", "--no-default-features"]);
-    let features = [
-        cfg!(feature = "tls").then_some("tls"),
-        cfg!(feature = "srx").then_some("srx"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(",");
-    if !features.is_empty() {
-        command.args(["--features", &features]);
-    }
-    // Inherit CARGO_TARGET_DIR from the environment so the build writes to the
-    // same target directory that `env!("CARGO_BIN_EXE_rust-junosmcp")` reads from.
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        command.env("CARGO_TARGET_DIR", target_dir);
-    }
-    let status = command.status().expect("cargo build");
-    assert!(status.success(), "cargo build failed");
-}
+/// Kept as a function so the ~40 call sites need not all change at once, and
+/// because "make sure the binary exists" reads as a reasonable thing for a test
+/// to want. It is not: `binary_path()` uses `CARGO_BIN_EXE_rust-junosmcp`, which
+/// Cargo sets **and guarantees is built** before any integration test runs.
+///
+/// This used to shell out to `cargo build` from inside every test binary. Two
+/// problems, both real:
+///
+/// 1. **It could deadlock the suite.** `cargo test` runs test binaries
+///    concurrently, so each one launched its own `cargo` contending for the same
+///    build-directory lock. On a 2-core CI runner that stalled a single CI step
+///    for 36 minutes, against a 4–7 minute total for the whole workflow on main.
+/// 2. **It could build a different binary than the one under test.** It
+///    reassembled the feature list by hand from `cfg!(feature = ...)`, so any
+///    drift between that list and the real build would have tests exercising a
+///    binary nobody asked for.
+///
+/// Do not reintroduce a build step here. If the binary is genuinely missing,
+/// that is a Cargo bug, and `binary_path()` failing loudly is the right outcome.
+pub fn ensure_built() {}
 
 /// Write `contents` to `path` with mode 0600.
 ///
@@ -110,7 +107,7 @@ pub fn write_inventory_temp(devices: &[(&str, &str, u16, &str, &str)]) -> tempfi
 pub struct StdioChild {
     pub child: Child,
     pub stdin: ChildStdin,
-    pub reader: BufReader<ChildStdout>,
+    pub lines: BoundedLines<BufReader<ChildStdout>>,
     pub next_id: i64,
     _device_lease_dir: tempfile::TempDir,
 }
@@ -128,23 +125,20 @@ fn send(stdin: &mut ChildStdin, msg: &Value) {
     stdin.flush().expect("flush stdin");
 }
 
-fn read_response_with_id(reader: &mut BufReader<ChildStdout>, id: i64) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).unwrap_or(0);
-        if n == 0 {
-            break;
-        }
-        let v: Value = match serde_json::from_str(line.trim()) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if v.get("id") == Some(&json!(id)) {
-            return v;
-        }
+/// Read stdout until the JSON-RPC response with `id` arrives, bounded at 15s.
+///
+/// Bounded via `BoundedLines` rather than a deadline around `read_line`: if the
+/// child stops writing, `read_line` never returns and the deadline never gets
+/// looked at again. See #281.
+fn read_response_with_id(lines: &BoundedLines<BufReader<ChildStdout>>, id: i64) -> Value {
+    let wanted = json!(id);
+    let found = lines.wait_for_line(Duration::from_secs(15), |line| {
+        serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v.get("id") == Some(&wanted))
+    });
+    match found {
+        Some(line) => serde_json::from_str(line.trim()).expect("jsonrpc response"),
+        None => panic!("did not receive response with id={id} within 15s"),
     }
-    panic!("did not receive response with id={id} within 15s");
 }
 
 /// Spawn the server with `-t stdio` plus any extra CLI args (for example
@@ -172,7 +166,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
 
     let mut stdin = child.stdin.take().expect("take stdin");
     let stdout = child.stdout.take().expect("take stdout");
-    let mut reader = BufReader::new(stdout);
+    let lines = BoundedLines::spawn(BufReader::new(stdout));
 
     send(
         &mut stdin,
@@ -185,7 +179,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
             }
         }),
     );
-    let _ = read_response_with_id(&mut reader, 0);
+    let _ = read_response_with_id(&lines, 0);
 
     send(
         &mut stdin,
@@ -195,7 +189,7 @@ pub fn spawn_stdio_server_with_args(extra_args: &[&str]) -> StdioChild {
     StdioChild {
         child,
         stdin,
-        reader,
+        lines,
         next_id: 2,
         _device_lease_dir: device_lease_dir,
     }
@@ -221,7 +215,7 @@ pub fn call_tool(child: &mut StdioChild, name: &str, args: Value) -> Value {
         }),
     );
 
-    let resp = read_response_with_id(&mut child.reader, id);
+    let resp = read_response_with_id(&child.lines, id);
     let result = resp
         .get("result")
         .cloned()
@@ -272,61 +266,93 @@ impl Drop for Server {
     }
 }
 
+/// Lines read from a child pipe on a worker thread, so waits can be bounded.
+///
+/// **Use this instead of looping on `read_line` with a deadline.** A deadline
+/// checked *between* `read_line` calls does not bind: the failure it guards
+/// against — the awaited line never arriving — leaves `read_line` blocked
+/// forever, so control never returns to the check. The test then hangs rather
+/// than failing, and a hang reports nothing at all: no test name, no assertion,
+/// no exit code.
+///
+/// This repo has now been bitten by that shape three times (see #281), each in
+/// a separately hand-written loop. Hence one primitive rather than another copy.
+pub struct BoundedLines<R: std::io::BufRead + Send + 'static> {
+    rx: std::sync::mpsc::Receiver<Option<String>>,
+    worker: std::thread::JoinHandle<R>,
+}
+
+impl<R: std::io::BufRead + Send + 'static> BoundedLines<R> {
+    pub fn spawn(mut reader: R) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+        let worker = std::thread::spawn(move || {
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => {
+                        let _ = tx.send(None);
+                        return reader;
+                    }
+                    Ok(_) => {
+                        if tx.send(Some(line)).is_err() {
+                            return reader;
+                        }
+                    }
+                }
+            }
+        });
+        Self { rx, worker }
+    }
+
+    /// Wait up to `timeout` for a line satisfying `matches`, returning it.
+    ///
+    /// `None` means the timeout expired, the pipe hit EOF, or the child died —
+    /// never "still waiting".
+    pub fn wait_for_line(
+        &self,
+        timeout: Duration,
+        matches: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let deadline = Instant::now() + timeout;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.rx.recv_timeout(remaining) {
+                Ok(Some(line)) if matches(&line) => return Some(line),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => return None,
+            }
+        }
+        None
+    }
+
+    /// As [`Self::wait_for_line`] when only "did it arrive" matters.
+    pub fn wait_for(&self, timeout: Duration, matches: impl Fn(&str) -> bool) -> bool {
+        self.wait_for_line(timeout, matches).is_some()
+    }
+
+    /// Reclaim the reader once waiting is done (e.g. to keep draining it).
+    pub fn into_reader(self) -> R {
+        drop(self.rx);
+        self.worker.join().expect("pipe reader thread")
+    }
+}
+
 /// Wait for the "streamable-http listening" readiness line on the child's
 /// stderr, then spawn a drain thread and return the guarded Server. Panics if
 /// the server doesn't announce within 15s.
 fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir) -> Server {
     let stderr = child.stderr.take().unwrap();
-    let mut reader = BufReader::new(stderr);
+    let lines = BoundedLines::spawn(BufReader::new(stderr));
 
-    // Read on a worker and wait on a channel, so the deadline binds even when
-    // the child simply stops writing.
-    //
-    // Checking `Instant::now()` between `read_line` calls does not bind: the
-    // very failure being guarded against — the readiness line never arriving —
-    // leaves `read_line` blocked forever, so the loop never gets back to the
-    // check. A renamed log line then hangs the whole suite instead of failing
-    // it, which is exactly what happened when mecmcp 0.7 began emitting its own
-    // "Streamable HTTP listening" in place of this marker.
-    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-    let reader_thread = std::thread::spawn(move || {
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => {
-                    let _ = tx.send(None);
-                    return reader;
-                }
-                Ok(_) => {
-                    if tx.send(Some(line)).is_err() {
-                        return reader;
-                    }
-                }
-            }
-        }
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut ready = false;
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(remaining) {
-            Ok(Some(line)) if line.contains("streamable-http listening") => {
-                ready = true;
-                break;
-            }
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => break, // EOF, process died, or deadline hit
-        }
-    }
-    if !ready {
+    if !lines.wait_for(Duration::from_secs(15), |line| {
+        line.contains("streamable-http listening")
+    }) {
         let _ = child.kill();
         panic!(
             "server did not print the 'streamable-http listening' readiness line within 15s \
              (if the server still works, the log line was renamed — see http_transport.rs)"
         );
     }
-    drop(rx);
-    let mut reader = reader_thread.join().expect("stderr reader thread");
+    let mut reader = lines.into_reader();
     // Spawn a drain thread so the child's stderr pipe never fills and the
     // BufReader (and underlying ChildStderr) is kept alive for the test's
     // duration.
