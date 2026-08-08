@@ -738,4 +738,52 @@ mod tests {
             Err(JmcpError::SshConfigInvalid { ref router, .. }) if router == "r1"
         ));
     }
+
+    // ── cleanup taint (#260) ────────────────────────────────────────────
+
+    fn taint_manager() -> DeviceManager {
+        DeviceManager::new(build_inventory(
+            r#"{"r1":{"ip":"203.0.113.1","port":830,"username":"u","auth":{"type":"password","password":"x"}},
+                "r2":{"ip":"203.0.113.2","port":830,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+        ))
+    }
+
+    /// A failed cleanup must be visible to the *next* caller for that device.
+    ///
+    /// The whole point of #260 is that the information already existed and was
+    /// dropped on the floor. Without this test, deleting the `record_cleanup_taint`
+    /// call leaves the feature inert and the entire suite green — which is exactly
+    /// what happened when it was first written.
+    #[tokio::test]
+    async fn recorded_taint_is_visible_to_the_next_caller() {
+        let dm = taint_manager();
+        assert_eq!(dm.check_cleanup_taint("r1").await, None, "clean to start");
+
+        dm.record_cleanup_taint("r1", "rollback; unlock".to_owned())
+            .await;
+
+        assert_eq!(
+            dm.check_cleanup_taint("r1").await,
+            Some("rollback; unlock".to_owned()),
+            "the next caller must learn which cleanup phases failed"
+        );
+    }
+
+    /// Taint is per-device: one device's failed cleanup must not implicate another.
+    #[tokio::test]
+    async fn taint_does_not_leak_across_devices() {
+        let dm = taint_manager();
+        dm.record_cleanup_taint("r1", "unlock".to_owned()).await;
+        assert_eq!(dm.check_cleanup_taint("r2").await, None);
+    }
+
+    /// Proving the device is usable clears the warning, so it is not sticky
+    /// forever once the situation has resolved.
+    #[tokio::test]
+    async fn clearing_taint_removes_the_warning() {
+        let dm = taint_manager();
+        dm.record_cleanup_taint("r1", "unlock".to_owned()).await;
+        dm.clear_cleanup_taint("r1").await;
+        assert_eq!(dm.check_cleanup_taint("r1").await, None);
+    }
 }
