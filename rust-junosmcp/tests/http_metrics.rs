@@ -43,12 +43,36 @@ fn metrics_disabled_leaves_route_absent() {
     assert_eq!(response.code, 404);
 }
 
+/// `/metrics` is behind the Host allowlist, even though it needs no bearer token.
+///
+/// This is a deliberate behaviour change in mecmcp 0.7: the allowlist is applied
+/// to the whole router rather than to `/mcp` alone. `/metrics` is the one
+/// unauthenticated route, which makes it the most attractive DNS-rebinding
+/// target (RUSTSEC-2026-0189) — an attacker-controlled page could otherwise
+/// point a victim's browser at a loopback-bound server and read the scrape.
+///
+/// Until 0.7 this returned 200 for any Host, and the previous version of the
+/// test asserted exactly that, so the hardening reads as a test failure. It is
+/// the opposite. Keep this test as the record of which way round it goes.
+#[test]
+fn metrics_reject_a_foreign_host() {
+    let (_inventory, _tokens, _token, server) = fixture(&["--enable-metrics"]);
+    let response = http_get(server.port, "/metrics", None, Some("untrusted.example"));
+    assert_eq!(
+        response.code, 421,
+        "/metrics must be behind the Host allowlist: it is unauthenticated, \
+         which makes it the prime DNS-rebinding target"
+    );
+}
+
 #[test]
 fn enabled_metrics_are_unauthenticated_bounded_and_live() {
     let (_inventory, _tokens, token, server) =
         fixture(&["--enable-metrics", "--max-request-body-bytes", "512"]);
 
-    let initial = http_get(server.port, "/metrics", None, Some("untrusted.example"));
+    // Unauthenticated: no bearer token. The Host still has to be an allowed one
+    // — see metrics_reject_a_foreign_host below for why that changed.
+    let initial = http_get(server.port, "/metrics", None, None);
     assert_eq!(initial.code, 200);
     assert_eq!(
         initial.content_type,

@@ -15,6 +15,10 @@ default = ["tls", "srx"]
 tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
 srx = ["dep:rust-junosmcp-srx-core"]
 
+[lib]
+name = "rust_junosmcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rust-junosmcp"
 path = "src/main.rs"
@@ -56,6 +60,7 @@ required-features = ["srx"]
 rust-junosmcp-core = { version = "0.17.0", path = "../rust-junosmcp-core" }
 rust-junosmcp-auth = { version = "0.17.0", path = "../rust-junosmcp-auth" }
 mecmcp-audit = { workspace = true }
+mecmcp-auth = { workspace = true }
 mecmcp-changeset = { workspace = true }
 mecmcp-transport = { workspace = true }
 mecmcp-runtime = { workspace = true }

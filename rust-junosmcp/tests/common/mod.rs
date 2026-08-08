@@ -278,28 +278,55 @@ impl Drop for Server {
 fn finish_spawn(mut child: Child, port: u16, device_lease_dir: tempfile::TempDir) -> Server {
     let stderr = child.stderr.take().unwrap();
     let mut reader = BufReader::new(stderr);
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut ready = false;
-    loop {
-        if Instant::now() > deadline {
-            break;
-        }
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF: process died
-            Ok(_) => {
-                if line.contains("streamable-http listening") {
-                    ready = true;
-                    break;
+
+    // Read on a worker and wait on a channel, so the deadline binds even when
+    // the child simply stops writing.
+    //
+    // Checking `Instant::now()` between `read_line` calls does not bind: the
+    // very failure being guarded against — the readiness line never arriving —
+    // leaves `read_line` blocked forever, so the loop never gets back to the
+    // check. A renamed log line then hangs the whole suite instead of failing
+    // it, which is exactly what happened when mecmcp 0.7 began emitting its own
+    // "Streamable HTTP listening" in place of this marker.
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+    let reader_thread = std::thread::spawn(move || {
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send(None);
+                    return reader;
+                }
+                Ok(_) => {
+                    if tx.send(Some(line)).is_err() {
+                        return reader;
+                    }
                 }
             }
-            Err(_) => break,
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut ready = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(Some(line)) if line.contains("streamable-http listening") => {
+                ready = true;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break, // EOF, process died, or deadline hit
         }
     }
     if !ready {
         let _ = child.kill();
-        panic!("server did not start within 15s");
+        panic!(
+            "server did not print the 'streamable-http listening' readiness line within 15s \
+             (if the server still works, the log line was renamed — see http_transport.rs)"
+        );
     }
+    drop(rx);
+    let mut reader = reader_thread.join().expect("stderr reader thread");
     // Spawn a drain thread so the child's stderr pipe never fills and the
     // BufReader (and underlying ChildStderr) is kept alive for the test's
     // duration.
@@ -438,8 +465,24 @@ pub struct GetResult {
     pub body: String,
 }
 
+/// A ureq agent with a finite overall timeout.
+///
+/// Bare `ureq::get`/`post`/`delete` have **no** timeout, so a request that stalls
+/// hangs the test for as long as the runner allows — and a hung suite is far
+/// worse than a failed one, because it reports nothing at all. The whole
+/// workspace run stalled for 40 minutes on a single request this way, while the
+/// same test passed in 0.02s on its own.
+///
+/// 90s is deliberately generous: the batch tests dial unreachable IPs and take
+/// ~23s legitimately. This bounds a hang, it does not police latency.
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(90))
+        .build()
+}
+
 pub fn http_get(port: u16, path: &str, bearer: Option<&str>, host: Option<&str>) -> GetResult {
-    let mut request = ureq::get(&format!("http://127.0.0.1:{port}{path}"));
+    let mut request = agent().get(&format!("http://127.0.0.1:{port}{path}"));
     if let Some(bearer) = bearer {
         request = request.set("Authorization", &format!("Bearer {bearer}"));
     }
@@ -463,10 +506,22 @@ pub fn http_get(port: u16, path: &str, bearer: Option<&str>, host: Option<&str>)
 
 /// POST raw body bytes and return just the HTTP status code (for testing
 /// body-limit rejections before the JSON-RPC layer).
-pub fn http_post_raw(port: u16, _bearer: &str, _session_id: Option<&str>, body: &str) -> u16 {
-    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+/// POST a raw body and return only the status.
+///
+/// The bearer and session id are now actually sent. They used to be ignored,
+/// which was invisible while the body limit sat outside authentication: an
+/// oversized anonymous request still got its 413. Under mecmcp's order —
+/// authenticate, then body limit — the same request is 401, and every caller
+/// here passes a real token precisely because it wants to reach the limit.
+pub fn http_post_raw(port: u16, bearer: &str, session_id: Option<&str>, body: &str) -> u16 {
+    let mut req = agent()
+        .post(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Accept", "application/json, text/event-stream")
-        .set("Content-Type", "application/json");
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {bearer}"));
+    if let Some(sid) = session_id {
+        req = req.set("Mcp-Session-Id", sid);
+    }
     match req.send_string(body) {
         Ok(resp) => resp.status(),
         Err(ureq::Error::Status(code, _)) => code,
@@ -491,7 +546,7 @@ pub fn http_post(
     session_id: Option<&str>,
     body: Value,
 ) -> PostResult {
-    let mut req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"));
+    let mut req = agent().post(&format!("http://127.0.0.1:{port}/mcp"));
     if let Some(b) = bearer {
         req = req.set("Authorization", &format!("Bearer {b}"));
     }
@@ -537,7 +592,8 @@ pub fn http_post(
 }
 
 pub fn close_session(port: u16, bearer: &str, session_id: &str) -> u16 {
-    let request = ureq::delete(&format!("http://127.0.0.1:{port}/mcp"))
+    let request = agent()
+        .delete(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Authorization", &format!("Bearer {bearer}"))
         .set("Mcp-Session-Id", session_id);
     match request.call() {
@@ -598,7 +654,8 @@ pub fn init_body() -> Value {
 
 /// POST an `initialize` with an explicit Host header; return the HTTP status.
 pub fn post_init_with_host(port: u16, host: &str) -> u16 {
-    let req = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
+    let req = agent()
+        .post(&format!("http://127.0.0.1:{port}/mcp"))
         .set("Accept", "application/json, text/event-stream")
         .set("Host", host);
     match req.send_json(init_body()) {

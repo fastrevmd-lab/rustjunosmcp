@@ -1,28 +1,21 @@
-//! axum router: AuthLayer + rmcp streamable-http handler.
+//! Junos MCP Streamable HTTP transport using mecmcp-transport 0.7.0.
 //!
-//! Mount API per Task 0 spike memo: `StreamableHttpService` is a
-//! `tower::Service<http::Request<B>>`, mounted under axum 0.8 via
-//! `Router::nest_service("/mcp", svc)`. The service splits requests into
-//! `(Parts, Body)` and inserts the whole `http::request::Parts` into rmcp's
-//! per-request `Extensions`, so `CallerCtx` (which our outer middleware put
-//! on the axum request extensions) is reachable from `#[tool]` handlers via
-//! `parts.extensions.get::<CallerCtx>()` (see `server::caller_ctx`).
+//! Uses `HttpTransportConfig` / `build_streamable_http_router` / `serve_router`
+//! from mecmcp-transport 0.7.0, which replaces the hand-rolled router assembly
+//! this crate used in 0.6.1 and adds graceful shutdown with request draining.
 
 use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
-use axum::Router;
+use mecmcp_auth::BearerSyntax;
 use mecmcp_transport::{
-    ConcurrencyState, LimitedSessionManager, LimitsConfig, OptionalPreflight, PrometheusRuntime,
-    ScopePreflight, TransportIdentity, apply_body_limit, apply_ip_rate_limit,
-    apply_token_rate_limit, target_concurrency_middleware, token_concurrency_middleware,
+    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy, HttpShutdown,
+    HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
+    serve_router,
 };
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
-use rust_junosmcp_auth::tower::{AuthState, auth_layer};
+use rust_junosmcp_auth::{CallerCtx, TokenStoreFile};
 use serde_json::Value;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
 /// Junos scope preflight implementation.
 ///
@@ -36,7 +29,7 @@ use std::sync::Arc;
 /// bypassed).
 struct JunosPreflight;
 
-impl ScopePreflight for JunosPreflight {
+impl mecmcp_transport::ScopePreflight for JunosPreflight {
     fn check(&self, body: &[u8], caller: mecmcp_transport::CallerScopes<'_>) -> Result<(), String> {
         if request_exceeds_scope(body, caller) {
             Err("insufficient_scope".to_owned())
@@ -116,53 +109,21 @@ fn device_value_in_scope(value: &Value, caller: &mecmcp_transport::CallerScopes<
     }
 }
 
-/// Build the streamable-http server config, applying the Host allowlist policy.
-/// Default = rmcp's loopback-only allowlist (localhost/127.0.0.1/::1); each
-/// `--allowed-host` value extends it.
+/// Build the complete Junos HTTP router using mecmcp-transport 0.7.0.
 ///
-/// There is deliberately no way to turn the gate off. The allowlist is the
-/// DNS-rebinding guard (RUSTSEC-2026-0189), and rebinding targets loopback-bound
-/// services specifically — a browser resolves an attacker domain to 127.0.0.1 and
-/// reaches the server with a foreign `Host`. So "off" would be most dangerous
-/// exactly where it looked safest. Name the authority clients actually send with
-/// `--allowed-host` instead; it is repeatable and precise.
-///
-/// Built from `mecmcp_transport::streamable_http_server_config` rather than
-/// `StreamableHttpServerConfig::default()`. rmcp 3 added its own
-/// `max_request_body_bytes` defaulting to 4 MiB, enforced *inside* rmcp after
-/// our `apply_body_limit` layer has already accepted the request — so on
-/// `default()` every request between 4 MiB and `--max-request-body-bytes`
-/// (10 MiB here) would 413 from a limit that appears nowhere in our config.
-/// `load_and_commit_config` carries whole device configurations, which is
-/// exactly the payload that gets large.
-fn build_http_config(
-    allowed_hosts: Vec<String>,
-    limits: &LimitsConfig,
-) -> StreamableHttpServerConfig {
-    let mut cfg = mecmcp_transport::streamable_http_server_config(limits);
-    cfg.allowed_hosts.extend(allowed_hosts);
-    cfg
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn serve(
+/// Returns `(Router, HttpShutdown)`, and that value **must** be passed to
+/// `serve_router`. It carries the listener's token and rmcp's, which are
+/// cancelled at different times: sharing one ended every session the instant
+/// shutdown began, so no in-flight call could deliver its response.
+pub fn build_http_router(
     handler: JmcpHandler,
-    addr: SocketAddr,
-    token_store: Option<Arc<rust_junosmcp_auth::TokenStoreFile>>,
+    token_store: Option<Arc<TokenStoreFile>>,
     allowed_hosts: Vec<String>,
-    enable_metrics: bool,
+    allowed_origins: Vec<String>,
     limits: LimitsConfig,
-    #[cfg(feature = "tls")] tls: Option<Arc<rustls::ServerConfig>>,
-) -> Result<()> {
-    // Factory closure: rmcp wants a fresh handler per session. JmcpHandler
-    // is cheap to clone (Arc fields) so we just clone it.
-    let handler_factory = move || Ok::<_, std::io::Error>(handler.clone());
-
-    limits
-        .validate()
-        .context("validating HTTP resource limits")?;
-    limits.log_effective();
-
+    enable_metrics: bool,
+    shutdown: CancellationToken,
+) -> Result<(axum::Router, HttpShutdown)> {
     // Junos transport identity: metric prefix, server label, bearer realm, target keys.
     let identity = TransportIdentity::new(
         "junosmcp",
@@ -171,93 +132,71 @@ pub async fn serve(
         ["router", "router_name", "routers", "router_names"],
     );
 
-    let metrics_runtime = if enable_metrics {
-        Some(
-            PrometheusRuntime::install(&identity.metric_prefix, &identity.server_label)
-                .context("initializing Prometheus metrics")?,
-        )
-    } else {
-        None
-    };
+    let mut config = HttpTransportConfig::new(
+        identity.clone(),
+        limits.clone(),
+        HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
+        shutdown,
+    )
+    .with_metrics(enable_metrics);
 
-    let session_mgr = LimitedSessionManager::new(LocalSessionManager::default(), &limits);
-    let conc = ConcurrencyState::new(
-        &limits,
-        identity.target_keys.clone(),
-        Some(session_mgr.tracker()),
-    );
-
-    let http_cfg = build_http_config(allowed_hosts, &limits);
-    let svc = StreamableHttpService::new(handler_factory, session_mgr, http_cfg);
-    let rmcp_router = Router::new().nest_service("/mcp", svc);
-
-    // Innermost layers (closest to handler): target concurrency runs after
-    // authorization and body limit (buffering layer).
-    let app = rmcp_router.layer(axum::middleware::from_fn_with_state(
-        conc.clone(),
-        target_concurrency_middleware,
-    ));
-
-    // Token concurrency: non-buffering, runs before body limit.
-    let app = app.layer(axum::middleware::from_fn_with_state(
-        conc,
-        token_concurrency_middleware,
-    ));
-
-    // Per-token rate limiting: runs after authentication, before concurrency.
-    let app = apply_token_rate_limit(app, &limits);
-
-    // Auth runs before rate limiting and concurrency so CallerCtx is present.
-    // Preflight is integrated into auth: it runs after bearer authentication
-    // succeeds but before the request reaches the handler.
-    let app = if let Some(store) = token_store {
-        let preflight: OptionalPreflight = Some(Arc::new(JunosPreflight));
-        app.layer(axum::middleware::from_fn_with_state(
-            AuthState {
-                store,
-                preflight,
-                body_limit: limits.max_request_body_bytes,
-            },
-            auth_layer,
-        ))
-    } else {
-        app
-    };
-
-    // Body limit: outermost application middleware, rejects oversized bodies
-    // before buffering and before authentication. This matches the old behavior
-    // where body limit ran first.
-    let app = apply_body_limit(app, &limits);
-
-    // Per-IP rate limiting: applied after body limit, runs before authentication
-    // so unauthenticated requests (which have no token to charge) are metered
-    // per source IP.
-    let app = apply_ip_rate_limit(app, &limits);
-    let app = if let Some(runtime) = metrics_runtime.as_ref() {
-        app.merge(runtime.router())
-    } else {
-        app
-    };
-
-    #[cfg(feature = "tls")]
-    if let Some(cfg) = tls {
-        let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(cfg);
-        tracing::info!(addr = %addr, "streamable-http listening (TLS)");
-        return axum_server::bind_rustls(addr, rustls_cfg)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .context("axum_server::bind_rustls");
+    // Install bearer authentication if token store is present.
+    if let Some(store_file) = token_store {
+        let auth_store = store_file.clone();
+        let authenticator = BearerAuthenticator::new(BearerSyntax::Strict, move |candidate| {
+            let snapshot = auth_store.store();
+            snapshot.authenticate(candidate).map(CallerCtx::from)
+        });
+        let boundary = BearerBoundary::new(authenticator, BearerResponseProfile::detailed("jmcp"))
+            .with_preflight(JunosPreflight);
+        config = config.with_bearer(boundary);
     }
 
-    let listener = tokio::net::TcpListener::bind(addr)
+    // Factory closure: rmcp wants a fresh handler per session. JmcpHandler
+    // is cheap to clone (Arc fields) so we just clone it.
+    build_streamable_http_router(move || Ok::<_, std::io::Error>(handler.clone()), config)
+        .context("building Junos Streamable HTTP router")
+}
+
+/// Serve the Junos HTTP router over plain HTTP or supplied TLS with graceful shutdown.
+///
+/// **Graceful shutdown**: When `shutdown` is triggered, the listener stops accepting
+/// new connections and waits up to `shutdown_timeout` for in-flight requests to complete.
+/// rmcp terminates SSE sessions on the same token, so streams end immediately. The
+/// timeout bounds stuck connections well under systemd's `TimeoutStopSec`.
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_http(
+    handler: JmcpHandler,
+    address: SocketAddr,
+    token_store: Option<Arc<TokenStoreFile>>,
+    allowed_hosts: Vec<String>,
+    allowed_origins: Vec<String>,
+    limits: LimitsConfig,
+    enable_metrics: bool,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    shutdown: CancellationToken,
+    shutdown_timeout: std::time::Duration,
+) -> Result<()> {
+    let (router, shutdown) = build_http_router(
+        handler,
+        token_store,
+        allowed_hosts,
+        allowed_origins,
+        limits,
+        enable_metrics,
+        shutdown,
+    )?;
+    // Readiness marker. Three test harnesses block on this exact string, and
+    // `--tls-cert` callers on the "(TLS)" suffix, so it is a contract rather
+    // than a log line. mecmcp emits its own "Streamable HTTP listening" from
+    // inside serve_router; that is a different string, and relying on it once
+    // cost an afternoon to a suite that hung rather than failed.
+    if tls.is_some() {
+        tracing::info!(%address, "streamable-http listening (TLS)");
+    } else {
+        tracing::info!(%address, "streamable-http listening");
+    }
+    serve_router(router, address, tls, shutdown, shutdown_timeout)
         .await
-        .with_context(|| format!("binding {addr}"))?;
-    tracing::info!(addr = %addr, "streamable-http listening");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    .context("axum::serve")?;
-    Ok(())
+        .context("serving Junos Streamable HTTP")
 }

@@ -135,15 +135,18 @@ fn wrong_bearer_returns_401() {
     );
 }
 
+/// SRX twin of `http_smoke::disallowed_host_is_rejected`; see that test for why
+/// the status moved from 403 to 421 in mecmcp 0.7. The request is still refused,
+/// which is the property that must never regress.
 #[test]
-fn disallowed_host_is_rejected_403() {
+fn disallowed_host_is_rejected() {
     ensure_built();
     let inv = placeholder_inv();
     let s = spawn_no_auth(inv.path(), &[]);
     let code = post_init_with_host(s.port, "evil.example.com");
     assert_eq!(
-        code, 403,
-        "rmcp's built-in Host allowlist must reject a disallowed Host"
+        code, 421,
+        "the Host allowlist must reject a disallowed Host (DNS-rebinding guard)"
     );
 }
 

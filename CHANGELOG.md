@@ -6,6 +6,46 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed — breaking
+
+- **`mecmcp` moves to 0.7.3**, which owns the HTTP transport assembly. The
+  hand-rolled router construction here is replaced by
+  `HttpTransportConfig` / `build_streamable_http_router` / `serve_router`.
+  `--allowed-host` and `--allowed-origin` behaviour is unchanged, including the
+  deliberate asymmetry that a portless `--allowed-host` entry matches any port
+  (which is what LXC 609 relies on) while a portless `--allowed-origin` matches
+  only a portless browser Origin.
+
+- **`/metrics` is now behind the Host allowlist.** It was previously reachable
+  with any `Host` header. Anything scraping it with a non-allowlisted Host now
+  gets **421** and must be given a Host the server accepts, or added via
+  `--allowed-host`. This is deliberate: `/metrics` is the only unauthenticated
+  route, which makes it the most attractive DNS-rebinding target
+  (RUSTSEC-2026-0189) — an attacker-controlled page could otherwise point a
+  victim's browser at a loopback-bound server and read the scrape. It needs no
+  bearer token, exactly as before.
+
+- **A disallowed `Host` now returns 421, not 403.** Host is validated in
+  mecmcp's own middleware rather than by rmcp's built-in allowlist. 421
+  Misdirected Request is the accurate code for "this authority is not served
+  here"; 403 asserts the caller is unauthorized, which is a different claim.
+  The request is refused either way — only the code moved.
+
+- **An oversized request without a valid bearer now returns 401, not 413.**
+  Authentication runs before the body limit, so an unauthenticated caller is
+  turned away before its body is measured. An authenticated oversized request
+  still gets 413.
+
+### Fixed
+
+- **`systemctl restart` drains in-flight calls instead of dropping them.** This
+  needed three mecmcp releases: 0.7.0's shutdown signal could never fire, and
+  0.7.1 terminated rmcp's sessions at the instant shutdown began — and an MCP
+  response travels back over its session's SSE stream, so a call in flight lost
+  the reply it was about to send. Fixed in 0.7.2. Note the trade: while any SSE
+  stream is open, shutdown takes the full drain timeout (10s here, against the
+  unit's `TimeoutStopSec`).
+
 ## [0.17.0] — 2026-08-07
 
 Hardening release. The server no longer spawns any external process, and the

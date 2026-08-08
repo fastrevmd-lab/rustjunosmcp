@@ -207,5 +207,9 @@ fn tls_does_not_replace_host_validation() {
         .set("Authorization", &format!("Bearer {secret}"))
         .set("Accept", "application/json, text/event-stream")
         .send_json(init_body());
-    assert_eq!(response_status(result), 403);
+    // 421 since mecmcp 0.7 — see http_smoke::disallowed_host_is_rejected. The
+    // point of this test is that TLS does not stand in for Host validation, and
+    // that still holds: a foreign Host is refused over TLS exactly as over plain
+    // HTTP.
+    assert_eq!(response_status(result), 421);
 }
