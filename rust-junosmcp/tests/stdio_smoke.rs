@@ -3,12 +3,12 @@
 //! stdin, parse responses on stdout, and assert the exact configured tool set.
 
 mod common;
-use common::binary_path;
+use common::{BoundedLines, binary_path};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const JUNOS_TOOLS: &[&str] = &[
     // `get_device_list` is canonical; `get_router_list` is the deprecated alias
@@ -83,7 +83,7 @@ fn lists_expected_tools() {
         .expect("spawn rust-junosmcp");
 
     let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = child.stdout.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
 
     // MCP framing is JSON-RPC delimited by newlines.
     fn send(stdin: &mut impl Write, msg: &Value) {
@@ -116,24 +116,17 @@ fn lists_expected_tools() {
         }),
     );
 
-    // Read until we see the tools/list response.
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut tools_response: Option<Value> = None;
-    use std::io::{BufRead, BufReader};
-    let mut reader = BufReader::new(&mut stdout);
-    while Instant::now() < deadline && tools_response.is_none() {
-        let mut line = String::new();
-        if reader.read_line(&mut line).unwrap_or(0) == 0 {
-            break;
-        }
-        let v: Value = match serde_json::from_str(line.trim()) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if v.get("id") == Some(&json!(2)) {
-            tools_response = Some(v);
-        }
-    }
+    // Read until we see the tools/list response, bounded on a worker thread.
+    // A deadline checked between `read_line` calls cannot fire: the response
+    // never arriving is precisely what leaves `read_line` blocked, so control
+    // never returns to the check and the test hangs instead of failing (#281).
+    use std::io::BufReader;
+    let lines = BoundedLines::spawn(BufReader::new(stdout));
+    let tools_response: Option<Value> = lines
+        .wait_for_line(Duration::from_secs(15), |line| {
+            serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v.get("id") == Some(&json!(2)))
+        })
+        .map(|line| serde_json::from_str(line.trim()).expect("jsonrpc response"));
 
     let _ = child.kill();
     let _ = child.wait();
@@ -210,7 +203,7 @@ fn denied_command_returns_tool_error() {
         .expect("spawn rust-junosmcp");
 
     let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = child.stdout.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
 
     fn send(stdin: &mut impl Write, msg: &Value) {
         let line = serde_json::to_string(msg).unwrap();
@@ -247,23 +240,14 @@ fn denied_command_returns_tool_error() {
         }),
     );
 
-    use std::io::{BufRead, BufReader};
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut response: Option<Value> = None;
-    let mut reader = BufReader::new(&mut stdout);
-    while Instant::now() < deadline && response.is_none() {
-        let mut line = String::new();
-        if reader.read_line(&mut line).unwrap_or(0) == 0 {
-            break;
-        }
-        let v: Value = match serde_json::from_str(line.trim()) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if v.get("id") == Some(&json!(2)) {
-            response = Some(v);
-        }
-    }
+    // Bounded on a worker thread; see the note at the tools/list read above.
+    use std::io::BufReader;
+    let lines = BoundedLines::spawn(BufReader::new(stdout));
+    let response: Option<Value> = lines
+        .wait_for_line(Duration::from_secs(15), |line| {
+            serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v.get("id") == Some(&json!(2)))
+        })
+        .map(|line| serde_json::from_str(line.trim()).expect("jsonrpc response"));
 
     let _ = child.kill();
     let _ = child.wait();
