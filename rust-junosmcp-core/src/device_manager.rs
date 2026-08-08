@@ -109,8 +109,21 @@ struct PoolEntry {
     returned_at: Instant,
 }
 
+/// Record of a partial cleanup failure, retained until cleared by successful
+/// lock acquisition or evicted after the idle timeout (#260).
+#[derive(Clone)]
+struct CleanupTaint {
+    /// When the cleanup failure occurred.
+    failed_at: Instant,
+    /// Which cleanup phases failed (rollback, unlock, session close).
+    phases: String,
+}
+
 struct SessionPool {
     slots: Mutex<HashMap<String, PoolEntry>>,
+    /// Per-device cleanup failures. Warned on next open, cleared on successful
+    /// lock acquisition. Shares the same idle timeout as the session pool.
+    taints: Mutex<HashMap<String, CleanupTaint>>,
     idle_timeout: Duration,
 }
 
@@ -118,6 +131,7 @@ impl SessionPool {
     fn new() -> Arc<Self> {
         let pool = Arc::new(Self {
             slots: Mutex::new(HashMap::new()),
+            taints: Mutex::new(HashMap::new()),
             idle_timeout: POOL_IDLE_TIMEOUT,
         });
         // Spawn the reaper only if we're inside a tokio runtime
@@ -154,6 +168,17 @@ impl SessionPool {
                     let _ = d.close().await;
                 });
             }
+        }
+
+        // Evict cleanup taints older than the idle timeout.
+        let mut taints = self.taints.lock().await;
+        let expired_taints: Vec<String> = taints
+            .iter()
+            .filter(|(_, t)| now.duration_since(t.failed_at) > self.idle_timeout)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in expired_taints {
+            taints.remove(&key);
         }
     }
 
@@ -209,6 +234,33 @@ impl SessionPool {
                 });
             }
         }
+    }
+
+    /// Record a cleanup failure for a device. The taint is cleared on successful
+    /// lock acquisition or evicted after the idle timeout.
+    async fn record_cleanup_taint(&self, router: &str, phases: String) {
+        let mut taints = self.taints.lock().await;
+        taints.insert(
+            router.to_string(),
+            CleanupTaint {
+                failed_at: Instant::now(),
+                phases,
+            },
+        );
+    }
+
+    /// Check for and return any existing cleanup taint for this device.
+    /// Warns the caller that the device may still hold a configuration lock.
+    async fn check_cleanup_taint(&self, router: &str) -> Option<CleanupTaint> {
+        let taints = self.taints.lock().await;
+        taints.get(router).cloned()
+    }
+
+    /// Clear any cleanup taint for this device (called after successful lock
+    /// acquisition proves the device is not locked).
+    async fn clear_cleanup_taint(&self, router: &str) {
+        let mut taints = self.taints.lock().await;
+        taints.remove(router);
     }
 }
 
@@ -357,6 +409,27 @@ impl DeviceManager {
     /// Drain pool entries for routers that were removed or whose config changed.
     pub async fn invalidate_pool(&self, names: &[String]) {
         self.pool.invalidate(names).await;
+    }
+
+    /// Record a cleanup failure for a device (#260). The taint persists until
+    /// cleared by successful lock acquisition or evicted after the idle timeout.
+    pub(crate) async fn record_cleanup_taint(&self, router: &str, phases: String) {
+        self.pool.record_cleanup_taint(router, phases).await;
+    }
+
+    /// Check for and return any existing cleanup taint for this device.
+    /// Returns None if no taint exists or if it has expired.
+    pub(crate) async fn check_cleanup_taint(&self, router: &str) -> Option<String> {
+        self.pool
+            .check_cleanup_taint(router)
+            .await
+            .map(|t| t.phases)
+    }
+
+    /// Clear any cleanup taint for this device (called after successful lock
+    /// acquisition proves the device is accessible).
+    pub(crate) async fn clear_cleanup_taint(&self, router: &str) {
+        self.pool.clear_cleanup_taint(router).await;
     }
 
     /// Open a `Device` for the named router, reusing a pooled session if one

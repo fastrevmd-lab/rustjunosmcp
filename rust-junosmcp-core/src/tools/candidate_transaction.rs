@@ -168,6 +168,17 @@ pub(crate) async fn run(
     timeout: Duration,
     ct: &CancellationToken,
 ) -> Result<CandidateResult, JmcpError> {
+    // Check for a prior cleanup failure and warn the caller (#260). Lock
+    // acquisition failing later will prove whether the taint was real.
+    if let Some(phases) = dm.check_cleanup_taint(router).await {
+        tracing::warn!(
+            router,
+            phases,
+            "a previous candidate transaction failed cleanup; \
+             the device may still hold a configuration lock"
+        );
+    }
+
     let deadline = Instant::now() + timeout;
     let mut dev = run_step(deadline, timeout, ct, dm.open(router)).await?;
     dev.prevent_reuse();
@@ -178,6 +189,9 @@ pub(crate) async fn run(
     };
 
     if execution.reusable {
+        // Cleanup succeeded and lock was acquired. The device is not locked,
+        // so any prior taint was stale or resolved itself.
+        dm.clear_cleanup_taint(router).await;
         dev.allow_reuse();
     } else {
         // close() takes ownership of the underlying client on its first poll,
@@ -191,6 +205,25 @@ pub(crate) async fn run(
             Err(_) => tracing::warn!(router, "timed out closing tainted NETCONF session"),
         }
     }
+
+    // Record cleanup failure for the next caller if cleanup did not complete.
+    // Extract the failure details from a CandidateCleanupFailed error.
+    if let Err(JmcpError::CandidateCleanupFailed {
+        rollback, unlock, ..
+    }) = &execution.result
+    {
+        let mut phases = vec![];
+        if rollback != "ok" {
+            phases.push(format!("rollback={rollback}"));
+        }
+        if unlock != "ok" {
+            phases.push(format!("unlock={unlock}"));
+        }
+        if !phases.is_empty() {
+            dm.record_cleanup_taint(router, phases.join("; ")).await;
+        }
+    }
+
     execution.result
 }
 
