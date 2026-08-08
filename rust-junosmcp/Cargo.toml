@@ -12,7 +12,12 @@ workspace = true
 
 [features]
 default = ["tls", "srx"]
-tls = ["dep:rustls", "dep:rustls-pki-types", "dep:axum-server"]
+# `rustls` is unconditional: mecmcp-transport owns the listener and its
+# `serve_router` signature names `rustls::ServerConfig` whether or not TLS is
+# configured, so a --no-default-features build still has to name the type.
+# The `tls` feature still gates what is TLS-specific here: reading a cert and
+# key off disk, and axum-server.
+tls = ["dep:rustls-pki-types", "dep:axum-server"]
 srx = ["dep:rust-junosmcp-srx-core"]
 
 [lib]
@@ -88,7 +93,7 @@ axum               = { workspace = true }
 tower              = { workspace = true }
 tower-http         = { workspace = true, features = ["trace"] }
 http               = { workspace = true }
-rustls             = { workspace = true, optional = true }
+rustls             = { workspace = true }
 rustls-pki-types   = { workspace = true, optional = true }
 axum-server        = { workspace = true, optional = true, default-features = false, features = ["tls-rustls-no-provider"] }
 rustix             = { workspace = true, features = ["process"] }
