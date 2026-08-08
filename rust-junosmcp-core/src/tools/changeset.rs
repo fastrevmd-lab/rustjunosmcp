@@ -98,6 +98,17 @@ pub struct GetChangeSetStatusArgs {
     pub device: String,
 }
 
+/// Arguments for `list_junos_change_sets`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
+pub struct ListChangeSetsArgs {
+    /// Optional device name to filter change sets. If omitted, returns all
+    /// change sets across all devices visible to the caller.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: Option<String>,
+}
+
 /// Create a change set (plan).
 pub async fn create_change_set(
     args: CreateChangeSetArgs,
@@ -605,6 +616,50 @@ pub async fn get_change_set_status(
     serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
 }
 
+/// List change sets, optionally filtered by device.
+///
+/// Returns all change sets across all devices, or filtered to a single device
+/// if `device` is provided. Each record includes the change set ID, state,
+/// owner, device, and expiry information.
+///
+/// This tool provides the recovery path for #255: when an expired change set
+/// blocks creating a new one, enumerate to find the blocker's ID, then apply
+/// it to let the expiry transition complete (or wait for the automatic sweep
+/// that mecmcp v0.7.3 performs on insert).
+///
+/// Authorization is via device scope: records for devices outside the caller's
+/// scope are filtered server-side, so no out-of-scope device name is ever
+/// returned.
+pub async fn list_change_sets(
+    args: ListChangeSetsArgs,
+    coordinator: Arc<ChangesetCoordinator>,
+    dm: Arc<DeviceManager>,
+) -> Result<Value, JmcpError> {
+    // Get all change sets from the coordinator.
+    let all_records = coordinator.change_sets().await;
+
+    // Filter by device if specified, and by device scope authorization.
+    let inventory = dm.inventory();
+    let filtered: Vec<_> = all_records
+        .into_iter()
+        .filter(|record| {
+            // If a device filter was provided, honor it.
+            if let Some(ref device_filter) = args.device
+                && &record.device != device_filter
+            {
+                return false;
+            }
+            // Only include devices that exist in the caller's inventory scope.
+            // Devices outside scope are silently omitted rather than causing
+            // an error, matching the behavior of enumeration tools generally.
+            inventory.get(&record.device).is_ok()
+        })
+        .collect();
+
+    // Serialize the filtered records.
+    serde_json::to_value(filtered).map_err(|e| JmcpError::Validation(e.to_string()))
+}
+
 /// Arguments for `get_junos_candidate_fingerprint`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -998,5 +1053,129 @@ mod tests {
         // The lifecycle state serializes lowercase.
         assert_eq!(status_result["state"].as_str().unwrap(), "approved");
         assert_eq!(status_result["owner"].as_str().unwrap(), "alice");
+    }
+
+    /// #255: list_junos_change_sets provides the recovery path when an expired
+    /// change set blocks creating a new one. It must enumerate change sets,
+    /// filter by device when requested, and respect device-scope authorization.
+    #[tokio::test]
+    async fn list_change_sets_enumerates_and_filters() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}},
+                "r2":{"ip":"127.0.0.2","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FP: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        // Create two change sets on different devices.
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test1".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let r1_result = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action.clone()],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy.clone(),
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+        let r1_id = r1_result["change_set_id"].as_str().unwrap();
+
+        let action2 = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test2".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let r2_result = create_change_set(
+            CreateChangeSetArgs {
+                device: "r2".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action2],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy.clone(),
+            test_attribution("bob"),
+        )
+        .await
+        .unwrap();
+        let r2_id = r2_result["change_set_id"].as_str().unwrap();
+
+        // List all change sets: both should appear.
+        let all = list_change_sets(
+            ListChangeSetsArgs { device: None },
+            coordinator.clone(),
+            dm.clone(),
+        )
+        .await
+        .unwrap();
+        let all_arr = all.as_array().unwrap();
+        assert_eq!(all_arr.len(), 2, "both change sets should be listed");
+        let ids: Vec<&str> = all_arr
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&r1_id) && ids.contains(&r2_id));
+
+        // List filtered by device: only r1's change set should appear.
+        let r1_only = list_change_sets(
+            ListChangeSetsArgs {
+                device: Some("r1".into()),
+            },
+            coordinator.clone(),
+            dm.clone(),
+        )
+        .await
+        .unwrap();
+        let r1_arr = r1_only.as_array().unwrap();
+        assert_eq!(r1_arr.len(), 1, "only r1's change set should be listed");
+        assert_eq!(r1_arr[0]["id"].as_str().unwrap(), r1_id);
+        assert_eq!(r1_arr[0]["device"].as_str().unwrap(), "r1");
+        assert_eq!(r1_arr[0]["owner"].as_str().unwrap(), "alice");
+
+        // List filtered by the other device.
+        let r2_only = list_change_sets(
+            ListChangeSetsArgs {
+                device: Some("r2".into()),
+            },
+            coordinator.clone(),
+            dm.clone(),
+        )
+        .await
+        .unwrap();
+        let r2_arr = r2_only.as_array().unwrap();
+        assert_eq!(r2_arr.len(), 1);
+        assert_eq!(r2_arr[0]["id"].as_str().unwrap(), r2_id);
+
+        // Filter by a device not in the inventory: returns empty.
+        let inv_subset = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm_subset = Arc::new(DeviceManager::new(inv_subset));
+        let scoped = list_change_sets(
+            ListChangeSetsArgs { device: None },
+            coordinator.clone(),
+            dm_subset,
+        )
+        .await
+        .unwrap();
+        let scoped_arr = scoped.as_array().unwrap();
+        // Only r1 is in the scoped inventory, so r2's change set is omitted.
+        assert_eq!(scoped_arr.len(), 1);
+        assert_eq!(scoped_arr[0]["device"].as_str().unwrap(), "r1");
     }
 }

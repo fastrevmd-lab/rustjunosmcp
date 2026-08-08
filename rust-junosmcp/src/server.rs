@@ -336,6 +336,7 @@ const SERVER_TOOLS: &[&str] = &[
     "apply_junos_change_set",
     "confirm_junos_change_set",
     "get_junos_change_set_status",
+    "list_junos_change_sets",
     "get_junos_candidate_fingerprint",
 ];
 
@@ -348,10 +349,10 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_25() {
+    fn server_tools_len_is_26() {
         // 23 before the candidate-fingerprint tool (#231); 25 with the
-        // confirming-commit tool (#239).
-        assert_eq!(SERVER_TOOLS.len(), 25);
+        // confirming-commit tool (#239); 26 with list_junos_change_sets (#255).
+        assert_eq!(SERVER_TOOLS.len(), 26);
     }
 
     #[test]
@@ -1436,6 +1437,43 @@ impl JmcpHandler {
         }
         Self::to_call_result(result)
     }
+
+    #[tool(
+        name = "list_junos_change_sets",
+        description = "List change sets, optionally filtered by device. Returns all change sets (planned, approved, applied, expired, failed) across devices in scope, or for a single device if specified. Provides the recovery path when an expired change set blocks creating a new one."
+    )]
+    async fn list_junos_change_sets(
+        &self,
+        Parameters(args): Parameters<changeset::ListChangeSetsArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        // If a specific device is requested, audit names it; otherwise this is
+        // an enumeration across devices and the audit carries no device list.
+        let devices = args
+            .device
+            .as_ref()
+            .map(|d| vec![d.clone()])
+            .unwrap_or_default();
+        let mut audit = audit_scope(ctx, "list_junos_change_sets", "read", devices);
+
+        if let Err(e) = self.check_tool_scope(ctx, "list_junos_change_sets") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        // Device-scope check is inside the tool implementation: it filters the
+        // results to only include devices in the caller's inventory, which is
+        // already scoped. So an out-of-scope device in the filter simply returns
+        // zero records rather than an error.
+
+        let result = changeset::list_change_sets(args, self.coordinator.clone(), self.dm.clone())
+            .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
 }
 
 /// Pull the target device out of a tool's raw arguments, for the progress
@@ -1768,17 +1806,19 @@ mod scope_tests {
             .map(|name| (*name).to_string())
             .collect();
         assert_eq!(names, expected);
-        // 28 before Phase 5; the change-set tools took it to 33, and
-        // `confirm_junos_change_set` makes 34 (#239).
-        assert_eq!(names.len(), 34);
+        // 28 before Phase 5; the change-set tools took it to 33,
+        // `confirm_junos_change_set` makes 34 (#239), and
+        // `list_junos_change_sets` makes 35 (#255).
+        assert_eq!(names.len(), 35);
     }
 
     #[test]
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_eighteen_tools() {
-        // 19 before Phase 5; the change-set tools took it to 24, and
-        // `confirm_junos_change_set` makes 25 (#239).
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 25);
+        // 19 before Phase 5; the change-set tools took it to 24,
+        // `confirm_junos_change_set` makes 25 (#239), and
+        // `list_junos_change_sets` makes 26 (#255).
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 26);
     }
 
     #[test]
