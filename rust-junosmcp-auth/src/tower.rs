@@ -10,10 +10,17 @@ use axum::{
 };
 use std::sync::Arc;
 
+/// Tower middleware state: token store, optional preflight check, and body size limit.
+///
+/// Cloned once per request by axum's state extraction. The `Arc<TokenStoreFile>` is
+/// cheap to clone and provides atomic snapshot reads via `store()`.
 #[derive(Clone)]
 pub struct AuthState {
+    /// The token store backing authentication. Snapshot-read on each request.
     pub store: Arc<crate::TokenStoreFile>,
+    /// Optional preflight check that runs after authentication but before tool dispatch.
     pub preflight: mecmcp_transport::OptionalPreflight,
+    /// Maximum request body size in bytes. Requests exceeding this return 413.
     pub body_limit: usize,
 }
 
@@ -26,6 +33,17 @@ const CHALLENGE_NO_CREDENTIALS: &str = r#"Bearer realm="jmcp""#;
 /// syntactically-valid bearer token that did not match any known token.
 const CHALLENGE_INVALID_TOKEN: &str = r#"Bearer realm="jmcp", error="invalid_token", error_description="The access token is invalid""#;
 
+/// Tower middleware layer enforcing HTTP Bearer token authentication.
+///
+/// Extracts `Authorization: Bearer <token>`, authenticates against the token store,
+/// buffers the request body (rejecting requests over `body_limit`), runs the optional
+/// preflight check, and inserts a `CallerCtx` into request extensions for downstream
+/// handlers. Rejects with RFC 6750-compliant 401 responses (including `WWW-Authenticate`
+/// challenge headers) on missing or invalid tokens, and 403 if preflight denies the
+/// request.
+///
+/// This is the authorization boundary: a request reaching `next.run()` has been
+/// authenticated and authorized.
 pub async fn auth_layer(
     axum::extract::State(state): axum::extract::State<AuthState>,
     req: Request<Body>,

@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Spawn the `rust-junosmcp` binary, send MCP `initialize` + `tools/list` over
 //! stdin, parse responses on stdout, and assert the exact configured tool set.
 

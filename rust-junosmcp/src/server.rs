@@ -102,14 +102,30 @@ pub(super) fn audit_scope(
     }
 }
 
+/// Authorization failures arising from token scope checks.
+///
+/// Returned when a bearer token's configured scope does not confer access to the
+/// requested tool or device. The server converts these into `CallToolResult` errors
+/// with `isError: true`, not into protocol-level errors, so the denial is delivered
+/// as tool content rather than an MCP transport failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ScopeError {
+    /// Token lacks permission for this tool.
     #[error("token '{token}' is not authorized for tool '{tool}'")]
-    ToolNotInScope { token: String, tool: &'static str },
+    ToolNotInScope {
+        /// The name of the denied token (truncated digest).
+        token: String,
+        /// The tool name that was denied.
+        tool: &'static str,
+    },
+    /// Token lacks permission for this device.
     #[error("token '{token}' is not authorized for router '{router}' (tool '{tool}')")]
     RouterNotInScope {
+        /// The name of the denied token (truncated digest).
         token: String,
+        /// The device name that was denied.
         router: String,
+        /// The tool that triggered the device-scope check.
         tool: &'static str,
     },
 }
@@ -139,6 +155,12 @@ pub(super) fn classify_router_access(allows: bool, in_inventory: bool) -> Router
     }
 }
 
+/// MCP server handler implementing the Junos and SRX tool surface.
+///
+/// Coordinates tool dispatch through `rmcp::ServerHandler`, enforces caller
+/// authorization scopes, manages the device inventory and policy, and delegates
+/// operational work to the `-core` crates. Instantiated once at startup and cloned
+/// per request.
 #[derive(Clone)]
 pub struct JmcpHandler {
     pub(super) dm: Arc<DeviceManager>,
@@ -162,6 +184,13 @@ pub struct JmcpHandler {
 }
 
 impl JmcpHandler {
+    /// Construct a new server handler with the given device manager, policy, and
+    /// operational configs.
+    ///
+    /// Registers the Junos tool surface unconditionally and the SRX tools when the
+    /// `srx` feature is enabled. Authorization is not yet enforced at construction;
+    /// call [`with_srx_runtime`](Self::with_srx_runtime) to configure SRX-specific
+    /// authorization if the `srx` feature is enabled.
     pub fn new(
         dm: Arc<DeviceManager>,
         policy: Arc<Policy>,
@@ -195,6 +224,11 @@ impl JmcpHandler {
         }
     }
 
+    /// Configure SRX-specific runtime settings: whether authorization is required for
+    /// SRX workflow tools and the staging directory for support bundles.
+    ///
+    /// Only available when the `srx` feature is enabled. Must be called after
+    /// [`new`](Self::new) if SRX workflows require authorization or custom staging.
     #[cfg(feature = "srx")]
     pub fn with_srx_runtime(
         mut self,
@@ -206,6 +240,7 @@ impl JmcpHandler {
         self
     }
 
+    /// Returns the transfer configuration governing `transfer_file` operations.
     pub fn transfer_config(&self) -> &rust_junosmcp_core::TransferConfig {
         &self.transfer_cfg
     }

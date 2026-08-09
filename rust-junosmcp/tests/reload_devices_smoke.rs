@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Stdio smoke for reload_devices.
 
 mod common;

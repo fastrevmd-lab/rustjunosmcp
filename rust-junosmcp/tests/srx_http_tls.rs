@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Real rustls handshake coverage for the unified streamable-HTTP endpoint.
 
 #![cfg(feature = "tls")]

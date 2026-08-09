@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 mod common;
 
 use common::{

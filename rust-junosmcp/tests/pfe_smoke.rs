@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! End-to-end streamable-http smoke for the PFE tool.
 
 mod common;

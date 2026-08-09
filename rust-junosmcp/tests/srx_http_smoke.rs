@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Streamable-http integration smoke for the unified server's SRX tools: auth (RFC 6750 401s),
 //! rmcp 2.0 Host allowlist (#97), and the tool-surface tripwire. All tests
 //! exercise the transport/auth layers only — no device is contacted.
