@@ -39,6 +39,10 @@ pub fn strip_config_xml_wrapper(raw: &str) -> String {
 }
 
 /// Maximum allowed length for user-supplied text fields (1 MB).
+///
+/// Command strings, configuration payloads, and other text inputs exceeding
+/// this limit are rejected with [`JmcpError::InventoryInvalid`]. Prevents
+/// unbounded memory allocation from malicious or malformed inputs.
 pub const MAX_INPUT_LEN: usize = 1_048_576;
 
 /// Reject text fields that exceed the maximum allowed length.

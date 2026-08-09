@@ -169,12 +169,20 @@ pub(crate) mod validation {
     }
 }
 
-/// Authentication config for a Junos device. Tagged enum mirrors the Python
-/// repo's `auth.type` discriminator.
+/// Device authentication method for NETCONF.
+///
+/// Tagged enum mirroring the Python repo's `auth.type` discriminator for
+/// drop-in compatibility with Juniper/junos-mcp-server inventories. Password
+/// auth is supported for NETCONF but not SCP (file transfers require SSH keys).
+/// The `Debug` impl is hand-written to redact passwords.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
+    /// Authenticate with a plaintext password. Supported for NETCONF; not
+    /// supported for SCP-based file transfers.
     Password { password: String },
+    /// Authenticate with an SSH private key. Path is validated at inventory
+    /// load time; the file must exist.
     SshKey { private_key_path: PathBuf },
 }
 
@@ -243,29 +251,46 @@ mod auth_tests {
     }
 }
 
-/// `deny` blocks the tool call; `allow` overrides a broader deny.
+/// Blocklist rule action.
+///
+/// `deny` blocks the tool call; `allow` overrides a broader deny. Rules are
+/// evaluated most-specific-first (literal count tiebreak), then device rules
+/// win over defaults.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
+    /// Block the input. Logged as a denied operation.
     Deny,
+    /// Permit the input. Overrides a broader `Deny` rule.
     Allow,
 }
 
-/// One author-side rule: an action and a glob pattern.
+/// Single blocklist rule as authored in `devices.json`.
+///
+/// Compiled into a `CompiledRule<Action>` by `policy::build()`. Pattern is a
+/// glob; invalid globs are rejected at inventory load time.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuleSpec {
+    /// `deny` or `allow`.
     pub action: Action,
+    /// Glob pattern (e.g., `request system *`, `delete interfaces *`).
     pub pattern: String,
 }
 
-/// Per-domain rule lists (commands → execute_junos_command,
-/// config → load_and_commit_config).
+/// Per-domain blocklist rules for a device or the global defaults.
+///
+/// `commands` gates `execute_junos_command`, `config` gates
+/// `load_and_commit_config` (set-format only), and `pfe_commands` gates
+/// `execute_junos_pfe_command`. Missing fields default to empty lists.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BlocklistRules {
+    /// Rules checked by `execute_junos_command`.
     #[serde(default)]
     pub commands: Vec<RuleSpec>,
+    /// Rules checked by `load_and_commit_config` (set-format only).
     #[serde(default)]
     pub config: Vec<RuleSpec>,
+    /// Rules checked by `execute_junos_pfe_command`.
     #[serde(default)]
     pub pfe_commands: Vec<RuleSpec>,
 }
@@ -274,23 +299,31 @@ fn default_port() -> u16 {
     22
 }
 
-/// One entry in `devices.json`.
+/// Single device entry from `devices.json`.
+///
+/// Validated at load time: `ip` must be an IPv4/IPv6 address or RFC 1123
+/// hostname; `port` in 1..=65535; `username` is 1-64 ASCII alphanumeric +
+/// `_.-`, no leading hyphen; `private_key_path` (if SSH key auth) must exist
+/// on disk. Optional `ssh_config` is loaded for ProxyJump/ProxyCommand; all
+/// other connection parameters come from this entry.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeviceEntry {
+    /// IPv4/IPv6 address or RFC 1123 hostname.
     pub ip: String,
+    /// SSH port. Defaults to 22.
     #[serde(default = "default_port")]
     pub port: u16,
+    /// SSH username. 1-64 ASCII alphanumeric + `_.-`, no leading hyphen.
     pub username: String,
+    /// Authentication method (password or SSH key).
     pub auth: AuthConfig,
-    /// Optional path to an OpenSSH `ssh_config(5)` file. When set, the file
-    /// is loaded and `ip` is used as the alias to look up `ProxyJump` /
-    /// `ProxyCommand` settings. The entry's explicit `ip`, `port`,
-    /// `username`, and `auth` remain authoritative; only proxy settings are
-    /// pulled from the config file. Mirrors PyEZ semantics.
+    /// Optional SSH config file for ProxyJump/ProxyCommand. When set, `ip` is
+    /// used as the alias to look up proxy settings. Connection parameters
+    /// (`ip`, `port`, `username`, `auth`) from this entry override the file.
     #[serde(default)]
     pub ssh_config: Option<PathBuf>,
-    /// Optional per-device blocklist rules. Merged with `_blocklist_defaults`
-    /// at policy build time. See [`BlocklistRules`].
+    /// Per-device blocklist rules. Merged with `_blocklist_defaults` at
+    /// policy build time.
     #[serde(default)]
     pub blocklist: Option<BlocklistRules>,
 }
@@ -341,12 +374,14 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
-#[derive(Debug, Clone)]
-/// Junos inventory wrapping `mecmcp-inventory::FileInventory`.
+/// Parsed and validated Junos device inventory.
 ///
-/// Maintains the synchronous interface the server uses while delegating
-/// schema validation to the shared crate. The flat-map schema with
-/// `_blocklist_defaults` is validated by FileInventory's dual-schema parser.
+/// Wraps `mecmcp-inventory::FileInventory<DeviceEntry, BlocklistRules>` and
+/// adds Junos-specific validation (SSH username/key-path character classes,
+/// port range, key-file existence). The flat-map schema with
+/// `_blocklist_defaults` is parsed by the shared crate; the validators here
+/// encode SSH and Junos rules the shared crate does not know.
+#[derive(Debug, Clone)]
 pub struct Inventory {
     devices: HashMap<String, DeviceEntry>,
     blocklist_defaults: Option<BlocklistRules>,
@@ -354,7 +389,7 @@ pub struct Inventory {
 }
 
 impl Inventory {
-    /// Construct an empty inventory. Useful for tests that don't need real devices.
+    /// Empty inventory with no devices. For tests that do not need real devices.
     pub fn empty() -> Self {
         Self {
             devices: Default::default(),
@@ -363,20 +398,14 @@ impl Inventory {
         }
     }
 
-    /// Load and validate a `devices.json` file.
+    /// Load and validate `devices.json` from disk.
     ///
-    /// Parsing is delegated to `mecmcp-inventory`, which detects the Junos
-    /// flat-map schema — including the `_blocklist_defaults` key, which is
-    /// policy rather than a device — and returns owned values. The
-    /// Junos-specific validators below then run over the result; they encode
-    /// SSH and Junos rules the shared crate has no business knowing.
-    ///
-    /// An earlier version parsed the file **twice**: once through the shared
-    /// loader, discarding the result, then again with local types. That was not
-    /// gratuitous — the trait's `get` and `policy` were unimplementable against
-    /// interior mutability and returned `Err`/`None` unconditionally, so there
-    /// was nothing to delegate to. Fixed upstream in `phase4-v0.1.7`; the
-    /// second parse is gone, along with the risk of two parsers drifting apart.
+    /// Parsing is delegated to `mecmcp-inventory::FileInventory`, which handles
+    /// the flat-map schema (top-level keys are device names, plus the special
+    /// `_blocklist_defaults` policy key). Junos-specific validators then check
+    /// SSH username/key-path character classes, port ranges, and key-file
+    /// existence. Returns `InventoryInvalid` if parsing fails or any device
+    /// entry is malformed.
     pub fn load(path: &Path) -> Result<Self, JmcpError> {
         use mecmcp_inventory::Inventory as _;
 
@@ -712,44 +741,45 @@ mod load_tests {
 }
 
 impl Inventory {
-    /// Look up a device by name.
+    /// Look up a device by name. Returns `UnknownRouter` if not found.
     pub fn get(&self, name: &str) -> Result<&DeviceEntry, JmcpError> {
         self.devices
             .get(name)
             .ok_or_else(|| JmcpError::UnknownRouter(name.to_string()))
     }
 
-    /// Sorted list of router names. Used by `get_router_list`.
+    /// Alphabetically sorted list of device names. Used by `get_router_list`.
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.devices.keys().cloned().collect();
         names.sort();
         names
     }
 
-    /// Source path the inventory was loaded from. Used by v0.2 `reload_devices`.
+    /// Path from which this inventory was loaded. Used by `reload_devices` and
+    /// `add_device` for CAS checks.
     pub fn source_path(&self) -> &Path {
         &self.source_path
     }
 
-    /// Top-level blocklist defaults merged into every device's effective rule
-    /// set. `None` if the file has no `_blocklist_defaults` key.
+    /// Global blocklist rules from `_blocklist_defaults`, if present. Merged
+    /// with each device's per-device rules at policy build time.
     pub fn blocklist_defaults(&self) -> Option<&BlocklistRules> {
         self.blocklist_defaults.as_ref()
     }
 
-    /// Number of devices currently in this inventory.
+    /// Number of devices in this inventory.
     pub fn len(&self) -> usize {
         self.devices.len()
     }
 
-    /// True if the inventory has no devices.
+    /// True if this inventory contains no devices.
     pub fn is_empty(&self) -> bool {
         self.devices.is_empty()
     }
 
-    /// True if `name` is a device in the current inventory. Used server-side to
-    /// classify a failed router request (unknown name vs out-of-scope) for
-    /// observability logging without leaking inventory to the caller (#175).
+    /// True if the named device exists in this inventory. Used server-side to
+    /// classify tool errors (unknown device vs. out-of-scope) for observability
+    /// logging without leaking inventory to the caller.
     pub fn contains_router(&self, name: &str) -> bool {
         self.devices.contains_key(name)
     }
@@ -855,9 +885,11 @@ mod rule_type_tests {
     }
 }
 
-/// Insert a new device into a `serde_json::Value`-shaped inventory.
-/// Preserves all existing top-level keys and key order. Returns the updated
-/// value. Errors if `name` already exists at top-level.
+/// Insert a device into a JSON-shaped inventory, preserving key order.
+///
+/// Used by `add_device` to build the updated inventory before writing it back
+/// to disk. Returns the modified `Value`. Fails with `DeviceExists` if `name`
+/// is already a top-level key.
 pub fn insert_device(
     inv: &serde_json::Value,
     name: &str,
@@ -892,10 +924,12 @@ pub fn insert_device(
     Ok(out)
 }
 
-/// SHA-256 of the file at `path`. Returns zeros if the file doesn't exist
-/// (callers treat zeros as "no last-known content"). The all-zero output
-/// cannot collide with a real SHA-256 digest, so callers can rely on this
-/// sentinel for TOCTOU CAS checks.
+/// SHA-256 digest of the file at `path`, or all-zeros if it does not exist.
+///
+/// Used by `add_device` and `reload_devices` for CAS checks. The all-zero
+/// sentinel cannot collide with a real SHA-256 digest (statistically
+/// infeasible), so callers can treat it as "no last-known content" and detect
+/// TOCTOU races.
 pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
     match std::fs::read(path) {
         Ok(bytes) => {
@@ -909,11 +943,13 @@ pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
     }
 }
 
-/// Atomically replace `path` with the JSON serialization of `value`.
-/// Same-filesystem rename via tempfile. Preserves existing file mode bits
-/// (Unix only). Round-trips an arbitrary `serde_json::Value` rather than the
-/// typed `InventoryFile` so callers can preserve unknown top-level keys
-/// (e.g. `_blocklist_defaults`, future extensions).
+/// Atomically write JSON to disk via same-filesystem rename.
+///
+/// Writes `value` (pretty-printed + trailing newline) to a temp file in the
+/// same directory as `path`, syncs it, then renames over `path`. Preserves
+/// existing file mode bits on Unix. Accepts an arbitrary `serde_json::Value`
+/// rather than a typed struct so callers can preserve unknown top-level keys
+/// (`_blocklist_defaults`, future extensions). Used by `add_device`.
 pub fn write_atomic(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(

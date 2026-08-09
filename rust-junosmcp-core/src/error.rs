@@ -2,17 +2,39 @@
 
 use std::path::PathBuf;
 
+/// Error type surfaced by tools and server operations.
+///
+/// Every public variant carries an actionable message suitable for MCP clients
+/// or CLI output. Variants marked `[code=*]` in their display output are stable
+/// audit identifiers consumed by SIEM; the `audit_kind()` method returns these
+/// for logging.
+///
+/// Security-relevant errors (`Denied`, `HostKeyMismatch`, `HostKeyRevoked`)
+/// preserve evidence for audit trails. File-transfer and upgrade errors carry
+/// diagnostic state (paths, SHA-256 digests, timeout durations) for
+/// troubleshooting without requiring log correlation.
 #[derive(Debug, thiserror::Error)]
 pub enum JmcpError {
+    /// Device name is not in the current inventory. Returned by
+    /// `DeviceManager::open()` and tool preconditions before any NETCONF
+    /// connection is attempted.
     #[error("router '{0}' not found in device mapping")]
     UnknownRouter(String),
 
+    /// Inventory file failed schema validation. Message carries parse errors,
+    /// validation failures (name/username/IP character classes, port range), or
+    /// references to missing SSH key files.
     #[error("invalid devices.json: {0}")]
     InventoryInvalid(String),
 
+    /// SSH private-key file referenced in inventory does not exist at load time.
+    /// Returned by `Inventory::load()` before any device connection is attempted.
     #[error("private key file not found: {0}")]
     KeyFileMissing(PathBuf),
 
+    /// SSH config file referenced in a device's `ssh_config` field could not be
+    /// loaded or parsed. The source error is a `rustez::SshConfigError` carrying
+    /// the specific parse failure or IO error.
     #[error("ssh_config invalid for router '{router}': {source}")]
     SshConfigInvalid {
         router: String,
@@ -20,18 +42,27 @@ pub enum JmcpError {
         source: rustez::SshConfigError,
     },
 
+    /// Caller passed a `config_format` other than `set`, `text`, or `xml`.
     #[error("invalid config_format '{0}' (expected set, text, or xml)")]
     BadFormat(String),
 
+    /// PFE command validation failed (e.g., contains literal quotes or shell
+    /// metacharacters). Message describes why the command is unsafe.
     #[error("invalid pfe_command: {0}")]
     BadPfeCommand(String),
 
+    /// Rollback version argument is outside Junos's valid range (0..=49).
     #[error("rollback version {0} out of range (0..=49)")]
     BadRollbackVersion(i64),
 
+    /// File path validation failed for a local source file (contains `/`,
+    /// starts with `-`, or other character-class violation). Prevents directory
+    /// traversal and SSH flag injection.
     #[error("invalid source_path [code=bad_source_path]: {0}")]
     BadSourcePath(String),
 
+    /// Device lacks sufficient free storage for a file transfer or package
+    /// install. Carries observed free bytes and the space requirement.
     #[error(
         "insufficient disk [code=insufficient_disk]: {message} (free={free}B required={required}B)"
     )]
@@ -41,11 +72,16 @@ pub enum JmcpError {
         message: String,
     },
 
+    /// File-transfer tool called on a password-auth device. SCP is
+    /// non-interactive and requires key-based authentication.
     #[error(
         "unsupported auth [code=unsupported_auth]: device '{0}' uses password auth; transfer_file requires ssh_key (add SshKey to inventory)"
     )]
     UnsupportedAuth(String),
 
+    /// File transfer aborted: destination file exists on device with a
+    /// different SHA-256 digest than the source. Caller must explicitly pass
+    /// `force=true` to overwrite.
     #[error(
         "destination already exists with different content [code=dest_exists_differs]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); pass force=true to overwrite"
     )]
@@ -55,19 +91,28 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
+    /// External `scp` process exited non-zero. Carries exit status and stderr.
     #[error("scp failed [code=scp_failed] (exit={exit_code}): {stderr}")]
     ScpFailed { exit_code: i32, stderr: String },
 
+    /// System lacks OpenSSH `scp` or the binary does not support the legacy
+    /// `-O` flag (required for Junos). Install openssh-client or run the
+    /// official container image.
     #[error(
         "required OpenSSH scp dependency unavailable [code=scp_dependency_unavailable]: {detail}; install openssh-client with legacy -O support or use the supported container image"
     )]
     ScpDependencyUnavailable { detail: String },
 
+    /// SCP connection to device timed out. Device is unreachable or SSH port
+    /// is filtered.
     #[error(
         "scp connect timeout [code=connect_timeout]: device '{0}' may be unreachable or SSH (port 22) is filtered"
     )]
     ConnectTimeout(String),
 
+    /// SSH host-key verification failed: device presented a key that does not
+    /// match the entry in `known_hosts`. Indicates device replacement, firmware
+    /// reflash, or a MITM attack. Operator must review and update known_hosts.
     #[error(
         "host key verification failed [code=host_key_mismatch]: router '{router}' was rejected; review or refresh the entry in {known_hosts_file}"
     )]
@@ -76,6 +121,8 @@ pub enum JmcpError {
         known_hosts_file: PathBuf,
     },
 
+    /// Device presented a host key marked `@revoked` in known_hosts. The key is
+    /// compromised or administratively revoked and must never be accepted.
     #[error(
         "host key revoked [code=host_key_revoked]: router '{router}' key is marked @revoked in {known_hosts_file}; the key is compromised and must not be trusted"
     )]
@@ -84,9 +131,14 @@ pub enum JmcpError {
         known_hosts_file: PathBuf,
     },
 
+    /// Pre-transfer device capability probe failed (storage query, file-exists
+    /// check, or SHA-256 command availability). Message names the probe phase.
     #[error("device probe failed [code=device_probe_failed] (phase={phase}): {message}")]
     DeviceProbeFailed { phase: String, message: String },
 
+    /// SHA-256 mismatch after file transfer. The file was deleted from the
+    /// device and the operation failed. Indicates mid-transfer corruption or a
+    /// transient storage fault.
     #[error(
         "post-transfer verify failed [code=verify_mismatch]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); destination file was deleted"
     )]
@@ -96,6 +148,9 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
+    /// File fetch aborted: local destination exists with a different SHA-256
+    /// digest than the remote file. Caller must explicitly pass `force=true` to
+    /// overwrite.
     #[error(
         "[code=local_dest_exists_differs] local destination '{dest}' exists with sha256 '{local_sha}'; remote sha256 is '{remote_sha}'; set force=true to overwrite"
     )]
@@ -105,9 +160,12 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
+    /// File fetch requested a path that does not exist on the device.
     #[error("[code=remote_file_missing] router '{router}' has no file at '{remote_path}'")]
     RemoteFileMissing { router: String, remote_path: String },
 
+    /// SHA-256 mismatch after file fetch. Downloaded file does not match the
+    /// device's reported digest. Indicates mid-transfer corruption.
     #[error(
         "[code=fetch_verify_mismatch] fetched file '{dest}' local sha256 '{local_sha}' does not match remote sha256 '{remote_sha}'"
     )]
@@ -117,26 +175,38 @@ pub enum JmcpError {
         remote_sha: String,
     },
 
+    /// File transfer exceeded the caller-specified timeout. The SCP process was
+    /// terminated. Remediation: raise `timeout` or split the transfer.
     #[error(
         "transfer outer timeout [code=outer_timeout] after {0:?}; raise the `timeout` arg or split the file"
     )]
     TransferOuterTimeout(std::time::Duration),
 
+    /// Destructive operation requires explicit confirmation. Payload describes
+    /// the planned change; caller must re-invoke with `confirm=true`.
     #[error(
         "confirmation required [code=confirmation_required]: re-call with confirm=true to proceed; plan: {payload}"
     )]
     ConfirmationRequired { payload: serde_json::Value },
 
+    /// Upgrade attempted on a chassis-cluster device. ISSU is not implemented
+    /// in v1; standalone devices only.
     #[error(
         "cluster device unsupported [code=cluster_unsupported]: router '{router}' is a chassis cluster; upgrade_junos v1 supports standalone devices only (ISSU support deferred to v2)"
     )]
     UpgradeClusterUnsupported { router: String },
 
+    /// Device has an active `commit confirmed` timer. Upgrade would trigger an
+    /// automatic rollback mid-operation. Operator must confirm or roll back the
+    /// pending commit first.
     #[error(
         "active commit-confirmed window [code=commit_confirmed_active]: router '{router}' has a pending rollback in {rollback_secs}s; run `commit` or `rollback` first, then retry"
     )]
     UpgradeCommitConfirmedActive { router: String, rollback_secs: u64 },
 
+    /// Junos `request system software add` RPC did not complete within the
+    /// internal timeout. The install may still be running on the device; check
+    /// from console before retrying.
     #[error(
         "install RPC timed out [code=install_timeout]: router '{router}' after {elapsed:?}; the install may still be running on the device — check from console or retry once the device is reachable"
     )]
@@ -145,11 +215,15 @@ pub enum JmcpError {
         elapsed: std::time::Duration,
     },
 
+    /// Device did not become reachable via NETCONF after reboot within the
+    /// retry window. Check console or hardware status.
     #[error(
         "device did not return after reboot [code=reboot_timeout]: router '{router}' did not reopen NETCONF within {waited_secs}s; check console / hardware status"
     )]
     UpgradeRebootTimeout { router: String, waited_secs: u64 },
 
+    /// After reboot, device is running a different Junos version than
+    /// expected. The install may have rolled back or failed silently.
     #[error(
         "post-upgrade version mismatch [code=postverify_mismatch]: router '{router}' expected '{expected}', got '{observed}'; the install may have rolled back or failed silently"
     )]
@@ -159,25 +233,38 @@ pub enum JmcpError {
         observed: String,
     },
 
+    /// Entire upgrade workflow (install + reboot + verify) exceeded the
+    /// caller-specified timeout. Remediation: raise `timeout` or investigate
+    /// device responsiveness.
     #[error(
         "upgrade outer timeout [code=upgrade_outer_timeout] after {0:?}; raise the `timeout` arg or check device responsiveness"
     )]
     UpgradeOuterTimeout(std::time::Duration),
 
+    /// Generic operation timeout. Carries the elapsed duration.
     #[error("operation timed out after {0:?}")]
     Timeout(std::time::Duration),
 
+    /// Operation was cancelled by the client (MCP cancellation signal or
+    /// internal shutdown).
     #[error("operation cancelled by client [code=cancelled]")]
     Cancelled,
 
+    /// Device is locked by another workflow (config change, upgrade, file
+    /// transfer) and did not become available within the wait timeout.
     #[error(
         "device lease busy [code=device_lease_busy]: router '{router}' remained locked by another destructive workflow after {waited_secs}s"
     )]
     DeviceLeaseBusy { router: String, waited_secs: u64 },
 
+    /// Device lease acquisition failed for a reason other than busy/timeout.
+    /// Detail carries the underlying failure.
     #[error("device lease failed [code=device_lease_error]: router '{router}': {detail}")]
     DeviceLeaseError { router: String, detail: String },
 
+    /// Candidate configuration cleanup (rollback + unlock) partially or fully
+    /// failed after a workflow error. Each field describes the outcome of its
+    /// phase; the device may still hold a lock.
     #[error(
         "candidate cleanup failed [code=candidate_cleanup_failed]: primary={primary}; rollback={rollback}; unlock={unlock}"
     )]
@@ -187,15 +274,22 @@ pub enum JmcpError {
         unlock: String,
     },
 
+    /// Transport-layer error from rustez (NETCONF, SSH, XML parsing). Boxed
+    /// to keep the `JmcpError` enum small.
     #[error(transparent)]
     Rustez(Box<rustez::RustEzError>),
 
+    /// Standard IO error (file not found, permission denied, disk full, etc.).
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
+    /// JSON serialization or deserialization failed.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// Tool call was blocked by a deny rule in the device or default blocklist.
+    /// All fields are retained for audit logging; `input_excerpt` is capped to
+    /// avoid logging unbounded payloads.
     #[error(
         "denied by blocklist: {tool} on '{router}' matched rule '{pattern}' \
              (action=deny, source={rule_source}); input: {input_excerpt}"
@@ -209,9 +303,14 @@ pub enum JmcpError {
         line_number: Option<usize>,
     },
 
+    /// Device has active config blocklist rules, which only apply to
+    /// `config_format=set`. Caller requested `text` or `xml` instead.
     #[error("config blocklist rules require config_format=set; got '{format}'")]
     ConfigFormatNotAllowedWithRules { format: String },
 
+    /// Blocklist rule pattern failed to compile as a glob. Returned during
+    /// inventory load (before the server starts) so invalid rules never reach
+    /// production.
     #[error("invalid blocklist rule for {scope}: pattern '{pattern}': {source}")]
     BlocklistRuleInvalid {
         scope: String,
@@ -220,71 +319,99 @@ pub enum JmcpError {
         source: globset::Error,
     },
 
-    /// Jinja2 template failed to parse (`minijinja::Error` syntax kind).
-    /// Inner string carries the line/col-formatted message.
+    /// Jinja2 template syntax error. Inner string carries the line/col-formatted
+    /// message from the minijinja parser.
     #[error("template syntax error: {0}")]
     TemplateSyntax(String),
 
-    /// `vars_content` could not be parsed as JSON or YAML.
-    /// Inner string mentions which parser was attempted last.
+    /// Template variables (`vars_content`) could not be parsed as JSON or YAML.
+    /// Inner string names which parser was attempted last.
     #[error("template vars parse error: {0}")]
     TemplateVars(String),
 
-    /// Render-time error (most commonly strict-undefined hits).
+    /// Template render failed (undefined variable in strict mode, type error,
+    /// or filter failure). Inner string is the minijinja error message.
     #[error("template render error: {0}")]
     TemplateRender(String),
 
-    /// Rendered template uses `text` or `xml` format against a device with
-    /// active config blocklist rules. Same restriction as load_and_commit_config.
+    /// Rendered template specifies `text` or `xml` format, but the target
+    /// device has active config blocklist rules (which only apply to `set`).
+    /// Same restriction as `load_and_commit_config`.
     #[error("template format `{format}` not allowed: device has config rules; use `set`")]
     TemplateFormatMismatch { format: String },
 
+    /// Generic input validation failure. Inner string describes the specific
+    /// constraint that was violated.
     #[error("validation error: {0}")]
     Validation(String),
 
-    /// A `junos_config_diff` failed because the on-box config won't parse for
-    /// the current mode; message carries the raw error + an actionable hint.
+    /// Config diff failed because the on-device configuration could not be
+    /// parsed in the requested format. Message carries the raw error and an
+    /// actionable hint (e.g., "try display_format=text").
     #[error("{0}")]
     ConfigParseHint(String),
 
+    /// Inventory modification attempted but the server was started with
+    /// `--inventory-readonly`.
     #[error("inventory is read-only (--inventory-readonly set)")]
     InventoryReadonly,
 
+    /// `add_device` attempted to create a device whose name is already in the
+    /// inventory.
     #[error("device `{0}` already exists in the inventory")]
     DeviceExists(String),
 
+    /// `add_device` called with password auth, but the server was started
+    /// without `--allow-password-auth-add`.
     #[error(
         "password authentication is not allowed for add_device; use --allow-password-auth-add to enable"
     )]
     PasswordAuthDisabled,
 
+    /// Device name fails validation (must be 1-64 ASCII alphanumeric + `_.-`,
+    /// no leading hyphen).
     #[error("invalid device name `{0}`: must match ^[A-Za-z0-9_.-]+$")]
     InvalidDeviceName(String),
 
+    /// IP or hostname fails validation (not an IPv4/IPv6 address and not a
+    /// valid RFC 1123 hostname).
     #[error("invalid device IP/hostname `{0}`")]
     InvalidDeviceIp(String),
 
+    /// Port number is outside the valid range (1..=65535).
     #[error("invalid device port `{0}`: must be in 1..=65535")]
     InvalidDevicePort(u32),
 
+    /// MCP tool call is missing one or more required arguments. Vec names the
+    /// missing fields.
     #[error("missing required arguments: {0:?}")]
     MissingArguments(Vec<String>),
 
+    /// CAS check failed: inventory file was modified by another process
+    /// between read and write. Caller must reload and retry.
     #[error("inventory file changed on disk between read and write; call reload_devices and retry")]
     InventoryDriftedOnDisk,
 
+    /// Inventory file was successfully loaded but contains no devices.
     #[error("inventory is empty (no devices)")]
     EmptyInventory,
 
+    /// IO error reading inventory file. Inner string carries the error detail.
     #[error("inventory file read error: {0}")]
     InventoryRead(String),
 
+    /// Inventory file is not valid JSON. Inner string is the parse error.
     #[error("inventory parse error: {0}")]
     InventoryParse(String),
 
+    /// IO error writing inventory file. Inner string carries the error detail.
     #[error("inventory file write error: {0}")]
     InventoryWrite(String),
 
+    /// Server started with `HostKeyVerification::KnownHosts(<path>)` but the
+    /// file does not exist or is unreadable. Remediation: run
+    /// `scripts/scan-known-hosts.sh` to populate it, or (lab only) pass
+    /// `--ssh-accept-new-host-keys`.
     #[error(
         "known_hosts file missing or unreadable [code=known_hosts_missing]: {0}; run scripts/scan-known-hosts.sh to pre-populate it, or pass --ssh-accept-new-host-keys (lab only)"
     )]

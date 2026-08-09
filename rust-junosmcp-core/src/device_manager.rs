@@ -266,10 +266,12 @@ impl SessionPool {
 
 // ── PooledDevice RAII guard ─────────────────────────────────────────────
 
-/// RAII wrapper around `Device` that returns the session to the pool on drop.
+/// RAII guard that returns a NETCONF session to the pool on drop.
 ///
-/// If candidate state is uncertain or the config DB is left open, the session
-/// is closed instead of pooled.
+/// Derefs to `rustez::Device` for direct RPC access. When dropped, the session
+/// is returned to the single-slot per-device pool for reuse by the next caller,
+/// unless `reuse_allowed` is false (candidate state uncertain) or the config
+/// DB is open — in which case the session is closed instead.
 pub struct PooledDevice {
     dev: Option<Device>,
     router_name: String,
@@ -328,6 +330,15 @@ impl Drop for PooledDevice {
 
 // ── DeviceManager ───────────────────────────────────────────────────────
 
+/// Device inventory and NETCONF connection pool manager.
+///
+/// Maintains an `Arc<Inventory>` swappable at runtime (`reload_devices`) and a
+/// single-slot session pool keyed by device name. Sessions are reused when
+/// clean; otherwise they are closed and a fresh connection is opened. All NETCONF
+/// operations acquire a `PooledDevice` guard from `open()` or `open_fresh()`.
+///
+/// Cloning is cheap (shared Arc refs). Host-key verification policy is set once
+/// at construction via `with_host_key_policy()` and applies to every connect.
 #[derive(Clone)]
 pub struct DeviceManager {
     inventory: Arc<ArcSwap<Inventory>>,
@@ -344,10 +355,19 @@ pub struct DeviceManager {
 }
 
 impl DeviceManager {
+    /// Construct a manager with the given inventory and default settings.
+    ///
+    /// Host-key verification defaults to `AcceptAll` for test ergonomics.
+    /// Production callers must override via `with_host_key_policy()`.
     pub fn new(inventory: Arc<Inventory>) -> Self {
         Self::with_path(inventory, PathBuf::new(), [0u8; 32], false, false)
     }
 
+    /// Construct a manager with inventory path tracking and write permissions.
+    ///
+    /// `path` and `hash` enable CAS checks for `add_device` / `reload_devices`.
+    /// `inventory_readonly` gates write operations; `allow_password_auth_add`
+    /// gates password-auth device additions.
     pub fn with_path(
         inventory: Arc<Inventory>,
         path: PathBuf,
@@ -367,46 +387,65 @@ impl DeviceManager {
         }
     }
 
-    /// Override the SSH host-key verification policy applied to every
-    /// NETCONF connect. Production callers should set this to either
-    /// `HostKeyVerification::KnownHosts(<path>)` (strict, recommended) or
-    /// `HostKeyVerification::AcceptAll` (lab/TOFU mode).
+    /// Set the SSH host-key verification policy for all future connections.
+    ///
+    /// Production deployments should use `HostKeyVerification::KnownHosts(<path>)`
+    /// (strict); lab environments may use `AcceptAll` (TOFU mode, no MITM
+    /// protection). The default is `AcceptAll` for test convenience.
     pub fn with_host_key_policy(mut self, policy: HostKeyVerification) -> Self {
         self.host_key_policy = policy;
         self
     }
 
+    /// Snapshot the current inventory.
     pub fn inventory(&self) -> Arc<Inventory> {
         self.inventory.load_full()
     }
 
+    /// Path from which the inventory was loaded (for reload and add_device CAS).
     pub fn inventory_path(&self) -> PathBuf {
         (**self.inventory_path.load()).clone()
     }
 
+    /// SHA-256 of the inventory file when it was last loaded. Used by
+    /// `add_device` to detect concurrent modifications.
     pub fn inventory_hash(&self) -> [u8; 32] {
         **self.inventory_hash.load()
     }
 
+    /// True if the manager was started with `--inventory-readonly`. `add_device`
+    /// checks this and returns `InventoryReadonly` before attempting a write.
     pub fn inventory_readonly(&self) -> bool {
         self.inventory_readonly
     }
 
+    /// True if password-auth devices may be added via `add_device`.
     pub fn allow_password_auth_add(&self) -> bool {
         self.allow_password_auth_add
     }
 
+    /// Inventory write mutex. Held by `add_device` and `reload_devices` to
+    /// serialize file modifications.
     pub fn write_lock(&self) -> Arc<Mutex<()>> {
         self.inventory_write_lock.clone()
     }
 
+    /// Atomically swap the in-memory inventory and its file metadata.
+    ///
+    /// Called by `reload_devices` after successfully loading and parsing the
+    /// new inventory. All subsequent `open()` calls see the new device set;
+    /// existing pooled sessions are unaffected (invalidation is explicit).
     pub fn store_inventory(&self, inv: Arc<Inventory>, path: PathBuf, hash: [u8; 32]) {
         self.inventory.store(inv);
         self.inventory_path.store(Arc::new(path));
         self.inventory_hash.store(Arc::new(hash));
     }
 
-    /// Drain pool entries for routers that were removed or whose config changed.
+    /// Close and evict pooled sessions for the named devices.
+    ///
+    /// Called by `reload_devices` after swapping the inventory to purge stale
+    /// sessions for removed or reconfigured devices. Next `open()` for these
+    /// devices will establish a fresh connection.
     pub async fn invalidate_pool(&self, names: &[String]) {
         self.pool.invalidate(names).await;
     }
@@ -432,9 +471,13 @@ impl DeviceManager {
         self.pool.clear_cleanup_taint(router).await;
     }
 
-    /// Open a `Device` for the named router, reusing a pooled session if one
-    /// is available and healthy. Returns a `PooledDevice` guard that
-    /// automatically returns the session to the pool on drop.
+    /// Open or reuse a NETCONF session for the named device.
+    ///
+    /// If a pooled session exists and is healthy, it is returned immediately.
+    /// Otherwise a fresh connection is established with retry on transient
+    /// errors (issue #83). Returns `UnknownRouter` if the device is not in the
+    /// current inventory. The returned `PooledDevice` guard is automatically
+    /// returned to the pool on drop.
     pub async fn open(&self, router_name: &str) -> Result<PooledDevice, JmcpError> {
         // Try the pool first.
         if let Some(dev) = self.pool.try_checkout(router_name).await {
@@ -451,28 +494,26 @@ impl DeviceManager {
         self.connect_fresh(router_name).await
     }
 
-    /// Open a guaranteed-fresh `Device`, bypassing the pool. Any existing
-    /// pooled entry for this router is invalidated (closed) first so a dead
-    /// session left behind by a transient blip or a reboot can't linger and
-    /// be handed to the next caller (issue #83). Use this on the reconnect
-    /// path after a pooled RPC fails with a stale-session error.
+    /// Open a guaranteed-fresh NETCONF session, evicting any pooled entry first.
+    ///
+    /// Use this on the reconnect path after a pooled RPC fails with a
+    /// stale-session error (keepalive probe failed, connection reset, etc.).
+    /// The pooled entry is closed and a new connection is established with
+    /// retry on transient errors. Returns `UnknownRouter` if the device is not
+    /// in the current inventory.
     pub async fn open_fresh(&self, router_name: &str) -> Result<PooledDevice, JmcpError> {
         self.pool.invalidate(&[router_name.to_string()]).await;
         self.connect_fresh(router_name).await
     }
 
-    /// Open a session and run an operational CLI command, transparently
-    /// reconnecting on a guaranteed-fresh session and retrying once if the
-    /// first attempt fails with a transient/stale-session error (issue #83).
+    /// Run a Junos operational CLI command with automatic stale-session retry.
     ///
-    /// The pooled [`Self::open`] may hand back a session that was alive at
-    /// checkout but whose peer rebooted between checkout and the first RPC; the
-    /// keepalive probe then fails with "session expired" / "keepalive probe
-    /// failed". Rather than surface that as a hard error to the caller, the
-    /// dead session is dropped, a fresh one is opened (which itself retries
-    /// connect-time transients via [`Self::open_fresh`]), and the command is
-    /// run again. Genuine command/RPC errors are non-transient and propagate
-    /// without a retry.
+    /// Opens a pooled session and executes `command`. If the RPC fails with a
+    /// transient error (session expired, keepalive probe failed, connection
+    /// reset), the pooled session is dropped, a fresh one is opened, and the
+    /// command is retried once. Genuine command/RPC errors (syntax error,
+    /// permission denied, unknown command) are non-transient and propagate
+    /// immediately. Returns the command output as a string.
     pub async fn run_cli(&self, router_name: &str, command: &str) -> Result<String, JmcpError> {
         let mut dev = self.open(router_name).await?;
         match dev.cli(command).await {

@@ -144,15 +144,20 @@ fn annotate_as_alias(subschema: &mut Value, canonical: &str) {
     }
 }
 
-/// The overwhelmingly common case: a `device` field aliased as `router_name`
-/// and `router`.
+/// The overwhelmingly common case: a `device` field aliased as `router_name` and `router`.
+///
+/// Most Junos tool argument types use `device` as the canonical name and accept
+/// `router_name` and `router` as backward-compatible aliases. This helper applies
+/// the standard group to a schema via `#[schemars(transform = device_aliases)]`.
 pub fn device_aliases(schema: &mut Schema) {
     describe_aliases(schema, &[("device", &["router_name", "router"])]);
 }
 
+/// SRX workflow argument types use `router` as canonical, aliasing `router_name`.
+///
 /// The SRX workflow argument types kept `router` as the canonical field name
 /// and alias it as `router_name` — the mirror image of the Junos tools, whose
-/// canonical name is `device`.
+/// canonical name is `device`. Apply via `#[schemars(transform = router_name_alias)]`.
 pub fn router_name_alias(schema: &mut Schema) {
     describe_aliases(schema, &[("router", &["router_name"])]);
 }

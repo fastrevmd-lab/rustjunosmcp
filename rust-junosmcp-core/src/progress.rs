@@ -20,8 +20,10 @@ use tokio::time::MissedTickBehavior;
 
 /// How often a running device operation reports that it is still alive.
 ///
-/// Chosen well inside the 300s idle timeout typical of MCP clients, so several
-/// heartbeats land before any client would consider giving up.
+/// Chosen well inside the 300s idle timeout typical of MCP clients (at least
+/// four heartbeats land before timeout). Each heartbeat emits a progress
+/// notification with the elapsed time, keeping the client informed without
+/// overwhelming the channel.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Emits a progress notification every interval until dropped.
