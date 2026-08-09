@@ -9,6 +9,13 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Run an operational CLI command via NETCONF and return the text output.
+///
+/// Validates input length, checks the command against the device's policy
+/// blocklist, then opens a pooled NETCONF session and executes the command.
+/// Supports optional output caps (`max_lines`, `max_bytes`, `tail`) and
+/// respects the caller's timeout. Short-circuits before connecting if the
+/// device is unknown or the command is denied.
 pub async fn handle(
     args: ExecuteCommandArgs,
     dm: Arc<DeviceManager>,

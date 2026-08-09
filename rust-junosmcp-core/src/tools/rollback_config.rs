@@ -17,10 +17,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Load a rollback archive and optionally commit it.
+///
+/// Preview mode (commit=false): loads rollback N, diffs, discards the candidate
+/// (stateless). Commit mode (commit=true): loads rollback N and commits, with
+/// optional confirmed-commit. Validates rollback version (0..=49). Config blocklist
+/// is NOT applied — granting rollback_config scope grants full config-change authority.
 pub async fn handle(args: RollbackConfigArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     handle_with_cancel(args, dm, CancellationToken::new()).await
 }
 
+/// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: RollbackConfigArgs,
     dm: Arc<DeviceManager>,

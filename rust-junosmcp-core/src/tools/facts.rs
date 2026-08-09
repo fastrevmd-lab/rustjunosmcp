@@ -7,6 +7,11 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Gather device facts from a Junos device.
+///
+/// Opens a pooled NETCONF session, runs the built-in `Device::facts()` probe,
+/// and returns hardware/software details as a JSON object. Respects the caller's
+/// timeout; returns `JmcpError::Timeout` if the device does not respond in time.
 pub async fn handle(args: GatherFactsArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let timeout = Duration::from_secs(args.timeout);
     let result = tokio::time::timeout(timeout, async {

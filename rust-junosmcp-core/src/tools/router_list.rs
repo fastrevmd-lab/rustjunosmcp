@@ -10,6 +10,10 @@ pub async fn handle(inv: Arc<Inventory>) -> Result<Value, JmcpError> {
 }
 
 /// Serialize names already filtered by the transport's caller scope.
+///
+/// Does not contact any devices — purely serializes the provided list. The
+/// filtering has already happened upstream, typically via the transport's
+/// token-scope device mapping.
 pub async fn handle_names(names: Vec<String>) -> Result<Value, JmcpError> {
     Ok(json!(names))
 }

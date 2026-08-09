@@ -9,18 +9,33 @@ use crate::inventory::validation::{
 use crate::tools::AddDeviceArgs;
 use std::sync::Arc;
 
-/// Resolved + validated argument bundle. Produced by `validate()`.
+/// Resolved and validated `add_device` arguments.
+///
+/// Produced by `validate()`. Contains only well-formed values that passed all
+/// validation gates: device name does not exist, IP/hostname is valid, port is
+/// in range, username satisfies the SSH naming constraints, and auth type is
+/// allowed by the server's policy.
 #[derive(Debug)]
 pub struct ResolvedAdd {
+    /// Validated device name (does not exist in inventory).
     pub device_name: String,
+    /// Validated IP address or hostname.
     pub device_ip: String,
+    /// Validated port (1..=65535, defaults to 22).
     pub device_port: u32,
+    /// Validated SSH username (matches constraints, does not start with `-`).
     pub username: String,
+    /// Validated auth config (SSH-key or password, if password auth is enabled).
     pub auth: AuthConfig,
 }
 
-/// Pure validation: returns the resolved bundle or the most specific error.
-/// Does NOT touch disk or the device manager's locks.
+/// Validate `add_device` arguments without touching disk or locks.
+///
+/// Pure function that checks: inventory is not readonly, all required fields
+/// are present, device name is valid and does not already exist, IP/hostname
+/// is valid, port is in range (1..=65535), username matches SSH constraints,
+/// auth type is allowed, and paths do not start with `-`. Returns the resolved
+/// bundle or the most specific error.
 pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd, JmcpError> {
     if dm.inventory_readonly() {
         return Err(JmcpError::InventoryReadonly);
@@ -103,6 +118,13 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
     })
 }
 
+/// Add a device to the inventory file atomically.
+///
+/// Validates arguments, takes the device manager write lock, reads the current
+/// inventory from disk, checks the hash matches (TOCTOU guard), inserts the new
+/// device entry, writes atomically (temp + rename), re-hashes, reloads the
+/// inventory, and swaps it into the device manager. Returns `{added, inventory_path,
+/// router_count}`.
 pub async fn handle(
     args: AddDeviceArgs,
     dm: Arc<DeviceManager>,

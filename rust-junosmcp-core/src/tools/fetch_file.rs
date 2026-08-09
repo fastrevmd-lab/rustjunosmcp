@@ -16,6 +16,8 @@ use crate::tools::transfer_file::{
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+/// Build the JSON response for a skipped fetch (local file already present
+/// with matching checksum).
 fn skipped_response(
     local_path: &std::path::Path,
     remote_basename: &str,
@@ -33,6 +35,13 @@ fn skipped_response(
     })
 }
 
+/// SCP a file from `/var/tmp/<remote_path>` on the device to the local staging directory.
+///
+/// Validates basename (rejects path traversal), requires SSH-key auth, enforces
+/// per-router serialization, probes remote SHA-256 via NETCONF, skips if local
+/// file already matches, verifies SHA-256 post-fetch, and atomically promotes
+/// `.partial` to the canonical name. Requires `known_hosts` unless `accept_new_host_keys`
+/// is enabled (TOFU mode). Respects cancellation.
 pub async fn handle(
     args: FetchFileArgs,
     dm: Arc<DeviceManager>,

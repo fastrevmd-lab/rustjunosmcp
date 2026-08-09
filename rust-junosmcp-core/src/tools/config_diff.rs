@@ -24,6 +24,13 @@ fn parse_error_hint(err_text: &str) -> Option<String> {
     }
 }
 
+/// Compare running config against a rollback archive (rollback 0..=49).
+///
+/// Opens a pooled session, runs `show configuration | compare rollback <version>`,
+/// strips the XML wrapper, and returns the diff text. Validates rollback version
+/// range (0..=49). On failure, checks for on-box config parse errors (common
+/// after chassis-cluster mode changes) and enriches the error message with recovery
+/// hints.
 pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
     let version = validate_rollback_version(args.version)?;
     let timeout = Duration::from_secs(args.timeout);
