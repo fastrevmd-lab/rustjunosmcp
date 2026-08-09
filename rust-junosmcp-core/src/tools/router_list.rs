@@ -5,6 +5,7 @@ use crate::inventory::Inventory;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// Return the list of device names visible to the caller (MCP tool handler entry point).
 pub async fn handle(inv: Arc<Inventory>) -> Result<Value, JmcpError> {
     handle_names(inv.names()).await
 }

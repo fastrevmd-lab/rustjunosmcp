@@ -64,16 +64,17 @@ rustez       = "0.13"
 # None, and every per-token limit stops enforcing while still logging as
 # configured. That is not theoretical: it already happened in this repo.
 #
-# TEMP: using local path for mecmcp-changeset and mecmcp-audit to test commit-metadata hook
 # mecmcp 0.7.0: adds graceful HTTP shutdown, GracefulShutdown::new returns Result.
-mecmcp-audit = { path = "../mecmcp/crates/mecmcp-audit" }
+# TEMP: replace with tag vX.Y.Z when mecmcp releases the hook
+mecmcp-audit = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/commit-metadata-hook" }
 mecmcp-auth  = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-transport = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-runtime = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-policy = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-inventory = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-device = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-changeset = { path = "../mecmcp/crates/mecmcp-changeset" }
+# TEMP: replace with tag vX.Y.Z when mecmcp releases the hook
+mecmcp-changeset = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/commit-metadata-hook" }
 mecmcp-scp = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 mecmcp-secret = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
 globset      = "0.4"

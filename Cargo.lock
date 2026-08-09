@@ -1745,6 +1745,7 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 [[package]]
 name = "mecmcp-audit"
 version = "0.8.2"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fcommit-metadata-hook#28ad75e1dec778bfe139945920fabc5f388d63f7"
 dependencies = [
  "hmac 0.13.0",
  "log",
@@ -1782,6 +1783,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.8.2"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fcommit-metadata-hook#28ad75e1dec778bfe139945920fabc5f388d63f7"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1799,6 +1801,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-changeset"
 version = "0.8.2"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fcommit-metadata-hook#28ad75e1dec778bfe139945920fabc5f388d63f7"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1902,6 +1905,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-secret"
 version = "0.8.2"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fcommit-metadata-hook#28ad75e1dec778bfe139945920fabc5f388d63f7"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",

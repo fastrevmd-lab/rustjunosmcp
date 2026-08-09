@@ -173,6 +173,7 @@ pub struct JunosTransaction {
 }
 
 impl JunosTransaction {
+    /// Construct a new transaction wrapper for the given device.
     pub fn new(device_manager: Arc<DeviceManager>, router: String) -> Self {
         Self {
             device_manager,

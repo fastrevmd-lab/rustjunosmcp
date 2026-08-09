@@ -180,10 +180,16 @@ pub(crate) mod validation {
 pub enum AuthConfig {
     /// Authenticate with a plaintext password. Supported for NETCONF; not
     /// supported for SCP-based file transfers.
-    Password { password: String },
+    Password {
+        /// Plaintext password for SSH authentication.
+        password: String,
+    },
     /// Authenticate with an SSH private key. Path is validated at inventory
     /// load time; the file must exist.
-    SshKey { private_key_path: PathBuf },
+    SshKey {
+        /// Path to the SSH private key file.
+        private_key_path: PathBuf,
+    },
 }
 
 // Hand-written Debug to redact passwords. Never derive Debug on this enum.
