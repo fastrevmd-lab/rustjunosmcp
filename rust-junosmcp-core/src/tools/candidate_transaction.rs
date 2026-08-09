@@ -64,8 +64,11 @@ pub(crate) struct CandidateRequest {
 /// rustnetconf cannot parse). Conflating them is a safety bug (#180).
 #[derive(Debug)]
 pub enum CheckOutcome {
+    /// Configuration passed validation.
     Valid,
+    /// Device rejected the configuration with a config-content error.
     Invalid(String),
+    /// Check could not reach a verdict (parse failure, transport error, environmental RPC error).
     CheckFailed(String),
 }
 

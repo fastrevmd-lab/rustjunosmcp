@@ -28,33 +28,43 @@ pub mod template;
 pub mod transfer_file;
 pub mod upgrade_junos;
 
+/// Default command execution timeout for most tools, in seconds.
 fn default_timeout() -> u64 {
     360
 }
+/// Default timeout for file-transfer operations, in seconds.
 fn default_transfer_timeout() -> u64 {
     600
 }
+/// Default timeout for listing staged files, in seconds.
 fn default_list_staged_timeout() -> u64 {
     30
 }
+/// Default timeout for upgrade_junos, in seconds.
 fn default_upgrade_timeout() -> u64 {
     900
 }
+/// Default post-install reboot-and-reconnect budget for upgrade_junos, in seconds.
 fn default_reboot_wait_secs() -> u64 {
     480
 }
+/// Default for post-transfer sha256 verification (enabled).
 fn default_verify() -> bool {
     true
 }
+/// Default rollback version for config_diff.
 fn default_version() -> i64 {
     1
 }
+/// Default configuration format (set-style commands).
 fn default_set_format() -> String {
     "set".into()
 }
+/// Default commit comment for load_commit and template tools.
 fn default_commit_comment() -> String {
     "Configuration loaded via MCP".into()
 }
+/// Default concurrency cap for execute_batch (devices processed in parallel).
 fn default_max_concurrent_devices() -> u32 {
     16
 }
@@ -89,7 +99,7 @@ fn string_or_string_array(_generator: &mut schemars::SchemaGenerator) -> schemar
     })
 }
 
-/// `device` aliases plus `config_path`'s `filter` spelling.
+/// Inject schema aliases for `get_junos_config`: `device` and `config_path` (aka `filter`).
 fn get_config_aliases(schema: &mut schemars::Schema) {
     crate::schema_alias::describe_aliases(
         schema,
@@ -100,7 +110,7 @@ fn get_config_aliases(schema: &mut schemars::Schema) {
     );
 }
 
-/// The batch tool pluralises, so its aliases differ from every other tool's.
+/// Inject schema aliases for `execute_junos_command_batch`: pluralized device field names.
 fn batch_aliases(schema: &mut schemars::Schema) {
     crate::schema_alias::describe_aliases(
         schema,
@@ -111,7 +121,7 @@ fn batch_aliases(schema: &mut schemars::Schema) {
     );
 }
 
-/// The template tool names its targets `device_name`/`device_names`.
+/// Inject schema aliases for the template tool: `device_name`/`device_names` plus router-name aliases.
 fn template_aliases(schema: &mut schemars::Schema) {
     crate::schema_alias::describe_aliases(
         schema,
@@ -122,10 +132,12 @@ fn template_aliases(schema: &mut schemars::Schema) {
     );
 }
 
+/// Empty argument struct for tools that take no parameters.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyArgs {}
 
+/// Arguments for `execute_junos_command`: runs a single operational CLI command on one device.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -153,6 +165,7 @@ pub struct ExecuteCommandArgs {
     pub tail: bool,
 }
 
+/// Arguments for `get_junos_config`: retrieves device configuration (full or filtered by hierarchy path).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = get_config_aliases)]
@@ -187,6 +200,7 @@ pub struct GetConfigArgs {
     pub tail: bool,
 }
 
+/// Arguments for `junos_config_diff`: compares candidate vs committed config or archived rollbacks.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -202,6 +216,7 @@ pub struct ConfigDiffArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `gather_device_facts`: retrieves device inventory facts (model, version, serial).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -214,6 +229,7 @@ pub struct GatherFactsArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `load_and_commit_config`: loads configuration and commits in one operation.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -239,6 +255,7 @@ pub struct LoadCommitArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `commit_check_config`: validates configuration without committing.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -256,6 +273,7 @@ pub struct CommitCheckArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `discard_candidate`: discards uncommitted configuration changes.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -268,6 +286,7 @@ pub struct DiscardCandidateArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `rollback_config`: loads an archived rollback and optionally commits it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -297,6 +316,7 @@ pub struct RollbackConfigArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `execute_junos_pfe_command`: runs a Packet Forwarding Engine command on an FPC.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -326,6 +346,7 @@ pub struct ExecutePfeArgs {
     pub tail: bool,
 }
 
+/// Arguments for `execute_junos_command_batch`: runs M commands across N devices in parallel.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = batch_aliases)]
@@ -373,6 +394,7 @@ pub struct ExecuteBatchArgs {
     pub tail: bool,
 }
 
+/// Arguments for the Jinja2 templating tool: renders config from template + vars, optionally applying to device(s).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = template_aliases)]
@@ -407,6 +429,7 @@ pub struct TemplateArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `add_device`: dynamically registers a new device in the runtime inventory (when `--inventory-readonly` is false).
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AddDeviceArgs {
@@ -427,6 +450,7 @@ pub struct AddDeviceArgs {
     pub auth: Option<crate::inventory::AuthConfig>,
 }
 
+/// Arguments for `reload_devices`: hot-reloads the device inventory from disk without restarting the server.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ReloadDevicesArgs {
@@ -436,6 +460,7 @@ pub struct ReloadDevicesArgs {
     pub file_name: Option<String>,
 }
 
+/// Arguments for `transfer_file`: SCP-uploads a pre-staged file from the host to a device's `/var/tmp/`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -456,6 +481,7 @@ pub struct TransferFileArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `fetch_file`: SCP-downloads a file from a device's `/var/tmp/` to the host's staging directory.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -481,6 +507,7 @@ pub struct FetchFileArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `list_staged_files`: lists files in the host staging directory, optionally also the device's `/var/tmp/`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]
@@ -493,6 +520,7 @@ pub struct ListStagedFilesArgs {
     pub timeout: u64,
 }
 
+/// Arguments for `upgrade_junos`: performs a standalone (non-cluster) Junos software upgrade with install + reboot + verification.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = crate::schema_alias::device_aliases)]

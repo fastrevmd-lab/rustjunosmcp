@@ -4,10 +4,14 @@
 use crate::error::JmcpError;
 use serde::Serialize;
 
+/// Entry describing one file on the device's `/var/tmp/` (returned when `device` is specified).
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct DeviceFileEntry {
+    /// Full remote path (e.g., `/var/tmp/junos-image.tgz`).
     pub path: String,
+    /// File size in bytes.
     pub size_bytes: u64,
+    /// Modification time in ISO 8601 format (device-local timezone, no `Z` suffix).
     pub mtime_iso: String,
 }
 
@@ -114,11 +118,16 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Entry describing one file in the host staging directory, including its sha256.
 #[derive(Clone, Debug, Serialize)]
 pub struct StagedFileEntry {
+    /// Basename (no directory component).
     pub name: String,
+    /// File size in bytes (from metadata, then verified by the sha256 pass).
     pub size_bytes: u64,
+    /// Lowercase hex sha256 digest.
     pub sha256: String,
+    /// Modification time in UTC ISO 8601 format with `Z` suffix.
     pub mtime_iso: String,
 }
 
@@ -136,8 +145,11 @@ pub const STAGING_DIR_MAX_ENTRIES: usize = 256;
 /// the caller can show "showing 256 of 1340" in a UI.
 #[derive(Debug)]
 pub struct StagingDirResult {
+    /// The (possibly truncated) list of staged files.
     pub entries: Vec<StagedFileEntry>,
+    /// Whether the on-disk count exceeded `STAGING_DIR_MAX_ENTRIES`.
     pub truncated: bool,
+    /// Total regular files found before truncation.
     pub total_found: usize,
 }
 
@@ -219,6 +231,7 @@ fn systemtime_to_iso(t: Option<std::time::SystemTime>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// Tool handler for `list_staged_files`: lists the host staging directory and optionally probes the device's `/var/tmp/`.
 pub async fn handle(
     args: ListStagedFilesArgs,
     dm: Arc<DeviceManager>,
