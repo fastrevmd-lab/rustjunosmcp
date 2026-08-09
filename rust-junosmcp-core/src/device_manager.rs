@@ -109,8 +109,21 @@ struct PoolEntry {
     returned_at: Instant,
 }
 
+/// Record of a partial cleanup failure, retained until cleared by successful
+/// lock acquisition or evicted after the idle timeout (#260).
+#[derive(Clone)]
+struct CleanupTaint {
+    /// When the cleanup failure occurred.
+    failed_at: Instant,
+    /// Which cleanup phases failed (rollback, unlock, session close).
+    phases: String,
+}
+
 struct SessionPool {
     slots: Mutex<HashMap<String, PoolEntry>>,
+    /// Per-device cleanup failures. Warned on next open, cleared on successful
+    /// lock acquisition. Shares the same idle timeout as the session pool.
+    taints: Mutex<HashMap<String, CleanupTaint>>,
     idle_timeout: Duration,
 }
 
@@ -118,6 +131,7 @@ impl SessionPool {
     fn new() -> Arc<Self> {
         let pool = Arc::new(Self {
             slots: Mutex::new(HashMap::new()),
+            taints: Mutex::new(HashMap::new()),
             idle_timeout: POOL_IDLE_TIMEOUT,
         });
         // Spawn the reaper only if we're inside a tokio runtime
@@ -154,6 +168,17 @@ impl SessionPool {
                     let _ = d.close().await;
                 });
             }
+        }
+
+        // Evict cleanup taints older than the idle timeout.
+        let mut taints = self.taints.lock().await;
+        let expired_taints: Vec<String> = taints
+            .iter()
+            .filter(|(_, t)| now.duration_since(t.failed_at) > self.idle_timeout)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in expired_taints {
+            taints.remove(&key);
         }
     }
 
@@ -209,6 +234,33 @@ impl SessionPool {
                 });
             }
         }
+    }
+
+    /// Record a cleanup failure for a device. The taint is cleared on successful
+    /// lock acquisition or evicted after the idle timeout.
+    async fn record_cleanup_taint(&self, router: &str, phases: String) {
+        let mut taints = self.taints.lock().await;
+        taints.insert(
+            router.to_string(),
+            CleanupTaint {
+                failed_at: Instant::now(),
+                phases,
+            },
+        );
+    }
+
+    /// Check for and return any existing cleanup taint for this device.
+    /// Warns the caller that the device may still hold a configuration lock.
+    async fn check_cleanup_taint(&self, router: &str) -> Option<CleanupTaint> {
+        let taints = self.taints.lock().await;
+        taints.get(router).cloned()
+    }
+
+    /// Clear any cleanup taint for this device (called after successful lock
+    /// acquisition proves the device is not locked).
+    async fn clear_cleanup_taint(&self, router: &str) {
+        let mut taints = self.taints.lock().await;
+        taints.remove(router);
     }
 }
 
@@ -357,6 +409,27 @@ impl DeviceManager {
     /// Drain pool entries for routers that were removed or whose config changed.
     pub async fn invalidate_pool(&self, names: &[String]) {
         self.pool.invalidate(names).await;
+    }
+
+    /// Record a cleanup failure for a device (#260). The taint persists until
+    /// cleared by successful lock acquisition or evicted after the idle timeout.
+    pub(crate) async fn record_cleanup_taint(&self, router: &str, phases: String) {
+        self.pool.record_cleanup_taint(router, phases).await;
+    }
+
+    /// Check for and return any existing cleanup taint for this device.
+    /// Returns None if no taint exists or if it has expired.
+    pub(crate) async fn check_cleanup_taint(&self, router: &str) -> Option<String> {
+        self.pool
+            .check_cleanup_taint(router)
+            .await
+            .map(|t| t.phases)
+    }
+
+    /// Clear any cleanup taint for this device (called after successful lock
+    /// acquisition proves the device is accessible).
+    pub(crate) async fn clear_cleanup_taint(&self, router: &str) {
+        self.pool.clear_cleanup_taint(router).await;
     }
 
     /// Open a `Device` for the named router, reusing a pooled session if one
@@ -664,5 +737,53 @@ mod tests {
             r,
             Err(JmcpError::SshConfigInvalid { ref router, .. }) if router == "r1"
         ));
+    }
+
+    // ── cleanup taint (#260) ────────────────────────────────────────────
+
+    fn taint_manager() -> DeviceManager {
+        DeviceManager::new(build_inventory(
+            r#"{"r1":{"ip":"203.0.113.1","port":830,"username":"u","auth":{"type":"password","password":"x"}},
+                "r2":{"ip":"203.0.113.2","port":830,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+        ))
+    }
+
+    /// A failed cleanup must be visible to the *next* caller for that device.
+    ///
+    /// The whole point of #260 is that the information already existed and was
+    /// dropped on the floor. Without this test, deleting the `record_cleanup_taint`
+    /// call leaves the feature inert and the entire suite green — which is exactly
+    /// what happened when it was first written.
+    #[tokio::test]
+    async fn recorded_taint_is_visible_to_the_next_caller() {
+        let dm = taint_manager();
+        assert_eq!(dm.check_cleanup_taint("r1").await, None, "clean to start");
+
+        dm.record_cleanup_taint("r1", "rollback; unlock".to_owned())
+            .await;
+
+        assert_eq!(
+            dm.check_cleanup_taint("r1").await,
+            Some("rollback; unlock".to_owned()),
+            "the next caller must learn which cleanup phases failed"
+        );
+    }
+
+    /// Taint is per-device: one device's failed cleanup must not implicate another.
+    #[tokio::test]
+    async fn taint_does_not_leak_across_devices() {
+        let dm = taint_manager();
+        dm.record_cleanup_taint("r1", "unlock".to_owned()).await;
+        assert_eq!(dm.check_cleanup_taint("r2").await, None);
+    }
+
+    /// Proving the device is usable clears the warning, so it is not sticky
+    /// forever once the situation has resolved.
+    #[tokio::test]
+    async fn clearing_taint_removes_the_warning() {
+        let dm = taint_manager();
+        dm.record_cleanup_taint("r1", "unlock".to_owned()).await;
+        dm.clear_cleanup_taint("r1").await;
+        assert_eq!(dm.check_cleanup_taint("r1").await, None);
     }
 }
