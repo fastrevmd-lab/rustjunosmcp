@@ -6,9 +6,10 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
         "AuthConfig": {
-          "description": "Authentication config for a Junos device. Tagged enum mirrors the Python\nrepo's `auth.type` discriminator.",
+          "description": "Device authentication method for NETCONF.",
           "oneOf": [
             {
+              "description": "Authenticate with a plaintext password. Supported for NETCONF; not\nsupported for SCP-based file transfers.",
               "type": "object",
               "properties": {
                 "password": {
@@ -25,6 +26,7 @@
               ]
             },
             {
+              "description": "Authenticate with an SSH private key. Path is validated at inventory\nload time; the file must exist.",
               "type": "object",
               "properties": {
                 "private_key_path": {
@@ -369,10 +371,11 @@
           "additionalProperties": false
         },
         "ConfigPayloadSpec": {
-          "description": "Serializable config payload specification.",
+          "description": "Configuration text and format for loading into the Junos candidate.",
           "type": "object",
           "properties": {
             "text": {
+              "description": "Configuration text to load into the Junos candidate database.",
               "type": "string"
             },
             "format": {

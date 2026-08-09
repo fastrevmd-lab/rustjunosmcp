@@ -17,13 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Junos-specific action: a config payload or a rollback archive reference.
-// `deny_unknown_fields` is load-bearing, not tidiness. Both fields are
-// `Option`, so `{}` is a structurally valid `JunosAction`; without it a caller
-// who mistypes `payload` — say `{"action":"set","config_text":"..."}` — has
-// every field silently dropped and ends up with an empty, *approved* change
-// set that only fails at apply (#254). Deliberately a `//` comment: this
-// struct's doc comment is published to clients in the tool schema, and the
-// rationale is for maintainers.
+// Security note for maintainers: `deny_unknown_fields` is load-bearing. Both
+// fields are `Option`, so `{}` is structurally valid; without the attribute, a
+// mistyped field name would be silently dropped, producing an empty approved
+// change set that only fails at apply (#254).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JunosAction {
@@ -71,24 +68,28 @@ impl JunosAction {
     }
 }
 
-/// Serializable config payload specification.
-// `deny_unknown_fields` for the same reason as [`JunosAction`]: a mistyped key
-// here silently produced an action that passed create and failed at apply.
+/// Configuration text and format for loading into the Junos candidate.
+// Security note for maintainers: `deny_unknown_fields` is load-bearing. A
+// mistyped key would be silently dropped, producing a structurally valid but
+// semantically wrong payload that passes staging and only fails at apply.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigPayloadSpec {
+    /// Configuration text to load into the Junos candidate database.
     pub text: String,
     /// Format: "set", "text", or "xml". Defaults to "set" if omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
 
-/// Opaque staged-transaction handle.
+/// Opaque staged-transaction handle retaining the session and lock until commit or discard.
 ///
 /// On a chassis cluster, `cfg.load()` auto-opens a *private* configuration
 /// database that is destroyed when the session unlocks. To preserve the staged
-/// candidate across validate and commit, we must retain the session and its
-/// lock until commit or discard.
+/// candidate across validate and commit, this handle retains the session and its
+/// lock until commit or discard. The session is marked non-reusable and will be
+/// closed (not pooled) on drop unless `allow_reuse` is called after a successful
+/// commit.
 pub struct JunosStagedTransaction {
     /// Device name for the pool.
     #[allow(dead_code)] // Kept for potential future use; session carries the connection.
@@ -106,24 +107,38 @@ pub struct JunosStagedTransaction {
     session: tokio::sync::Mutex<Option<crate::device_manager::PooledDevice>>,
 }
 
-/// Diff output: just the text diff from Junos.
+/// Diff output: the text diff from Junos showing staged changes.
+///
+/// Captures the output of `show | compare` as reported by the device. Used by
+/// the change-set diff primitive to show callers what will be committed.
 #[derive(Debug, Clone, Serialize)]
 pub struct JunosDiff {
+    /// Text diff showing candidate vs committed configuration.
     pub diff: String,
 }
 
-/// Validation result.
+/// Validation result from Junos `commit check`.
+///
+/// Reports whether the staged candidate passes Junos validation. A `valid: false`
+/// result carries the device's rejection message. A check failure (timeout,
+/// parse error, multi-RE cluster reply) is not a validation result and returns
+/// an error instead.
 #[derive(Debug, Clone, Serialize)]
 pub struct JunosValidation {
+    /// Whether the candidate configuration passed `commit check`.
     pub valid: bool,
+    /// Junos validation error details. Set only when `valid` is `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }
 
-/// Junos transaction context.
+/// Junos transaction context implementing the change-set lifecycle.
 ///
-/// This struct implements `DeviceTransaction` by delegating to rustez primitives.
-/// It holds a reference to the device manager for opening sessions.
+/// Implements [`DeviceTransaction`] by delegating to rustez primitives and the
+/// device manager. Holds a locked session between `lock()` and `stage()` to close
+/// the fingerprint-to-stage window (mecmcp#60, #80). The session is transferred to
+/// the staged handle when staging completes, so validate and commit operate on the
+/// same private candidate database (chassis cluster requirement).
 pub struct JunosTransaction {
     device_manager: Arc<DeviceManager>,
     router: String,
