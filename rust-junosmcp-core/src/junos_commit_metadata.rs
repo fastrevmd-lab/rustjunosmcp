@@ -102,7 +102,7 @@ mod tests {
             comment
         );
         assert!(
-            comment.contains("[req:550e8400-e29b-41d4-a716-446655440000]"),
+            comment.contains("request.id=550e8400-e29b-41d4-a716-446655440000"),
             "request ID must be included: {}",
             comment
         );
@@ -161,7 +161,7 @@ mod tests {
 
         let comment = sink.take_comment().unwrap();
         assert!(
-            comment.contains("[req:550e8400-e29b-41d4-a716-446655440000]"),
+            comment.contains("request.id=550e8400-e29b-41d4-a716-446655440000"),
             "request ID must be present for Task 10's cross-reference join: {}",
             comment
         );
