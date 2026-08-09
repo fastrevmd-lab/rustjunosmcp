@@ -12,15 +12,22 @@ use std::collections::HashMap;
 // Re-export the upstream rule engine primitives.
 pub use mecmcp_policy::{CompiledRule, RuleSource, count_literal_chars, normalize_input};
 
-/// Outcome of a policy check.
+/// Outcome of a policy check against a single input (command, config line, or PFE command).
+///
+/// A `Deny` carries the rule that matched and metadata for audit logging. An `Allow`
+/// means no deny rule matched — either there were no rules or only allow rules matched.
 #[derive(Debug)]
 pub enum Decision<'a> {
+    /// Input is allowed. No deny rule matched.
     Allow,
+    /// Input is denied. The first deny rule that matched blocks this input.
     Deny {
+        /// The compiled rule that matched and denied the input.
         rule: &'a CompiledRule<Action>,
+        /// Source of the rule: device-specific or from defaults.
         source: RuleSource,
-        /// Set only for config-domain checks; identifies the offending line
-        /// (1-indexed, comment lines counted).
+        /// Line number of the offending input (1-indexed, including comment lines).
+        /// Set only for config-domain checks where per-line validation applies.
         line_number: Option<usize>,
     },
 }
@@ -274,11 +281,18 @@ impl Policy {
 }
 
 /// Summary numbers for startup logging.
+///
+/// Reports how many rules are active from defaults and how many devices have
+/// device-specific overrides. Used to log policy coverage at server boot.
 #[derive(Debug, Clone, Copy)]
 pub struct PolicyCounts {
+    /// Number of default command rules active across all devices.
     pub default_commands: usize,
+    /// Number of default config rules active across all devices.
     pub default_config: usize,
+    /// Number of default PFE command rules active across all devices.
     pub default_pfe_commands: usize,
+    /// Number of devices that have at least one device-specific rule.
     pub devices_with_rules: usize,
 }
 

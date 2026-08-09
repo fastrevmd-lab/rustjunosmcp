@@ -56,9 +56,17 @@ pub fn load_inventory(path: &Path) -> Result<(Arc<Inventory>, [u8; 32]), crate::
     }
 }
 
-/// Build the host-key verification policy for NETCONF SSH.
-///   - `accept_new = true`  → `AcceptAll` (lab/TOFU mode)
-///   - `accept_new = false` → `KnownHosts(known_hosts_file)` (strict, default)
+/// Build the host-key verification policy for NETCONF SSH connections.
+///
+/// Returns either strict known-hosts checking (production default) or
+/// accept-all mode (lab/TOFU setups only).
+///
+/// - `accept_new = true` → `HostKeyVerification::AcceptAll` (lab/TOFU mode)
+/// - `accept_new = false` → `HostKeyVerification::KnownHosts(known_hosts_file)` (strict, production default)
+///
+/// Production callers should pass `false` and supply a known_hosts file path.
+/// Lab setups may pass `true` to skip host-key validation, accepting any key
+/// on first connect (TOFU).
 pub fn build_host_key_policy(accept_new: bool, known_hosts_file: PathBuf) -> HostKeyVerification {
     if accept_new {
         HostKeyVerification::AcceptAll

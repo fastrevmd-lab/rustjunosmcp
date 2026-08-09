@@ -2,14 +2,14 @@
 //! `| count`, and `| last N` pipe modifiers that rustez drops in NETCONF
 //! translation (#105, #177), then apply optional size caps (#106). Pure — no I/O.
 
-/// See module docs. Order: honor pipe modifiers → line cap → byte cap.
-/// Returns `raw` unchanged when nothing applies.
+/// Apply pipe modifiers and size caps to operational-command output.
 ///
-/// The byte cap runs **last** so it is the outermost bound. Applying it first
-/// let the line cap append its own marker afterwards and push the result back
-/// over `max_bytes` — with both caps set, the byte budget was not a budget.
-/// Running it last can cost the line marker its tail, which is the right
-/// trade: `max_bytes` is the limit a caller sizes a context window against.
+/// Order: pipe modifiers (`| match`, `| except`, `| count`, `| last`) →
+/// line cap → byte cap. Returns `raw` unchanged when nothing applies. The
+/// byte cap runs **last** so it is the outermost bound; a caller sizing a
+/// context window expects the response to never exceed `max_bytes`, even
+/// when a line-cap marker would push it over. The marker can lose its tail
+/// if the budget is tight; that is the correct trade.
 pub fn process_output(
     command: &str,
     raw: String,

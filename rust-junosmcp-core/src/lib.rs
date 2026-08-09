@@ -21,9 +21,22 @@ pub mod tools;
 pub use mecmcp_device::cancel;
 pub use mecmcp_device::{DeviceLock, DeviceLockGuard, FlockDeviceLock};
 
-// Backward compatibility alias for existing consumers
+/// Backward-compatibility alias for `FlockDeviceLock`.
+///
+/// Existing callers written against the v0.1 API may use this name. New code
+/// should use `FlockDeviceLock` directly.
 pub type DeviceLeaseManager = FlockDeviceLock;
+
+/// Backward-compatibility alias for `DeviceLockGuard`.
+///
+/// Existing callers written against the v0.1 API may use this name. New code
+/// should use `DeviceLockGuard` directly.
 pub type DeviceLeaseGuard = DeviceLockGuard;
+
+/// Default directory for flock-based device lease files.
+///
+/// Used by the device manager when no custom path is provided. Callers running
+/// as the `jmcp` user must ensure this directory exists and is writable.
 pub const DEFAULT_DEVICE_LEASE_DIR: &str = "/var/lib/jmcp/device-leases";
 
 pub use device_manager::DeviceManager;
