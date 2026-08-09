@@ -8,6 +8,14 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// MCP-facing reload: re-read or swap the inventory file.
+///
+/// Rejects the call if inventory mutation is disabled (`--inventory-readonly`).
+/// Takes the device manager write lock, validates the new path is within the
+/// inventory directory (RJMCP-SEC-005: prevents symlink/traversal escapes),
+/// checks the file exists and is non-empty, hashes and swaps the inventory in
+/// memory, invalidates pooled sessions for removed/changed devices, and returns
+/// added/removed/changed counts.
 pub async fn handle(
     args: ReloadDevicesArgs,
     dm: Arc<DeviceManager>,

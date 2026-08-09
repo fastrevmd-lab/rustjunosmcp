@@ -14,6 +14,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Load configuration and commit it to the device.
+///
+/// Locks the candidate, loads the provided config (validating format and checking
+/// policy), diffs, and commits with the provided comment. Supports confirmed-commit
+/// with auto-rollback. Rolls back the candidate on commit failure. Returns
+/// `{success, diff, error?, confirmed?, rollback_in_minutes?}`.
 pub async fn handle(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
@@ -22,6 +28,7 @@ pub async fn handle(
     handle_with_cancel(args, dm, policy, CancellationToken::new()).await
 }
 
+/// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
