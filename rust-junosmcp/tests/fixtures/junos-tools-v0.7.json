@@ -1229,6 +1229,64 @@
       "additionalProperties": false
     }
   },
+  "list_junos_change_sets": {
+    "name": "list_junos_change_sets",
+    "description": "List change sets, optionally filtered by device. Returns all change sets (planned, approved, applied, expired, failed) across devices in scope, or for a single device if specified. Provides the recovery path when an expired change set blocks creating a new one.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "device",
+              "router_name"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "device",
+              "router"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "router_name",
+              "router"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "device": {
+          "description": "Optional device name to filter change sets. If omitted, returns all\nchange sets across all devices visible to the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "router_name": {
+          "description": "Optional device name to filter change sets. If omitted, returns all\nchange sets across all devices visible to the caller.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "router": {
+          "description": "Optional device name to filter change sets. If omitted, returns all\nchange sets across all devices visible to the caller.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
   "list_staged_files": {
     "name": "list_staged_files",
     "description": "List host-staging files (always); also lists /var/tmp/ on a Junos device when device is supplied",

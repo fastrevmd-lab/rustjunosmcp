@@ -40,6 +40,7 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "get_junos_config",
     "get_router_list",
     "junos_config_diff",
+    "list_junos_change_sets",
     "list_staged_files",
     "load_and_commit_config",
     "reload_devices",
@@ -89,6 +90,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_router_list",
     "get_srx_security_services_status",
     "junos_config_diff",
+    "list_junos_change_sets",
     "list_staged_files",
     "load_and_commit_config",
     "manage_appid_signature_package",
@@ -207,6 +209,7 @@ mod write_tool_registry_tests {
     fn read_only_change_set_tools_are_not_write_tools() {
         for tool in [
             "get_junos_change_set_status",
+            "list_junos_change_sets",
             "get_junos_candidate_fingerprint",
         ] {
             assert!(!WRITE_TOOLS.contains(&tool), "{tool} only reads");
