@@ -4,10 +4,12 @@
 #![cfg(feature = "tls")]
 
 mod common;
-use common::{Server, binary_path, ensure_built, init_body, parse_first_sse_data, pick_port};
+use common::{
+    BoundedLines, Server, binary_path, ensure_built, init_body, parse_first_sse_data, pick_port,
+};
 use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -60,24 +62,23 @@ fn spawn_tls(inventory: &Path, tokens: &Path, cert: &Path, key: &Path) -> Server
         .expect("spawn TLS server");
 
     let stderr = child.stderr.take().unwrap();
-    let mut reader = BufReader::new(stderr);
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        assert!(Instant::now() < deadline, "TLS server did not become ready");
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => panic!("TLS server exited before readiness"),
-            Ok(_) if line.contains("streamable-http listening (TLS)") => break,
-            Ok(_) => {}
-            Err(error) => panic!("reading TLS server stderr: {error}"),
-        }
+    // Bounded on a worker thread — a deadline checked between `read_line` calls
+    // cannot fire, because the missing line is exactly what leaves `read_line`
+    // blocked. See `common::BoundedLines`.
+    let lines = BoundedLines::spawn(BufReader::new(stderr));
+    if !lines.wait_for(Duration::from_secs(15), |line| {
+        line.contains("streamable-http listening (TLS)")
+    }) {
+        let _ = child.kill();
+        panic!(
+            "server did not print the 'streamable-http listening (TLS)' readiness line within 15s \
+             (if the server still works, the log line was renamed — see http_transport.rs)"
+        );
     }
-    let drain = std::thread::spawn(move || {
-        let mut line = String::new();
-        while reader.read_line(&mut line).unwrap_or(0) > 0 {
-            line.clear();
-        }
-    });
+    // The BoundedLines worker already owns this pipe and keeps reading it, so it
+    // is the drain. Do not join it — it blocks in `read_line` and would only
+    // notice a dropped receiver on its next send. See `common::into_drain`.
+    let drain = lines.into_drain();
 
     // The readiness log line is emitted just before the listener begins
     // accepting, so a client racing it can still see ECONNREFUSED. `http_tls.rs`
