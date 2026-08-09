@@ -5,17 +5,24 @@ use crate::error::JmcpError;
 use async_trait::async_trait;
 use std::sync::Arc;
 
+/// Trait for an open device CLI session used by the batch runner.
+/// Abstracting this allows test doubles that don't require real Junos devices.
 #[async_trait]
 pub trait RouterSession: Send {
+    /// Execute a single CLI command and return its output.
     async fn cli(&mut self, command: &str) -> Result<String, JmcpError>;
+    /// Close the session gracefully.
     async fn close(&mut self) -> Result<(), JmcpError>;
 }
 
+/// Trait for opening device sessions. Production uses `DeviceManager`; tests inject stubs.
 #[async_trait]
 pub trait BatchRunner: Send + Sync {
+    /// Open a CLI session to the named device, returning a boxed `RouterSession`.
     async fn open(&self, router: &str) -> Result<Box<dyn RouterSession>, JmcpError>;
 }
 
+/// Production `RouterSession` wrapping a `PooledDevice` from `DeviceManager`.
 struct RustEzSession(crate::device_manager::PooledDevice);
 
 #[async_trait]
@@ -29,6 +36,7 @@ impl RouterSession for RustEzSession {
     }
 }
 
+/// Production `BatchRunner` using `DeviceManager` to open real device sessions.
 pub struct DeviceManagerRunner(pub Arc<DeviceManager>);
 
 #[async_trait]
@@ -45,22 +53,31 @@ use crate::tools::ExecuteBatchArgs;
 use serde::Serialize;
 use serde_json::Value;
 
+/// Outcome of a single command execution within a batch: either success with output or failure with an error message.
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
 pub struct CommandOutcome {
+    /// The command that was executed.
     pub command: String,
+    /// Whether the command succeeded.
     pub ok: bool,
+    /// Command output (when `ok=true`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Error message (when `ok=false`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
+/// Per-device batch result: device name plus the ordered outcomes for each command.
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
 pub struct RouterResult {
+    /// Device name.
     pub router: String,
+    /// Ordered list of command outcomes (matches the input command order).
     pub commands: Vec<CommandOutcome>,
 }
 
+/// Production entry point for `execute_junos_command_batch` using `DeviceManager`.
 pub async fn handle(
     args: ExecuteBatchArgs,
     dm: Arc<DeviceManager>,
@@ -70,6 +87,7 @@ pub async fn handle(
     handle_with_runner(args, dm, policy, runner).await
 }
 
+/// Core batch handler accepting an injectable `BatchRunner`. Used by tests and by `handle()`.
 pub async fn handle_with_runner(
     args: ExecuteBatchArgs,
     dm: Arc<DeviceManager>,

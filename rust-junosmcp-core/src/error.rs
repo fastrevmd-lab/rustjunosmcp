@@ -37,7 +37,9 @@ pub enum JmcpError {
     /// the specific parse failure or IO error.
     #[error("ssh_config invalid for router '{router}': {source}")]
     SshConfigInvalid {
+        /// Name of the device whose SSH config failed to load.
         router: String,
+        /// Underlying SSH config parse or load error.
         #[source]
         source: rustez::SshConfigError,
     },
@@ -67,8 +69,11 @@ pub enum JmcpError {
         "insufficient disk [code=insufficient_disk]: {message} (free={free}B required={required}B)"
     )]
     InsufficientDisk {
+        /// Observed free bytes on the target filesystem.
         free: u64,
+        /// Required free bytes for the operation to proceed.
         required: u64,
+        /// Human-readable diagnostic describing which check failed.
         message: String,
     },
 
@@ -86,14 +91,22 @@ pub enum JmcpError {
         "destination already exists with different content [code=dest_exists_differs]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); pass force=true to overwrite"
     )]
     DestExistsDiffers {
+        /// Remote destination file path on the device.
         dest: String,
+        /// SHA-256 digest of the local source file (64 hex chars).
         local_sha: String,
+        /// SHA-256 digest of the existing remote file (64 hex chars).
         remote_sha: String,
     },
 
     /// External `scp` process exited non-zero. Carries exit status and stderr.
     #[error("scp failed [code=scp_failed] (exit={exit_code}): {stderr}")]
-    ScpFailed { exit_code: i32, stderr: String },
+    ScpFailed {
+        /// SCP process exit code.
+        exit_code: i32,
+        /// Stderr output from the failed SCP invocation (scrubbed).
+        stderr: String,
+    },
 
     /// System lacks OpenSSH `scp` or the binary does not support the legacy
     /// `-O` flag (required for Junos). Install openssh-client or run the
@@ -101,7 +114,10 @@ pub enum JmcpError {
     #[error(
         "required OpenSSH scp dependency unavailable [code=scp_dependency_unavailable]: {detail}; install openssh-client with legacy -O support or use the supported container image"
     )]
-    ScpDependencyUnavailable { detail: String },
+    ScpDependencyUnavailable {
+        /// Diagnostic describing why SCP is unavailable (binary missing, wrong version, etc.).
+        detail: String,
+    },
 
     /// SCP connection to device timed out. Device is unreachable or SSH port
     /// is filtered.
@@ -117,7 +133,9 @@ pub enum JmcpError {
         "host key verification failed [code=host_key_mismatch]: router '{router}' was rejected; review or refresh the entry in {known_hosts_file}"
     )]
     HostKeyMismatch {
+        /// Name of the device whose host key does not match known_hosts.
         router: String,
+        /// Path to the known_hosts file that contains the mismatched key.
         known_hosts_file: PathBuf,
     },
 
@@ -127,14 +145,21 @@ pub enum JmcpError {
         "host key revoked [code=host_key_revoked]: router '{router}' key is marked @revoked in {known_hosts_file}; the key is compromised and must not be trusted"
     )]
     HostKeyRevoked {
+        /// Name of the device whose host key is marked @revoked.
         router: String,
+        /// Path to the known_hosts file containing the revoked key marker.
         known_hosts_file: PathBuf,
     },
 
     /// Pre-transfer device capability probe failed (storage query, file-exists
     /// check, or SHA-256 command availability). Message names the probe phase.
     #[error("device probe failed [code=device_probe_failed] (phase={phase}): {message}")]
-    DeviceProbeFailed { phase: String, message: String },
+    DeviceProbeFailed {
+        /// Probe phase that failed (e.g., "storage_probe", "checksum_command").
+        phase: String,
+        /// Diagnostic describing the specific failure.
+        message: String,
+    },
 
     /// SHA-256 mismatch after file transfer. The file was deleted from the
     /// device and the operation failed. Indicates mid-transfer corruption or a
@@ -143,8 +168,11 @@ pub enum JmcpError {
         "post-transfer verify failed [code=verify_mismatch]: {dest} (local sha256={local_sha}, remote sha256={remote_sha}); destination file was deleted"
     )]
     VerifyMismatch {
+        /// Remote destination file path that failed verification.
         dest: String,
+        /// SHA-256 digest of the local source file (64 hex chars).
         local_sha: String,
+        /// SHA-256 digest of the file on device after transfer (64 hex chars).
         remote_sha: String,
     },
 
@@ -155,14 +183,22 @@ pub enum JmcpError {
         "[code=local_dest_exists_differs] local destination '{dest}' exists with sha256 '{local_sha}'; remote sha256 is '{remote_sha}'; set force=true to overwrite"
     )]
     LocalDestExistsDiffers {
+        /// Local file path that already exists.
         dest: String,
+        /// SHA-256 digest of the existing local file (64 hex chars).
         local_sha: String,
+        /// SHA-256 digest of the remote source file (64 hex chars).
         remote_sha: String,
     },
 
     /// File fetch requested a path that does not exist on the device.
     #[error("[code=remote_file_missing] router '{router}' has no file at '{remote_path}'")]
-    RemoteFileMissing { router: String, remote_path: String },
+    RemoteFileMissing {
+        /// Name of the device where the file was not found.
+        router: String,
+        /// Remote file path that does not exist.
+        remote_path: String,
+    },
 
     /// SHA-256 mismatch after file fetch. Downloaded file does not match the
     /// device's reported digest. Indicates mid-transfer corruption.
@@ -170,8 +206,11 @@ pub enum JmcpError {
         "[code=fetch_verify_mismatch] fetched file '{dest}' local sha256 '{local_sha}' does not match remote sha256 '{remote_sha}'"
     )]
     FetchVerifyMismatch {
+        /// Local destination file path that failed verification.
         dest: String,
+        /// SHA-256 digest of the downloaded local file (64 hex chars).
         local_sha: String,
+        /// SHA-256 digest reported by the device before transfer (64 hex chars).
         remote_sha: String,
     },
 
@@ -187,14 +226,20 @@ pub enum JmcpError {
     #[error(
         "confirmation required [code=confirmation_required]: re-call with confirm=true to proceed; plan: {payload}"
     )]
-    ConfirmationRequired { payload: serde_json::Value },
+    ConfirmationRequired {
+        /// JSON payload describing the planned destructive operation.
+        payload: serde_json::Value,
+    },
 
     /// Upgrade attempted on a chassis-cluster device. ISSU is not implemented
     /// in v1; standalone devices only.
     #[error(
         "cluster device unsupported [code=cluster_unsupported]: router '{router}' is a chassis cluster; upgrade_junos v1 supports standalone devices only (ISSU support deferred to v2)"
     )]
-    UpgradeClusterUnsupported { router: String },
+    UpgradeClusterUnsupported {
+        /// Name of the chassis-cluster device that cannot be upgraded.
+        router: String,
+    },
 
     /// Device has an active `commit confirmed` timer. Upgrade would trigger an
     /// automatic rollback mid-operation. Operator must confirm or roll back the
@@ -202,7 +247,12 @@ pub enum JmcpError {
     #[error(
         "active commit-confirmed window [code=commit_confirmed_active]: router '{router}' has a pending rollback in {rollback_secs}s; run `commit` or `rollback` first, then retry"
     )]
-    UpgradeCommitConfirmedActive { router: String, rollback_secs: u64 },
+    UpgradeCommitConfirmedActive {
+        /// Name of the device with an active commit-confirmed timer.
+        router: String,
+        /// Remaining seconds before automatic rollback.
+        rollback_secs: u64,
+    },
 
     /// Junos `request system software add` RPC did not complete within the
     /// internal timeout. The install may still be running on the device; check
@@ -211,7 +261,9 @@ pub enum JmcpError {
         "install RPC timed out [code=install_timeout]: router '{router}' after {elapsed:?}; the install may still be running on the device — check from console or retry once the device is reachable"
     )]
     UpgradeInstallTimeout {
+        /// Name of the device where the install RPC timed out.
         router: String,
+        /// Elapsed time before the timeout fired.
         elapsed: std::time::Duration,
     },
 
@@ -220,7 +272,12 @@ pub enum JmcpError {
     #[error(
         "device did not return after reboot [code=reboot_timeout]: router '{router}' did not reopen NETCONF within {waited_secs}s; check console / hardware status"
     )]
-    UpgradeRebootTimeout { router: String, waited_secs: u64 },
+    UpgradeRebootTimeout {
+        /// Name of the device that did not return after reboot.
+        router: String,
+        /// Seconds waited before giving up.
+        waited_secs: u64,
+    },
 
     /// After reboot, device is running a different Junos version than
     /// expected. The install may have rolled back or failed silently.
@@ -228,8 +285,11 @@ pub enum JmcpError {
         "post-upgrade version mismatch [code=postverify_mismatch]: router '{router}' expected '{expected}', got '{observed}'; the install may have rolled back or failed silently"
     )]
     UpgradePostVerifyMismatch {
+        /// Name of the device running an unexpected version.
         router: String,
+        /// Expected Junos version after upgrade.
         expected: String,
+        /// Observed Junos version after reboot.
         observed: String,
     },
 
@@ -255,12 +315,22 @@ pub enum JmcpError {
     #[error(
         "device lease busy [code=device_lease_busy]: router '{router}' remained locked by another destructive workflow after {waited_secs}s"
     )]
-    DeviceLeaseBusy { router: String, waited_secs: u64 },
+    DeviceLeaseBusy {
+        /// Name of the locked device.
+        router: String,
+        /// Seconds waited before giving up.
+        waited_secs: u64,
+    },
 
     /// Device lease acquisition failed for a reason other than busy/timeout.
     /// Detail carries the underlying failure.
     #[error("device lease failed [code=device_lease_error]: router '{router}': {detail}")]
-    DeviceLeaseError { router: String, detail: String },
+    DeviceLeaseError {
+        /// Name of the device whose lease acquisition failed.
+        router: String,
+        /// Diagnostic describing the lease failure.
+        detail: String,
+    },
 
     /// Candidate configuration cleanup (rollback + unlock) partially or fully
     /// failed after a workflow error. Each field describes the outcome of its
@@ -269,8 +339,11 @@ pub enum JmcpError {
         "candidate cleanup failed [code=candidate_cleanup_failed]: primary={primary}; rollback={rollback}; unlock={unlock}"
     )]
     CandidateCleanupFailed {
+        /// Outcome of the primary workflow operation.
         primary: String,
+        /// Outcome of the rollback attempt.
         rollback: String,
+        /// Outcome of the unlock attempt.
         unlock: String,
     },
 
@@ -295,26 +368,38 @@ pub enum JmcpError {
              (action=deny, source={rule_source}); input: {input_excerpt}"
     )]
     Denied {
+        /// Name of the MCP tool that was blocked.
         tool: &'static str,
+        /// Name of the device the tool call was targeting.
         router: String,
+        /// Blocklist rule pattern that matched.
         pattern: String,
+        /// Source of the deny rule ("device" or "defaults").
         rule_source: &'static str,
+        /// Excerpt of the blocked input (capped to avoid unbounded audit payloads).
         input_excerpt: String,
+        /// Line number within the input where the pattern matched, if available.
         line_number: Option<usize>,
     },
 
     /// Device has active config blocklist rules, which only apply to
     /// `config_format=set`. Caller requested `text` or `xml` instead.
     #[error("config blocklist rules require config_format=set; got '{format}'")]
-    ConfigFormatNotAllowedWithRules { format: String },
+    ConfigFormatNotAllowedWithRules {
+        /// Config format the caller requested (e.g., "text", "xml").
+        format: String,
+    },
 
     /// Blocklist rule pattern failed to compile as a glob. Returned during
     /// inventory load (before the server starts) so invalid rules never reach
     /// production.
     #[error("invalid blocklist rule for {scope}: pattern '{pattern}': {source}")]
     BlocklistRuleInvalid {
+        /// Scope where the invalid rule was found (e.g., device name or "_blocklist_defaults").
         scope: String,
+        /// The glob pattern that failed to compile.
         pattern: String,
+        /// Underlying glob compilation error.
         #[source]
         source: globset::Error,
     },
@@ -338,7 +423,10 @@ pub enum JmcpError {
     /// device has active config blocklist rules (which only apply to `set`).
     /// Same restriction as `load_and_commit_config`.
     #[error("template format `{format}` not allowed: device has config rules; use `set`")]
-    TemplateFormatMismatch { format: String },
+    TemplateFormatMismatch {
+        /// Format the template specified (e.g., "text", "xml").
+        format: String,
+    },
 
     /// Generic input validation failure. Inner string describes the specific
     /// constraint that was violated.

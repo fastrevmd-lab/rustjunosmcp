@@ -7,8 +7,15 @@ repository.workspace  = true
 authors.workspace     = true
 description = "Core logic and Junos tool handlers for rust-junosmcp."
 
-[lints]
-workspace = true
+[lints.rust]
+missing_docs = "deny"
+unsafe_code  = "forbid"
+
+[lints.clippy]
+all         = { level = "warn", priority = -1 }
+dbg_macro   = "deny"
+todo        = "deny"
+unwrap_used = "deny"
 
 [dependencies]
 chrono       = { workspace = true }

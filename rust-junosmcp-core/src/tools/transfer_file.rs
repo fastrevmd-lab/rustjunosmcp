@@ -533,13 +533,20 @@ mod sha_tests {
 /// Inputs for one SCP upload job.
 #[derive(Clone, Debug)]
 pub struct ScpJob {
+    /// Path to the SSH private key file for authentication.
     pub private_key_path: PathBuf,
+    /// Path to the known_hosts file for host key verification.
     pub known_hosts_file: PathBuf,
+    /// SSH username for the device connection.
     pub username: String,
+    /// Device hostname or IP address.
     pub host: String,
+    /// SSH port number (typically 22).
     pub port: u16,
+    /// Full local path to the file to upload.
     pub local_path: PathBuf,
-    pub remote_dir: String, // e.g. "/var/tmp/"
+    /// Remote directory where the file will be placed (e.g., "/var/tmp/").
+    pub remote_dir: String,
     /// When `true`, emit `StrictHostKeyChecking=accept-new` (TOFU); when
     /// `false`, emit `StrictHostKeyChecking=yes` (strict — refuses unknown
     /// host keys). Default for the server is `false` as of v0.5.2; opt in
@@ -550,10 +557,15 @@ pub struct ScpJob {
 /// Inputs for one SCP download job.
 #[derive(Clone, Debug)]
 pub struct ScpFetchJob {
+    /// Path to the SSH private key file for authentication.
     pub private_key_path: PathBuf,
+    /// Path to the known_hosts file for host key verification.
     pub known_hosts_file: PathBuf,
+    /// SSH username for the device connection.
     pub username: String,
+    /// Device hostname or IP address.
     pub host: String,
+    /// SSH port number (typically 22).
     pub port: u16,
     /// Full remote path, e.g. `/var/tmp/foo.tgz`.
     pub remote_path: String,
@@ -721,11 +733,16 @@ pub(crate) fn classify_scp_failure(
 /// Outcome of a single SCP invocation.
 #[derive(Clone, Debug)]
 pub struct ScpOutcome {
+    /// Exit code from the SCP process (0 for success).
     pub exit_code: i32,
+    /// Standard output from the SCP process.
     pub stdout: String,
+    /// Standard error from the SCP process.
     pub stderr: String,
 }
 
+/// Trait for SCP upload and download operations. Production and test impls
+/// must honor cancellation and return `ErrorKind::Interrupted` on cancel.
 #[async_trait::async_trait]
 pub trait ScpRunner: Send + Sync {
     /// Run the SCP upload job, racing against `ct.cancelled()`. On cancel,
@@ -924,8 +941,11 @@ impl ScpRunner for MecmcpScpRunner {
 
 /// Test double that records calls and returns canned outcomes.
 pub struct MockScpRunner {
+    /// The canned outcome to return for all SCP operations.
     pub outcome: ScpOutcome,
+    /// Record of all upload jobs submitted to this runner.
     pub calls: tokio::sync::Mutex<Vec<ScpJob>>,
+    /// Record of all download jobs submitted to this runner.
     pub fetch_calls: tokio::sync::Mutex<Vec<ScpFetchJob>>,
     /// When `Some`, the runner sleeps this long (cancel-aware) before
     /// returning the outcome. Used by cancellation tests to assert the
@@ -934,6 +954,7 @@ pub struct MockScpRunner {
 }
 
 impl MockScpRunner {
+    /// Construct a mock runner that returns success (exit code 0) with no delay.
     pub fn ok() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             outcome: ScpOutcome {
@@ -946,6 +967,7 @@ impl MockScpRunner {
             delay: None,
         })
     }
+    /// Construct a mock runner that returns the given outcome with no delay.
     pub fn with_outcome(o: ScpOutcome) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             outcome: o,
@@ -1349,8 +1371,11 @@ impl TransferLocks {
 /// per call.
 #[derive(Clone)]
 pub struct TransferConfig {
+    /// Directory where staged files are stored before transfer.
     pub staging_dir: std::path::PathBuf,
+    /// Path to the known_hosts file for SSH host key verification.
     pub known_hosts_file: std::path::PathBuf,
+    /// SCP runner implementation (production or mock).
     pub scp_runner: Arc<dyn ScpRunner>,
     /// Per-router concurrency limiter; defaults to an empty map that
     /// lazy-creates one-permit semaphores on first use. Share the same
@@ -1364,6 +1389,9 @@ pub struct TransferConfig {
     pub accept_new_host_keys: bool,
 }
 
+/// Transfer a file from the staging directory to a device's /var/tmp/.
+/// Performs idempotency check, pre-transfer storage probe, SCP upload,
+/// and post-transfer SHA-256 verification.
 pub async fn handle(
     args: TransferFileArgs,
     dm: Arc<DeviceManager>,

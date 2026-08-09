@@ -265,6 +265,7 @@ pub async fn approve_change_set(
         .await
 }
 
+/// Approve a pending change set by ID. Makes the transition `Pending` → `Approved`.
 pub async fn approve_change_set_with_cancel(
     args: ApproveChangeSetArgs,
     coordinator: Arc<ChangesetCoordinator>,
@@ -315,6 +316,7 @@ pub async fn apply_change_set(
     .await
 }
 
+/// Apply an approved change set to its target device. Makes the transition `Approved` → `Committed`.
 pub async fn apply_change_set_with_cancel(
     args: ApplyChangeSetArgs,
     dm: Arc<DeviceManager>,
