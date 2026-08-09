@@ -12,6 +12,13 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Retrieve the running configuration from a Junos device.
+///
+/// Runs `show configuration [<config_path>]` over NETCONF, strips the XML
+/// wrapper, validates the `config_path` against injection (newlines, pipes,
+/// semicolons), checks the final command against policy, and applies optional
+/// output caps. Returns text-format configuration. Fails fast if the device
+/// is unknown or the path/command is denied.
 pub async fn handle(
     args: GetConfigArgs,
     dm: Arc<DeviceManager>,

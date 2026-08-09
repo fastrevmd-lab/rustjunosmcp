@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Discard uncommitted candidate configuration (rollback 0).
+///
+/// Resets the candidate to match the running config. Operates lock-free on the
+/// shared candidate to recover a candidate left dirty ("configuration database
+/// modified"). Never changes the running config. Returns `{success, message}`.
 pub async fn handle(
     args: DiscardCandidateArgs,
     dm: Arc<DeviceManager>,
@@ -19,6 +24,7 @@ pub async fn handle(
     handle_with_cancel(args, dm, CancellationToken::new()).await
 }
 
+/// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: DiscardCandidateArgs,
     dm: Arc<DeviceManager>,

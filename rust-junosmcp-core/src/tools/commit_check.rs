@@ -18,6 +18,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Validate configuration without committing (dry-run with commit-check).
+///
+/// Locks the candidate, loads the provided config, diffs, runs commit-check,
+/// rolls back the candidate, and unlocks. Never commits. Checks the config
+/// against policy, validates input length and format, and returns
+/// `{success, outcome, diff, error?, hint?}` where `outcome` is `valid`,
+/// `invalid`, or `check_failed`.
 pub async fn handle(
     args: CommitCheckArgs,
     dm: Arc<DeviceManager>,
@@ -26,6 +33,7 @@ pub async fn handle(
     handle_with_cancel(args, dm, policy, CancellationToken::new()).await
 }
 
+/// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: CommitCheckArgs,
     dm: Arc<DeviceManager>,

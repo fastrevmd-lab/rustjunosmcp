@@ -106,6 +106,7 @@ pub async fn handle(
     handle_with_cancel(args, dm, policy, CancellationToken::new()).await
 }
 
+/// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: TemplateArgs,
     dm: Arc<DeviceManager>,
@@ -235,6 +236,8 @@ pub async fn handle_with_cancel(
 }
 
 /// Commit (or dry-run) a rendered config payload to one device.
+/// Commit (or dry-run) a rendered config payload to one device.
+///
 /// Returns the diff string in dry-run mode, or the commit comment echo in apply
 /// mode. rustez does not return a server-issued commit identifier, so callers
 /// should treat the apply-mode return value as the comment that was used.

@@ -110,6 +110,11 @@ pub struct ListChangeSetsArgs {
 }
 
 /// Create a change set (plan).
+///
+/// Validates the device exists, derives owner from the authenticated principal,
+/// validates each action's shape and checks it against policy, then persists the
+/// plan to the coordinator. In lab mode, waives approval immediately so apply can
+/// proceed without a second principal. Returns `{change_set_id, plan_digest, state}`.
 pub async fn create_change_set(
     args: CreateChangeSetArgs,
     dm: Arc<DeviceManager>,
@@ -128,6 +133,7 @@ pub async fn create_change_set(
     .await
 }
 
+/// Cancellable variant of `create_change_set` for use in transport shutdown paths.
 pub async fn create_change_set_with_cancel(
     args: CreateChangeSetArgs,
     dm: Arc<DeviceManager>,
@@ -244,6 +250,11 @@ pub async fn create_change_set_with_cancel(
 }
 
 /// Approve a change set (second principal).
+///
+/// Validates the device exists and is within scope, derives approver from the
+/// authenticated principal, checks the expected digest matches the stored plan,
+/// and marks the change set as approved. Enforces separation of duties: the
+/// approver must differ from the owner. Returns `{change_set_id, state, digest}`.
 pub async fn approve_change_set(
     args: ApproveChangeSetArgs,
     coordinator: Arc<ChangesetCoordinator>,

@@ -9,6 +9,13 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Execute a PFE command on a specific FPC via the NETCONF CLI wrapper.
+///
+/// Wraps the provided `pfe_command` in `request pfe execute target <fpc_target> command "..."`,
+/// validates inputs (rejects literal quotes and invalid FPC target chars),
+/// checks the command against the device's PFE policy blocklist, opens a
+/// pooled session, and returns the output. Short-circuits before connecting
+/// if validation or policy fails.
 pub async fn handle(
     args: ExecutePfeArgs,
     dm: Arc<DeviceManager>,
