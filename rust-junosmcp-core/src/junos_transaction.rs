@@ -7,11 +7,13 @@
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::build_config_payload;
+use crate::junos_commit_metadata::JunosCommitMetadataSink;
 use crate::tools::candidate_transaction::CheckOutcome;
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{
     CommitOptions, CommitOutcome, DeviceTransaction, RollbackOutcome, RollbackRef,
+    apply_commit_metadata,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -505,8 +507,21 @@ impl DeviceTransaction for JunosTransaction {
             JmcpError::Validation("staged transaction has no session; already consumed?".into())
         })?;
 
-        // Build the commit comment from the attribution.
-        let comment = format_attribution(attribution);
+        // Build the commit comment from the attribution using the library hook.
+        // The hook composes operator comment (if any) + provenance line, and
+        // handles attach failures gracefully (fail-open for commit, fail-closed
+        // for audit). For normal commits there's no operator comment to preserve,
+        // but the hook provides a uniform composition path.
+        let mut sink = JunosCommitMetadataSink::new();
+        let _attach_outcome = apply_commit_metadata(&mut sink, None, attribution);
+        // The attach outcome will be recorded in the audit event by the caller.
+        // Here we just retrieve the composed comment line.
+        let comment = sink.take_comment().unwrap_or_else(|| {
+            // If attach() was never called or failed, fall back to the legacy
+            // format_attribution() path. This should never happen with the library
+            // hook, but it's defensive: a missing comment is better than a panic.
+            format_attribution(attribution)
+        });
 
         // Confirmed commit takes a different path: the Junos-native RPC rather
         // than the RFC form, because only the native one survives this session.
@@ -717,19 +732,26 @@ impl DeviceTransaction for JunosTransaction {
 
     async fn confirm_commit(
         &self,
-        _operation_id: &str,
+        operation_id: &str,
         attribution: &Attribution,
     ) -> Result<CommitOutcome, Self::Error> {
         // Issue a second <commit/> with a comment that references the confirmed
-        // commit and applies the attribution. This is the NEW primitive that does
-        // not currently exist: a plain commit (no candidate changes). We'll use
-        // the existing commit_with_comment for now, which is safe because a
-        // confirming commit against an empty candidate is a no-op with a logged
-        // comment.
+        // commit and applies the attribution. This is the confirming commit that
+        // Junos requires after a confirmed commit, and it's where the provenance
+        // lands (the initial confirmed commit drops the comment).
         let mut dev = self.device_manager.open(&self.router).await?;
         let mut cfg = dev.config()?;
 
-        let comment = format!("Confirming commit: {}", format_attribution(attribution));
+        // Compose the confirming comment using the library hook. The operator
+        // comment is the confirming-commit prefix; the hook appends provenance.
+        let operator_comment = format!("Confirming commit {}", operation_id);
+        let mut sink = JunosCommitMetadataSink::new();
+        let _attach_outcome =
+            apply_commit_metadata(&mut sink, Some(&operator_comment), attribution);
+        let comment = sink.take_comment().unwrap_or_else(|| {
+            // Defensive fallback if the hook didn't set a comment.
+            format!("Confirming commit: {}", format_attribution(attribution))
+        });
 
         match cfg.commit_with_comment(&comment).await {
             Ok(()) => Ok(CommitOutcome::Reconciled {

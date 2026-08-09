@@ -222,7 +222,9 @@ use std::collections::BTreeMap;
 /// ignored.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BaselineDiff {
+    /// Lines present in post but not pre.
     pub added: Vec<String>,
+    /// Lines present in pre but not post.
     pub removed: Vec<String>,
 }
 
@@ -361,12 +363,19 @@ pub const ESTIMATED_OUTAGE_SECONDS: u64 = 420;
 /// boundary between "talk to the world" and "decide what to do".
 #[derive(Debug, Clone)]
 pub struct PreflightFacts {
+    /// Output of `show chassis cluster status`.
     pub cluster_status_output: String,
+    /// Output of `show version | match Junos:`.
     pub version_output: String,
+    /// Output of `show system commit`.
     pub commit_output: String,
+    /// Output of `show system storage no-forwarding`.
     pub storage_output: String,
+    /// Local staged image size in bytes.
     pub local_image_size: u64,
+    /// Local staged image sha256.
     pub local_image_sha256: [u8; 32],
+    /// Basename of the staged image file.
     pub image_basename: String,
 }
 
@@ -375,13 +384,32 @@ pub struct PreflightFacts {
 /// payload, or "go ahead".
 #[derive(Debug)]
 pub enum PreflightDecision {
+    /// Chassis cluster detected (ISSU not yet supported).
     ClusterUnsupported,
+    /// Could not parse current Junos version.
     UnparseableVersion,
+    /// Could not parse storage output.
     UnparseableStorage,
-    AlreadyAtTarget { current_version: String },
-    CommitConfirmedActive { rollback_secs: u64 },
-    InsufficientDisk { free: u64, required: u64 },
+    /// Device already running target version.
+    AlreadyAtTarget {
+        /// Current version string.
+        current_version: String,
+    },
+    /// Active commit-confirmed rollback window detected.
+    CommitConfirmedActive {
+        /// Remaining rollback time in seconds.
+        rollback_secs: u64,
+    },
+    /// Insufficient disk space on `/var`.
+    InsufficientDisk {
+        /// Free bytes available.
+        free: u64,
+        /// Required bytes (2x image + headroom).
+        required: u64,
+    },
+    /// Preflight passed but `confirm=false` (dry-run).
     ConfirmationRequired(serde_json::Value),
+    /// All checks passed and `confirm=true`.
     Proceed,
 }
 
@@ -581,7 +609,9 @@ use tokio_util::sync::CancellationToken;
 ///   `transfer_file::handle` for the actual image push
 #[derive(Clone)]
 pub struct UpgradeConfig {
+    /// Transfer configuration (staging dir, known_hosts, SCP runner, locks).
     pub transfer_cfg: TransferConfig,
+    /// Device lease manager (for exclusive-upgrade lock across tools).
     pub device_leases: Arc<DeviceLeaseManager>,
 }
 
@@ -682,6 +712,7 @@ async fn open_validated(
     }
 }
 
+/// Tool handler for `upgrade_junos`: standalone Junos software upgrade with install + reboot + verification.
 pub async fn handle(
     args: UpgradeJunosArgs,
     dm: Arc<DeviceManager>,
@@ -1365,22 +1396,37 @@ mod install_classifier_tests {
     }
 }
 
+/// Arguments for building the success response JSON payload. Aggregates timing + baseline data.
 pub struct BuildSuccessArgs<'a> {
+    /// Device name.
     pub router: &'a str,
+    /// Pre-upgrade version.
     pub from_version: &'a str,
+    /// Post-upgrade (target) version.
     pub to_version: &'a str,
+    /// Installed image basename.
     pub image_basename: &'a str,
+    /// Installed image sha256.
     pub image_sha256: &'a [u8; 32],
+    /// Total wall-clock elapsed time (seconds).
     pub elapsed_seconds: u64,
+    /// Preflight phase duration.
     pub preflight_secs: u64,
+    /// Transfer phase duration.
     pub transfer_secs: u64,
+    /// Install phase duration.
     pub install_secs: u64,
+    /// Reboot-wait phase duration.
     pub reboot_wait_secs: u64,
+    /// Post-verify phase duration.
     pub postverify_secs: u64,
+    /// Pre-upgrade operational baseline (command → output map).
     pub pre_baseline: &'a std::collections::BTreeMap<String, String>,
+    /// Post-upgrade operational baseline (command → output map).
     pub post_baseline: &'a std::collections::BTreeMap<String, String>,
 }
 
+/// Build the success response JSON payload from phase timings and baselines.
 pub fn build_success_response(a: BuildSuccessArgs) -> serde_json::Value {
     let diff = diff_baseline(a.pre_baseline, a.post_baseline);
     serde_json::json!({

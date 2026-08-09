@@ -1744,12 +1744,11 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.7.3"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
+version = "0.8.2"
 dependencies = [
  "hmac 0.13.0",
  "log",
- "mecmcp-auth",
+ "mecmcp-auth 0.8.2",
  "metrics",
  "serde",
  "serde_json",
@@ -1770,7 +1769,24 @@ dependencies = [
  "arc-swap",
  "chrono",
  "getrandom 0.4.3",
- "mecmcp-secret",
+ "mecmcp-secret 0.7.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "tempfile",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "mecmcp-auth"
+version = "0.8.2"
+dependencies = [
+ "arc-swap",
+ "chrono",
+ "getrandom 0.4.3",
+ "mecmcp-secret 0.8.2",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1782,14 +1798,13 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.7.3"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
+version = "0.8.2"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
  "hex",
  "mecmcp-audit",
- "mecmcp-secret",
+ "mecmcp-secret 0.8.2",
  "rustix 1.1.4",
  "serde",
  "serde_json",
@@ -1821,7 +1836,7 @@ name = "mecmcp-inventory"
 version = "0.7.3"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
 dependencies = [
- "mecmcp-secret",
+ "mecmcp-secret 0.7.3",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1847,7 +1862,7 @@ source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f312
 dependencies = [
  "anyhow",
  "clap",
- "mecmcp-auth",
+ "mecmcp-auth 0.7.3",
  "rustix 1.1.4",
  "thiserror",
  "tokio",
@@ -1863,7 +1878,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "hmac 0.12.1",
- "mecmcp-secret",
+ "mecmcp-secret 0.7.3",
  "russh",
  "rustix 1.1.4",
  "sha1 0.10.7",
@@ -1885,6 +1900,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mecmcp-secret"
+version = "0.8.2"
+dependencies = [
+ "rustix 1.1.4",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "mecmcp-transport"
 version = "0.7.3"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.7.3#3eac1100b02f31254967cd07c926acf89994b287"
@@ -1896,7 +1920,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "mecmcp-auth",
+ "mecmcp-auth 0.7.3",
  "metrics",
  "metrics-exporter-prometheus 0.17.2",
  "rmcp",
@@ -2817,7 +2841,7 @@ dependencies = [
  "clap",
  "http",
  "mecmcp-audit",
- "mecmcp-auth",
+ "mecmcp-auth 0.7.3",
  "mecmcp-changeset",
  "mecmcp-runtime",
  "mecmcp-transport",
@@ -2853,7 +2877,7 @@ dependencies = [
  "arc-swap",
  "axum",
  "http",
- "mecmcp-auth",
+ "mecmcp-auth 0.7.3",
  "mecmcp-transport",
  "serde_json",
  "tower",
@@ -2880,7 +2904,7 @@ dependencies = [
  "mecmcp-inventory",
  "mecmcp-policy",
  "mecmcp-scp",
- "mecmcp-secret",
+ "mecmcp-secret 0.7.3",
  "mecmcp-transport",
  "minijinja",
  "regex",
