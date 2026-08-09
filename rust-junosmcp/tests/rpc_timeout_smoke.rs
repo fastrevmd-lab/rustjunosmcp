@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Smoke test: the MCP-side per-call `tokio::time::timeout(args.timeout, ...)`
 //! wrapper around `dm.open(...) + dev.cli(...)` returns a clean error within
 //! the requested bound, end-to-end through the tool dispatch path.

@@ -7,8 +7,15 @@ repository.workspace = true
 authors.workspace    = true
 description = "Unified MCP server for Juniper Junos and SRX devices, built on rustEZ."
 
-[lints]
-workspace = true
+[lints.rust]
+missing_docs = "deny"
+unsafe_code  = "forbid"
+
+[lints.clippy]
+all         = { level = "warn", priority = -1 }
+dbg_macro   = "deny"
+todo        = "deny"
+unwrap_used = "deny"
 
 [features]
 default = ["tls", "srx"]

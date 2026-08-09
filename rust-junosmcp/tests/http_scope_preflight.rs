@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Scope preflight tests: assert that out-of-scope requests are rejected
 //! before dispatch, not merely that they fail.
 

@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! e2e: request-body limit returns 413; happy-path still works with limits on.
 
 mod common;

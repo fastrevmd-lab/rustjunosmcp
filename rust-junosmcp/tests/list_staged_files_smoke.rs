@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 mod common;
 
 use common::{call_tool, spawn_stdio_server_with_args, write_inventory_temp};

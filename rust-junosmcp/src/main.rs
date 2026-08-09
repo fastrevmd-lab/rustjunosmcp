@@ -1,3 +1,13 @@
+//! Junos and SRX MCP server.
+//!
+//! Provides MCP tools for Junos device management (generic operations across all
+//! Junos platforms) and SRX-specific operational workflows. Authenticates remote
+//! callers via HTTP Bearer tokens with per-token tool and device scopes, and
+//! supports unauthenticated stdio transport for local-only operation.
+//!
+//! See [`server::JmcpHandler`] for the tool surface and
+//! `rust-junosmcp-auth::tower` for the authentication boundary.
+
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod cli;

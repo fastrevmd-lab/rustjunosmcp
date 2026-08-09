@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Audit field + redaction assertions for rust-junosmcp.
 
 use mecmcp_audit::AuditScope;

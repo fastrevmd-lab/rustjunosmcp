@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(missing_docs)]
 //! Live smoke against the LXC 601 deployment.
 //!
 //! Required env:
