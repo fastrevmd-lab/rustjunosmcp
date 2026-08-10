@@ -179,7 +179,7 @@ mod tests {
         let mut sink = JunosCommitMetadataSink::new();
         let attr = test_attribution();
 
-        let confirming_comment = format!("Confirming commit <operation_id>");
+        let confirming_comment = "Confirming commit <operation_id>".to_string();
         apply_commit_metadata(&mut sink, Some(&confirming_comment), &attr);
 
         let comment = sink.take_comment().unwrap();
