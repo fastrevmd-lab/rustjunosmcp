@@ -10,6 +10,7 @@ pub mod device_manager;
 pub mod error;
 pub mod helpers;
 pub mod inventory;
+pub mod junos_commit_metadata;
 pub mod junos_transaction;
 pub mod output;
 pub mod policy;
