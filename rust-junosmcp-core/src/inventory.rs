@@ -170,11 +170,9 @@ pub(crate) mod validation {
 }
 
 /// Device authentication method for NETCONF.
-///
-/// Tagged enum mirroring the Python repo's `auth.type` discriminator for
-/// drop-in compatibility with Juniper/junos-mcp-server inventories. Password
-/// auth is supported for NETCONF but not SCP (file transfers require SSH keys).
-/// The `Debug` impl is hand-written to redact passwords.
+// Tagged enum mirroring the Python repo's `auth.type` discriminator for
+// drop-in compatibility with Juniper/junos-mcp-server inventories.
+// The `Debug` impl is hand-written to redact passwords.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
@@ -258,10 +256,8 @@ mod auth_tests {
 }
 
 /// Blocklist rule action.
-///
-/// `deny` blocks the tool call; `allow` overrides a broader deny. Rules are
-/// evaluated most-specific-first (literal count tiebreak), then device rules
-/// win over defaults.
+// Rules are evaluated most-specific-first (literal count tiebreak), then
+// device rules win over defaults.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
@@ -272,9 +268,7 @@ pub enum Action {
 }
 
 /// Single blocklist rule as authored in `devices.json`.
-///
-/// Compiled into a `CompiledRule<Action>` by `policy::build()`. Pattern is a
-/// glob; invalid globs are rejected at inventory load time.
+// Compiled into a `CompiledRule<Action>` by `policy::build()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuleSpec {
     /// `deny` or `allow`.
@@ -284,19 +278,18 @@ pub struct RuleSpec {
 }
 
 /// Per-domain blocklist rules for a device or the global defaults.
-///
-/// `commands` gates `execute_junos_command`, `config` gates
-/// `load_and_commit_config` (set-format only), and `pfe_commands` gates
-/// `execute_junos_pfe_command`. Missing fields default to empty lists.
+// `commands` gates `execute_junos_command`, `config` gates
+// `load_and_commit_config` (set-format only), and `pfe_commands` gates
+// `execute_junos_pfe_command`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BlocklistRules {
-    /// Rules checked by `execute_junos_command`.
+    /// Rules for operational CLI commands. Defaults to empty.
     #[serde(default)]
     pub commands: Vec<RuleSpec>,
-    /// Rules checked by `load_and_commit_config` (set-format only).
+    /// Rules for configuration loads (set-format only). Defaults to empty.
     #[serde(default)]
     pub config: Vec<RuleSpec>,
-    /// Rules checked by `execute_junos_pfe_command`.
+    /// Rules for PFE commands. Defaults to empty.
     #[serde(default)]
     pub pfe_commands: Vec<RuleSpec>,
 }

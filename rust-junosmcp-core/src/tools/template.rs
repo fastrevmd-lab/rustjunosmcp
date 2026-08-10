@@ -98,6 +98,7 @@ fn resolve_devices(args: &TemplateArgs) -> Result<Vec<String>, JmcpError> {
     }
 }
 
+/// Render a Jinja2 template and apply it to one or more devices.
 pub async fn handle(
     args: TemplateArgs,
     dm: Arc<DeviceManager>,

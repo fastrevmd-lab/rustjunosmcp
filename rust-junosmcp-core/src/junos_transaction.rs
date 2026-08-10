@@ -7,30 +7,20 @@
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::build_config_payload;
-use crate::junos_commit_metadata::JunosCommitMetadataSink;
 use crate::tools::candidate_transaction::CheckOutcome;
 use async_trait::async_trait;
 use mecmcp_audit::Attribution;
 use mecmcp_changeset::{
     CommitOptions, CommitOutcome, DeviceTransaction, RollbackOutcome, RollbackRef,
-    apply_commit_metadata,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Junos-specific action: a config payload or a rollback archive reference.
-///
-/// Each action specifies either new configuration to load (`payload`) or a
-/// rollback archive version to revert to (`rollback_source`). Exactly one must
-/// be set; providing both or neither is rejected at staging time.
-///
-/// # Security note
-///
-/// `deny_unknown_fields` is load-bearing. Both fields are `Option`, so `{}` is
-/// structurally valid; without the attribute, a mistyped field name would be
-/// silently dropped, producing an empty approved change set that only fails at
-/// apply (#254).
-// Deliberately a `//` comment: the rationale is for maintainers, not clients.
+// Security note for maintainers: `deny_unknown_fields` is load-bearing. Both
+// fields are `Option`, so `{}` is structurally valid; without the attribute, a
+// mistyped field name would be silently dropped, producing an empty approved
+// change set that only fails at apply (#254).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JunosAction {
@@ -78,17 +68,10 @@ impl JunosAction {
     }
 }
 
-/// Serializable config payload specification.
-///
-/// Wraps configuration text and its format for loading into the Junos candidate.
-/// Used as the payload variant in [`JunosAction`].
-///
-/// # Security note
-///
-/// `deny_unknown_fields` is load-bearing. A mistyped key would be silently dropped,
-/// producing a structurally valid but semantically wrong payload that passes staging
-/// and only fails at apply.
-// Deliberately a `//` comment: the rationale is for maintainers, not clients.
+/// Configuration text and format for loading into the Junos candidate.
+// Security note for maintainers: `deny_unknown_fields` is load-bearing. A
+// mistyped key would be silently dropped, producing a structurally valid but
+// semantically wrong payload that passes staging and only fails at apply.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigPayloadSpec {
@@ -173,7 +156,7 @@ pub struct JunosTransaction {
 }
 
 impl JunosTransaction {
-    /// Construct a new transaction wrapper for the given device.
+    /// Create a new transaction for the given device.
     pub fn new(device_manager: Arc<DeviceManager>, router: String) -> Self {
         Self {
             device_manager,
@@ -508,21 +491,8 @@ impl DeviceTransaction for JunosTransaction {
             JmcpError::Validation("staged transaction has no session; already consumed?".into())
         })?;
 
-        // Build the commit comment from the attribution using the library hook.
-        // The hook composes operator comment (if any) + provenance line, and
-        // handles attach failures gracefully (fail-open for commit, fail-closed
-        // for audit). For normal commits there's no operator comment to preserve,
-        // but the hook provides a uniform composition path.
-        let mut sink = JunosCommitMetadataSink::new();
-        let _attach_outcome = apply_commit_metadata(&mut sink, None, attribution);
-        // The attach outcome will be recorded in the audit event by the caller.
-        // Here we just retrieve the composed comment line.
-        let comment = sink.take_comment().unwrap_or_else(|| {
-            // If attach() was never called or failed, fall back to the legacy
-            // format_attribution() path. This should never happen with the library
-            // hook, but it's defensive: a missing comment is better than a panic.
-            format_attribution(attribution)
-        });
+        // Build the commit comment from the attribution.
+        let comment = format_attribution(attribution);
 
         // Confirmed commit takes a different path: the Junos-native RPC rather
         // than the RFC form, because only the native one survives this session.
@@ -733,26 +703,19 @@ impl DeviceTransaction for JunosTransaction {
 
     async fn confirm_commit(
         &self,
-        operation_id: &str,
+        _operation_id: &str,
         attribution: &Attribution,
     ) -> Result<CommitOutcome, Self::Error> {
         // Issue a second <commit/> with a comment that references the confirmed
-        // commit and applies the attribution. This is the confirming commit that
-        // Junos requires after a confirmed commit, and it's where the provenance
-        // lands (the initial confirmed commit drops the comment).
+        // commit and applies the attribution. This is the NEW primitive that does
+        // not currently exist: a plain commit (no candidate changes). We'll use
+        // the existing commit_with_comment for now, which is safe because a
+        // confirming commit against an empty candidate is a no-op with a logged
+        // comment.
         let mut dev = self.device_manager.open(&self.router).await?;
         let mut cfg = dev.config()?;
 
-        // Compose the confirming comment using the library hook. The operator
-        // comment is the confirming-commit prefix; the hook appends provenance.
-        let operator_comment = format!("Confirming commit {}", operation_id);
-        let mut sink = JunosCommitMetadataSink::new();
-        let _attach_outcome =
-            apply_commit_metadata(&mut sink, Some(&operator_comment), attribution);
-        let comment = sink.take_comment().unwrap_or_else(|| {
-            // Defensive fallback if the hook didn't set a comment.
-            format!("Confirming commit: {}", format_attribution(attribution))
-        });
+        let comment = format!("Confirming commit: {}", format_attribution(attribution));
 
         match cfg.commit_with_comment(&comment).await {
             Ok(()) => Ok(CommitOutcome::Reconciled {

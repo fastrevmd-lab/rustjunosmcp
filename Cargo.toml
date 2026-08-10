@@ -65,22 +65,21 @@ rustez       = "0.13"
 # configured. That is not theoretical: it already happened in this repo.
 #
 # mecmcp 0.7.0: adds graceful HTTP shutdown, GracefulShutdown::new returns Result.
-# TEMP: replace with tag vX.Y.Z when mecmcp releases the hook
-mecmcp-audit = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/commit-metadata-hook" }
-mecmcp-auth  = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-transport = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-runtime = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-policy = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-inventory = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-device = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-# TEMP: replace with tag vX.Y.Z when mecmcp releases the hook
-mecmcp-changeset = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/commit-metadata-hook" }
-mecmcp-scp = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
-mecmcp-secret = { version = "0.7.3", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.7.3" }
+mecmcp-audit = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-auth  = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-transport = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-runtime = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-policy = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-inventory = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-device = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-changeset = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-scp = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
+mecmcp-secret = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.4" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+
 # auth + remote transport (sub-project #2)
 arc-swap         = "1"
 sha2             = "0.10"

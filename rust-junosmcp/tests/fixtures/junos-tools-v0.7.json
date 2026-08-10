@@ -6,12 +6,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
         "AuthConfig": {
-          "description": "Authentication config for a Junos device. Tagged enum mirrors the Python\nrepo's `auth.type` discriminator.",
+          "description": "Device authentication method for NETCONF.",
           "oneOf": [
             {
+              "description": "Authenticate with a plaintext password. Supported for NETCONF; not\nsupported for SCP-based file transfers.",
               "type": "object",
               "properties": {
                 "password": {
+                  "description": "Plaintext password for SSH authentication.",
                   "type": "string"
                 },
                 "type": {
@@ -25,9 +27,11 @@
               ]
             },
             {
+              "description": "Authenticate with an SSH private key. Path is validated at inventory\nload time; the file must exist.",
               "type": "object",
               "properties": {
                 "private_key_path": {
+                  "description": "Path to the SSH private key file.",
                   "type": "string"
                 },
                 "type": {
@@ -43,6 +47,7 @@
           ]
         }
       },
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device_name": {
@@ -91,8 +96,7 @@
           ],
           "default": null
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "apply_junos_change_set": {
@@ -247,6 +251,9 @@
           ]
         }
       ],
+      "required": [
+        "config_text"
+      ],
       "type": "object",
       "properties": {
         "device": {
@@ -278,10 +285,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "config_text"
-      ]
+      "additionalProperties": false
     }
   },
   "confirm_junos_change_set": {
@@ -369,10 +373,11 @@
           "additionalProperties": false
         },
         "ConfigPayloadSpec": {
-          "description": "Serializable config payload specification.",
+          "description": "Configuration text and format for loading into the Junos candidate.",
           "type": "object",
           "properties": {
             "text": {
+              "description": "Configuration text to load into the Junos candidate database.",
               "type": "string"
             },
             "format": {
@@ -469,6 +474,7 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
@@ -490,8 +496,7 @@
           "description": "The target device.\n\nAlias for `device`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "execute_junos_command": {
@@ -519,6 +524,9 @@
             }
           ]
         }
+      ],
+      "required": [
+        "command"
       ],
       "type": "object",
       "properties": {
@@ -571,10 +579,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "command"
-      ]
+      "additionalProperties": false
     }
   },
   "execute_junos_command_batch": {
@@ -615,6 +620,9 @@
             ]
           }
         }
+      ],
+      "required": [
+        "commands"
       ],
       "type": "object",
       "properties": {
@@ -738,10 +746,7 @@
           "default": 16
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "commands"
-      ]
+      "additionalProperties": false
     }
   },
   "execute_junos_pfe_command": {
@@ -769,6 +774,10 @@
             }
           ]
         }
+      ],
+      "required": [
+        "fpc_target",
+        "pfe_command"
       ],
       "type": "object",
       "properties": {
@@ -825,11 +834,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "fpc_target",
-        "pfe_command"
-      ]
+      "additionalProperties": false
     }
   },
   "fetch_file": {
@@ -857,6 +862,9 @@
             }
           ]
         }
+      ],
+      "required": [
+        "remote_path"
       ],
       "type": "object",
       "properties": {
@@ -902,10 +910,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "remote_path"
-      ]
+      "additionalProperties": false
     }
   },
   "gather_device_facts": {
@@ -934,6 +939,7 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
@@ -955,8 +961,7 @@
           "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "get_device_list": {
@@ -1097,6 +1102,7 @@
           }
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
@@ -1159,8 +1165,7 @@
           ],
           "default": null
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "get_router_list": {
@@ -1198,6 +1203,7 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
@@ -1225,8 +1231,7 @@
           "description": "The name of the device.\n\nAlias for `device`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "list_junos_change_sets": {
@@ -1318,6 +1323,7 @@
           }
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "device": {
@@ -1351,8 +1357,7 @@
           ],
           "default": null
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "load_and_commit_config": {
@@ -1380,6 +1385,9 @@
             }
           ]
         }
+      ],
+      "required": [
+        "config_text"
       ],
       "type": "object",
       "properties": {
@@ -1428,10 +1436,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "config_text"
-      ]
+      "additionalProperties": false
     }
   },
   "reload_devices": {
@@ -1440,7 +1445,6 @@
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "type": "object",
       "properties": {
         "file_name": {
           "description": "Optional path to a different inventory file. If omitted, re-reads\nthe current --device-mapping.",
@@ -1450,7 +1454,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "type": "object"
     }
   },
   "render_and_apply_j2_template": {
@@ -1491,6 +1496,10 @@
             ]
           }
         }
+      ],
+      "required": [
+        "template_content",
+        "vars_content"
       ],
       "type": "object",
       "properties": {
@@ -1579,11 +1588,7 @@
           "default": null
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "template_content",
-        "vars_content"
-      ]
+      "additionalProperties": false
     }
   },
   "rollback_config": {
@@ -1611,6 +1616,9 @@
             }
           ]
         }
+      ],
+      "required": [
+        "version"
       ],
       "type": "object",
       "properties": {
@@ -1663,10 +1671,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "version"
-      ]
+      "additionalProperties": false
     }
   },
   "transfer_file": {
@@ -1694,6 +1699,9 @@
             }
           ]
         }
+      ],
+      "required": [
+        "source_path"
       ],
       "type": "object",
       "properties": {
@@ -1731,10 +1739,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "source_path"
-      ]
+      "additionalProperties": false
     }
   },
   "upgrade_junos": {
@@ -1762,6 +1767,10 @@
             }
           ]
         }
+      ],
+      "required": [
+        "source_path",
+        "target_version"
       ],
       "type": "object",
       "properties": {
@@ -1805,11 +1814,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "source_path",
-        "target_version"
-      ]
+      "additionalProperties": false
     }
   }
 }
