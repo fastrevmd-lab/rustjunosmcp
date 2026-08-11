@@ -38,46 +38,69 @@ use serde::{Deserialize, Serialize};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Arguments for `get_chassis_cluster_status`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct ClusterStatusArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
 
+/// Chassis cluster topology and status snapshot.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ClusterStatusData {
+    /// Cluster ID configured on device. None if not available.
     pub cluster_id: Option<u16>,
+    /// Cluster member nodes.
     pub nodes: Vec<ClusterNode>,
+    /// Redundancy groups configured in the cluster.
     pub redundancy_groups: Vec<RedundancyGroup>,
 }
 
+/// Chassis cluster member node.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ClusterNode {
+    /// Node name (e.g., "node0", "node1").
     pub name: String,
+    /// Node priority for failover.
     pub priority: u16,
+    /// Node status (e.g., "primary", "secondary").
     pub status: String,
+    /// Active monitor failures on this node.
     pub monitor_failures: Vec<String>,
 }
 
+/// Chassis cluster redundancy group.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct RedundancyGroup {
+    /// Redundancy group ID (0 for control plane, 1+ for data plane).
     pub group_id: u16,
+    /// Number of failovers since last reboot.
     pub failover_count: u32,
+    /// Member nodes in this redundancy group.
     pub members: Vec<RgMember>,
 }
 
+/// Node membership in a redundancy group.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct RgMember {
+    /// Node name (e.g., "node0", "node1").
     pub node: String,
+    /// Node priority for this redundancy group.
     pub priority: u16,
+    /// Node status in this group (e.g., "primary", "secondary").
     pub status: String,
+    /// Preemption enabled for this node.
     pub preempt: bool,
+    /// Manual failover mode enabled.
     pub manual: bool,
+    /// Active monitor failures on this node.
     pub monitor_failures: Vec<String>,
 }
 

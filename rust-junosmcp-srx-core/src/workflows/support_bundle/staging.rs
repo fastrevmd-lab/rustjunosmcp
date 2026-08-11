@@ -22,6 +22,7 @@ pub struct SupportBundleStagingConfig {
 }
 
 impl SupportBundleStagingConfig {
+    /// Construct a new staging configuration.
     pub fn new(directory: PathBuf, max_bytes: u64) -> Self {
         Self {
             directory,
@@ -29,10 +30,12 @@ impl SupportBundleStagingConfig {
         }
     }
 
+    /// Root directory for LXC-side bundle staging.
     pub fn directory(&self) -> &Path {
         &self.directory
     }
 
+    /// Staging capacity cap in bytes (LRU eviction stub enforces this).
     pub fn max_bytes(&self) -> u64 {
         self.max_bytes
     }
@@ -215,15 +218,22 @@ fn remove_without_following(path: &Path) {
 /// is called, it also removes a partial tarball.
 #[derive(Debug)]
 pub struct PreparedBundlePaths {
+    /// Canonicalized staging root (symlink-resolved)
     staging_root: PathBuf,
+    /// Staging capacity cap in bytes
     staging_max_bytes: u64,
+    /// Per-router subdirectory under the staging root
     router_dir: PathBuf,
+    /// Ephemeral scratch directory (removed on drop)
     scratch_dir: PathBuf,
+    /// Final tarball destination path
     tarball_path: PathBuf,
+    /// Whether to keep the tarball on drop (set by commit_tarball)
     keep_tarball: bool,
 }
 
 impl PreparedBundlePaths {
+    /// Prepare staging paths for a bundle collection using the global config.
     pub fn prepare(
         config: &SupportBundleStagingConfig,
         router: &str,
@@ -294,6 +304,7 @@ impl PreparedBundlePaths {
         })
     }
 
+    /// Router-specific staging directory.
     pub fn router_dir(&self) -> &Path {
         &self.router_dir
     }
@@ -302,14 +313,18 @@ impl PreparedBundlePaths {
         self.staging_max_bytes
     }
 
+    /// Ephemeral scratch directory for building the tarball contents.
     pub fn scratch_dir(&self) -> &Path {
         &self.scratch_dir
     }
 
+    /// Final tarball destination path.
     pub fn tarball_path(&self) -> &Path {
         &self.tarball_path
     }
 
+    /// Re-validate that all paths remain confined within the staging root.
+    /// Called before tarball creation to defend against symlink-swap attacks.
     pub fn ensure_confined(&self) -> Result<(), SrxError> {
         let root = checked_directory(&self.staging_root, "staging root")?;
         let router = checked_directory(&self.router_dir, "router staging directory")?;
@@ -329,6 +344,9 @@ impl PreparedBundlePaths {
         Ok(())
     }
 
+    /// Open the tarball destination for writing with `create_new` semantics
+    /// (fails if the file already exists or is a symlink). Sets mode 0o600
+    /// on Unix. Calls `ensure_confined` first.
     pub fn create_tarball(&self) -> Result<File, SrxError> {
         self.ensure_confined()?;
         let mut options = OpenOptions::new();
@@ -343,6 +361,7 @@ impl PreparedBundlePaths {
         })
     }
 
+    /// Mark the tarball as committed so it survives the Drop cleanup.
     pub fn commit_tarball(&mut self) {
         self.keep_tarball = true;
     }

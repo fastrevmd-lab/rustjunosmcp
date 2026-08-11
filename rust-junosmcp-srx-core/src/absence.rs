@@ -3,26 +3,38 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
+/// Operational state of an SRX feature or capability.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SrxState {
+    /// Feature is enabled and data was successfully collected.
     Active,
+    /// Feature is not configured on the device.
     NotConfigured,
+    /// An error occurred while querying the feature.
     Error,
 }
 
+/// Standard response envelope for SRX tools.
+///
+/// Distinguishes successful data collection from feature-not-configured states.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SrxToolResponse<T> {
+    /// Operational state of the queried feature.
     pub state: SrxState,
+    /// Collected data, present when state is Active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
+    /// Human-readable explanation, present when state is NotConfigured or Error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Raw XML response from the device, if requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_xml: Option<String>,
 }
 
 impl<T: JsonSchema + Serialize> SrxToolResponse<T> {
+    /// Constructs a response for an active feature with collected data.
     pub fn active(data: T) -> Self {
         Self {
             state: SrxState::Active,
@@ -32,6 +44,7 @@ impl<T: JsonSchema + Serialize> SrxToolResponse<T> {
         }
     }
 
+    /// Constructs a response for a feature that is not configured.
     pub fn not_configured(reason: impl Into<String>) -> Self {
         Self {
             state: SrxState::NotConfigured,
@@ -41,6 +54,7 @@ impl<T: JsonSchema + Serialize> SrxToolResponse<T> {
         }
     }
 
+    /// Attaches the raw XML response from the device.
     pub fn with_raw(mut self, raw: impl Into<String>) -> Self {
         self.raw_xml = Some(raw.into());
         self

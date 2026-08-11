@@ -17,10 +17,15 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ProblemType {
+    /// Chassis cluster troubleshooting artifacts.
     ChassisCluster,
+    /// VPN troubleshooting artifacts.
     Vpn,
+    /// Traffic loss troubleshooting artifacts.
     TrafficLoss,
+    /// IDP and AppID troubleshooting artifacts.
     IdpAppid,
+    /// Routing troubleshooting artifacts.
     Routing,
     /// Catch-all — uses `request support information | save` directly.
     /// Short-circuits other selections when present in a multi-select array.

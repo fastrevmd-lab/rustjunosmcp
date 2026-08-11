@@ -10,24 +10,33 @@ use serde::Serialize;
 
 // ── Enums shared by every plan ────────────────────────────────────────────────
 
+/// Signature-package service type (IDP or AppID).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Service {
+    /// IDP (Intrusion Detection and Prevention)
     Idp,
+    /// AppID (Application Identification)
     Appid,
 }
 
+/// Device topology (standalone SRX or chassis-cluster pair).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Topology {
+    /// Single standalone SRX
     Standalone,
+    /// Chassis cluster (node0 + node1)
     ChassisCluster,
 }
 
+/// Where the target version came from (latest from Juniper or caller-pinned).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetSource {
+    /// Target resolved from the Juniper check server
     LatestFromCheckServer,
+    /// Target pinned by caller via `target_package_version`
     Pinned,
 }
 
@@ -37,8 +46,11 @@ pub enum TargetSource {
 /// cluster, it's `"node0"` / `"node1"`.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct NodeVersionInfo {
+    /// Routing engine name. Empty string for standalone; "node0" or "node1" for cluster.
     pub re_name: String,
+    /// Currently installed package version on this node.
     pub current_package_version: String,
+    /// Detector engine version. None when not applicable or unavailable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_detector_version: Option<String>,
 }
@@ -51,74 +63,108 @@ pub struct NodeVersionInfo {
 /// so the wire shape matches the design doc's §2 examples exactly.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct DownloadAndInstallPlan {
+    /// Confirmation code (always "confirmation_required").
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Action type (always "download_and_install").
     pub action: DownloadAndInstallAction,
+    /// Service type (idp or appid).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: Topology,
+    /// Per-node current version information.
     pub nodes: Vec<NodeVersionInfo>,
+    /// Target package version to install.
     pub target_package_version: String,
+    /// Source of the target version (latest or pinned).
     pub target_source: TargetSource,
-    /// Only populated when `target_source == Pinned` (so callers can still
-    /// see what `check-server` reported alongside the pinned target).
+    /// Latest version from check-server. Populated when target_source is Pinned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_from_check_server: Option<String>,
+    /// Estimated package size in bytes. None when unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_package_size_bytes: Option<u64>,
+    /// Estimated installation duration in seconds. None when unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_install_duration_seconds: Option<u64>,
+    /// Pre-flight check failures that must be resolved.
     pub preflight_blockers: Vec<String>,
+    /// Warning message about operation risks.
     pub warning: String,
 }
 
+/// Action discriminator for download_and_install plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadAndInstallAction {
+    /// Download and install a signature package
     DownloadAndInstall,
 }
 
 /// Plan for `rollback` (IDP + AppID).
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct RollbackPlan {
+    /// Confirmation code (always "confirmation_required").
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Action type (always "rollback").
     pub action: RollbackAction,
+    /// Service type (idp or appid).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: Topology,
+    /// Currently installed package version.
     pub current_package_version: String,
+    /// Target version to roll back to.
     pub rollback_target_version: String,
+    /// Pre-flight check failures that must be resolved.
     pub preflight_blockers: Vec<String>,
+    /// Warning message about operation risks.
     pub warning: String,
 }
 
+/// Action discriminator for rollback plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RollbackAction {
+    /// Roll back to the previously installed signature package
     Rollback,
 }
 
 /// Plan for `uninstall` (AppID only).
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct UninstallPlan {
+    /// Confirmation code (always "confirmation_required").
     #[serde(rename = "code")]
     pub code: ConfirmationRequiredTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Action type (always "uninstall").
     pub action: UninstallAction,
+    /// Service type (always appid for uninstall).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: Topology,
+    /// Currently installed package version to be uninstalled.
     pub current_package_version: String,
+    /// Pre-flight check failures that must be resolved.
     pub preflight_blockers: Vec<String>,
+    /// Warning message about operation risks.
     pub warning: String,
 }
 
+/// Action discriminator for uninstall plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UninstallAction {
+    /// Uninstall the active AppID signature package
     Uninstall,
 }
 
@@ -128,6 +174,7 @@ pub enum UninstallAction {
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfirmationRequiredTag {
+    /// Serializes as "confirmation_required".
     ConfirmationRequired,
 }
 
@@ -137,8 +184,11 @@ pub enum ConfirmationRequiredTag {
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ConfirmationPlan {
+    /// Download and install plan.
     DownloadAndInstall(DownloadAndInstallPlan),
+    /// Rollback plan.
     Rollback(RollbackPlan),
+    /// Uninstall plan.
     Uninstall(UninstallPlan),
 }
 
@@ -149,18 +199,26 @@ pub enum ConfirmationPlan {
 /// `confirmation_required` round-trip entirely.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct AlreadyAtTargetResponse {
+    /// Status tag (always "already_at_target").
     pub status: AlreadyAtTargetTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (idp or appid).
     pub service: Service,
+    /// Currently installed package version.
     pub current_package_version: String,
+    /// Target version (same as current).
     pub target_package_version: String,
+    /// Human-readable message explaining no action was taken.
     pub message: String,
 }
 
+/// Marker type serialized as `"already_at_target"` for the status field.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AlreadyAtTargetTag {
+    /// Device is already running the target version (short-circuit response)
     AlreadyAtTarget,
 }
 

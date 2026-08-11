@@ -90,11 +90,13 @@ fn lock_for(router: &str) -> Arc<Semaphore> {
 // ── Public args / response types ──────────────────────────────────────────────
 
 /// Accept `problem_type` as either a single value or an array per the
-/// design doc spec.
+/// design doc spec. Converted to a set via `into_set` to deduplicate.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ProblemTypeArg {
+    /// Single problem type specified directly
     One(ProblemType),
+    /// Array of problem types (deduplicated on conversion)
     Many(Vec<ProblemType>),
 }
 
@@ -111,23 +113,30 @@ impl ProblemTypeArg {
     }
 }
 
+/// Arguments for `collect_jtac_support_bundle` workflow (RPC input schema).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct SupportBundleArgs {
+    /// Target router name (inventory key)
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Problem category or categories to capture evidence for
     pub problem_type: ProblemTypeArg,
     /// Optional correlation label. Limited to 1..=64 ASCII letters, digits,
     /// `_`, `.`, and `-`; never used in a filesystem path.
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Whether to capture log files in addition to RPC replies. Default true.
     #[serde(default = "default_true")]
     pub include_logs: bool,
+    /// Whether to redact known-sensitive XML elements and log values. Default true.
     #[serde(default = "default_true")]
     pub redact: bool,
+    /// Per-log-file size cap in bytes. Default 10 MiB.
     #[serde(default = "default_max_log_bytes")]
     pub max_log_bytes_per_file: u64,
+    /// Maximum number of log files to capture. Default 5.
     #[serde(default = "default_max_log_files")]
     pub max_log_files: u32,
     /// Outer per-call budget (seconds). Default 1800, cap 3600. The
@@ -192,18 +201,24 @@ pub fn validate_path_inputs(args: &SupportBundleArgs) -> Result<(), SrxError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BundleLocation {
+    /// Tarball resides on-device under `/var/tmp`
     Device,
+    /// Tarball resides on the LXC host in the configured staging directory
     LxcStaging,
 }
 
+/// Tarball metadata nested inside the `collect_jtac_support_bundle` response.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct BundleInfo {
+    /// Where the tarball resides (on-device or LXC staging)
     pub location: BundleLocation,
     /// Absolute path to the tarball. Interpretation depends on `location`.
     pub path: String,
+    /// Tarball size in bytes
     pub bytes: u64,
     /// Lower-case hex SHA-256 of the tarball.
     pub sha256: String,
+    /// Problem types that were captured
     pub problem_types: Vec<ProblemType>,
     /// Per-artefact manifest (RPC names + log paths captured).
     pub artefacts: Vec<CapturedArtefact>,
@@ -211,13 +226,17 @@ pub struct BundleInfo {
     pub redacted: bool,
 }
 
+/// Success response for `collect_jtac_support_bundle` workflow.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SupportBundleData {
+    /// Target router name
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Caller-provided or server-minted correlation ID
     pub request_id: String,
     /// Server-minted ID used exclusively for local and device filenames.
     pub filesystem_id: String,
+    /// Tarball metadata (location, path, size, digest, manifest)
     pub bundle: BundleInfo,
     /// Free-form next-step hint for the LLM. For `Device` bundles this is
     /// the `fetch_file router=... source=...` invocation; for

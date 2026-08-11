@@ -6,41 +6,51 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
         "SrxLicensedFeature": {
-          "description": "The set of SRX security features that require a Junos license.\n\nEach variant has a hard-coded list of case-insensitive substring patterns\nmatched against the `<name>` field of `<feature-summary>` elements returned\nby `<get-license-summary-information/>`.",
-          "type": "string",
-          "enum": [
-            "idp",
-            "app_id",
-            "utm_antivirus",
-            "web_filtering",
-            "anti_spam",
-            "sec_intel",
-            "atp_cloud",
-            "ssl_proxy"
+          "description": "SRX security features that require a Junos license.\n\nEach variant has a hard-coded list of case-insensitive substring patterns\nmatched against the `<name>` field of `<feature-summary>` elements returned\nby `<get-license-summary-information/>`.",
+          "oneOf": [
+            {
+              "description": "Intrusion Detection and Prevention (IDP).",
+              "type": "string",
+              "const": "idp"
+            },
+            {
+              "description": "Application Identification (AppID).",
+              "type": "string",
+              "const": "app_id"
+            },
+            {
+              "description": "Unified Threat Management Antivirus.",
+              "type": "string",
+              "const": "utm_antivirus"
+            },
+            {
+              "description": "Web filtering / URL filtering.",
+              "type": "string",
+              "const": "web_filtering"
+            },
+            {
+              "description": "Anti-spam.",
+              "type": "string",
+              "const": "anti_spam"
+            },
+            {
+              "description": "Security Intelligence (SecIntel).",
+              "type": "string",
+              "const": "sec_intel"
+            },
+            {
+              "description": "Advanced Threat Prevention Cloud / Sky ATP.",
+              "type": "string",
+              "const": "atp_cloud"
+            },
+            {
+              "description": "SSL Forward Proxy.",
+              "type": "string",
+              "const": "ssl_proxy"
+            }
           ]
         }
       },
-      "type": "object",
-      "properties": {
-        "router": {
-          "type": "string"
-        },
-        "feature": {
-          "$ref": "#/$defs/SrxLicensedFeature"
-        },
-        "include_raw": {
-          "type": "boolean",
-          "default": false
-        },
-        "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "feature"
-      ],
       "allOf": [
         {
           "oneOf": [
@@ -56,6 +66,30 @@
             }
           ]
         }
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "feature": {
+          "description": "Security feature to check licensing for.",
+          "$ref": "#/$defs/SrxLicensedFeature"
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "feature"
       ]
     }
   },
@@ -66,12 +100,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
         "ProblemTypeArg": {
-          "description": "Accept `problem_type` as either a single value or an array per the\ndesign doc spec.",
+          "description": "Accept `problem_type` as either a single value or an array per the\ndesign doc spec. Converted to a set via `into_set` to deduplicate.",
           "anyOf": [
             {
+              "description": "Single problem type specified directly",
               "$ref": "#/$defs/ProblemType"
             },
             {
+              "description": "Array of problem types (deduplicated on conversion)",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/ProblemType"
@@ -83,14 +119,29 @@
           "description": "Closed set of problem categories. Multi-select is handled by the caller\n(orchestrator accepts `Vec<ProblemType>` and unions the additional\nartefact lists).",
           "oneOf": [
             {
+              "description": "Chassis cluster troubleshooting artifacts.",
               "type": "string",
-              "enum": [
-                "chassis_cluster",
-                "vpn",
-                "traffic_loss",
-                "idp_appid",
-                "routing"
-              ]
+              "const": "chassis_cluster"
+            },
+            {
+              "description": "VPN troubleshooting artifacts.",
+              "type": "string",
+              "const": "vpn"
+            },
+            {
+              "description": "Traffic loss troubleshooting artifacts.",
+              "type": "string",
+              "const": "traffic_loss"
+            },
+            {
+              "description": "IDP and AppID troubleshooting artifacts.",
+              "type": "string",
+              "const": "idp_appid"
+            },
+            {
+              "description": "Routing troubleshooting artifacts.",
+              "type": "string",
+              "const": "routing"
             },
             {
               "description": "Catch-all — uses `request support information | save` directly.\nShort-circuits other selections when present in a multi-select array.",
@@ -100,12 +151,30 @@
           ]
         }
       },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
       "type": "object",
       "properties": {
         "router": {
+          "description": "Target router name (inventory key)",
           "type": "string"
         },
         "problem_type": {
+          "description": "Problem category or categories to capture evidence for",
           "$ref": "#/$defs/ProblemTypeArg"
         },
         "request_id": {
@@ -117,20 +186,24 @@
           "default": null
         },
         "include_logs": {
+          "description": "Whether to capture log files in addition to RPC replies. Default true.",
           "type": "boolean",
           "default": true
         },
         "redact": {
+          "description": "Whether to redact known-sensitive XML elements and log values. Default true.",
           "type": "boolean",
           "default": true
         },
         "max_log_bytes_per_file": {
+          "description": "Per-log-file size cap in bytes. Default 10 MiB.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
           "default": 10485760
         },
         "max_log_files": {
+          "description": "Maximum number of log files to capture. Default 5.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0,
@@ -144,29 +217,13 @@
           "default": 1800
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Target router name (inventory key)\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
         "problem_type"
-      ],
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "router"
-              ]
-            },
-            {
-              "required": [
-                "router_name"
-              ]
-            }
-          ]
-        }
       ]
     }
   },
@@ -191,21 +248,23 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "get_srx_security_services_status": {
@@ -229,21 +288,23 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "manage_appid_signature_package": {
@@ -253,20 +314,50 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
         "AppidAction": {
-          "type": "string",
-          "enum": [
-            "check_server",
-            "download_and_install",
-            "uninstall"
+          "description": "AppID signature package management action.",
+          "oneOf": [
+            {
+              "description": "Check server for latest available package version.",
+              "type": "string",
+              "const": "check_server"
+            },
+            {
+              "description": "Download and install AppID signature package.",
+              "type": "string",
+              "const": "download_and_install"
+            },
+            {
+              "description": "Uninstall the active AppID package.",
+              "type": "string",
+              "const": "uninstall"
+            }
           ]
         }
       },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "action": {
+          "description": "Action to perform.",
           "$ref": "#/$defs/AppidAction"
         },
         "version": {
@@ -301,19 +392,48 @@
           "default": null
         },
         "include_raw": {
-          "description": "Append raw RPC replies to the response for debugging.",
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
         "action"
-      ],
+      ]
+    }
+  },
+  "manage_idp_security_package": {
+    "name": "manage_idp_security_package",
+    "description": "DESTRUCTIVE on the `download_and_install` and `rollback` actions: updates / reverts the IDP signature package on an SRX device. Three actions: `check_server` (read-only — returns installed + latest version from signatures.juniper.net), `download_and_install` (downloads and installs the latest or a pinned `version`), and `rollback` (reverts to the device's preserved previous package). Destructive verbs use a two-call confirmation protocol: call 1 with `confirm=false` returns `[code=confirmation_required]` carrying a `plan` and short-lived `confirmation_token`; call 2 supplies both `confirm=true` and that token. Tokens are caller-bound and one-time. `download_and_install` short-circuits with `status=already_at_target` when every node already runs the requested version.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$defs": {
+        "IdpAction": {
+          "description": "IDP signature package management action.",
+          "oneOf": [
+            {
+              "description": "Check server for latest available package version.",
+              "type": "string",
+              "const": "check_server"
+            },
+            {
+              "description": "Download and install IDP signature package.",
+              "type": "string",
+              "const": "download_and_install"
+            },
+            {
+              "description": "Roll back to previously installed package version.",
+              "type": "string",
+              "const": "rollback"
+            }
+          ]
+        }
+      },
       "allOf": [
         {
           "oneOf": [
@@ -329,30 +449,15 @@
             }
           ]
         }
-      ]
-    }
-  },
-  "manage_idp_security_package": {
-    "name": "manage_idp_security_package",
-    "description": "DESTRUCTIVE on the `download_and_install` and `rollback` actions: updates / reverts the IDP signature package on an SRX device. Three actions: `check_server` (read-only — returns installed + latest version from signatures.juniper.net), `download_and_install` (downloads and installs the latest or a pinned `version`), and `rollback` (reverts to the device's preserved previous package). Destructive verbs use a two-call confirmation protocol: call 1 with `confirm=false` returns `[code=confirmation_required]` carrying a `plan` and short-lived `confirmation_token`; call 2 supplies both `confirm=true` and that token. Tokens are caller-bound and one-time. `download_and_install` short-circuits with `status=already_at_target` when every node already runs the requested version.",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$defs": {
-        "IdpAction": {
-          "type": "string",
-          "enum": [
-            "check_server",
-            "download_and_install",
-            "rollback"
-          ]
-        }
-      },
+      ],
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "action": {
+          "description": "Action to perform.",
           "$ref": "#/$defs/IdpAction"
         },
         "version": {
@@ -387,34 +492,18 @@
           "default": null
         },
         "include_raw": {
-          "description": "Append raw RPC replies to the response for debugging.",
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
         "action"
-      ],
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "router"
-              ]
-            },
-            {
-              "required": [
-                "router_name"
-              ]
-            }
-          ]
-        }
       ]
     }
   },
@@ -448,12 +537,15 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -466,11 +558,10 @@
           "default": null
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "vpn_lifecycle_report": {
@@ -494,9 +585,11 @@
           ]
         }
       ],
+      "additionalProperties": false,
       "type": "object",
       "properties": {
         "router": {
+          "description": "Device name (aliased as router_name).",
           "type": "string"
         },
         "peer": {
@@ -514,15 +607,15 @@
           ]
         },
         "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
           "type": "boolean",
           "default": false
         },
         "router_name": {
-          "description": "Alias for `router`; accepted for backward compatibility.",
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     }
   }
 }

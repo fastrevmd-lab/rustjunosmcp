@@ -77,20 +77,27 @@ const MAX_TIMEOUT_SECS: u64 = 1800;
 
 // ── Public arg surface ────────────────────────────────────────────────────────
 
+/// AppID signature package management action.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AppidAction {
+    /// Check server for latest available package version.
     CheckServer,
+    /// Download and install AppID signature package.
     DownloadAndInstall,
+    /// Uninstall the active AppID package.
     Uninstall,
 }
 
+/// Arguments for `manage_appid_signature_package`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct AppidPackageArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Action to perform.
     pub action: AppidAction,
     /// Pin to a specific package version. Only meaningful for
     /// `download_and_install`; ignored otherwise.
@@ -106,40 +113,43 @@ pub struct AppidPackageArgs {
     /// Per-call outer budget in seconds. Default 600s, cap 1800s.
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Append raw RPC replies to the response for debugging.
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
 
 // ── `check_server` response types ─────────────────────────────────────────────
 
-/// One row of the `nodes` array on the `check_server` response.
-///
-/// `re_name` is `""` for standalone, `"node0"`/`"node1"` for clusters.
-/// `current_package_version` is the raw `<version-detail>` text, or `None`
-/// when the device reports `"N/A"` (fresh) or the element is absent.
-///
-/// AppID has no "detector version" or "rollback version" peers — the
-/// device reply for `get-appid-package-version` only carries version-detail
-/// plus a release-date string.
+/// Per-node AppID package information.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct AppidCheckServerNode {
+    /// Empty string for standalone; "node0" or "node1" for cluster.
     pub re_name: String,
+    /// Currently installed package version. None when no package installed or "N/A".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_package_version: Option<String>,
+    /// Package release date. None when absent or "N/A".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_date: Option<String>,
 }
 
+/// Check-server response data for AppID packages.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct AppidCheckServerData {
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always appid).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
+    /// Latest available package version from Juniper.
     pub latest_version: String,
+    /// Per-node package information.
     pub nodes: Vec<AppidCheckServerNode>,
+    /// True if any node has a different version than latest_version.
     pub update_available: bool,
+    /// Raw XML from device when include_raw was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_xml: Option<String>,
 }
@@ -327,11 +337,15 @@ fn leading_version_number(v: &str) -> &str {
 /// 5. Anything else → Pending (conservative)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsyncStatusOutcome {
+    /// Operation still in progress.
     Pending,
+    /// Operation completed successfully.
     Done,
+    /// Operation failed with error message.
     Failed(String),
 }
 
+/// Parse async status detail text from device into outcome.
 pub fn parse_async_status_detail(detail: &str) -> AsyncStatusOutcome {
     let t = detail.trim();
     let lower = t.to_lowercase();
@@ -349,12 +363,16 @@ pub fn parse_async_status_detail(detail: &str) -> AsyncStatusOutcome {
 
 // ── Plan builders (pure) ──────────────────────────────────────────────────────
 
+/// Outcome of building an execution plan for signature package operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanOutcome {
+    /// Device already at target version; no operation needed.
     AlreadyAtTarget(crate::workflows::signature_package::AlreadyAtTargetResponse),
+    /// Operation requires user confirmation before proceeding.
     NeedsConfirmation(crate::workflows::signature_package::ConfirmationPlan),
 }
 
+/// Build execution plan for AppID package operation based on current state.
 pub fn build_plan(
     snapshot: &AppidCheckServerData,
     pinned: Option<&str>,
@@ -489,14 +507,23 @@ pub fn build_uninstall_plan(
 
 // ── Unified verb dispatcher ───────────────────────────────────────────────────
 
+/// Top-level response for `manage_appid_signature_package`.
+///
+/// Contains action-specific response data based on the requested action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum AppidPackageResponse {
+    /// check_server action response.
     CheckServer(AppidCheckServerData),
+    /// download_and_install action response.
     DownloadAndInstall(DownloadAndInstallResponse),
+    /// uninstall action response.
     Uninstall(UninstallResponse),
 }
 
+/// Execute AppID signature package management operation.
+///
+/// Dispatches to the appropriate handler based on action type.
 pub async fn run(
     device: &mut PooledDevice,
     device_leases: &DeviceLeaseManager,
@@ -537,31 +564,47 @@ pub async fn run(
 
 // ── `download_and_install` — destructive workflow ─────────────────────────────
 
+/// Download and install completion data.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct DownloadAndInstallCompletedData {
+    /// Completion status (always "completed").
     pub status: CompletedTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always appid).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
+    /// Requested package version.
     pub target_package_version: String,
+    /// Actually installed package version (verified post-install).
     pub installed_package_version: String,
+    /// Total elapsed time in seconds.
     pub elapsed_seconds: u64,
 }
 
+/// Completion status tag.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletedTag {
+    /// Operation completed successfully.
     Completed,
 }
 
+/// Response for download_and_install action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DownloadAndInstallResponse {
+    /// Device already at target version; no action taken.
     AlreadyAtTarget(crate::workflows::signature_package::AlreadyAtTargetResponse),
+    /// Download and install completed successfully.
     Completed(DownloadAndInstallCompletedData),
 }
 
+/// Execute AppID package download and install operation.
+///
+/// Two-phase protocol: preview without confirmation, execute with confirmation token.
 pub async fn download_and_install(
     device: &mut PooledDevice,
     device_leases: &DeviceLeaseManager,
@@ -1042,20 +1085,29 @@ async fn verify_installed_version(
 
 // ── `uninstall` — destructive workflow ────────────────────────────────────────
 
+/// Uninstall completion data.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct UninstallCompletedData {
+    /// Completion status (always "completed").
     pub status: CompletedTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always appid).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
+    /// Package version that was uninstalled.
     pub previous_package_version: String,
+    /// Total elapsed time in seconds.
     pub elapsed_seconds: u64,
 }
 
+/// Response for uninstall action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum UninstallResponse {
+    /// Uninstall completed successfully.
     Completed(UninstallCompletedData),
 }
 

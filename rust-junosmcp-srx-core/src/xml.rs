@@ -11,6 +11,7 @@ use std::io::Cursor;
 /// clustered devices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReNode {
+    /// Routing engine name. Empty string for standalone; "node0" or "node1" for cluster.
     pub re_name: String,
     /// Raw XML for everything inside this node's `<multi-routing-engine-item>`
     /// (or the full document body for standalone devices).

@@ -17,10 +17,18 @@ pub enum ArtefactSource {
     /// NETCONF RPC reply (e.g. `get-configuration`). The inner string is
     /// the RPC element name. When the RPC carried inner XML args, the
     /// args are recorded in `args` for replay.
-    Rpc { name: String, args: Option<String> },
+    Rpc {
+        /// RPC element name.
+        name: String,
+        /// Inner XML arguments passed to the RPC, if any.
+        args: Option<String>,
+    },
     /// Log file pulled via scp from the device. Inner string is the
     /// device-side absolute path (e.g. `/var/log/messages`).
-    LogFile { device_path: String },
+    LogFile {
+        /// Absolute path on device.
+        device_path: String,
+    },
 }
 
 /// A single artefact captured during bundle assembly. `bytes_in_tarball`
@@ -28,12 +36,14 @@ pub enum ArtefactSource {
 /// (so `redact=true` runs are accurately accounted for).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CapturedArtefact {
+    /// Origin of this artefact (RPC reply or log file).
     pub source: ArtefactSource,
     /// File name inside the tarball (relative path, no leading `/`).
     /// Example: `rpc/get-configuration.xml`, `logs/messages`.
     pub tarball_path: String,
     /// SHA-256 hex of the post-redact payload (lower-case, no prefix).
     pub sha256: String,
+    /// Byte count of content in tarball after redaction.
     pub bytes_in_tarball: u64,
     /// `true` if redact rules matched and at least one element was
     /// replaced. `false` for log files (redaction is RPC-XML-only in v0.3.0).

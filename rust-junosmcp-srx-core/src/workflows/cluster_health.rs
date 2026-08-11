@@ -20,12 +20,15 @@ use serde::{Deserialize, Serialize};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Arguments for `validate_chassis_cluster_health`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct ClusterHealthArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
     /// Caller-supplied correlation token. If absent, `run()` mints
@@ -34,28 +37,34 @@ pub struct ClusterHealthArgs {
     pub request_id: Option<String>,
 }
 
-/// Per-check severity. Aggregated by [`Verdict::roll_up`] using
-/// fail > warn > pass precedence.
+/// Severity level for a health check finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
+    /// Check passed.
     Pass,
+    /// Check found a warning condition.
     Warn,
+    /// Check found a failure condition.
     Fail,
 }
 
-/// Overall verdict for the cluster-health run. Derived from
-/// `findings.iter().map(|f| f.severity).max()` with the precedence above.
+/// Overall health verdict for the cluster.
+///
+/// Aggregated from individual check severities using fail > warn > pass precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
+    /// All checks passed.
     Pass,
+    /// At least one check warned; no failures.
     Warn,
+    /// At least one check failed.
     Fail,
 }
 
 impl Verdict {
-    /// Roll up an ordered findings list into a single verdict.
+    /// Aggregates findings into a single verdict using fail > warn > pass precedence.
     pub fn roll_up<'a, I: IntoIterator<Item = &'a Finding>>(findings: I) -> Self {
         let mut worst = Verdict::Pass;
         for finding in findings {
@@ -69,19 +78,21 @@ impl Verdict {
     }
 }
 
-/// One ordered finding emitted by a single check. `check_id` is a stable
-/// snake_case identifier; the closed set is enumerated in [`CHECK_IDS`].
+/// Single health check finding.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct Finding {
+    /// Stable check identifier. Values enumerated in CHECK_IDS.
     pub check_id: String,
+    /// Severity level for this finding.
     pub severity: Severity,
+    /// Human-readable finding description.
     pub message: String,
-    /// Optional structured detail (per-node values, RPC reply excerpts).
+    /// Optional structured detail (per-node values, RPC excerpts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<serde_json::Value>,
 }
 
-/// Closed set of `check_id` values emitted by this workflow.
+/// Complete set of health check identifiers emitted by this workflow.
 pub const CHECK_IDS: &[&str] = &[
     "red_led",
     "disabled_secondary",
@@ -92,17 +103,16 @@ pub const CHECK_IDS: &[&str] = &[
     "version_skew",
 ];
 
-/// Top-level response for `validate_chassis_cluster_health`. Wrapped in
-/// [`SrxToolResponse`] by the workflow entry point so standalone devices
-/// get the `NotConfigured` envelope instead.
+/// Chassis cluster health validation results.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ClusterHealthData {
+    /// Overall health verdict.
     pub verdict: Verdict,
+    /// Individual health check findings.
     pub findings: Vec<Finding>,
-    /// Effective request_id (caller-supplied or server-minted).
+    /// Request correlation token (caller-supplied or server-generated).
     pub request_id: String,
-    /// Pass-through of the Phase 1B parser's structured cluster snapshot.
-    /// Populated when the cluster_status RPC returned parseable data.
+    /// Cluster topology snapshot. Present when cluster_status RPC succeeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster_status: Option<crate::workflows::cluster_status::ClusterStatusData>,
 }
