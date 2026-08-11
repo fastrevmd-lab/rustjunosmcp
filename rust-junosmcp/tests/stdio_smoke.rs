@@ -41,6 +41,7 @@ const JUNOS_TOOLS: &[&str] = &[
     "approve_junos_change_set",
     "apply_junos_change_set",
     "confirm_junos_change_set",
+    "cancel_junos_change_set",
     "get_junos_change_set_status",
     "list_junos_change_sets",
     "get_junos_candidate_fingerprint",
@@ -150,12 +151,13 @@ fn lists_expected_tools() {
         .collect();
     assert_eq!(names, expected);
     // 28 / 19 before Phase 5; the change-set tools added four,
-    // `confirm_junos_change_set` adds one more (#239), and
-    // `list_junos_change_sets` adds one more (#255).
+    // `confirm_junos_change_set` adds one more (#239),
+    // `list_junos_change_sets` adds one more (#255), and
+    // `cancel_junos_change_set` adds one more (#293).
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 35);
+    assert_eq!(names.len(), 36);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 26);
+    assert_eq!(names.len(), 27);
 }
 
 #[cfg(feature = "srx")]

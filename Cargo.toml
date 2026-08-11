@@ -65,17 +65,16 @@ rustez       = "0.13"
 # configured. That is not theoretical: it already happened in this repo.
 #
 # mecmcp 0.7.0: adds graceful HTTP shutdown, GracefulShutdown::new returns Result.
-# TEMP: feat/changeset-cancel branch for cancel_change_set development
-mecmcp-audit = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-auth  = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-transport = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-runtime = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-policy = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-inventory = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-device = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-changeset = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-scp = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
-mecmcp-secret = { version = "0.8.4", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }
+mecmcp-audit = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-auth  = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-transport = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-runtime = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-policy = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-inventory = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-device = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-changeset = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-scp = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
+mecmcp-secret = { version = "0.8.5", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.5" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

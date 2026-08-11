@@ -46,8 +46,8 @@ mecmcp-transport = { workspace = true }
 mecmcp-policy = { workspace = true }
 mecmcp-inventory = { workspace = true }
 mecmcp-device = { workspace = true }
-mecmcp-changeset = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }  # TEMP: replace with tag when mecmcp releases cancel
-mecmcp-audit = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }  # TEMP: replace with tag when mecmcp releases cancel
+mecmcp-changeset = { workspace = true }
+mecmcp-audit = { workspace = true }
 mecmcp-scp = { workspace = true }
 mecmcp-secret = { workspace = true }
 dashmap      = { workspace = true }
@@ -56,5 +56,5 @@ rustnetconf  = { workspace = true }
 
 [dev-dependencies]
 tower        = { workspace = true }
-mecmcp-audit = { git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-cancel" }  # TEMP: replace with tag when mecmcp releases cancel
+mecmcp-audit = { workspace = true }
 uuid         = "1"
