@@ -225,6 +225,57 @@
       "additionalProperties": false
     }
   },
+  "cancel_junos_change_set": {
+    "name": "cancel_junos_change_set",
+    "description": "Cancel a Planned or Approved change set, freeing the per-principal pending slot. The caller must be either the owner or have approver authority. Idempotent: already-Cancelled sets return success. Rejects Applied/Applying sets.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
+      ],
+      "required": [
+        "change_set_id"
+      ],
+      "type": "object",
+      "properties": {
+        "change_set_id": {
+          "description": "Change-set ID to cancel.",
+          "type": "string"
+        },
+        "device": {
+          "description": "Device name. Required because change sets are indexed by (id, device).",
+          "type": "string"
+        },
+        "router_name": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "Device name. Required because change sets are indexed by (id, device).\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "commit_check_config": {
     "name": "commit_check_config",
     "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
