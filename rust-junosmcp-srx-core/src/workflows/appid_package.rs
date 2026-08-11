@@ -110,7 +110,7 @@ pub struct AppidPackageArgs {
     /// `confirm=true` is never sufficient to authorize a destructive action.
     #[serde(default)]
     pub confirmation_token: Option<String>,
-    /// Timeout in seconds. Default 600s, maximum 1800s.
+    /// Per-call outer budget in seconds. Default 600s, cap 1800s.
     #[serde(default)]
     pub timeout: Option<u64>,
     /// Include raw XML from device in response. Default false.

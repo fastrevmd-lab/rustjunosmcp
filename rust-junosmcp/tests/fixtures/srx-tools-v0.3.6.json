@@ -382,7 +382,7 @@
           "default": null
         },
         "timeout": {
-          "description": "Timeout in seconds. Default 600s, maximum 1800s.",
+          "description": "Per-call outer budget in seconds. Default 600s, cap 1800s.",
           "type": [
             "integer",
             "null"
