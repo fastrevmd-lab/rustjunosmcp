@@ -172,6 +172,9 @@ pub struct JmcpHandler {
     /// Whether to allow destructive operations on plane-owned devices.
     /// Defaults to false (refuse). Set via --allow-plane-owned-writes CLI flag.
     allow_plane_owned_writes: bool,
+    /// Whether to include staged actions in change-set status responses.
+    /// Defaults to false. Set via --web-enabled-approver CLI flag.
+    web_enabled_approver: bool,
     #[cfg(feature = "srx")]
     pub(super) started: Arc<tokio::time::Instant>,
     #[cfg(feature = "srx")]
@@ -201,6 +204,7 @@ impl JmcpHandler {
         upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
         coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
         allow_plane_owned_writes: bool,
+        web_enabled_approver: bool,
     ) -> Self {
         let tool_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
@@ -216,6 +220,7 @@ impl JmcpHandler {
             coordinator,
             tool_router,
             allow_plane_owned_writes,
+            web_enabled_approver,
             #[cfg(feature = "srx")]
             started: Arc::new(tokio::time::Instant::now()),
             #[cfg(feature = "srx")]
@@ -1536,7 +1541,11 @@ impl JmcpHandler {
             return Self::scope_to_call_result(e);
         }
 
-        let result = changeset::get_change_set_status(args, self.coordinator.clone()).await;
+        let result = if self.web_enabled_approver {
+            changeset::get_change_set_status_with_actions(args, self.coordinator.clone()).await
+        } else {
+            changeset::get_change_set_status(args, self.coordinator.clone()).await
+        };
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -1821,6 +1830,7 @@ mod scope_tests {
                 .expect("in-memory changeset coordinator"),
             ),
             false,
+            false,
         )
     }
 
@@ -1975,6 +1985,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
             grant: None,
@@ -1999,6 +2010,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -2023,6 +2035,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2074,6 +2087,7 @@ mod scope_tests {
                 .expect("in-memory changeset coordinator"),
             ),
             false,
+            false,
         );
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }
@@ -2083,6 +2097,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2102,6 +2117,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2123,6 +2139,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
             grant: None,
@@ -2147,6 +2164,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2168,6 +2186,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
             grant: None,
@@ -2190,6 +2209,7 @@ mod scope_tests {
         let handler = make_handler();
         let ctx = CallerCtx {
             token_name: "alice".into(),
+            client_name: None,
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -2224,6 +2244,7 @@ mod scope_tests {
     fn ctx_with_tools(tools: ScopeSet) -> CallerCtx {
         CallerCtx {
             token_name: "t".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools,
             grant: None,

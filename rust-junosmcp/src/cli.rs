@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 // Re-export from mecmcp-runtime for compatibility
 pub use mecmcp_runtime::cli::Transport;
+pub use mecmcp_runtime::cli::WebApproverArgs;
 
 #[derive(Debug, Parser)]
 #[cfg_attr(
@@ -189,6 +190,10 @@ pub struct Cli {
     /// Defaults to false (refuse). Spelled identically on every mecmcp server.
     #[arg(long = "allow-plane-owned-writes")]
     pub allow_plane_owned_writes: bool,
+
+    /// Web approver settings (--web-enabled-approver).
+    #[command(flatten)]
+    pub web_approver: WebApproverArgs,
 
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]

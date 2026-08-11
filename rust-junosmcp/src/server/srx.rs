@@ -848,8 +848,16 @@ mod scope_tests {
             )
             .expect("in-memory changeset coordinator"),
         );
-        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg, coordinator, false)
-            .with_srx_runtime(authorization_required, Default::default())
+        JmcpHandler::new(
+            dm,
+            policy,
+            transfer_cfg,
+            upgrade_cfg,
+            coordinator,
+            false,
+            false,
+        )
+        .with_srx_runtime(authorization_required, Default::default())
     }
 
     #[tokio::test]
@@ -894,6 +902,7 @@ mod scope_tests {
         let handler = make_handler(true);
         let wildcard_ctx = CallerCtx {
             token_name: "srx-admin".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -930,6 +939,7 @@ mod scope_tests {
         // Explicit allowlist should still grant write tools
         let explicit_ctx = CallerCtx {
             token_name: "srx-write".into(),
+            client_name: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()),
             grant: None,
