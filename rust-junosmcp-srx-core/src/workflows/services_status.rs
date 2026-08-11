@@ -46,37 +46,52 @@ struct SubCall {
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Arguments for `get_srx_security_services_status`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct ServicesStatusArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
 
+/// Aggregated security services status across all cluster nodes.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct ServicesStatusData {
+    /// Per-node security services status.
     pub nodes: Vec<NodeServicesStatus>,
 }
 
+/// Security services status for a single cluster node or standalone device.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct NodeServicesStatus {
-    /// `""` for standalone devices, `"node0"` / `"node1"` for clustered.
+    /// Empty string for standalone devices; "node0" or "node1" for clustered.
     pub re_name: String,
+    /// IDP (Intrusion Detection and Prevention) status.
     pub idp: SubServiceStatus<IdpInfo>,
+    /// AppID (Application Identification) status.
     pub appid: SubServiceStatus<AppIdInfo>,
+    /// UTM Antivirus status.
     pub utm_av: SubServiceStatus<UtmAvInfo>,
+    /// Security Intelligence status.
     pub secintel: SubServiceStatus<SecIntelInfo>,
+    /// ATP Cloud status.
     pub atp_cloud: SubServiceStatus<AtpCloudInfo>,
 }
 
+/// Status envelope for a single security sub-service.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct SubServiceStatus<T: JsonSchema + Serialize + PartialEq + Eq> {
+    /// Operational state of this sub-service.
     pub state: crate::SrxState,
+    /// Service data when state is Active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
+    /// Error or not-configured reason when state is not Active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -107,37 +122,40 @@ impl<T: JsonSchema + Serialize + PartialEq + Eq> SubServiceStatus<T> {
     }
 }
 
+/// IDP signature package and detector information.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct IdpInfo {
-    /// e.g. `"3714(4.1)"` or `"N/A(N/A)"` when no package loaded.
+    /// Package version and detector version, e.g., "3714(4.1)". "N/A(N/A)" when no package loaded.
     pub package_version: String,
-    /// Detector engine version, or `"N/A"`.
+    /// Detector engine version, or "N/A".
     pub detector_version: String,
 }
 
+/// AppID package information.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct AppIdInfo {
-    /// Application-identification package version. `"0"` when none loaded.
+    /// Application-identification package version. "0" when none loaded.
     pub version: String,
 }
 
+/// UTM antivirus engine information.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct UtmAvInfo {
-    /// Anti-virus scan engine type, e.g. `"sophos-engine"`.
+    /// Anti-virus scan engine type, e.g., "sophos-engine".
     pub engine_type: String,
 }
 
+/// Security Intelligence feed information.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct SecIntelInfo {
-    /// Feed names reported by SecIntel (empty list when all feeds down).
+    /// Active SecIntel feed names. Empty list when all feeds are down.
     pub feeds: Vec<String>,
 }
 
+/// ATP Cloud connection information.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct AtpCloudInfo {
-    /// The configured AAMW/ATP-Cloud connection URL when present in the
-    /// `<aamw-status>` payload, otherwise `None`. Presence of `Active` state
-    /// already implies AAMW is enrolled; this field carries the destination.
+    /// AAMW/ATP-Cloud connection URL when configured. None when not configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_url: Option<String>,
 }
