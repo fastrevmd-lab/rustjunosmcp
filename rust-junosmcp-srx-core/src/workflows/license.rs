@@ -65,7 +65,7 @@ use time::OffsetDateTime;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/// The set of SRX security features that require a Junos license.
+/// SRX security features that require a Junos license.
 ///
 /// Each variant has a hard-coded list of case-insensitive substring patterns
 /// matched against the `<name>` field of `<feature-summary>` elements returned
@@ -73,19 +73,29 @@ use time::OffsetDateTime;
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum SrxLicensedFeature {
+    /// Intrusion Detection and Prevention (IDP).
     Idp,
+    /// Application Identification (AppID).
     AppId,
+    /// Unified Threat Management Antivirus.
     UtmAntivirus,
+    /// Web filtering / URL filtering.
     WebFiltering,
+    /// Anti-spam.
     AntiSpam,
+    /// Security Intelligence (SecIntel).
     SecIntel,
+    /// Advanced Threat Prevention Cloud / Sky ATP.
     AtpCloud,
+    /// SSL Forward Proxy.
     SslProxy,
 }
 
 impl SrxLicensedFeature {
-    /// Case-insensitive substring patterns matched against the Junos
-    /// `<name>` field (the "Feature" column in `show system license`).
+    /// Returns case-insensitive substring patterns matched against Junos license names.
+    ///
+    /// These patterns are matched against the `<name>` field returned by
+    /// `show system license` / `get-license-summary-information`.
     pub fn record_patterns(&self) -> &'static [&'static str] {
         match self {
             Self::Idp => &["idp", "intrusion"],
@@ -99,7 +109,7 @@ impl SrxLicensedFeature {
         }
     }
 
-    /// Human-readable name for use in `reason` strings.
+    /// Returns human-readable feature name for error messages.
     fn display_name(&self) -> &'static str {
         match self {
             Self::Idp => "idp",
@@ -114,13 +124,17 @@ impl SrxLicensedFeature {
     }
 }
 
+/// Arguments for `check_srx_feature_license`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct LicenseArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Security feature to check licensing for.
     pub feature: SrxLicensedFeature,
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
@@ -139,28 +153,33 @@ pub struct LicenseRecord {
     pub end_date: Option<OffsetDateTime>,
 }
 
-/// Aggregated counts across all matching records.
+/// Aggregated license counts across all matching records.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct LicenseCounts {
+    /// Number of licenses currently in use.
     pub used: u32,
+    /// Number of licenses installed on device.
     pub installed: u32,
+    /// Number of additional licenses needed.
     pub needed: u32,
 }
 
-/// The `data` payload returned in `SrxToolResponse<LicenseData>` when one
-/// or more matching license records are found.
+/// License data for a specific security feature.
+///
+/// Returned when one or more matching license records are found on the device.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct LicenseData {
+    /// Security feature queried.
     pub feature: SrxLicensedFeature,
+    /// License records matching the feature.
     pub license_records: Vec<LicenseRecord>,
+    /// Aggregated counts across all matching records.
     pub counts: LicenseCounts,
-    /// Earliest expiry among time-based records (`None` when all permanent).
-    /// Wire shape is RFC 3339.
+    /// Earliest expiry among time-based records. None when all licenses are permanent.
     #[serde(with = "time::serde::rfc3339::option")]
     #[schemars(with = "Option<String>")]
     pub earliest_expiry: Option<OffsetDateTime>,
-    /// `true` iff every matching record has `license_type == "permanent"`
-    /// (i.e. `end_date.is_none()` for all records).
+    /// True if every matching record is permanent (no expiration).
     pub all_permanent: bool,
 }
 
