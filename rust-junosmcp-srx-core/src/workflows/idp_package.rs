@@ -78,82 +78,80 @@ const MAX_TIMEOUT_SECS: u64 = 1800;
 
 // ── Public arg surface ────────────────────────────────────────────────────────
 
+/// IDP signature package management action.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IdpAction {
+    /// Check server for latest available package version.
     CheckServer,
+    /// Download and install IDP signature package.
     DownloadAndInstall,
+    /// Roll back to previously installed package version.
     Rollback,
 }
 
+/// Arguments for `manage_idp_security_package`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct IdpPackageArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Action to perform.
     pub action: IdpAction,
-    /// Pin to a specific package version (e.g. `"3714"`). Only meaningful
-    /// for `download_and_install`; ignored otherwise.
+    /// Pin to specific package version (e.g., "3714"). Only used for download_and_install.
     #[serde(default)]
     pub version: Option<String>,
-    /// Required for destructive actions (`download_and_install`, `rollback`).
-    /// Ignored for `check_server`.
+    /// Explicit confirmation required for destructive actions. Default false.
     #[serde(default)]
     pub confirm: bool,
-    /// Opaque, short-lived artifact returned by the preview call. A bare
-    /// `confirm=true` is never sufficient to authorize a destructive action.
+    /// Confirmation token from preview call. Required when confirm is true.
     #[serde(default)]
     pub confirmation_token: Option<String>,
-    /// Per-call outer budget in seconds (download poll + install poll combined).
-    /// Default 600s (10 min), cap 1800s (30 min).
+    /// Timeout in seconds. Default 600s, maximum 1800s.
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Append raw RPC replies to the response for debugging.
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
 
 // ── `check_server` response types ─────────────────────────────────────────────
 
-/// One row of the `nodes` array on the `check_server` response.
-///
-/// `re_name` is `""` for standalone devices, `"node0"` / `"node1"` for clusters.
-/// `current_package_version` is the raw `<security-package-version>` text from
-/// the device — `None` only when the element is missing or its text is
-/// `"N/A(N/A)"` (fresh device with no signatures ever installed).
-/// `current_detector_version` is the raw `<detector-version>` text — `None`
-/// when absent or `"N/A"` (fresh device).
+/// Per-node IDP package information.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct IdpCheckServerNode {
+    /// Empty string for standalone; "node0" or "node1" for cluster.
     pub re_name: String,
+    /// Currently installed package version. None when no package installed or "N/A(N/A)".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_package_version: Option<String>,
+    /// Detector engine version. None when absent or "N/A".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_detector_version: Option<String>,
-    /// Raw `<security-package-rollback-version>` text — `None` when absent
-    /// or `"N/A(N/A)"` (device has no preserved previous package). Used by
-    /// the `rollback` verb's pre-flight to decide whether a rollback target
-    /// is available.
+    /// Preserved previous package version for rollback. None when absent or "N/A(N/A)".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_rollback_version: Option<String>,
 }
 
+/// Check-server response data for IDP packages.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct IdpCheckServerData {
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always idp).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
-    /// Leading numeric version reported by the Juniper signatures server
-    /// (e.g. `"3910"`). Pulled from the `Version info:NNNN(...)` line in
-    /// the `<secpack-download-status-detail>` free text.
+    /// Latest available package version from Juniper (e.g., "3910").
     pub latest_version: String,
+    /// Per-node package information.
     pub nodes: Vec<IdpCheckServerNode>,
-    /// True iff any node's `current_package_version` leading numeric does
-    /// not match `latest_version`. A fresh device (`current = None`) counts
-    /// as "needs update".
+    /// True if any node has a different version than latest_version.
     pub update_available: bool,
+    /// Raw XML from device when include_raw was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_xml: Option<String>,
 }
@@ -569,12 +567,17 @@ pub fn build_rollback_plan(
 ///
 /// Serializes untagged so the JSON body the caller receives matches the
 /// per-verb shape documented in the design spec — no `{ "kind": "rollback",
-/// "data": {...} }` envelope.
+/// Top-level response for `manage_idp_security_package`.
+///
+/// Contains action-specific response data based on the requested action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum IdpPackageResponse {
+    /// check_server action response.
     CheckServer(IdpCheckServerData),
+    /// download_and_install action response.
     DownloadAndInstall(DownloadAndInstallResponse),
+    /// rollback action response.
     Rollback(RollbackResponse),
 }
 
@@ -628,37 +631,41 @@ pub async fn run(
 
 // ── `download_and_install` — destructive workflow ─────────────────────────────
 
-/// Terminal success payload returned by call 2 of `download_and_install`.
+/// Download and install completion data.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct DownloadAndInstallCompletedData {
+    /// Completion status (always "completed").
     pub status: CompletedTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always idp).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
+    /// Requested package version.
     pub target_package_version: String,
+    /// Actually installed package version (verified post-install).
     pub installed_package_version: String,
+    /// Total elapsed time in seconds.
     pub elapsed_seconds: u64,
 }
 
+/// Completion status tag.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletedTag {
+    /// Operation completed successfully.
     Completed,
 }
 
-/// Union returned to the MCP caller — either a call-1 `already_at_target`
-/// short-circuit (no destructive RPC fired) or a call-2 `completed`
-/// terminal success.
-///
-/// `confirmation_required` is **not** a variant here: it flows back as
-/// `SrxError::SignaturePackageConfirmationRequired { plan }` so MCP
-/// callers can pattern-match the bracketed `[code=confirmation_required]`
-/// token on the error string.
+/// Response for download_and_install action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DownloadAndInstallResponse {
+    /// Device already at target version; no action taken.
     AlreadyAtTarget(crate::workflows::signature_package::AlreadyAtTargetResponse),
+    /// Download and install completed successfully.
     Completed(DownloadAndInstallCompletedData),
 }
 
@@ -1139,26 +1146,31 @@ async fn verify_installed_version(
 // ── `rollback` — destructive workflow ─────────────────────────────────────────
 
 /// Terminal success payload returned by call 2 of `rollback`.
+/// Rollback completion data.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct RollbackCompletedData {
+    /// Completion status (always "completed").
     pub status: CompletedTag,
+    /// Device name.
     #[serde(alias = "router_name")]
     pub router: String,
+    /// Service type (always idp).
     pub service: Service,
+    /// Device topology (standalone or chassis cluster).
     pub topology: crate::workflows::signature_package::Topology,
-    /// Version that was active before rollback fired (pre-rollback snapshot).
+    /// Package version before rollback.
     pub previous_package_version: String,
-    /// Version that is active after rollback (= rollback target).
+    /// Package version after rollback (rollback target).
     pub installed_package_version: String,
+    /// Total elapsed time in seconds.
     pub elapsed_seconds: u64,
 }
 
-/// MCP-caller response from `rollback`. `confirmation_required` flows back
-/// as `SrxError::SignaturePackageConfirmationRequired { plan }`; this enum
-/// only encodes the call-2 terminal-success shape today.
+/// Response for rollback action.
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum RollbackResponse {
+    /// Rollback completed successfully.
     Completed(RollbackCompletedData),
 }
 
