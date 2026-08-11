@@ -1852,7 +1852,7 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 [[package]]
 name = "mecmcp-audit"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1882,7 +1882,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1900,7 +1900,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-changeset"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1920,7 +1920,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-device"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "async-trait",
  "rustix 1.1.4",
@@ -1936,7 +1936,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-inventory"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "mecmcp-secret",
  "serde",
@@ -1950,7 +1950,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-policy"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "globset",
  "serde",
@@ -1960,7 +1960,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-runtime"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "anyhow",
  "clap",
@@ -1975,7 +1975,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-scp"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-secret"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",
@@ -2004,7 +2004,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-transport"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#6ae34d552ff7e0f09ba0fa1c934b596da0cd5bbd"
 dependencies = [
  "axum",
  "axum-server",

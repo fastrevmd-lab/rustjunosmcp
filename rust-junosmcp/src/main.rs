@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
         upgrade_cfg,
         coordinator,
         args.allow_plane_owned_writes,
-        args.web_enabled_approver,
+        args.web_approver.web_enabled_approver,
     );
     #[cfg(feature = "srx")]
     let handler = handler.with_srx_runtime(

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 // Re-export from mecmcp-runtime for compatibility
 pub use mecmcp_runtime::cli::Transport;
+pub use mecmcp_runtime::cli::WebApproverArgs;
 
 #[derive(Debug, Parser)]
 #[cfg_attr(
@@ -190,10 +191,9 @@ pub struct Cli {
     #[arg(long = "allow-plane-owned-writes")]
     pub allow_plane_owned_writes: bool,
 
-    /// Include staged actions in get_junos_change_set_status responses (approver tooling). Off by
-    /// default: exposes staged config content to any caller with status scope.
-    #[arg(long)]
-    pub web_enabled_approver: bool,
+    /// Web approver settings (--web-enabled-approver).
+    #[command(flatten)]
+    pub web_approver: WebApproverArgs,
 
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]
