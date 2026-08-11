@@ -335,11 +335,15 @@ fn leading_version_number(v: &str) -> &str {
 /// 5. Anything else → Pending (conservative)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsyncStatusOutcome {
+    /// Operation still in progress.
     Pending,
+    /// Operation completed successfully.
     Done,
+    /// Operation failed with error message.
     Failed(String),
 }
 
+/// Parse async status detail text from device into outcome.
 pub fn parse_async_status_detail(detail: &str) -> AsyncStatusOutcome {
     let t = detail.trim();
     let lower = t.to_lowercase();
@@ -357,12 +361,16 @@ pub fn parse_async_status_detail(detail: &str) -> AsyncStatusOutcome {
 
 // ── Plan builders (pure) ──────────────────────────────────────────────────────
 
+/// Outcome of building an execution plan for signature package operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanOutcome {
+    /// Device already at target version; no operation needed.
     AlreadyAtTarget(crate::workflows::signature_package::AlreadyAtTargetResponse),
+    /// Operation requires user confirmation before proceeding.
     NeedsConfirmation(crate::workflows::signature_package::ConfirmationPlan),
 }
 
+/// Build execution plan for AppID package operation based on current state.
 pub fn build_plan(
     snapshot: &AppidCheckServerData,
     pinned: Option<&str>,
@@ -511,6 +519,9 @@ pub enum AppidPackageResponse {
     Uninstall(UninstallResponse),
 }
 
+/// Execute AppID signature package management operation.
+///
+/// Dispatches to the appropriate handler based on action type.
 pub async fn run(
     device: &mut PooledDevice,
     device_leases: &DeviceLeaseManager,

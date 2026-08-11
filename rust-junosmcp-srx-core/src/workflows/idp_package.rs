@@ -349,8 +349,11 @@ fn leading_version_number(v: &str) -> &str {
 /// * `"Failed;..."` (or text containing it)    → terminal failure    → Failed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsyncStatusOutcome {
+    /// Operation still in progress.
     Pending,
+    /// Operation completed successfully.
     Done,
+    /// Operation failed with error message.
     Failed(String),
 }
 

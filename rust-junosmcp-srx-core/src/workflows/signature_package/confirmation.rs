@@ -334,6 +334,7 @@ impl ConfirmationStore {
 }
 
 impl ConfirmationError {
+    /// Convert confirmation error to SrxError for the given router.
     pub fn into_srx_error(self, router: &str) -> crate::SrxError {
         match self {
             Self::Capacity => crate::SrxError::SignaturePackageConfirmationCapacityExceeded {
