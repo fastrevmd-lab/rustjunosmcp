@@ -13,6 +13,8 @@ use time::format_description::well_known::Rfc3339;
 const DEFAULT_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_CAPACITY: usize = 4096;
 
+/// Binding context for a confirmation token (caller, router, device identity).
+/// Tokens issued to one binding cannot be replayed against a different one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmationBinding {
     caller: String,
@@ -21,6 +23,7 @@ pub struct ConfirmationBinding {
 }
 
 impl ConfirmationBinding {
+    /// Construct a new binding from caller ID, router name, and device identity.
     pub fn new(caller: Option<&str>, router: &str, device_identity: &str) -> Self {
         Self {
             caller: caller.unwrap_or("unauthenticated").to_string(),
@@ -29,22 +32,28 @@ impl ConfirmationBinding {
         }
     }
 
+    /// Caller identifier ("unauthenticated" when None was passed).
     pub fn caller(&self) -> &str {
         &self.caller
     }
 
+    /// Target router name (inventory key).
     pub fn router(&self) -> &str {
         &self.router
     }
 }
 
+/// Confirmed plan returned after token consumption (workflow may proceed).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmedPlan {
+    /// Caller-provided correlation ID from the original plan
     pub correlation_id: String,
 }
 
+/// Pre-validated plan (binding checks passed; plan comparison deferred).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedPlan {
+    /// Caller-provided correlation ID from the original plan
     pub correlation_id: String,
 }
 
@@ -68,15 +77,22 @@ pub fn confirmation_token_for_request<'a>(
     }
 }
 
+/// Failure modes for confirmation token validation and consumption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfirmationError {
+    /// Store at capacity; cannot issue new token
     Capacity,
+    /// Token unknown or already consumed
     Invalid,
+    /// Token expired
     Expired,
+    /// Token bound to a different caller, router, or device
     BindingMismatch,
+    /// Freshly recomputed plan differs from the plan the token was issued for
     PlanDrift,
 }
 
+/// In-memory store of pending confirmation tokens for destructive workflows.
 #[derive(Clone)]
 pub struct ConfirmationStore {
     inner: Arc<Mutex<HashMap<[u8; 32], PendingConfirmation>>>,
@@ -99,6 +115,7 @@ impl Default for ConfirmationStore {
 }
 
 impl ConfirmationStore {
+    /// Construct a new confirmation store with the given TTL and capacity.
     pub fn new(ttl: Duration, capacity: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
@@ -107,8 +124,9 @@ impl ConfirmationStore {
         }
     }
 
-    /// Store only a SHA-256 digest of the opaque token, then add the raw token
-    /// and expiry metadata to the plan returned to the caller.
+    /// Issue a confirmation token for a destructive plan. Stores only a SHA-256
+    /// digest of the opaque token, then adds the raw token, expiry metadata, and
+    /// correlation_id to the plan returned to the caller.
     pub fn issue(
         &self,
         mut plan: Value,
@@ -186,9 +204,10 @@ impl ConfirmationStore {
         Ok(plan)
     }
 
-    /// Reject unknown, expired, or mis-bound artifacts before opening a device
-    /// session. The later [`Self::consume`] call repeats these checks and adds
-    /// the freshly recomputed plan comparison atomically.
+    /// Pre-flight binding validation. Rejects unknown, expired, or mis-bound
+    /// tokens before opening a device session. The later [`Self::consume`] call
+    /// repeats these checks and adds the freshly recomputed plan comparison
+    /// atomically. Does not consume the token.
     pub fn validate_binding(
         &self,
         token: &str,
@@ -237,6 +256,7 @@ impl ConfirmationStore {
 
     /// Validate all bindings and the freshly recomputed plan, then consume the
     /// token atomically so a retry or concurrent replay cannot execute twice.
+    /// Returns the confirmed plan's correlation_id on success.
     pub fn consume(
         &self,
         token: &str,

@@ -10,24 +10,33 @@ use serde::Serialize;
 
 // ── Enums shared by every plan ────────────────────────────────────────────────
 
+/// Signature-package service type (IDP or AppID).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Service {
+    /// IDP (Intrusion Detection and Prevention)
     Idp,
+    /// AppID (Application Identification)
     Appid,
 }
 
+/// Device topology (standalone SRX or chassis-cluster pair).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Topology {
+    /// Single standalone SRX
     Standalone,
+    /// Chassis cluster (node0 + node1)
     ChassisCluster,
 }
 
+/// Where the target version came from (latest from Juniper or caller-pinned).
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetSource {
+    /// Target resolved from the Juniper check server
     LatestFromCheckServer,
+    /// Target pinned by caller via `target_package_version`
     Pinned,
 }
 
@@ -73,9 +82,11 @@ pub struct DownloadAndInstallPlan {
     pub warning: String,
 }
 
+/// Action discriminator for download_and_install plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadAndInstallAction {
+    /// Download and install a signature package
     DownloadAndInstall,
 }
 
@@ -95,9 +106,11 @@ pub struct RollbackPlan {
     pub warning: String,
 }
 
+/// Action discriminator for rollback plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RollbackAction {
+    /// Roll back to the previously installed signature package
     Rollback,
 }
 
@@ -116,9 +129,11 @@ pub struct UninstallPlan {
     pub warning: String,
 }
 
+/// Action discriminator for uninstall plans.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UninstallAction {
+    /// Uninstall the active AppID signature package
     Uninstall,
 }
 
@@ -158,9 +173,11 @@ pub struct AlreadyAtTargetResponse {
     pub message: String,
 }
 
+/// Marker type serialized as `"already_at_target"` for the status field.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AlreadyAtTargetTag {
+    /// Device is already running the target version (short-circuit response)
     AlreadyAtTarget,
 }
 
