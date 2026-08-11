@@ -61,92 +61,94 @@ use serde::{Deserialize, Serialize};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Arguments for `vpn_lifecycle_report`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = rust_junosmcp_core::schema_alias::router_name_alias)]
 pub struct VpnLifecycleArgs {
+    /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
-    /// Filter IKE and IPsec SAs to those whose remote address contains this substring.
+    /// Filter IKE and IPsec SAs by remote address substring. Optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer: Option<String>,
-    /// Filter IPsec SAs to those whose **remote gateway** address contains this
-    /// substring. The brief-style IPsec RPC does not surface the st0 interface
-    /// name, so this is effectively a second peer-substring filter; it remains
-    /// distinct from `peer` so that callers can express tunnel-vs-IKE-only
-    /// intent independently.
+    /// Filter IPsec SAs by remote gateway address substring. Optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tunnel: Option<String>,
+    /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
 }
 
-/// One IKE Phase-1 security association.
+/// IKE Phase-1 security association.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct IkeSa {
-    /// IKE SA index. `None` when Junos omits or returns a non-numeric value
-    /// — distinguishes "field absent" from a legitimate index of 0.
+    /// IKE SA index. None when Junos omits this field or returns a non-numeric value.
     pub index: Option<u64>,
     /// Remote peer IP address.
     pub remote_address: String,
-    /// SA state: "UP", "DOWN", "INITIATING", etc.
+    /// SA state (e.g., "UP", "DOWN", "INITIATING").
     pub state: String,
-    /// Exchange type: "IKEv2", "IKEv1", etc.
+    /// Exchange type (e.g., "IKEv2", "IKEv1").
     pub mode: String,
+    /// Initiator cookie value.
     pub initiator_cookie: String,
+    /// Responder cookie value.
     pub responder_cookie: String,
-    /// Remaining lifetime in seconds, parsed from "Expires in N seconds".
-    /// `None` when the field is absent or unparseable (e.g. "Disabled").
+    /// Remaining lifetime in seconds. None when absent or unparseable.
     pub lifetime_remaining_seconds: Option<u64>,
-    /// IKE gateway name from Junos config (e.g. "lab-ike-gw").
+    /// IKE gateway name from configuration.
     pub gateway_name: Option<String>,
 }
 
-/// One IPsec Phase-2 security association (one direction).
+/// IPsec Phase-2 security association (one direction).
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct IpsecSa {
-    /// IPsec tunnel id (one per pair). `None` when Junos omits or returns a
-    /// non-numeric value — distinguishes "field absent" from a legitimate id of 0.
+    /// Tunnel ID (one per SA pair). None when Junos omits this field or returns a non-numeric value.
     pub tunnel_id: Option<u32>,
     /// Traffic direction: "<" (inbound) or ">" (outbound).
     pub direction: String,
     /// Remote gateway IP address.
     pub gateway: String,
-    /// SPI value in hex.
+    /// Security Parameter Index (SPI) in hex.
     pub spi: String,
-    /// Block state: "up" or "down".
+    /// SA state (e.g., "up", "down").
     pub block_state: String,
-    /// Remaining lifetime in seconds. `None` when absent or zero.
+    /// Remaining lifetime in seconds. None when absent or zero.
     pub lifetime_remaining_seconds: Option<u64>,
-    /// Remaining lifesize in kilobytes. `None` when "unlim" or absent.
+    /// Remaining lifesize in kilobytes. None when "unlim" or absent.
     pub lifetime_remaining_kilobytes: Option<u64>,
 }
 
-/// Correlation between one IKE SA and its associated IPsec SAs (by remote address).
+/// Correlation between IKE SA and its associated IPsec SAs.
+///
+/// Associates one IKE Phase-1 SA with its Phase-2 IPsec SAs by matching remote addresses.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct VpnCorrelation {
-    /// IKE SA index. `None` when the source IKE SA's index was absent or
-    /// unparseable.
+    /// IKE SA index. None when source IKE SA index was absent or unparseable.
     pub ike_sa_index: Option<u64>,
-    /// Tunnel ids of correlated IPsec SAs, deduplicated. Only known
-    /// (`Some(u32)`) tunnel ids appear here.
+    /// IPsec tunnel IDs correlated with this IKE SA, deduplicated.
     pub ipsec_sa_tunnel_ids: Vec<u32>,
 }
 
-/// Per-node VPN report (one element for standalone devices, two for HA clusters).
+/// VPN lifecycle snapshot for one cluster node or standalone device.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct NodeVpnReport {
-    /// Routing-engine name: "" for standalone, "node0"/"node1" for cluster.
+    /// Empty string for standalone; "node0" or "node1" for cluster.
     pub re_name: String,
+    /// IKE Phase-1 security associations.
     pub ike_sas: Vec<IkeSa>,
+    /// IPsec Phase-2 security associations.
     pub ipsec_sas: Vec<IpsecSa>,
+    /// IKE-to-IPsec correlations by remote address.
     pub correlations: Vec<VpnCorrelation>,
 }
 
-/// Aggregated VPN lifecycle report returned by the tool.
+/// Aggregated VPN lifecycle report across all cluster nodes.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct VpnLifecycleData {
+    /// Per-node VPN reports.
     pub nodes: Vec<NodeVpnReport>,
 }
 
