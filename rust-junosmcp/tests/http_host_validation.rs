@@ -63,6 +63,7 @@ fn test_handler() -> JmcpHandler {
         upgrade_cfg,
         coordinator,
         false,
+        false,
     )
 }
 

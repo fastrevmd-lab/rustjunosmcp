@@ -1052,7 +1052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1852,7 +1852,7 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 [[package]]
 name = "mecmcp-audit"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1882,7 +1882,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-auth"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1900,7 +1900,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-changeset"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1920,7 +1920,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-device"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "async-trait",
  "rustix 1.1.4",
@@ -1936,7 +1936,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-inventory"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "mecmcp-secret",
  "serde",
@@ -1950,7 +1950,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-policy"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "globset",
  "serde",
@@ -1960,7 +1960,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-runtime"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "anyhow",
  "clap",
@@ -1975,7 +1975,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-scp"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-secret"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "rustix 1.1.4",
  "thiserror",
@@ -2004,7 +2004,7 @@ dependencies = [
 [[package]]
 name = "mecmcp-transport"
 version = "0.8.6"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.8.6#c02c3faa9c8bf54516c1a504c7c9bd359556d86b"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?branch=feat%2Fchangeset-review-view#727b26b82e16828421cdf8f816e9260512a55096"
 dependencies = [
  "axum",
  "axum-server",
@@ -2196,7 +2196,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2973,6 +2973,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq 2.12.1",
+ "uuid",
 ]
 
 [[package]]
@@ -3112,7 +3113,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3661,10 +3662,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

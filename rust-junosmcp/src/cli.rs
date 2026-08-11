@@ -190,6 +190,11 @@ pub struct Cli {
     #[arg(long = "allow-plane-owned-writes")]
     pub allow_plane_owned_writes: bool,
 
+    /// Include staged actions in get_junos_change_set_status responses (approver tooling). Off by
+    /// default: exposes staged config content to any caller with status scope.
+    #[arg(long)]
+    pub web_enabled_approver: bool,
+
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]
     #[arg(

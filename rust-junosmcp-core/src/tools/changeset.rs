@@ -728,6 +728,21 @@ pub async fn get_change_set_status(
     serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
 }
 
+/// Get the status of a change set with staged actions included.
+/// Only used when --web-enabled-approver is set.
+pub async fn get_change_set_status_with_actions(
+    args: GetChangeSetStatusArgs,
+    coordinator: Arc<ChangesetCoordinator>,
+) -> Result<Value, JmcpError> {
+    let status = coordinator
+        .change_set_status_with_actions(args.change_set_id, args.device)
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Serialize the full status structure including actions.
+    serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
+}
+
 /// List change sets, optionally filtered by device.
 ///
 /// Returns all change sets across all devices, or filtered to a single device

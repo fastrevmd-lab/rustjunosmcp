@@ -66,16 +66,17 @@ rustez       = "0.13"
 #
 # mecmcp 0.7.0: adds graceful HTTP shutdown, GracefulShutdown::new returns Result.
 # mecmcp 0.8.6: adds ConfigAuthority and config_authority field to OperationRecord.
-mecmcp-audit = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-auth  = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-transport = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-runtime = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-policy = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-inventory = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-device = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-changeset = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-scp = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
-mecmcp-secret = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.6" }
+# TEMP: PR #263 feat/changeset-review-view adds change_set_status_with_actions
+mecmcp-audit = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-auth  = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-transport = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-runtime = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-policy = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-inventory = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-device = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-changeset = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-scp = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
+mecmcp-secret = { version = "0.8.6", git = "https://github.com/fastrevmd-lab/mecmcp", branch = "feat/changeset-review-view" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
