@@ -717,19 +717,24 @@ pub async fn handle(
     args: UpgradeJunosArgs,
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
+    allow_plane_owned_writes: bool,
     ct: CancellationToken,
     correlation_id: String,
 ) -> Result<serde_json::Value, JmcpError> {
     let timeout = std::time::Duration::from_secs(args.timeout);
-    tokio::time::timeout(timeout, run(args, dm, cfg, ct, correlation_id))
-        .await
-        .map_err(|_| JmcpError::UpgradeOuterTimeout(timeout))?
+    tokio::time::timeout(
+        timeout,
+        run(args, dm, cfg, allow_plane_owned_writes, ct, correlation_id),
+    )
+    .await
+    .map_err(|_| JmcpError::UpgradeOuterTimeout(timeout))?
 }
 
 async fn run(
     args: UpgradeJunosArgs,
     dm: Arc<DeviceManager>,
     cfg: UpgradeConfig,
+    allow_plane_owned_writes: bool,
     ct: CancellationToken,
     correlation_id: String,
 ) -> Result<serde_json::Value, JmcpError> {
@@ -740,9 +745,9 @@ async fn run(
     // 1. Basename validation (same allowlist as transfer_file).
     validate_source_basename(&args.source_path)?;
 
-    // 2. Inventory lookup + auth check up front. We snapshot what we
+    // 2. Inventory lookup + auth + config_authority checks up front. We snapshot what we
     //    need so the borrow drops before any await on dm.open().
-    {
+    let authority_warning = {
         let inv = dm.inventory();
         let entry = inv.get(&args.device)?;
         match &entry.auth {
@@ -751,7 +756,15 @@ async fn run(
             }
             AuthConfig::SshKey { .. } => {}
         }
-    }
+
+        // Check config_authority: refuse if plane-owned and not explicitly allowed.
+        crate::helpers::check_plane_owned_operation(
+            "upgrade_junos",
+            &args.device,
+            &entry.config_authority,
+            allow_plane_owned_writes,
+        )?
+    };
 
     // 3. Staged file checks (mirror transfer_file pre-flight).
     let local_path = cfg.transfer_cfg.staging_dir.join(&args.source_path);
@@ -801,7 +814,16 @@ async fn run(
     .await?;
 
     // 7. Pure preflight decision.
-    dispatch_preflight(&args, &facts, dm.clone(), &cfg, &ct, &correlation_id).await
+    dispatch_preflight(
+        &args,
+        &facts,
+        dm.clone(),
+        &cfg,
+        authority_warning,
+        &ct,
+        &correlation_id,
+    )
+    .await
 }
 
 /// Translate a PreflightDecision into a handle() outcome. Task 9
@@ -811,6 +833,7 @@ async fn dispatch_preflight(
     facts: &PreflightFacts,
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
+    authority_warning: Option<String>,
     ct: &CancellationToken,
     correlation_id: &str,
 ) -> Result<serde_json::Value, JmcpError> {
@@ -841,7 +864,16 @@ async fn dispatch_preflight(
         return finish_preflight(locked_decision, args);
     }
 
-    run_destructive(args, &locked_facts, dm, cfg, ct, correlation_id).await
+    run_destructive(
+        args,
+        &locked_facts,
+        dm,
+        cfg,
+        authority_warning,
+        ct,
+        correlation_id,
+    )
+    .await
 }
 
 fn finish_preflight(
@@ -895,6 +927,7 @@ async fn run_destructive(
     facts: &PreflightFacts,
     dm: Arc<DeviceManager>,
     cfg: &UpgradeConfig,
+    authority_warning: Option<String>,
     ct: &CancellationToken,
     correlation_id: &str,
 ) -> Result<serde_json::Value, JmcpError> {
@@ -1069,6 +1102,9 @@ async fn run_destructive(
         post_baseline: &post_baseline,
     });
     response["correlation_id"] = serde_json::Value::String(correlation_id.to_string());
+    if let Some(warning) = authority_warning {
+        response["warning"] = serde_json::Value::String(warning);
+    }
     Ok(response)
 }
 
@@ -1226,6 +1262,7 @@ mod handle_early_exit_tests {
             args("r1", "../etc/passwd"),
             dm,
             cfg(dir.path()),
+            false,
             CancellationToken::new(),
             "test-rejects-bad-basename".into(),
         )
@@ -1246,6 +1283,7 @@ mod handle_early_exit_tests {
             args("nope", "img.tgz"),
             dm,
             cfg(dir.path()),
+            false,
             CancellationToken::new(),
             "test-unknown-router".into(),
         )
@@ -1266,6 +1304,7 @@ mod handle_early_exit_tests {
             args("r1", "img.tgz"),
             dm,
             cfg(dir.path()),
+            false,
             CancellationToken::new(),
             "test-password-auth".into(),
         )
@@ -1285,6 +1324,7 @@ mod handle_early_exit_tests {
             args("r1", "missing.tgz"),
             dm,
             cfg(dir.path()),
+            false,
             CancellationToken::new(),
             "test-missing-file".into(),
         )
@@ -1314,6 +1354,7 @@ mod handle_early_exit_tests {
                 args("r1", "missing.tgz"),
                 dm,
                 cfg(dir.path()),
+                false,
                 ct,
                 "test-pre-cancelled".into(),
             ),

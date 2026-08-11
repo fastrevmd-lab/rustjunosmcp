@@ -172,6 +172,24 @@ pub struct Cli {
     #[arg(long = "lab-mode")]
     pub lab_mode: bool,
 
+    /// Allow destructive operations on devices owned by a management plane.
+    ///
+    /// By default, this server refuses `load_and_commit_config`, `rollback_config`,
+    /// and `upgrade_junos` on devices whose `config_authority` is not `local` or
+    /// `unknown`, because writes to plane-owned devices are overwritten at the next
+    /// push from the owning management plane (Mist, Security Director).
+    ///
+    /// Set this flag to permit those operations with a warning instead of refusal.
+    /// The warning and config_authority are recorded in audit events.
+    ///
+    /// **Break-glass only**: enabling this defeats the durability check that #292
+    /// was created to provide. Leave it off unless you have a specific need to push
+    /// config to plane-owned devices (e.g., emergency local override).
+    ///
+    /// Defaults to false (refuse). Spelled identically on every mecmcp server.
+    #[arg(long = "allow-plane-owned-writes")]
+    pub allow_plane_owned_writes: bool,
+
     /// Directory used to stage collected SRX support bundles.
     #[cfg(feature = "srx")]
     #[arg(

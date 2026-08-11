@@ -382,6 +382,26 @@ pub enum JmcpError {
         line_number: Option<usize>,
     },
 
+    /// Destructive operation refused on a plane-owned device.
+    ///
+    /// This device's `config_authority` indicates it is managed by a plane (Mist,
+    /// Security Director), and writes made through this server are overwritten at
+    /// the next push. The operation is refused by default; pass
+    /// `--allow-plane-owned-writes` to permit it with a warning instead.
+    #[error(
+        "refused: {tool} on '{device}' is owned by {authority}. Changes to plane-owned \
+         devices are overwritten at the next push. Use --allow-plane-owned-writes to \
+         permit this operation with a warning."
+    )]
+    PlaneOwnedDevice {
+        /// Name of the MCP tool that was refused.
+        tool: String,
+        /// Name of the device the tool call was targeting.
+        device: String,
+        /// Configuration authority that owns this device (e.g., "mist", "security-director-cloud").
+        authority: String,
+    },
+
     /// Device has active config blocklist rules, which only apply to
     /// `config_format=set`. Caller requested `text` or `xml` instead.
     #[error("config blocklist rules require config_format=set; got '{format}'")]
@@ -585,6 +605,7 @@ impl JmcpError {
             Self::Io(_) => "io",
             Self::Json(_) => "parse",
             Self::Denied { .. } => "blocked",
+            Self::PlaneOwnedDevice { .. } => "blocked",
             Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
             Self::BlocklistRuleInvalid { .. } => "invalid_input",
             Self::TemplateSyntax(_) => "parse",

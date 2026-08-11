@@ -56,7 +56,14 @@ fn test_handler() -> JmcpHandler {
         .expect("test changeset coordinator"),
     );
 
-    JmcpHandler::new(dev_manager, policy, transfer_cfg, upgrade_cfg, coordinator)
+    JmcpHandler::new(
+        dev_manager,
+        policy,
+        transfer_cfg,
+        upgrade_cfg,
+        coordinator,
+        false,
+    )
 }
 
 #[tokio::test]

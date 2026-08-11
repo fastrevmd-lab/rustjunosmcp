@@ -24,8 +24,16 @@ pub async fn handle(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
+    allow_plane_owned_writes: bool,
 ) -> Result<Value, JmcpError> {
-    handle_with_cancel(args, dm, policy, CancellationToken::new()).await
+    handle_with_cancel(
+        args,
+        dm,
+        policy,
+        allow_plane_owned_writes,
+        CancellationToken::new(),
+    )
+    .await
 }
 
 /// Cancellable variant of `handle` for use in transport shutdown paths.
@@ -33,11 +41,24 @@ pub async fn handle_with_cancel(
     args: LoadCommitArgs,
     dm: Arc<DeviceManager>,
     policy: Arc<Policy>,
+    allow_plane_owned_writes: bool,
     ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
     validate_input_length("config_text", &args.config_text)?;
-    // Confirm the router exists before consulting the policy.
-    let _ = dm.inventory().get(&args.device)?;
+
+    // Confirm the router exists and check config authority before policy check.
+    let authority_warning = {
+        let inv = dm.inventory();
+        let device_entry = inv.get(&args.device)?;
+
+        // Check config_authority: refuse if plane-owned and not explicitly allowed.
+        crate::helpers::check_plane_owned_operation(
+            "load_and_commit_config",
+            &args.device,
+            &device_entry.config_authority,
+            allow_plane_owned_writes,
+        )?
+    };
 
     // The format gate is part of the policy check; downstream
     // build_config_payload still validates the value separately.
@@ -113,10 +134,17 @@ pub async fn handle_with_cancel(
                     );
                 }
             }
+            if let Some(warning) = authority_warning {
+                obj["warning"] = json!(warning);
+            }
             Ok(obj)
         }
         CandidateResult::CommitFailed { diff, error } => {
-            Ok(json!({ "success": false, "diff": diff, "error": error }))
+            let mut obj = json!({ "success": false, "diff": diff, "error": error });
+            if let Some(warning) = authority_warning {
+                obj["warning"] = json!(warning);
+            }
+            Ok(obj)
         }
         _ => unreachable!("load/commit transaction returned the wrong result kind"),
     }
@@ -153,6 +181,7 @@ mod tests {
             },
             dm,
             pol,
+            false,
         )
         .await;
         assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
@@ -176,6 +205,7 @@ mod tests {
             },
             dm,
             pol,
+            false,
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadFormat(ref s)) if s == "yaml"));
@@ -202,6 +232,7 @@ mod tests {
             },
             dm,
             pol,
+            false,
         )
         .await;
         match r {
@@ -233,6 +264,7 @@ mod tests {
             },
             dm,
             pol,
+            false,
         )
         .await;
         match r {

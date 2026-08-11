@@ -169,6 +169,9 @@ pub struct JmcpHandler {
     upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
     coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
     tool_router: ToolRouter<Self>,
+    /// Whether to allow destructive operations on plane-owned devices.
+    /// Defaults to false (refuse). Set via --allow-plane-owned-writes CLI flag.
+    allow_plane_owned_writes: bool,
     #[cfg(feature = "srx")]
     pub(super) started: Arc<tokio::time::Instant>,
     #[cfg(feature = "srx")]
@@ -197,6 +200,7 @@ impl JmcpHandler {
         transfer_cfg: rust_junosmcp_core::TransferConfig,
         upgrade_cfg: rust_junosmcp_core::UpgradeConfig,
         coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
+        allow_plane_owned_writes: bool,
     ) -> Self {
         let tool_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
@@ -211,6 +215,7 @@ impl JmcpHandler {
             upgrade_cfg,
             coordinator,
             tool_router,
+            allow_plane_owned_writes,
             #[cfg(feature = "srx")]
             started: Arc::new(tokio::time::Instant::now()),
             #[cfg(feature = "srx")]
@@ -686,9 +691,14 @@ impl JmcpHandler {
         }
         audit.meta("comment_present", !args.commit_comment.is_empty());
 
-        let result =
-            load_commit::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct)
-                .await;
+        let result = load_commit::handle_with_cancel(
+            args,
+            self.dm.clone(),
+            self.policy.load_full(),
+            self.allow_plane_owned_writes,
+            ct,
+        )
+        .await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -808,7 +818,13 @@ impl JmcpHandler {
             audit.meta("commit_confirmed", confirm_mins as u64);
         }
 
-        let result = rollback_config::handle_with_cancel(args, self.dm.clone(), ct).await;
+        let result = rollback_config::handle_with_cancel(
+            args,
+            self.dm.clone(),
+            self.allow_plane_owned_writes,
+            ct,
+        )
+        .await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -1139,6 +1155,7 @@ impl JmcpHandler {
             args,
             self.dm.clone(),
             self.upgrade_cfg.clone(),
+            self.allow_plane_owned_writes,
             ct,
             correlation_id,
         )
@@ -1803,6 +1820,7 @@ mod scope_tests {
                 )
                 .expect("in-memory changeset coordinator"),
             ),
+            false,
         )
     }
 
@@ -2055,6 +2073,7 @@ mod scope_tests {
                 )
                 .expect("in-memory changeset coordinator"),
             ),
+            false,
         );
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }
