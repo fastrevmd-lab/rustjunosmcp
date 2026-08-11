@@ -848,7 +848,7 @@ mod scope_tests {
             )
             .expect("in-memory changeset coordinator"),
         );
-        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg, coordinator)
+        JmcpHandler::new(dm, policy, transfer_cfg, upgrade_cfg, coordinator, false)
             .with_srx_runtime(authorization_required, Default::default())
     }
 

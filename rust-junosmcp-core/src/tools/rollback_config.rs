@@ -23,18 +23,39 @@ use tokio_util::sync::CancellationToken;
 /// (stateless). Commit mode (commit=true): loads rollback N and commits, with
 /// optional confirmed-commit. Validates rollback version (0..=49). Config blocklist
 /// is NOT applied — granting rollback_config scope grants full config-change authority.
-pub async fn handle(args: RollbackConfigArgs, dm: Arc<DeviceManager>) -> Result<Value, JmcpError> {
-    handle_with_cancel(args, dm, CancellationToken::new()).await
+pub async fn handle(
+    args: RollbackConfigArgs,
+    dm: Arc<DeviceManager>,
+    allow_plane_owned_writes: bool,
+) -> Result<Value, JmcpError> {
+    handle_with_cancel(args, dm, allow_plane_owned_writes, CancellationToken::new()).await
 }
 
 /// Cancellable variant of `handle` for use in transport shutdown paths.
 pub async fn handle_with_cancel(
     args: RollbackConfigArgs,
     dm: Arc<DeviceManager>,
+    allow_plane_owned_writes: bool,
     ct: CancellationToken,
 ) -> Result<Value, JmcpError> {
-    // Confirm the router exists before connecting.
-    let _ = dm.inventory().get(&args.device)?;
+    // Confirm the router exists and check config authority.
+    let authority_warning = {
+        let inv = dm.inventory();
+        let device_entry = inv.get(&args.device)?;
+
+        // Check config_authority: refuse if plane-owned and not explicitly allowed.
+        // Only check if actually committing (preview mode is read-only).
+        if args.commit {
+            crate::helpers::check_plane_owned_operation(
+                "rollback_config",
+                &args.device,
+                &device_entry.config_authority,
+                allow_plane_owned_writes,
+            )?
+        } else {
+            None
+        }
+    };
 
     // Validate rollback version 0..=49.
     let version = validate_rollback_version(args.version)?;
@@ -104,16 +125,23 @@ pub async fn handle_with_cancel(
                     );
                 }
             }
+            if let Some(warning) = authority_warning {
+                result["warning"] = json!(warning);
+            }
             Ok(result)
         }
         CandidateResult::CommitFailed { diff, error } => {
             // Commit was attempted but device rejected it.
-            Ok(json!({
+            let mut result = json!({
                 "committed": false,
                 "diff": diff,
                 "version": version,
                 "error": error
-            }))
+            });
+            if let Some(warning) = authority_warning {
+                result["warning"] = json!(warning);
+            }
+            Ok(result)
         }
         _ => unreachable!("rollback transaction returned unexpected result kind"),
     }
@@ -147,6 +175,7 @@ mod tests {
                 timeout: 5,
             },
             dm,
+            false,
         )
         .await;
         assert!(matches!(r, Err(JmcpError::UnknownRouter(_))));
@@ -168,6 +197,7 @@ mod tests {
                 timeout: 5,
             },
             dm,
+            false,
         )
         .await;
         assert!(matches!(r, Err(JmcpError::BadRollbackVersion(50))));

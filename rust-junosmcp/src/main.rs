@@ -214,6 +214,29 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Plane-owned writes flag defeats the durability check #292 was created to
+    // provide. Log its state at startup so it's visible, not just a flag typed once.
+    //
+    // Deliberately NOT on `target: "audit"`. That stream carries one record per
+    // tool call with a fixed schema — request_id, caller, tool, action, result —
+    // and downstream SIEM queries parse it on that basis. A startup banner has
+    // none of those fields, so emitting it there pollutes the audit stream with
+    // something no consumer can interpret as an action record.
+    if args.allow_plane_owned_writes {
+        tracing::warn!(
+            "allow-plane-owned-writes enabled: destructive operations on devices owned by \
+             management planes (Mist, Security Director) will proceed with a warning instead \
+             of refusal. Changes to plane-owned devices may be overwritten at the next push. \
+             This flag is for break-glass scenarios only."
+        );
+    } else {
+        tracing::info!(
+            "plane-owned device protection active: load_and_commit_config, rollback_config, \
+             and upgrade_junos refuse operations on devices whose config_authority is not \
+             'local' or 'unknown' (default). Use --allow-plane-owned-writes for break-glass."
+        );
+    }
+
     let coordinator = std::sync::Arc::new(
         mecmcp_changeset::ChangesetCoordinator::load(
             Some(&args.changeset_state_file),
@@ -234,6 +257,7 @@ async fn main() -> Result<()> {
         transfer_cfg,
         upgrade_cfg,
         coordinator,
+        args.allow_plane_owned_writes,
     );
     #[cfg(feature = "srx")]
     let handler = handler.with_srx_runtime(
