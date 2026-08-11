@@ -70,10 +70,14 @@ pub struct VpnLifecycleArgs {
     /// Device name (aliased as router_name).
     #[serde(alias = "router_name")]
     pub router: String,
-    /// Filter IKE and IPsec SAs by remote address substring. Optional.
+    /// Filter IKE and IPsec SAs to those whose remote address contains this substring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer: Option<String>,
-    /// Filter IPsec SAs by remote gateway address substring. Optional.
+    /// Filter IPsec SAs to those whose **remote gateway** address contains this
+    /// substring. The brief-style IPsec RPC does not surface the st0 interface
+    /// name, so this is effectively a second peer-substring filter; it remains
+    /// distinct from `peer` so that callers can express tunnel-vs-IKE-only
+    /// intent independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tunnel: Option<String>,
     /// Include raw XML from device in response. Default false.

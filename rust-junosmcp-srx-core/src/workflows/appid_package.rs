@@ -99,13 +99,15 @@ pub struct AppidPackageArgs {
     pub router: String,
     /// Action to perform.
     pub action: AppidAction,
-    /// Pin to specific package version. Only used for download_and_install.
+    /// Pin to a specific package version. Only meaningful for
+    /// `download_and_install`; ignored otherwise.
     #[serde(default)]
     pub version: Option<String>,
-    /// Explicit confirmation required for destructive actions. Default false.
+    /// Required for destructive actions (`download_and_install`, `uninstall`).
     #[serde(default)]
     pub confirm: bool,
-    /// Confirmation token from preview call. Required when confirm is true.
+    /// Opaque, short-lived artifact returned by the preview call. A bare
+    /// `confirm=true` is never sufficient to authorize a destructive action.
     #[serde(default)]
     pub confirmation_token: Option<String>,
     /// Timeout in seconds. Default 600s, maximum 1800s.

@@ -31,7 +31,8 @@ pub struct ClusterHealthArgs {
     /// Include raw XML from device in response. Default false.
     #[serde(default)]
     pub include_raw: bool,
-    /// Correlation token for tracking this request. Auto-generated if not provided.
+    /// Caller-supplied correlation token. If absent, `run()` mints
+    /// `srxmcp-<uuid-v4>` and returns it in the response.
     #[serde(default)]
     pub request_id: Option<String>,
 }

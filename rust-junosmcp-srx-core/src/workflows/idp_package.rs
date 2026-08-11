@@ -100,16 +100,20 @@ pub struct IdpPackageArgs {
     pub router: String,
     /// Action to perform.
     pub action: IdpAction,
-    /// Pin to specific package version (e.g., "3714"). Only used for download_and_install.
+    /// Pin to a specific package version (e.g. `"3714"`). Only meaningful
+    /// for `download_and_install`; ignored otherwise.
     #[serde(default)]
     pub version: Option<String>,
-    /// Explicit confirmation required for destructive actions. Default false.
+    /// Required for destructive actions (`download_and_install`, `rollback`).
+    /// Ignored for `check_server`.
     #[serde(default)]
     pub confirm: bool,
-    /// Confirmation token from preview call. Required when confirm is true.
+    /// Opaque, short-lived artifact returned by the preview call. A bare
+    /// `confirm=true` is never sufficient to authorize a destructive action.
     #[serde(default)]
     pub confirmation_token: Option<String>,
-    /// Timeout in seconds. Default 600s, maximum 1800s.
+    /// Per-call outer budget in seconds (download poll + install poll combined).
+    /// Default 600s (10 min), cap 1800s (30 min).
     #[serde(default)]
     pub timeout: Option<u64>,
     /// Include raw XML from device in response. Default false.
