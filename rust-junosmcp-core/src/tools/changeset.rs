@@ -47,6 +47,18 @@ pub struct ApproveChangeSetArgs {
     pub expected_digest: String,
 }
 
+/// Arguments for `cancel_junos_change_set`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
+pub struct CancelChangeSetArgs {
+    /// Change-set ID to cancel.
+    pub change_set_id: String,
+    /// Device name. Required because change sets are indexed by (id, device).
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
+}
+
 /// Arguments for `apply_junos_change_set`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -294,6 +306,49 @@ pub async fn approve_change_set_with_cancel(
         "state": format!("{:?}", result.state),
         "digest": result.digest,
         "message": "change set approved; ready to apply"
+    }))
+}
+
+/// Cancel a change set.
+///
+/// Transitions a Planned or Approved change set to the terminal Cancelled state,
+/// freeing the per-principal pending slot. The caller must be either the owner
+/// or have approver authority. Idempotent: already-Cancelled sets return success.
+/// Rejects Applied/Applying sets.
+pub async fn cancel_change_set(
+    args: CancelChangeSetArgs,
+    coordinator: Arc<ChangesetCoordinator>,
+    dm: Arc<DeviceManager>,
+    attribution: Attribution,
+) -> Result<Value, JmcpError> {
+    cancel_change_set_with_cancel(args, coordinator, dm, attribution, CancellationToken::new())
+        .await
+}
+
+/// Cancellable variant of `cancel_change_set`.
+pub async fn cancel_change_set_with_cancel(
+    args: CancelChangeSetArgs,
+    coordinator: Arc<ChangesetCoordinator>,
+    dm: Arc<DeviceManager>,
+    attribution: Attribution,
+    _ct: CancellationToken,
+) -> Result<Value, JmcpError> {
+    // Validate the device exists and is within scope.
+    let _ = dm.inventory().get(&args.device)?;
+
+    // Derive the principal from the authenticated caller.
+    let principal = attribution.principal.to_string();
+
+    let result = coordinator
+        .cancel_change_set(args.change_set_id.clone(), args.device, principal)
+        .await
+        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    Ok(json!({
+        "change_set_id": args.change_set_id,
+        "state": format!("{:?}", result.state),
+        "digest": result.digest,
+        "message": "change set cancelled"
     }))
 }
 
@@ -1187,5 +1242,228 @@ mod tests {
         // Only r1 is in the scoped inventory, so r2's change set is omitted.
         assert_eq!(scoped_arr.len(), 1);
         assert_eq!(scoped_arr[0]["device"].as_str().unwrap(), "r1");
+    }
+
+    /// Cancel transitions a Planned change set to Cancelled and frees the slot.
+    #[tokio::test]
+    async fn cancel_change_set_owner_can_cancel_planned() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FP: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        // Create a change set as alice.
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let create_result = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy.clone(),
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+
+        let change_set_id = create_result["change_set_id"].as_str().unwrap();
+        assert_eq!(create_result["state"].as_str().unwrap(), "Planned");
+
+        // Alice cancels her own change set.
+        let cancel_result = cancel_change_set(
+            CancelChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+            },
+            coordinator.clone(),
+            dm.clone(),
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cancel_result["state"].as_str().unwrap(), "Cancelled");
+        assert_eq!(
+            cancel_result["message"].as_str().unwrap(),
+            "change set cancelled"
+        );
+
+        // The slot must be free: alice can create another change set immediately.
+        let action2 = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test2".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let create2 = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action2],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            create2.is_ok(),
+            "a cancelled change set must free the pending slot, got {:?}",
+            create2
+        );
+    }
+
+    /// An approver can cancel an Approved change set.
+    #[tokio::test]
+    async fn cancel_change_set_approver_can_cancel_approved() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FP: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        // Create a change set as alice.
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let create_result = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy,
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+
+        let change_set_id = create_result["change_set_id"].as_str().unwrap();
+        let plan_digest = create_result["plan_digest"].as_str().unwrap();
+
+        // Bob approves it.
+        let approve_result = approve_change_set(
+            ApproveChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+                expected_digest: plan_digest.into(),
+            },
+            coordinator.clone(),
+            dm.clone(),
+            test_attribution("bob"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(approve_result["state"].as_str().unwrap(), "Approved");
+
+        // Bob cancels it.
+        let cancel_result = cancel_change_set(
+            CancelChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+            },
+            coordinator.clone(),
+            dm,
+            test_attribution("bob"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cancel_result["state"].as_str().unwrap(), "Cancelled");
+    }
+
+    /// Cancelling an already-Cancelled change set is idempotent.
+    #[tokio::test]
+    async fn cancel_change_set_idempotent() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FP: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        // Create and cancel a change set.
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test".into(),
+                format: Some("set".into()),
+            }),
+            rollback_source: None,
+        };
+        let create_result = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FP.into(),
+                actions: vec![action],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy,
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+
+        let change_set_id = create_result["change_set_id"].as_str().unwrap();
+
+        let cancel1 = cancel_change_set(
+            CancelChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+            },
+            coordinator.clone(),
+            dm.clone(),
+            test_attribution("alice"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cancel1["state"].as_str().unwrap(), "Cancelled");
+
+        // Cancel it again: should succeed idempotently.
+        let cancel2 = cancel_change_set(
+            CancelChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+            },
+            coordinator,
+            dm,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            cancel2.is_ok(),
+            "cancelling an already-Cancelled change set should be idempotent, got {:?}",
+            cancel2
+        );
+        assert_eq!(cancel2.unwrap()["state"].as_str().unwrap(), "Cancelled");
     }
 }

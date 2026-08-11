@@ -368,6 +368,7 @@ const SERVER_TOOLS: &[&str] = &[
     "list_staged_files",
     "create_junos_change_set",
     "approve_junos_change_set",
+    "cancel_junos_change_set",
     "apply_junos_change_set",
     "confirm_junos_change_set",
     "get_junos_change_set_status",
@@ -384,10 +385,11 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_26() {
+    fn server_tools_len_is_27() {
         // 23 before the candidate-fingerprint tool (#231); 25 with the
-        // confirming-commit tool (#239); 26 with list_junos_change_sets (#255).
-        assert_eq!(SERVER_TOOLS.len(), 26);
+        // confirming-commit tool (#239); 26 with list_junos_change_sets (#255);
+        // 27 with cancel_junos_change_set.
+        assert_eq!(SERVER_TOOLS.len(), 27);
     }
 
     #[test]
@@ -1300,6 +1302,58 @@ impl JmcpHandler {
     }
 
     #[tool(
+        name = "cancel_junos_change_set",
+        description = "Cancel a Planned or Approved change set, freeing the per-principal pending slot. The caller must be either the owner or have approver authority. Idempotent: already-Cancelled sets return success. Rejects Applied/Applying sets."
+    )]
+    async fn cancel_junos_change_set(
+        &self,
+        Parameters(args): Parameters<changeset::CancelChangeSetArgs>,
+        extensions: Extensions,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "cancel_junos_change_set",
+            "cancel",
+            vec![args.device.clone()],
+        );
+
+        if let Err(e) = self.check_tool_scope(ctx, "cancel_junos_change_set") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "cancel_junos_change_set", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+
+        // Change-set tools require an authenticated caller for two-person control.
+        let Some(ctx_val) = ctx else {
+            audit.deny("no_auth");
+            return Self::to_call_result(Err(rust_junosmcp_core::JmcpError::Validation(
+                "cancel_junos_change_set requires authentication; not available on stdio or with --allow-no-auth".into()
+            )));
+        };
+
+        let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
+
+        let result = changeset::cancel_change_set_with_cancel(
+            args,
+            self.coordinator.clone(),
+            self.dm.clone(),
+            attribution,
+            ct,
+        )
+        .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
         name = "apply_junos_change_set",
         description = "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state."
     )]
@@ -1842,18 +1896,20 @@ mod scope_tests {
             .collect();
         assert_eq!(names, expected);
         // 28 before Phase 5; the change-set tools took it to 33,
-        // `confirm_junos_change_set` makes 34 (#239), and
-        // `list_junos_change_sets` makes 35 (#255).
-        assert_eq!(names.len(), 35);
+        // `confirm_junos_change_set` makes 34 (#239),
+        // `list_junos_change_sets` makes 35 (#255), and
+        // `cancel_junos_change_set` makes 36.
+        assert_eq!(names.len(), 36);
     }
 
     #[test]
     #[cfg(not(feature = "srx"))]
     fn junos_only_router_has_eighteen_tools() {
         // 19 before Phase 5; the change-set tools took it to 24,
-        // `confirm_junos_change_set` makes 25 (#239), and
-        // `list_junos_change_sets` makes 26 (#255).
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 26);
+        // `confirm_junos_change_set` makes 25 (#239),
+        // `list_junos_change_sets` makes 26 (#255), and
+        // `cancel_junos_change_set` makes 27 (#293).
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 27);
     }
 
     #[test]

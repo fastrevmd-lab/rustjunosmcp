@@ -1018,6 +1018,7 @@ mod unknown_field_tripwire {
         check::<TemplateArgs>("TemplateArgs", &["router_name", "router", "router_names"]);
         check::<changeset::CreateChangeSetArgs>("CreateChangeSetArgs", DEVICE);
         check::<changeset::ApproveChangeSetArgs>("ApproveChangeSetArgs", DEVICE);
+        check::<changeset::CancelChangeSetArgs>("CancelChangeSetArgs", DEVICE);
         check::<changeset::ApplyChangeSetArgs>("ApplyChangeSetArgs", DEVICE);
         check::<changeset::ConfirmChangeSetArgs>("ConfirmChangeSetArgs", DEVICE);
         check::<changeset::GetChangeSetStatusArgs>("GetChangeSetStatusArgs", DEVICE);
@@ -1127,6 +1128,7 @@ mod unknown_field_tripwire {
             UpgradeJunosArgs,
             crate::tools::changeset::CreateChangeSetArgs,
             crate::tools::changeset::ApproveChangeSetArgs,
+            crate::tools::changeset::CancelChangeSetArgs,
             crate::tools::changeset::ApplyChangeSetArgs,
             crate::tools::changeset::ConfirmChangeSetArgs,
             crate::tools::changeset::GetChangeSetStatusArgs,
