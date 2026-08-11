@@ -31,7 +31,12 @@ pub enum PollOutcome<T> {
 /// (e.g. `SignaturePackageDownloadFailed` vs `SignaturePackageInstallFailed`).
 #[derive(Debug)]
 pub enum PollError<E> {
-    Timeout { elapsed: Duration },
+    /// Polling deadline expired.
+    Timeout {
+        /// Total time elapsed.
+        elapsed: Duration,
+    },
+    /// Probe function returned an error.
     Probe(E),
 }
 

@@ -57,6 +57,7 @@ pub struct ValidatedPlan {
     pub correlation_id: String,
 }
 
+/// Validate confirmation parameters and return the token if confirmation is requested.
 pub fn confirmation_token_for_request<'a>(
     confirm: bool,
     token: Option<&'a str>,

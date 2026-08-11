@@ -174,6 +174,7 @@ pub enum UninstallAction {
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfirmationRequiredTag {
+    /// Serializes as "confirmation_required".
     ConfirmationRequired,
 }
 
@@ -183,8 +184,11 @@ pub enum ConfirmationRequiredTag {
 #[derive(Debug, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ConfirmationPlan {
+    /// Download and install plan.
     DownloadAndInstall(DownloadAndInstallPlan),
+    /// Rollback plan.
     Rollback(RollbackPlan),
+    /// Uninstall plan.
     Uninstall(UninstallPlan),
 }
 

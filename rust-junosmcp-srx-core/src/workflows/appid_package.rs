@@ -600,6 +600,9 @@ pub enum DownloadAndInstallResponse {
     Completed(DownloadAndInstallCompletedData),
 }
 
+/// Execute AppID package download and install operation.
+///
+/// Two-phase protocol: preview without confirmation, execute with confirmation token.
 pub async fn download_and_install(
     device: &mut PooledDevice,
     device_leases: &DeviceLeaseManager,
