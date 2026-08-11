@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod bootstrap;
+pub mod config_authority;
 pub mod device_manager;
 pub mod error;
 pub mod helpers;

@@ -325,6 +325,16 @@ pub struct DeviceEntry {
     /// policy build time.
     #[serde(default)]
     pub blocklist: Option<BlocklistRules>,
+    /// Configuration authority: which management plane owns this device's config.
+    ///
+    /// Defaults to `Unknown` when unset so the audit trail can distinguish
+    /// "unset" from "explicitly declared local". Operations treat `Unknown` as
+    /// local for behaviour (writes are not refused), but the audit event
+    /// records the distinction.
+    ///
+    /// See RustJunosMCP#292 and mecmcp#256.
+    #[serde(default)]
+    pub config_authority: crate::config_authority::JunosAuthority,
 }
 
 #[cfg(test)]
@@ -736,6 +746,43 @@ mod load_tests {
         );
         let inv = Inventory::load(f.path()).unwrap();
         assert!(inv.blocklist_defaults().unwrap().pfe_commands.is_empty());
+    }
+
+    /// Backward compatibility: devices.json without config_authority must load
+    /// unchanged. This is a hard constraint because LXC 600 and 609 (609 is tagged
+    /// `protected` with 34 devices) have deployed inventory files without this field.
+    ///
+    /// This test must fail before the serde default is added, then pass after.
+    #[test]
+    fn v0_17_inventory_without_config_authority_loads_unchanged() {
+        // Representative v0.17 inventory: no config_authority field.
+        let f = write(
+            "v017",
+            r#"{
+                "r1":{"ip":"1.2.3.4","username":"u","auth":{"type":"password","password":"x"}},
+                "r2":{"ip":"1.2.3.5","port":830,"username":"admin","auth":{"type":"ssh_key","private_key_path":"/tmp/k.pem"}}
+            }"#,
+        );
+        // Create a temporary key file so the ssh_key auth validates.
+        std::fs::write("/tmp/k.pem", "dummy").expect("failed to write temp key");
+
+        let inv = Inventory::load(f.path()).expect("v0.17 inventory must load");
+
+        // Both devices loaded.
+        assert_eq!(inv.len(), 2);
+        assert!(inv.get("r1").is_ok());
+        assert!(inv.get("r2").is_ok());
+
+        // The field must have a serde default so the absence is not a parse error.
+        // The default must be Unknown (not Local) to distinguish "unset" from "local" in audit.
+        let r1 = inv.get("r1").unwrap();
+        assert_eq!(
+            r1.config_authority,
+            crate::config_authority::JunosAuthority::Unknown
+        );
+
+        // Clean up temp key.
+        let _ = std::fs::remove_file("/tmp/k.pem");
     }
 }
 

@@ -386,6 +386,11 @@ pub async fn apply_change_set_with_cancel(
     let device_ip = device_entry.ip.clone();
     let device_port = device_entry.port;
 
+    // Capture config authority for the audit record.
+    let config_authority = serde_json::to_string(&device_entry.config_authority)
+        .ok()
+        .map(|s| s.trim_matches('"').to_string());
+
     // Derive the principal from the authenticated caller.
     let principal = attribution.principal.to_string();
 
@@ -452,6 +457,7 @@ pub async fn apply_change_set_with_cancel(
             &transaction,
             primary_action,
             primary_target,
+            config_authority.clone(),
             &attribution,
             &ct,
         )
@@ -524,6 +530,17 @@ pub async fn apply_change_set_with_cancel(
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
+    // Build a config-authority warning when the device is not locally owned.
+    use mecmcp_inventory::LocalAuthority;
+    let authority_warning = if !device_entry.config_authority.is_local() {
+        Some(format!(
+            "WARNING: this device is owned by {}. Changes may be overwritten at the next push from the owning management plane.",
+            config_authority.as_deref().unwrap_or("unknown")
+        ))
+    } else {
+        None
+    };
+
     // Branch on the commit outcome and report honestly.
     use mecmcp_changeset::CommitOutcome;
     match commit_result {
@@ -531,14 +548,23 @@ pub async fn apply_change_set_with_cancel(
             succeeded: true,
             details,
             ..
-        } => Ok(json!({
-            "change_set_id": args.change_set_id,
-            "operation_id": result.operation_id,
-            "state": "Applied",
-            "commit_outcome": "Reconciled",
-            "details": details,
-            "message": "change set applied and committed successfully"
-        })),
+        } => {
+            let mut result = json!({
+                "change_set_id": args.change_set_id,
+                "operation_id": result.operation_id,
+                "state": "Applied",
+                "commit_outcome": "Reconciled",
+                "details": details,
+                "message": "change set applied and committed successfully"
+            });
+            if let Some(warning) = authority_warning {
+                result
+                    .as_object_mut()
+                    .expect("json! macro produces an object here")
+                    .insert("config_authority_warning".to_string(), json!(warning));
+            }
+            Ok(result)
+        }
         CommitOutcome::Reconciled {
             succeeded: false,
             details,
@@ -550,27 +576,45 @@ pub async fn apply_change_set_with_cancel(
         CommitOutcome::Indeterminate { reason } => Err(JmcpError::Validation(format!(
             "commit outcome indeterminate, manual reconciliation required: {reason}"
         ))),
-        CommitOutcome::Detached { job_id } => Ok(json!({
-            "change_set_id": args.change_set_id,
-            "operation_id": result.operation_id,
-            "state": "Committing",
-            "commit_outcome": "Detached",
-            "job_id": job_id,
-            "message": "commit detached, poll for completion"
-        })),
+        CommitOutcome::Detached { job_id } => {
+            let mut result = json!({
+                "change_set_id": args.change_set_id,
+                "operation_id": result.operation_id,
+                "state": "Committing",
+                "commit_outcome": "Detached",
+                "job_id": job_id,
+                "message": "commit detached, poll for completion"
+            });
+            if let Some(warning) = authority_warning {
+                result
+                    .as_object_mut()
+                    .expect("json! macro produces an object here")
+                    .insert("config_authority_warning".to_string(), json!(warning));
+            }
+            Ok(result)
+        }
         CommitOutcome::AwaitingConfirmation {
             rollback_deadline_unix,
             details,
             ..
-        } => Ok(json!({
-            "change_set_id": args.change_set_id,
-            "operation_id": result.operation_id,
-            "state": "AwaitingConfirmation",
-            "commit_outcome": "AwaitingConfirmation",
-            "rollback_deadline_unix": rollback_deadline_unix,
-            "details": details,
-            "message": "commit awaiting confirmation; auto-rollback pending"
-        })),
+        } => {
+            let mut result = json!({
+                "change_set_id": args.change_set_id,
+                "operation_id": result.operation_id,
+                "state": "AwaitingConfirmation",
+                "commit_outcome": "AwaitingConfirmation",
+                "rollback_deadline_unix": rollback_deadline_unix,
+                "details": details,
+                "message": "commit awaiting confirmation; auto-rollback pending"
+            });
+            if let Some(warning) = authority_warning {
+                result
+                    .as_object_mut()
+                    .expect("json! macro produces an object here")
+                    .insert("config_authority_warning".to_string(), json!(warning));
+            }
+            Ok(result)
+        }
     }
 }
 
