@@ -361,7 +361,7 @@
           "$ref": "#/$defs/AppidAction"
         },
         "version": {
-          "description": "Pin to specific package version. Only used for download_and_install.",
+          "description": "Pin to a specific package version. Only meaningful for\n`download_and_install`; ignored otherwise.",
           "type": [
             "string",
             "null"
@@ -369,12 +369,12 @@
           "default": null
         },
         "confirm": {
-          "description": "Explicit confirmation required for destructive actions. Default false.",
+          "description": "Required for destructive actions (`download_and_install`, `uninstall`).",
           "type": "boolean",
           "default": false
         },
         "confirmation_token": {
-          "description": "Confirmation token from preview call. Required when confirm is true.",
+          "description": "Opaque, short-lived artifact returned by the preview call. A bare\n`confirm=true` is never sufficient to authorize a destructive action.",
           "type": [
             "string",
             "null"
@@ -461,7 +461,7 @@
           "$ref": "#/$defs/IdpAction"
         },
         "version": {
-          "description": "Pin to specific package version (e.g., \"3714\"). Only used for download_and_install.",
+          "description": "Pin to a specific package version (e.g. `\"3714\"`). Only meaningful\nfor `download_and_install`; ignored otherwise.",
           "type": [
             "string",
             "null"
@@ -469,12 +469,12 @@
           "default": null
         },
         "confirm": {
-          "description": "Explicit confirmation required for destructive actions. Default false.",
+          "description": "Required for destructive actions (`download_and_install`, `rollback`).\nIgnored for `check_server`.",
           "type": "boolean",
           "default": false
         },
         "confirmation_token": {
-          "description": "Confirmation token from preview call. Required when confirm is true.",
+          "description": "Opaque, short-lived artifact returned by the preview call. A bare\n`confirm=true` is never sufficient to authorize a destructive action.",
           "type": [
             "string",
             "null"
@@ -482,7 +482,7 @@
           "default": null
         },
         "timeout": {
-          "description": "Timeout in seconds. Default 600s, maximum 1800s.",
+          "description": "Per-call outer budget in seconds (download poll + install poll combined).\nDefault 600s (10 min), cap 1800s (30 min).",
           "type": [
             "integer",
             "null"
@@ -550,7 +550,7 @@
           "default": false
         },
         "request_id": {
-          "description": "Correlation token for tracking this request. Auto-generated if not provided.",
+          "description": "Caller-supplied correlation token. If absent, `run()` mints\n`srxmcp-<uuid-v4>` and returns it in the response.",
           "type": [
             "string",
             "null"
@@ -593,14 +593,14 @@
           "type": "string"
         },
         "peer": {
-          "description": "Filter IKE and IPsec SAs by remote address substring. Optional.",
+          "description": "Filter IKE and IPsec SAs to those whose remote address contains this substring.",
           "type": [
             "string",
             "null"
           ]
         },
         "tunnel": {
-          "description": "Filter IPsec SAs by remote gateway address substring. Optional.",
+          "description": "Filter IPsec SAs to those whose **remote gateway** address contains this\nsubstring. The brief-style IPsec RPC does not surface the st0 interface\nname, so this is effectively a second peer-substring filter; it remains\ndistinct from `peer` so that callers can express tunnel-vs-IKE-only\nintent independently.",
           "type": [
             "string",
             "null"
