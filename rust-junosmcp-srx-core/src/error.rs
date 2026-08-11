@@ -2,27 +2,41 @@
 
 use thiserror::Error;
 
+/// Error taxonomy for SRX workflows.
+///
+/// Covers transport failures, RPC errors, parsing failures, signature package
+/// lifecycle errors, cluster health checks, and support bundle collection.
 #[derive(Debug, Error)]
 pub enum SrxError {
+    /// NETCONF transport or connection failure.
     #[error("transport: {0}")]
     Transport(#[from] rust_junosmcp_core::JmcpError),
 
+    /// Device returned an RPC error response.
     #[error("rpc error: {tag} ({severity}) — {message}")]
     Rpc {
+        /// Error tag from the device.
         tag: String,
+        /// Severity level.
         severity: String,
+        /// Error message text.
         message: String,
     },
 
+    /// Failed to parse device XML response.
     #[error("xml parse: {0}")]
     Parse(String),
 
+    /// Expected XML element missing from device response.
     #[error("schema mismatch in {rpc}: missing required element <{element}>")]
     SchemaMismatch {
+        /// RPC name that returned unexpected schema.
         rpc: &'static str,
+        /// Missing element name.
         element: &'static str,
     },
 
+    /// Tool argument validation failed.
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
@@ -32,77 +46,144 @@ pub enum SrxError {
     // Display convention: `[code=<snake>] router=<name>: <detail>`.
     // MCP callers pattern-match on the bracketed `code=...` token.
     // ---------------------------------------------------------------------
+    /// Signature package operation requires explicit confirmation.
+    ///
+    /// Returned when a destructive operation (install, rollback, uninstall) needs
+    /// user approval before proceeding.
     #[error(
         "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true and the plan's confirmation_token; plan: {plan}"
     )]
     SignaturePackageConfirmationRequired {
+        /// Device name.
         router: String,
+        /// Execution plan requiring confirmation.
         plan: serde_json::Value,
     },
 
+    /// Confirmation token missing from request.
     #[error(
         "[code=confirmation_token_required] router={router}: confirm=true requires the server-issued confirmation_token from a fresh preview"
     )]
-    SignaturePackageConfirmationTokenRequired { router: String },
+    SignaturePackageConfirmationTokenRequired {
+        /// Device name.
+        router: String,
+    },
 
+    /// Confirmation token is malformed or expired.
     #[error("[code=confirmation_token_invalid] router={router}: {reason}")]
     SignaturePackageConfirmationTokenInvalid {
+        /// Device name.
         router: String,
+        /// Reason token was rejected.
         reason: &'static str,
     },
 
+    /// Device state changed since the plan was previewed.
     #[error(
         "[code=confirmation_plan_drift] router={router}: device state or requested plan changed; request and review a new preview"
     )]
-    SignaturePackageConfirmationPlanDrift { router: String },
+    SignaturePackageConfirmationPlanDrift {
+        /// Device name.
+        router: String,
+    },
 
+    /// Too many pending confirmations; capacity limit reached.
     #[error(
         "[code=confirmation_capacity_exceeded] router={router}: too many pending confirmations; retry after existing confirmations expire"
     )]
-    SignaturePackageConfirmationCapacityExceeded { router: String },
+    SignaturePackageConfirmationCapacityExceeded {
+        /// Device name.
+        router: String,
+    },
 
+    /// Required feature license is not active on device.
     #[error("[code=license_inactive] router={router}: feature license '{feature}' not active")]
-    SignaturePackageLicenseInactive { router: String, feature: String },
+    SignaturePackageLicenseInactive {
+        /// Device name.
+        router: String,
+        /// License feature name (e.g., "idp-sig", "appid-sig").
+        feature: String,
+    },
 
+    /// Juniper signature update server is not reachable from device.
     #[error("[code=signatures_server_unreachable] router={router}: {detail}")]
-    SignaturePackageServerUnreachable { router: String, detail: String },
+    SignaturePackageServerUnreachable {
+        /// Device name.
+        router: String,
+        /// Error detail from device.
+        detail: String,
+    },
 
+    /// No previous IDP package to roll back to.
     #[error(
         "[code=no_rollback_target] router={router}: no preserved previous IDP signature package to roll back to"
     )]
-    SignaturePackageNoRollbackTarget { router: String },
+    SignaturePackageNoRollbackTarget {
+        /// Device name.
+        router: String,
+    },
 
+    /// No AppID package installed; nothing to uninstall.
     #[error(
         "[code=no_uninstall_target] router={router}: no AppID application package is currently installed; nothing to uninstall"
     )]
-    SignaturePackageNoUninstallTarget { router: String },
+    SignaturePackageNoUninstallTarget {
+        /// Device name.
+        router: String,
+    },
 
+    /// Chassis cluster is not synchronized.
     #[error(
         "[code=cluster_desynced] router={router}: cluster state '{state}' (expected synchronized)"
     )]
-    SignaturePackageClusterDesynced { router: String, state: String },
+    SignaturePackageClusterDesynced {
+        /// Device name.
+        router: String,
+        /// Current cluster state.
+        state: String,
+    },
 
     // A5: SignaturePackageCommitConfirmedActive dropped — sig-package install
     // is op-mode, not config-mode. Pre-flight emits tracing::warn! when a
     // window is open and proceeds (see
     // signature_package/preflight.rs::detect_commit_confirmed).
+    /// Package download from Juniper server failed.
     #[error("[code=download_failed] router={router}: {detail}")]
-    SignaturePackageDownloadFailed { router: String, detail: String },
+    SignaturePackageDownloadFailed {
+        /// Device name.
+        router: String,
+        /// Error detail from device.
+        detail: String,
+    },
 
+    /// Package install operation failed on device.
     #[error("[code=install_failed] router={router}: {detail}")]
-    SignaturePackageInstallFailed { router: String, detail: String },
+    SignaturePackageInstallFailed {
+        /// Device name.
+        router: String,
+        /// Error detail from device.
+        detail: String,
+    },
 
+    /// Package version after install does not match expected version.
     #[error("[code=post_install_version_mismatch] router={router}: expected={expected}, got={got}")]
     SignaturePackageVerificationFailed {
+        /// Device name.
         router: String,
+        /// Expected package version.
         expected: String,
+        /// Actual package version found.
         got: String,
     },
 
+    /// Polling for package operation completion timed out.
     #[error("[code=poll_timeout] router={router} action={action}: elapsed={elapsed_secs}s")]
     SignaturePackagePollTimeout {
+        /// Device name.
         router: String,
+        /// Action being polled (e.g., "download", "install").
         action: String,
+        /// Elapsed time in seconds.
         elapsed_secs: u64,
     },
 
@@ -111,53 +192,88 @@ pub enum SrxError {
     // `timeout communicating with idp-policy daemon` (rpc-error channel).
     // Pre-flight should detect this case (or auto-`restart idp-policy` once)
     // before surfacing this variant.
+    /// IDP daemon not initialized; device has no `security idp` configuration.
     #[error(
         "[code=daemon_not_ready] router={router}: idp-policy daemon not initialized — restart idp-policy or add minimum 'security idp' config stanza"
     )]
-    SignaturePackageDaemonNotReady { router: String },
+    SignaturePackageDaemonNotReady {
+        /// Device name.
+        router: String,
+    },
 
     // ---------------------------------------------------------------------
     // Phase 3 / v0.3.0 — cluster health + support bundle.
     // Same `[code=<snake>] router=<name>: <detail>` convention.
     // ---------------------------------------------------------------------
+    /// Cluster health check exceeded time budget.
     #[error(
         "[code=cluster_health_check_timeout] router={router}: outer budget exceeded after {elapsed_secs}s"
     )]
-    ClusterHealthCheckTimeout { router: String, elapsed_secs: u64 },
+    ClusterHealthCheckTimeout {
+        /// Device name.
+        router: String,
+        /// Elapsed time in seconds.
+        elapsed_secs: u64,
+    },
 
+    /// Support bundle staging directory full despite LRU eviction.
     #[error(
         "[code=bundle_staging_full] router={router}: staging dir over cap even after LRU eviction (bundle {bundle_bytes} bytes; cap {cap_bytes} bytes)"
     )]
     BundleStagingFull {
+        /// Device name.
         router: String,
+        /// Size of bundle being staged, in bytes.
         bundle_bytes: u64,
+        /// Staging directory capacity, in bytes.
         cap_bytes: u64,
     },
 
+    /// Requested bundle was evicted from staging.
     #[error(
         "[code=bundle_staging_evicted] router={router}: requested request_id={request_id} not present in staging (LRU evicted or never written)"
     )]
-    BundleStagingEvicted { router: String, request_id: String },
+    BundleStagingEvicted {
+        /// Device name.
+        router: String,
+        /// Bundle request ID that was evicted.
+        request_id: String,
+    },
 
+    /// Some bundle collection RPCs failed; partial results returned.
     #[error(
         "[code=bundle_rpc_subset_failed] router={router}: {failed_count} of {total_count} bundle RPCs failed (first error: {first_error})"
     )]
     BundleRpcSubsetFailed {
+        /// Device name.
         router: String,
+        /// Number of failed RPCs.
         failed_count: usize,
+        /// Total number of RPCs attempted.
         total_count: usize,
+        /// First error encountered.
         first_error: String,
     },
 
+    /// Another support bundle collection is in progress for this device.
     #[error(
         "[code=bundle_per_router_contention] router={router}: another collect_jtac_support_bundle is in flight; retry after it completes"
     )]
-    BundlePerRouterContention { router: String },
+    BundlePerRouterContention {
+        /// Device name.
+        router: String,
+    },
 
+    /// Universal baseline configuration capture failed.
     #[error(
         "[code=bundle_config_capture_failed] router={router}: universal-baseline get-configuration RPC failed: {detail}"
     )]
-    BundleConfigCaptureFailed { router: String, detail: String },
+    BundleConfigCaptureFailed {
+        /// Device name.
+        router: String,
+        /// Error detail.
+        detail: String,
+    },
 }
 
 impl SrxError {
