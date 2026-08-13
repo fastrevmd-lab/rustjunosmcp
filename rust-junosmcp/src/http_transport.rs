@@ -8,9 +8,9 @@ use crate::server::JmcpHandler;
 use anyhow::{Context, Result};
 use mecmcp_auth::BearerSyntax;
 use mecmcp_transport::{
-    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy, HttpShutdown,
-    HttpTransportConfig, LimitsConfig, TransportIdentity, build_streamable_http_router,
-    serve_router,
+    BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
+    HttpTransportConfig, LimitsConfig, NoAuthAcknowledgement, ServePlan, TransportIdentity,
+    build_streamable_http_router, serve_router,
 };
 use rust_junosmcp_auth::{CallerCtx, TokenStoreFile};
 use serde_json::Value;
@@ -123,7 +123,7 @@ pub fn build_http_router(
     limits: LimitsConfig,
     enable_metrics: bool,
     shutdown: CancellationToken,
-) -> Result<(axum::Router, HttpShutdown)> {
+) -> Result<ServePlan> {
     // Junos transport identity: metric prefix, server label, bearer realm, target keys.
     let identity = TransportIdentity::new(
         "junosmcp",
@@ -132,16 +132,8 @@ pub fn build_http_router(
         ["router", "router_name", "routers", "router_names"],
     );
 
-    let mut config = HttpTransportConfig::new(
-        identity.clone(),
-        limits.clone(),
-        HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
-        shutdown,
-    )
-    .with_metrics(enable_metrics);
-
-    // Install bearer authentication if token store is present.
-    if let Some(store_file) = token_store {
+    let config = if let Some(store_file) = token_store {
+        // Authenticated mode with token store
         let auth_store = store_file.clone();
         let authenticator = BearerAuthenticator::new(BearerSyntax::Strict, move |candidate| {
             let snapshot = auth_store.store();
@@ -149,8 +141,24 @@ pub fn build_http_router(
         });
         let boundary = BearerBoundary::new(authenticator, BearerResponseProfile::detailed("jmcp"))
             .with_preflight(JunosPreflight);
-        config = config.with_bearer(boundary);
+        HttpTransportConfig::authenticated(
+            identity.clone(),
+            limits.clone(),
+            HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
+            shutdown,
+            boundary,
+        )
+    } else {
+        // Unauthenticated mode
+        HttpTransportConfig::unauthenticated(
+            identity.clone(),
+            limits.clone(),
+            HostOriginPolicy::enforced(allowed_hosts, allowed_origins),
+            shutdown,
+            NoAuthAcknowledgement::operator_allowed_no_auth(),
+        )
     }
+    .with_metrics(enable_metrics);
 
     // Factory closure: rmcp wants a fresh handler per session. JmcpHandler
     // is cheap to clone (Arc fields) so we just clone it.
@@ -177,7 +185,7 @@ pub async fn serve_http(
     shutdown: CancellationToken,
     shutdown_timeout: std::time::Duration,
 ) -> Result<()> {
-    let (router, shutdown) = build_http_router(
+    let plan = build_http_router(
         handler,
         token_store,
         allowed_hosts,
@@ -196,7 +204,7 @@ pub async fn serve_http(
     } else {
         tracing::info!(%address, "streamable-http listening");
     }
-    serve_router(router, address, tls, shutdown, shutdown_timeout)
+    serve_router(plan, address, tls, shutdown_timeout)
         .await
         .context("serving Junos Streamable HTTP")
 }

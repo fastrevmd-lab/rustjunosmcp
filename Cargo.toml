@@ -66,16 +66,16 @@ rustez       = "0.13"
 #
 # mecmcp 0.7.0: adds graceful HTTP shutdown, GracefulShutdown::new returns Result.
 # mecmcp 0.8.6: adds ConfigAuthority and config_authority field to OperationRecord.
-mecmcp-audit = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-auth  = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-transport = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-runtime = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-policy = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-inventory = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-device = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-changeset = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-scp = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
-mecmcp-secret = { version = "0.8.7", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.8.7" }
+mecmcp-audit = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-auth  = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-transport = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-runtime = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-policy = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-inventory = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-device = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-changeset = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-scp = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
+mecmcp-secret = { version = "0.9.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.9.1" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

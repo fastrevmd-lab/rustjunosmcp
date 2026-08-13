@@ -73,6 +73,8 @@ services:
       # Must match the address clients actually dial, or requests are rejected.
       - "--allowed-host"
       - "127.0.0.1"
+      - "--allowed-origin"
+      - "http://127.0.0.1:30030"
       # Binding 0.0.0.0 inside the container is what makes the published port
       # reachable; the port mapping above keeps it on the host's loopback.
       # Without TLS the server refuses an off-loopback bind unless told to.
