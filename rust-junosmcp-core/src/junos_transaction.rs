@@ -1101,8 +1101,8 @@ fn format_attribution(attribution: &Attribution) -> String {
     };
 
     format!(
-        "{} by {} ({}) on-behalf-of={}{}",
-        change_ref, principal, actor_type_str, on_behalf_of, agent_info
+        "{} by {} ({}) on-behalf-of={}{} request.id={}",
+        change_ref, principal, actor_type_str, on_behalf_of, agent_info, attribution.request_id
     )
 }
 
@@ -1310,6 +1310,32 @@ mod tests {
     }
 
     #[test]
+    fn commit_comment_includes_request_id() {
+        let comment = format_attribution(&agent_attribution(""));
+
+        assert!(
+            comment.contains("request.id="),
+            "request ID must be present for provenance join: {comment}"
+        );
+    }
+
+    #[test]
+    fn commit_comment_request_id_matches_attribution() {
+        use uuid::Uuid;
+
+        let mut attribution = agent_attribution("");
+        let expected_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        attribution.request_id = expected_id;
+
+        let comment = format_attribution(&attribution);
+
+        assert!(
+            comment.contains(&format!("request.id={}", expected_id)),
+            "request ID must match attribution's request_id: {comment}"
+        );
+    }
+
+    #[test]
     fn normalise_candidate_trims_whitespace() {
         let xml = r#"
             <configuration>
@@ -1417,6 +1443,7 @@ mod tests {
         use mecmcp_audit::{ActorType, AgentIdentity, Principal, Tier};
         use uuid::Uuid;
 
+        let request_id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
         let attribution = Attribution {
             principal: Principal::Token("alice".into()),
             actor_type: ActorType::Agent,
@@ -1430,7 +1457,7 @@ mod tests {
             }),
             on_behalf_of: Some("bob".into()),
             change_ref: Some("CHG0012345".into()),
-            request_id: Uuid::new_v4(),
+            request_id,
             token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
         };
         let formatted = format_attribution(&attribution);
@@ -1440,6 +1467,10 @@ mod tests {
         assert!(formatted.contains("public"));
         assert!(formatted.contains("bob"));
         assert!(formatted.contains("agent"));
+        assert!(
+            formatted.contains(&format!("request.id={}", request_id)),
+            "request_id must be present for provenance join: {formatted}"
+        );
     }
 
     #[test]
