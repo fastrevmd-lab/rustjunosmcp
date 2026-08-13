@@ -910,6 +910,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
 
         // Wildcard tool scope now excludes write tools (manage_idp_security_package, manage_appid_signature_package)
@@ -947,6 +948,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         for tool in SRX_SERVER_TOOLS {
             assert!(

@@ -1993,6 +1993,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(
             handler
@@ -2018,6 +2019,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(
             handler
@@ -2043,6 +2045,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "execute_junos_pfe_command"),
@@ -2105,6 +2108,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "transfer_file"),
@@ -2125,6 +2129,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "list_staged_files"),
@@ -2147,6 +2152,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(
             handler
@@ -2172,6 +2178,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(matches!(
             handler.check_tool_scope(Some(&ctx), "fetch_file"),
@@ -2194,6 +2201,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         assert!(handler.check_tool_scope(Some(&ctx), "fetch_file").is_ok());
         assert!(matches!(
@@ -2217,6 +2225,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         };
         let routers = ["r1", "r2"];
         let mut first_fail: Option<&str> = None;
@@ -2252,6 +2261,7 @@ mod scope_tests {
             provider_tier: None,
             on_behalf_of: None,
             actor_type: Default::default(),
+            request_id: uuid::Uuid::new_v4(),
         }
     }
 
