@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use mecmcp_auth::BearerSyntax;
 use mecmcp_transport::{
     BearerAuthenticator, BearerBoundary, BearerResponseProfile, HostOriginPolicy,
-    HttpTransportConfig, LimitsConfig, NoAuthAcknowledgement, ServePlan, TransportIdentity,
-    build_streamable_http_router, serve_router,
+    HttpTransportConfig, InsecureBindAcknowledgement, LimitsConfig, NoAuthAcknowledgement,
+    ServePlan, TransportIdentity, build_streamable_http_router, serve_router,
 };
 use rust_junosmcp_auth::{CallerCtx, TokenStoreFile};
 use serde_json::Value;
@@ -115,6 +115,7 @@ fn device_value_in_scope(value: &Value, caller: &mecmcp_transport::CallerScopes<
 /// `serve_router`. It carries the listener's token and rmcp's, which are
 /// cancelled at different times: sharing one ended every session the instant
 /// shutdown began, so no in-flight call could deliver its response.
+#[allow(clippy::too_many_arguments)]
 pub fn build_http_router(
     handler: JmcpHandler,
     token_store: Option<Arc<TokenStoreFile>>,
@@ -122,6 +123,7 @@ pub fn build_http_router(
     allowed_origins: Vec<String>,
     limits: LimitsConfig,
     enable_metrics: bool,
+    allow_insecure_bind: bool,
     shutdown: CancellationToken,
 ) -> Result<ServePlan> {
     // Junos transport identity: metric prefix, server label, bearer realm, target keys.
@@ -160,6 +162,17 @@ pub fn build_http_router(
     }
     .with_metrics(enable_metrics);
 
+    // Carry --allow-insecure-bind through to the transport. Parsing the flag and
+    // never converting it is exactly the defect class mecmcp#273 exists to close:
+    // a flag that is present but ignored. Without this, a plaintext off-loopback
+    // listener is refused at startup even though the operator asked for it — the
+    // failure is safe, but the server does not start.
+    let config = if allow_insecure_bind {
+        config.with_insecure_bind(InsecureBindAcknowledgement::operator_allowed_insecure_bind())
+    } else {
+        config
+    };
+
     // Factory closure: rmcp wants a fresh handler per session. JmcpHandler
     // is cheap to clone (Arc fields) so we just clone it.
     build_streamable_http_router(move || Ok::<_, std::io::Error>(handler.clone()), config)
@@ -182,6 +195,7 @@ pub async fn serve_http(
     limits: LimitsConfig,
     enable_metrics: bool,
     tls: Option<Arc<rustls::ServerConfig>>,
+    allow_insecure_bind: bool,
     shutdown: CancellationToken,
     shutdown_timeout: std::time::Duration,
 ) -> Result<()> {
@@ -192,6 +206,7 @@ pub async fn serve_http(
         allowed_origins,
         limits,
         enable_metrics,
+        allow_insecure_bind,
         shutdown,
     )?;
     // Readiness marker. Three test harnesses block on this exact string, and
