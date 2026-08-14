@@ -393,13 +393,19 @@ async fn main() -> Result<()> {
                 addr,
                 token_store,
                 args.allowed_host.clone(),
-                Vec::new(), // allowed_origins: empty by default (no browser CORS)
+                // Was Vec::new() with a comment claiming "empty by default (no
+                // browser CORS)". The CLI has always accepted --allowed-origin,
+                // and LXC 950's unit passes it — so the flag was parsed, shown in
+                // --help, and silently discarded here. Same defect class as
+                // mecmcp#273: present but ignored.
+                args.allowed_origin.clone(),
                 limits,
                 args.enable_metrics,
                 #[cfg(feature = "tls")]
                 tls_cfg,
                 #[cfg(not(feature = "tls"))]
                 None,
+                args.allow_insecure_bind,
                 shutdown_token,
                 shutdown_timeout,
             )

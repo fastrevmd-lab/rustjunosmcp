@@ -89,6 +89,7 @@ async fn start_test_server(
         allowed_origins,
         LimitsConfig::default(),
         false, // No metrics
+        false, // allow_insecure_bind: these tests bind loopback, which is exempt
         shutdown.clone(),
     )
     .expect("router build");
@@ -266,4 +267,85 @@ async fn origin_deny_pass_through() {
     );
 
     shutdown.cancel();
+}
+
+/// The deployed LXC 950 shape must actually serve: off-loopback, plaintext,
+/// with `--allow-insecure-bind` and an Origin allowlist.
+///
+/// Regression test for the wiring defect that took 950 down during the 0.20.0
+/// upgrade. `--allow-insecure-bind` and `--allowed-origin` were both parsed by
+/// the CLI, shown in `--help`, and then discarded: `serve_http` never received
+/// the first, and `main.rs` passed `Vec::new()` for the second with a comment
+/// claiming origins were "empty by default". Under mecmcp 0.9.x the transport
+/// refuses a plaintext off-loopback listener without the acknowledgement, so
+/// the server crash-looped on a flag the operator had supplied.
+///
+/// This binds a real off-loopback-shaped listener rather than loopback,
+/// because loopback is exempt from every admission check and would pass
+/// whether or not the flag is wired — which is exactly why the existing tests
+/// here did not catch it.
+#[tokio::test]
+async fn insecure_bind_acknowledgement_reaches_the_transport() {
+    // An AUTHENTICATED router. With `None` here the unauthenticated refusal
+    // fires first and the insecure-bind check is never reached — the test then
+    // passes whether or not the flag is wired, which is exactly how the first
+    // version of this test proved nothing. Verified by sabotage: discard the
+    // acknowledgement in build_http_router and this test must fail.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tokens = dir.path().join("tokens.json");
+    rust_junosmcp_auth::TokenStoreFile::add(
+        &tokens,
+        "probe",
+        rust_junosmcp_auth::ScopeSet::Wildcard,
+        rust_junosmcp_auth::ScopeSet::Wildcard,
+        &rust_junosmcp_auth::KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .expect("mint token");
+    let store = std::sync::Arc::new(
+        rust_junosmcp_auth::TokenStoreFile::load(&tokens).expect("load token store"),
+    );
+
+    let shutdown = CancellationToken::new();
+    let plan = rust_junosmcp::http_transport::build_http_router(
+        test_handler(),
+        Some(store),
+        vec!["192.168.1.194".to_owned()],
+        vec!["http://192.168.1.127".to_owned()],
+        LimitsConfig::default(),
+        false,
+        true, // allow_insecure_bind — the flag under test
+        shutdown.clone(),
+    )
+    .expect("router build");
+
+    // 192.0.2.1 (TEST-NET-1) is non-loopback and unbindable here. If the
+    // acknowledgement did NOT reach the transport we get Refused; if it did,
+    // admission passes and we fail later at the bind. Distinguishing those two
+    // is the whole point.
+    let err = mecmcp_transport::serve_router(
+        plan,
+        "192.0.2.1:30031".parse().expect("address"),
+        None,
+        std::time::Duration::from_millis(50),
+    )
+    .await
+    .expect_err("cannot bind TEST-NET-1");
+
+    // Assert on the specific refusal, not on Refused generally. This router is
+    // built without a token store, so UnauthenticatedOffLoopback fires first and
+    // is correct — it is a different check. What must NOT appear is the
+    // insecure-bind refusal, because the flag was supplied.
+    assert!(
+        !matches!(
+            err,
+            mecmcp_transport::HttpServeError::Refused(
+                mecmcp_transport::ListenerRefusal::InsecureBindNotAcknowledged { .. }
+            )
+        ),
+        "refused for want of an insecure-bind acknowledgement despite \
+         allow_insecure_bind=true, so the flag never reached the transport: {err:?}"
+    );
 }
