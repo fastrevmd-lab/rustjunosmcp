@@ -342,6 +342,89 @@ before deploying. The same warnings apply.
   `pfe_command`) are capped at 1 MB. Batch lists are capped at 100
   routers and 50 commands.
 
+## `--lab-mode`
+
+`--lab-mode` waives the second principal requirement for change sets,
+intended for single-operator lab environments where two-person control is
+impractical. **It is off by default and must not be enabled on servers
+managing production devices.**
+
+What it does and does not change:
+
+- Change sets are approved automatically at creation. There is no separate
+  approval step, and the flow stays plan → apply, identical to production.
+- Planning, the plan digest, drift detection, and apply-time revalidation all
+  still run. Lab mode removes the *second reviewer*, not the change record.
+- **No approver is fabricated.** A waived change set records `approver: null`
+  alongside `approval_waiver: "lab-mode"`. It is cryptographically
+  distinguishable from a genuine two-person approval and cannot be relabelled
+  afterwards — which matters if anyone later has to prove which changes had
+  real separation of duties.
+- The server warns loudly at startup whenever it is enabled.
+
+If you want solo write-testing *without* waiving the control, mint two tokens
+with different names and use one to plan and the other to approve: the
+principal is the token name, and self-approval is refused. That gives one
+person the complete lifecycle with the control intact, and is the better choice
+wherever the ceremony has any value.
+
+### Enabling it
+
+Add `--lab-mode` to the service unit. On a package install, use a systemd
+drop-in rather than editing the shipped unit, so an upgrade does not silently
+drop it:
+
+```console
+sudo systemctl edit rust-junosmcp
+```
+
+Replacing `ExecStart` means restating it in full, so **copy the shipped
+command and append the flag** rather than writing a shorter one. Dropping
+other arguments would turn off structured auditing or HMAC redaction as a side
+effect of enabling lab mode:
+
+```ini
+[Service]
+# Clear the shipped ExecStart before replacing it; systemd appends otherwise.
+ExecStart=
+ExecStart=/usr/local/bin/rust-junosmcp \
+    --device-mapping /etc/jmcp/devices.json \
+    --transport streamable-http \
+    --host 127.0.0.1 \
+    --port 30030 \
+    --tokens-file /etc/jmcp/tokens.json \
+    --audit-format json \
+    --audit-journald \
+    --audit-redact devices=hmac \
+    --audit-hmac-key-file /etc/jmcp/audit-hmac.key \
+    --lab-mode
+```
+
+Check it against `packaging/systemd/rust-junosmcp.service` before applying it —
+the shipped arguments are the authority, and this snippet is a copy that can
+age.
+
+```console
+sudo systemctl daemon-reload && sudo systemctl restart rust-junosmcp
+```
+
+Confirm it took effect. The startup warning uses `target: "audit"`, so grep
+the journal for the lab-mode text with enough privilege to see a system unit:
+
+```console
+sudo journalctl -u rust-junosmcp -b | grep -i "lab mode"
+```
+
+The expected output includes:
+
+```
+lab mode enabled: change sets are approved on creation with no second principal. Records carry approval_waiver=lab-mode. Do not run this against production devices.
+```
+
+Silence means it is off. An unprivileged `journalctl` can also print nothing
+here for lack of access rather than because the flag is unset, which is why the
+command uses `sudo`.
+
 ## Audit logging
 
 `rust-junosmcp` emits structured audit events for every Junos and SRX tool invocation. Each event records the caller, tool, target routers, authorization decision, outcome, and duration. See [`docs/AUDIT.md`](docs/AUDIT.md) for the full schema and forwarding guidance.
