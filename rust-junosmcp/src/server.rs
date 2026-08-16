@@ -1986,6 +1986,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["get_router_list".into()]),
             grant: None,
@@ -2012,6 +2014,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -2038,6 +2042,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2101,6 +2107,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2122,6 +2130,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2145,6 +2155,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["transfer_file".into()]),
             grant: None,
@@ -2171,6 +2183,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(vec!["execute_junos_command".into()]),
             grant: None,
@@ -2194,6 +2208,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Allowlist(vec!["other".into()]),
             tools: ScopeSet::Allowlist(vec!["fetch_file".into()]),
             grant: None,
@@ -2218,6 +2234,8 @@ mod scope_tests {
         let ctx = CallerCtx {
             token_name: "alice".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Allowlist(vec!["r1".into()]),
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -2254,6 +2272,8 @@ mod scope_tests {
         CallerCtx {
             token_name: "t".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools,
             grant: None,
