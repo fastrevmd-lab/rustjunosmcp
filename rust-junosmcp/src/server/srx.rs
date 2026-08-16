@@ -903,6 +903,8 @@ mod scope_tests {
         let wildcard_ctx = CallerCtx {
             token_name: "srx-admin".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Wildcard,
             grant: None,
@@ -941,6 +943,8 @@ mod scope_tests {
         let explicit_ctx = CallerCtx {
             token_name: "srx-write".into(),
             client_name: None,
+            model_id: None,
+            session_id: None,
             devices: ScopeSet::Wildcard,
             tools: ScopeSet::Allowlist(SRX_SERVER_TOOLS.iter().map(|s| (*s).to_string()).collect()),
             grant: None,
