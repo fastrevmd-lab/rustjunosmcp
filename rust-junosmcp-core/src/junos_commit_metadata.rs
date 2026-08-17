@@ -79,6 +79,8 @@ mod tests {
             change_ref: Some("CHG0012345".into()),
             request_id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
             token_verified_fields: TokenVerifiedFields::none(),
+            approver: None,
+            change_set_id: None,
         }
     }
 

@@ -52,6 +52,8 @@ fn test_attribution() -> mecmcp_audit::Attribution {
         change_ref: Some("TEST-001".into()),
         request_id: uuid::Uuid::new_v4(),
         token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
+        approver: None,
+        change_set_id: None,
     }
 }
 

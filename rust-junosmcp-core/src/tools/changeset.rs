@@ -121,6 +121,23 @@ pub struct ListChangeSetsArgs {
     pub device: Option<String>,
 }
 
+/// The approver to name on the device's commit log, if there was one (#307).
+///
+/// Reads `approval.approver` rather than the record's own `approver` field.
+/// That one is documented as present only for a genuine two-person approval and
+/// absent when waived, which is exactly the distinction a commit log must keep:
+/// a waived apply names nobody, and nobody is invented for it.
+///
+/// Split out from the apply path so the rule is testable. The apply path itself
+/// needs a live NETCONF session, so the one line that calls this is covered only
+/// by the live rig.
+fn approver_for_commit(record: &mecmcp_changeset::ChangeSetRecord) -> Option<&str> {
+    record
+        .approval
+        .as_ref()
+        .and_then(|approval| approval.approver.as_deref())
+}
+
 /// Create a change set (plan).
 ///
 /// Validates the device exists, derives owner from the authenticated principal,
@@ -399,6 +416,20 @@ pub async fn apply_change_set_with_cancel(
         .change_set(&args.change_set_id, &args.device)
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
+
+    // Name the two-person evidence on the device's own commit log (#307).
+    //
+    // The change-set record is the only thing that knows either value:
+    // `Attribution::from_caller` sees a token, and a token cannot vouch for who
+    // approved a change set. Set here, before the attribution reaches
+    // `commit_operation`, so `format_attribution` can render both.
+    //
+    // `approval.approver` rather than the record's own `approver` field: it is
+    // documented as present only for a genuine two-person approval and absent
+    // when waived, which is exactly the distinction the commit log must keep.
+    // A waived apply names no approver, and none is invented.
+    let mut attribution = attribution;
+    attribution.with_change_set(&args.change_set_id, approver_for_commit(&change_set_record));
 
     // Deserialize the actions from the stored JSON and validate each against policy.
     for action_value in &change_set_record.actions {
@@ -832,6 +863,66 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
+    /// A change-set record whose approval is either two-person or waived.
+    fn record_with_approval(
+        approver: Option<&str>,
+        waived: bool,
+    ) -> mecmcp_changeset::ChangeSetRecord {
+        use mecmcp_changeset::{ApprovalRecord, ChangeSetState, WaiverKind, WaiverRecord};
+        mecmcp_changeset::ChangeSetRecord {
+            id: "86324b20a3ecbfde".to_owned(),
+            owner: "claude-test".to_owned(),
+            device: "vsrx-ci".to_owned(),
+            expected_candidate_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            actions: vec![json!({"op": "set"})],
+            digest: format!("sha256:{}", "c".repeat(64)),
+            state: ChangeSetState::Approved,
+            approver: approver.map(str::to_owned),
+            approval: Some(ApprovalRecord {
+                approver: approver.map(str::to_owned),
+                approved_at_unix: 1_000,
+                digest: format!("sha256:{}", "d".repeat(64)),
+                waived: waived.then(|| WaiverRecord {
+                    kind: WaiverKind::LabMode,
+                    reason: "lab-mode".to_owned(),
+                    expires_at_unix: None,
+                    ticket: None,
+                }),
+            }),
+            expires_at_unix: 2_000,
+            operation_id: None,
+            policy_signature: String::new(),
+            targets: Vec::new(),
+            preview: None,
+        }
+    }
+
+    /// A genuine two-person approval names its approver on the device (#307).
+    #[test]
+    fn approver_for_commit_names_a_two_person_approver() {
+        let record = record_with_approval(Some("codex-approver"), false);
+        assert_eq!(approver_for_commit(&record), Some("codex-approver"));
+    }
+
+    /// A waived apply names nobody, and nobody is invented for it.
+    #[test]
+    fn approver_for_commit_is_absent_for_a_waived_approval() {
+        let record = record_with_approval(None, true);
+        assert_eq!(
+            approver_for_commit(&record),
+            None,
+            "lab mode approved this without a second principal; the commit log must not claim one"
+        );
+    }
+
+    /// A record still awaiting approval has no approver either.
+    #[test]
+    fn approver_for_commit_is_absent_without_an_approval_record() {
+        let mut record = record_with_approval(None, false);
+        record.approval = None;
+        assert_eq!(approver_for_commit(&record), None);
+    }
+
     fn inv_with(json: &str) -> Arc<Inventory> {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(json.as_bytes()).unwrap();
@@ -847,6 +938,8 @@ mod tests {
             change_ref: Some("TEST-001".into()),
             request_id: uuid::Uuid::new_v4(),
             token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
+            approver: None,
+            change_set_id: None,
         }
     }
 
