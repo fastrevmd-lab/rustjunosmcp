@@ -1069,6 +1069,25 @@ async fn confirmed_commit_on_session(
     }
 }
 
+/// How much of a change-set id reaches the device's commit comment.
+///
+/// Enough to correlate a commit with the server's change-set store — 16 hex
+/// characters is 64 bits, against a store holding tens of records — without
+/// spending a third of a bounded comment field on an identifier.
+const CHANGE_SET_ID_COMMENT_PREFIX: usize = 16;
+
+/// How much of an approver's name reaches the device's commit comment.
+///
+/// Junos accepts 512 characters of commit comment. This one already carries
+/// two token names — the principal and the on-behalf-of — each of which may be
+/// 128 characters, so a third unbounded name is what tips the worst case over.
+/// Truncating is strictly better than the alternative: an over-long comment
+/// fails the commit after the device is already staged.
+///
+/// 64 is far beyond any real token name; the fleet's approver is
+/// "codex-approver", at 14.
+const MAX_APPROVER_IN_COMMENT: usize = 64;
+
 /// Format the attribution into a Junos commit comment.
 fn format_attribution(attribution: &Attribution) -> String {
     let change_ref = attribution.change_ref.as_deref().unwrap_or("no-change-ref");
@@ -1100,9 +1119,58 @@ fn format_attribution(attribution: &Attribution) -> String {
         String::new()
     };
 
+    // The two-person evidence, where there is any (#307).
+    //
+    // Both segments follow the rule mecmcp#75 set for `model=`: omit rather
+    // than write an empty claim. `approved-by=` with nothing after it reads,
+    // to anyone scanning a commit log, like an approval that happened.
+    //
+    // `approver` is absent on a waived or single-operator apply, and that
+    // absence is a fact about the change rather than a gap to fill.
+    let approval_info = attribution
+        .approver
+        .as_deref()
+        .map(|approver| {
+            // Bounded because a commit comment is not. A token name may be 128
+            // characters (`mecmcp_auth::MAX_TOKEN_NAME`), and this comment
+            // already carries two of them — principal and on-behalf-of — so a
+            // third unbounded name is what tips the worst case past what Junos
+            // accepts. An over-long comment fails the commit at the last step,
+            // after the device has already been staged, which is a far worse
+            // outcome than a marked truncation. Real approver names are token
+            // names like "codex-approver"; nothing near this bound is expected.
+            if approver.len() > MAX_APPROVER_IN_COMMENT {
+                let kept: String = approver.chars().take(MAX_APPROVER_IN_COMMENT).collect();
+                format!(" approved-by={kept}...")
+            } else {
+                format!(" approved-by={approver}")
+            }
+        })
+        .unwrap_or_default();
+
+    // The id is truncated to a correlating prefix. A commit comment is a
+    // bounded field shared with every other attribution field, and 64 hex
+    // characters would spend over a third of it saying what 16 already says:
+    // 64 bits is ample to find one change set in a store holding tens.
+    let change_set_info = attribution
+        .change_set_id
+        .as_deref()
+        .map(|id| {
+            let prefix: String = id.chars().take(CHANGE_SET_ID_COMMENT_PREFIX).collect();
+            format!(" change-set={prefix}")
+        })
+        .unwrap_or_default();
+
     format!(
-        "{} by {} ({}) on-behalf-of={}{} request.id={}",
-        change_ref, principal, actor_type_str, on_behalf_of, agent_info, attribution.request_id
+        "{} by {} ({}) on-behalf-of={}{} request.id={}{}{}",
+        change_ref,
+        principal,
+        actor_type_str,
+        on_behalf_of,
+        agent_info,
+        attribution.request_id,
+        approval_info,
+        change_set_info
     )
 }
 
@@ -1459,6 +1527,8 @@ mod tests {
             change_ref: Some("CHG0012345".into()),
             request_id,
             token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
+            approver: None,
+            change_set_id: None,
         };
         let formatted = format_attribution(&attribution);
         assert!(formatted.contains("CHG0012345"));
@@ -1470,6 +1540,138 @@ mod tests {
         assert!(
             formatted.contains(&format!("request.id={}", request_id)),
             "request_id must be present for provenance join: {formatted}"
+        );
+    }
+
+    /// Build an attribution carrying the two-person evidence (#307).
+    fn two_person_attribution(approver: Option<&str>, change_set_id: Option<&str>) -> Attribution {
+        use mecmcp_audit::{ActorType, Principal};
+        Attribution {
+            principal: Principal::Token("claude-test".into()),
+            actor_type: ActorType::Agent,
+            agent: None,
+            on_behalf_of: Some("mharman".into()),
+            change_ref: None,
+            request_id: uuid::Uuid::nil(),
+            token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
+            approver: approver.map(str::to_owned),
+            change_set_id: change_set_id.map(str::to_owned),
+        }
+    }
+
+    /// The defect: the device's commit log never named the second principal.
+    ///
+    /// Reading the firewall alone, a two-person apply was indistinguishable
+    /// from a single-operator change.
+    #[test]
+    fn format_attribution_names_the_approver_and_change_set() {
+        let attribution = two_person_attribution(
+            Some("codex-approver"),
+            Some("86324b20a3ecbfde732b981a8c69a664d44b176c29b5cdaf59e23e4ea96d4175"),
+        );
+
+        let formatted = format_attribution(&attribution);
+
+        assert!(
+            formatted.contains("approved-by=codex-approver"),
+            "the approver must reach the device: {formatted}"
+        );
+        assert!(
+            formatted.contains("change-set=86324b20a3ecbfde"),
+            "the change set must reach the device: {formatted}"
+        );
+    }
+
+    /// The id is truncated to a correlating prefix, not carried whole.
+    ///
+    /// A Junos commit comment is a bounded field shared with every other
+    /// attribution field, and 64 hex characters would be over a third of it to
+    /// say something 16 already says: 64 bits is ample to find one change set
+    /// in a store that holds tens.
+    #[test]
+    fn change_set_id_is_truncated_to_a_correlating_prefix() {
+        let full = "86324b20a3ecbfde732b981a8c69a664d44b176c29b5cdaf59e23e4ea96d4175";
+        let formatted = format_attribution(&two_person_attribution(None, Some(full)));
+
+        assert!(
+            formatted.contains("change-set=86324b20a3ecbfde"),
+            "expected the 16-character prefix: {formatted}"
+        );
+        assert!(
+            !formatted.contains(full),
+            "the full 64-character id must not be written: {formatted}"
+        );
+    }
+
+    /// A waived or single-operator apply names no approver.
+    ///
+    /// Following the rule mecmcp#75 established for `model=`: omit the segment
+    /// rather than write an empty claim. `approved-by=` with nothing after it
+    /// reads, to anyone scanning a commit log, like an approval that happened.
+    #[test]
+    fn format_attribution_omits_an_absent_approver() {
+        let formatted = format_attribution(&two_person_attribution(None, Some("86324b20a3ecbfde")));
+
+        assert!(
+            !formatted.contains("approved-by"),
+            "a waived apply must not imply an approver: {formatted}"
+        );
+        assert!(
+            formatted.contains("change-set=86324b20a3ecbfde"),
+            "the change set is still named: {formatted}"
+        );
+    }
+
+    /// An apply outside the change-set flow gains neither segment.
+    #[test]
+    fn format_attribution_omits_both_when_there_is_no_change_set() {
+        let formatted = format_attribution(&two_person_attribution(None, None));
+
+        assert!(!formatted.contains("approved-by"), "{formatted}");
+        assert!(!formatted.contains("change-set"), "{formatted}");
+        assert!(
+            formatted.contains("by claude-test"),
+            "the existing fields must survive: {formatted}"
+        );
+    }
+
+    /// The comment must stay inside the Junos ceiling even at full stretch.
+    ///
+    /// Every variable field is a token name, capped at 128 characters by
+    /// `mecmcp_auth::MAX_TOKEN_NAME`, and `change_ref` is caller-supplied. The
+    /// worst realistic case must leave headroom under the 512-character limit
+    /// Junos documents for a commit comment, or an apply fails at the very last
+    /// step, after the device has already been staged.
+    #[test]
+    fn worst_case_comment_stays_within_the_junos_ceiling() {
+        use mecmcp_audit::{ActorType, AgentIdentity, Principal, Tier};
+
+        let long = "n".repeat(128);
+        let attribution = Attribution {
+            principal: Principal::Token(long.clone()),
+            actor_type: ActorType::Agent,
+            agent: Some(AgentIdentity {
+                model_id: "claude-opus-5".into(),
+                session_id: String::new(),
+                client_name: None,
+                provider: "anthropic".into(),
+                provider_tier: Tier::Public,
+                skills_used: vec![],
+            }),
+            on_behalf_of: Some(long.clone()),
+            change_ref: Some("CHG0012345".into()),
+            request_id: uuid::Uuid::nil(),
+            token_verified_fields: mecmcp_audit::TokenVerifiedFields::none(),
+            approver: Some(long),
+            change_set_id: Some("86324b20a3ecbfde732b981a8c69a664d44b176c29b5cdaf".into()),
+        };
+
+        let formatted = format_attribution(&attribution);
+
+        assert!(
+            formatted.len() <= 512,
+            "commit comment is {} characters, over the 512 Junos allows: {formatted}",
+            formatted.len()
         );
     }
 
