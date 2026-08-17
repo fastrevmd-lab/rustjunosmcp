@@ -121,6 +121,108 @@ pub struct ListChangeSetsArgs {
     pub device: Option<String>,
 }
 
+/// Reconcile a change set and its operation after an apply fails past staging
+/// (#309).
+///
+/// `ChangesetCoordinator::apply_change_set` marks a change set `Applied` once
+/// *staging* succeeds — deliberate, and documented on `ApplyOutput`, because in
+/// the coordinator's model an apply stages the actions. This server then runs
+/// diff, validate and commit as separate steps, any of which can fail against
+/// the device afterwards. Every one of those failure paths used to return early
+/// and leave both records untouched, so:
+///
+/// - the change set kept the `Applied` that staging set, asserting a change had
+///   landed that the device had in fact rejected, and
+/// - the operation stayed `Validated`, which every later apply on that device
+///   reads as "an active or unreconciled operation" and refuses.
+///
+/// `cancel_junos_change_set` could not clear either, because it refuses an
+/// `applied` set. One validation failure therefore wedged the device with no
+/// tool path out, recoverable only by hand-editing `changeset-state.json`.
+///
+/// The order matters. The discard runs first, to release the device's candidate
+/// and configuration lock. Marking the change set `Failed` then happens whether
+/// or not that succeeded: a wedged device is recoverable by an operator, while a
+/// record claiming a change landed when it did not is not — nothing downstream
+/// can tell it is wrong.
+///
+/// Both steps are best-effort by design. Neither may replace the error that
+/// brought us here, which is the one describing what the device actually
+/// refused; a cleanup failure must not mask it.
+///
+/// `Failed` is terminal, and that is the point: it is what
+/// `apply_change_set` already records for a staging failure, and it is excluded
+/// from `is_pending`, so the owner can plan a replacement change set for the
+/// device immediately rather than needing a cancel that would be refused.
+#[allow(clippy::too_many_arguments)]
+async fn abandon_failed_apply<T: mecmcp_changeset::DeviceTransaction>(
+    coordinator: &ChangesetCoordinator,
+    transaction: &T,
+    change_set_id: &str,
+    device: &str,
+    principal: &str,
+    operation_id: &str,
+    expected_fingerprint: &str,
+    reason: &str,
+    ct: &CancellationToken,
+) {
+    if let Err(error) = coordinator
+        .discard_operation(
+            operation_id,
+            device,
+            principal,
+            expected_fingerprint,
+            transaction,
+            ct,
+        )
+        .await
+    {
+        // Worth a line: the device may still hold a candidate and a lock, which
+        // an operator has to clear. It is not worth failing over — the change
+        // set still has to stop claiming it applied.
+        tracing::warn!(
+            operation_id = %operation_id,
+            device = %device,
+            error = %error,
+            "could not discard the operation after a failed apply; the device may still \
+             hold a staged candidate and its configuration lock"
+        );
+    }
+
+    match coordinator.change_set(change_set_id, device).await {
+        Ok(mut change_set) => {
+            change_set.state = mecmcp_changeset::ChangeSetState::Failed;
+            // `ChangeSetRecord` has nowhere to carry the reason — it has no
+            // details field, unlike `OperationRecord` — so the device's own
+            // words are recorded here and returned to the caller in the error.
+            // Adding a field to the record is a mecmcp schema change and does
+            // not belong in this fix.
+            tracing::info!(
+                target: "audit",
+                change_set_id = %change_set_id,
+                device = %device,
+                reason = %reason,
+                "change set marked failed after the device refused the apply"
+            );
+            if let Err(error) = coordinator.update_change_set(change_set).await {
+                tracing::error!(
+                    change_set_id = %change_set_id,
+                    device = %device,
+                    error = %error,
+                    "could not mark the change set failed; it still reads as applied and \
+                     asserts a change the device rejected"
+                );
+            }
+        }
+        Err(error) => tracing::error!(
+            change_set_id = %change_set_id,
+            device = %device,
+            error = %error,
+            "could not re-read the change set to mark it failed; it still reads as applied"
+        ),
+    }
+}
+
 /// The approver to name on the device's commit log, if there was one (#307).
 ///
 /// Reads `approval.approver` rather than the record's own `approver` field.
@@ -501,7 +603,7 @@ pub async fn apply_change_set_with_cancel(
     let policy_signature = "junos-default-v1";
 
     // Run diff to get the configuration difference.
-    let _diff = coordinator
+    let _diff = match coordinator
         .diff_operation(
             &result.operation_id,
             &args.device,
@@ -512,10 +614,28 @@ pub async fn apply_change_set_with_cancel(
             &ct,
         )
         .await
-        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+    {
+        Ok(diff) => diff,
+        Err(error) => {
+            let reason = error.to_string();
+            abandon_failed_apply(
+                &coordinator,
+                &transaction,
+                &args.change_set_id,
+                &args.device,
+                &principal,
+                &result.operation_id,
+                &result.after_fingerprint,
+                &reason,
+                &ct,
+            )
+            .await;
+            return Err(JmcpError::Validation(reason));
+        }
+    };
 
     // Run validation before committing.
-    let validation = coordinator
+    let validation = match coordinator
         .validate_operation(
             &result.operation_id,
             &args.device,
@@ -526,7 +646,25 @@ pub async fn apply_change_set_with_cancel(
             &ct,
         )
         .await
-        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+    {
+        Ok(validation) => validation,
+        Err(error) => {
+            let reason = error.to_string();
+            abandon_failed_apply(
+                &coordinator,
+                &transaction,
+                &args.change_set_id,
+                &args.device,
+                &principal,
+                &result.operation_id,
+                &result.after_fingerprint,
+                &reason,
+                &ct,
+            )
+            .await;
+            return Err(JmcpError::Validation(reason));
+        }
+    };
 
     // A confirmed-commit window is expressed in whole minutes because that is
     // what Junos schedules; the transaction layer refuses anything it cannot
@@ -539,13 +677,26 @@ pub async fn apply_change_set_with_cancel(
 
     // Check if validation succeeded. If it failed, refuse to commit.
     if !validation.valid {
-        return Err(JmcpError::Validation(format!(
+        let reason = format!(
             "configuration validation failed: {}",
             validation.details.as_deref().unwrap_or("no details")
-        )));
+        );
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &args.change_set_id,
+            &args.device,
+            &principal,
+            &result.operation_id,
+            &result.after_fingerprint,
+            &reason,
+            &ct,
+        )
+        .await;
+        return Err(JmcpError::Validation(reason));
     }
 
-    let commit_result = coordinator
+    let commit_result = match coordinator
         .commit_operation(
             &result.operation_id,
             &args.device,
@@ -559,7 +710,25 @@ pub async fn apply_change_set_with_cancel(
             &ct,
         )
         .await
-        .map_err(|e| JmcpError::Validation(e.to_string()))?;
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let reason = error.to_string();
+            abandon_failed_apply(
+                &coordinator,
+                &transaction,
+                &args.change_set_id,
+                &args.device,
+                &principal,
+                &result.operation_id,
+                &result.after_fingerprint,
+                &reason,
+                &ct,
+            )
+            .await;
+            return Err(JmcpError::Validation(reason));
+        }
+    };
 
     // Build a config-authority warning when the device is not locally owned.
     use mecmcp_inventory::LocalAuthority;
@@ -862,6 +1031,266 @@ mod tests {
     use mecmcp_audit::{ActorType, Attribution, Principal};
     use std::io::Write;
     use tempfile::TempDir;
+
+    // ---- #309: a failed apply must not leave the change set `Applied` ----
+
+    use mecmcp_changeset::{
+        ChangeSetRecord, LifecycleState, OperationLimits, OperationRecord, RollbackOutcome,
+        RollbackRef, UnlockOutcome,
+    };
+    use std::time::Duration;
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+    struct FakeAction;
+    #[derive(Debug)]
+    struct FakeStaged;
+    #[derive(Debug, serde::Serialize)]
+    struct FakeDiff;
+    #[derive(Debug, serde::Serialize)]
+    struct FakeValidation;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("fake transaction failure")]
+    struct FakeError;
+
+    /// A device that is not there.
+    ///
+    /// Only the methods `discard_operation` reaches are meaningful — `rollback`
+    /// and `unlock`. `rollback_succeeds` lets a test drive the case where the
+    /// device itself refuses the cleanup, which must still not leave the change
+    /// set claiming it applied.
+    struct FakeTransaction {
+        rollback_succeeds: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl mecmcp_changeset::DeviceTransaction for FakeTransaction {
+        type Action = FakeAction;
+        type Staged = FakeStaged;
+        type Diff = FakeDiff;
+        type Validation = FakeValidation;
+        type Error = FakeError;
+
+        async fn fingerprint(&self) -> Result<String, Self::Error> {
+            Ok(format!("sha256:{}", "a".repeat(64)))
+        }
+        async fn stage(&self, _actions: &[Self::Action]) -> Result<Self::Staged, Self::Error> {
+            Ok(FakeStaged)
+        }
+        async fn diff(&self, _staged: &Self::Staged) -> Result<Self::Diff, Self::Error> {
+            Ok(FakeDiff)
+        }
+        async fn validate(&self, _staged: &Self::Staged) -> Result<Self::Validation, Self::Error> {
+            Ok(FakeValidation)
+        }
+        async fn commit(
+            &self,
+            _staged: &Self::Staged,
+            _attribution: &Attribution,
+            _options: &CommitOptions,
+        ) -> Result<mecmcp_changeset::CommitOutcome, Self::Error> {
+            Err(FakeError)
+        }
+        async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+            if self.rollback_succeeds {
+                Ok(RollbackOutcome {
+                    succeeded: true,
+                    details: None,
+                })
+            } else {
+                Err(FakeError)
+            }
+        }
+        async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
+            Ok(UnlockOutcome::Released)
+        }
+        async fn confirm_commit(
+            &self,
+            _operation_id: &str,
+            _attribution: &Attribution,
+        ) -> Result<mecmcp_changeset::CommitOutcome, Self::Error> {
+            Err(FakeError)
+        }
+    }
+
+    const DEVICE: &str = "vsrx-ci";
+    const OWNER: &str = "claude-test";
+    const FINGERPRINT_HEX: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// Change-set and operation ids must be 64 hexadecimal characters.
+    fn hex_id(seed: &str) -> String {
+        format!("{seed:0>64}")
+    }
+
+    fn coordinator() -> (tempfile::TempDir, Arc<ChangesetCoordinator>) {
+        let dir = tempfile::tempdir().unwrap();
+        let coordinator = ChangesetCoordinator::load(
+            Some(&dir.path().join("state.json")),
+            OperationLimits::default(),
+            Duration::from_secs(900),
+            false,
+        )
+        .unwrap();
+        (dir, Arc::new(coordinator))
+    }
+
+    /// A change set mid-apply: staging succeeded, so it already reads `Applied`.
+    fn applied_change_set(id: &str) -> ChangeSetRecord {
+        ChangeSetRecord {
+            id: id.to_owned(),
+            owner: OWNER.to_owned(),
+            device: DEVICE.to_owned(),
+            expected_candidate_fingerprint: format!("sha256:{FINGERPRINT_HEX}"),
+            actions: vec![json!({"op": "set"})],
+            digest: format!("sha256:{}", "c".repeat(64)),
+            state: mecmcp_changeset::ChangeSetState::Applied,
+            approver: Some("codex-approver".to_owned()),
+            approval: None,
+            expires_at_unix: u64::MAX,
+            operation_id: None,
+            policy_signature: String::new(),
+            targets: Vec::new(),
+            preview: None,
+        }
+    }
+
+    /// The operation left behind by a validation failure.
+    fn validated_operation(id: &str) -> OperationRecord {
+        OperationRecord {
+            id: id.to_owned(),
+            owner: OWNER.to_owned(),
+            device: DEVICE.to_owned(),
+            endpoint: format!("junos://{DEVICE}:830"),
+            action: json!("merge"),
+            xpath: None,
+            actions: vec![json!({"op": "set"})],
+            change_set_id: None,
+            current: format!("sha256:{FINGERPRINT_HEX}"),
+            state: LifecycleState::Validated,
+            job_id: None,
+            details: None,
+            config_lock_held: true,
+            policy_signature: String::new(),
+            attribution: None,
+            rollback_deadline_unix: None,
+            config_authority: None,
+        }
+    }
+
+    /// The reported symptom: the record claims a change landed that never did.
+    #[tokio::test]
+    async fn a_failed_apply_marks_the_change_set_failed_not_applied() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c1")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("01")))
+            .await
+            .unwrap();
+
+        abandon_failed_apply(
+            &coordinator,
+            &FakeTransaction {
+                rollback_succeeds: true,
+            },
+            &hex_id("c1"),
+            DEVICE,
+            OWNER,
+            &hex_id("01"),
+            &format!("sha256:{FINGERPRINT_HEX}"),
+            "configuration validation failed",
+            &CancellationToken::new(),
+        )
+        .await;
+
+        let change_set = coordinator.change_set(&hex_id("c1"), DEVICE).await.unwrap();
+        assert_eq!(
+            change_set.state,
+            mecmcp_changeset::ChangeSetState::Failed,
+            "a change set the device rejected must not read as Applied"
+        );
+    }
+
+    /// The second symptom: the device is wedged until someone edits state by hand.
+    #[tokio::test]
+    async fn a_failed_apply_releases_the_operation() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c2")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("02")))
+            .await
+            .unwrap();
+
+        abandon_failed_apply(
+            &coordinator,
+            &FakeTransaction {
+                rollback_succeeds: true,
+            },
+            &hex_id("c2"),
+            DEVICE,
+            OWNER,
+            &hex_id("02"),
+            &format!("sha256:{FINGERPRINT_HEX}"),
+            "configuration validation failed",
+            &CancellationToken::new(),
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("02"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_ne!(
+            operation.state,
+            LifecycleState::Validated,
+            "an unreconciled Validated operation blocks every later apply on the device"
+        );
+    }
+
+    /// A device that refuses the cleanup must still not leave a lying record.
+    ///
+    /// A wedged device is recoverable; a change set asserting a change landed
+    /// when it never did is not, because nothing downstream can tell.
+    #[tokio::test]
+    async fn a_failed_rollback_still_marks_the_change_set_failed() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c3")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("03")))
+            .await
+            .unwrap();
+
+        abandon_failed_apply(
+            &coordinator,
+            &FakeTransaction {
+                rollback_succeeds: false,
+            },
+            &hex_id("c3"),
+            DEVICE,
+            OWNER,
+            &hex_id("03"),
+            &format!("sha256:{FINGERPRINT_HEX}"),
+            "configuration validation failed",
+            &CancellationToken::new(),
+        )
+        .await;
+
+        let change_set = coordinator.change_set(&hex_id("c3"), DEVICE).await.unwrap();
+        assert_eq!(
+            change_set.state,
+            mecmcp_changeset::ChangeSetState::Failed,
+            "the record must be honest even when the device cleanup fails"
+        );
+    }
 
     /// A change-set record whose approval is either two-person or waived.
     fn record_with_approval(
