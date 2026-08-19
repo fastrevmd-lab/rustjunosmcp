@@ -27,19 +27,27 @@ pub fn set_cleanup_timeout_secs(secs: u64) {
     CLEANUP_TIMEOUT_SECS.store(secs, Ordering::Relaxed);
 }
 
-fn cleanup_timeout() -> Duration {
+pub(crate) fn cleanup_timeout() -> Duration {
     Duration::from_secs(CLEANUP_TIMEOUT_SECS.load(Ordering::Relaxed))
 }
 
+/// Number of per-phase cleanup budgets a single call can burn in series.
+///
+/// The longest chain is a failed change-set apply: the staged session close,
+/// then the lock, fingerprint and unlock probes that establish whether anything
+/// may be recorded (mecmcp#312). The older rollback-then-unlock path spends two
+/// of these; the bound has to cover the worst case, not the common one.
+const CLEANUP_PHASES: u32 = 4;
+
 /// Worst-case wall clock for one candidate transaction against `operation_timeout`.
 ///
-/// A stalled device can burn the operation budget, then the rollback budget,
-/// then the unlock budget, in series — the aggregate a client's idle timeout has
-/// to clear if it is to hear the outcome rather than give up and report that the
-/// server "sent no response" (#257).
+/// A stalled device can burn the operation budget and then every cleanup phase
+/// in series — the aggregate a client's idle timeout has to clear if it is to
+/// hear the outcome rather than give up and report that the server "sent no
+/// response" (#257).
 #[must_use]
 pub fn worst_case_duration(operation_timeout: Duration) -> Duration {
-    operation_timeout + cleanup_timeout() * 2
+    operation_timeout + cleanup_timeout() * CLEANUP_PHASES
 }
 
 #[derive(Debug)]

@@ -2501,7 +2501,7 @@ mod timeout_budget_tests {
     use std::time::Duration;
 
     /// The arithmetic behind #257: a stalled device burns the operation budget,
-    /// then rollback, then unlock. With the shipped defaults that is 420s,
+    /// then every cleanup phase in series. With the shipped defaults that is 480s,
     /// against the 300s idle timeout a typical MCP client applies — so without
     /// progress notifications a stalled call is *guaranteed* to outlive its
     /// caller. This pins the number the startup log and `--cleanup-timeout-secs`
@@ -2511,7 +2511,7 @@ mod timeout_budget_tests {
         set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
         let worst_case = worst_case_duration(Duration::from_secs(360));
 
-        assert_eq!(worst_case, Duration::from_secs(420));
+        assert_eq!(worst_case, Duration::from_secs(480));
         assert!(
             worst_case > Duration::from_secs(300),
             "if this ever stops being true, the --cleanup-timeout-secs help text \
@@ -2524,9 +2524,12 @@ mod timeout_budget_tests {
     #[test]
     fn lowering_the_cleanup_budget_lowers_the_worst_case() {
         set_cleanup_timeout_secs(5);
+        // Four cleanup phases: the staged-session close, then the lock,
+        // fingerprint and unlock probes a failed apply uses to establish
+        // whether anything may be recorded.
         assert_eq!(
             worst_case_duration(Duration::from_secs(120)),
-            Duration::from_secs(130)
+            Duration::from_secs(140)
         );
         set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
     }

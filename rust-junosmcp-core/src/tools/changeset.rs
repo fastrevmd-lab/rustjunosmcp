@@ -155,48 +155,305 @@ pub struct ListChangeSetsArgs {
 /// from `is_pending`, so the owner can plan a replacement change set for the
 /// device immediately rather than needing a cancel that would be refused.
 #[allow(clippy::too_many_arguments)]
+/// Which failure path is abandoning the apply.
+///
+/// The two differ in what can honestly be recorded. Nothing reaches the device
+/// before commit, so a diff or validation failure leaves a candidate that the
+/// release discards. A commit that errored may have landed anyway — the device
+/// can succeed and the coordinator still fail to persist it — and that outcome
+/// is unknown until someone looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbandonOutcome {
+    /// Diff, validation, or a rejected validation: nothing was committed.
+    CandidateNotCommitted,
+    /// The commit itself errored; whether it landed is unknown.
+    CommitOutcomeUnknown,
+}
+
+/// Reconcile a change set and its operation after the device refused an apply.
+///
+/// `apply_change_set` marks a change set `Applied` once staging succeeds, and
+/// this server then runs diff, validate and commit as separate steps. Every one
+/// of those can fail afterwards, leaving a record asserting a change that the
+/// device rejected and an operation that blocks every later apply.
+///
+/// The cleanup makes **no device write**. The staged handle owns the session
+/// holding the candidate lock, and releasing it is itself the revert on Junos,
+/// so the device needs nothing further — measured on vsrx-ci, where the
+/// candidate is back to its pre-stage fingerprint and the lock free the instant
+/// a failed apply returns. What remains is settling the records (mecmcp#312).
+/// What the cleanup needs to name: which records, on whose behalf, and why.
+struct Abandon<'a> {
+    change_set_id: &'a str,
+    device: &'a str,
+    principal: &'a str,
+    operation_id: &'a str,
+    /// The candidate fingerprint from *before* staging. Releasing the session
+    /// discards, so a clean device reads back exactly this — and rustnetconf
+    /// suppresses a failed `<discard-changes/>` and closes anyway, which makes
+    /// this comparison the only proof the revert happened.
+    pre_stage_fingerprint: &'a str,
+    reason: &'a str,
+    outcome: AbandonOutcome,
+}
+
 async fn abandon_failed_apply<T: mecmcp_changeset::DeviceTransaction>(
     coordinator: &ChangesetCoordinator,
     transaction: &T,
-    change_set_id: &str,
-    device: &str,
-    principal: &str,
-    operation_id: &str,
-    expected_fingerprint: &str,
-    reason: &str,
-    ct: &CancellationToken,
-) {
-    if let Err(error) = coordinator
-        .discard_operation(
-            operation_id,
-            device,
-            principal,
-            expected_fingerprint,
-            transaction,
-            ct,
-        )
-        .await
-    {
-        // Worth a line: the device may still hold a candidate and a lock, which
-        // an operator has to clear. It is not worth failing over — the change
-        // set still has to stop claiming it applied.
+    staged: &T::Staged,
+    about: Abandon<'_>,
+) where
+    T::Staged: crate::junos_transaction::ReleaseStaged,
+{
+    // Release the staged session first. It owns the candidate lock — `stage()`
+    // takes the session out of the transaction and keeps it, so validate and
+    // commit see the same private database — and on Junos closing it is the
+    // revert: rustnetconf's `CloseSequence::DiscardThenClose` sends
+    // `<discard-changes/>` before `<close-session/>`.
+    //
+    // Awaiting it is the point. `PooledDevice::drop` can only *spawn* the close,
+    // so a dropped handle frees the lock at a moment the caller cannot observe.
+    let Abandon {
+        change_set_id,
+        device,
+        principal,
+        operation_id,
+        pre_stage_fingerprint,
+        reason,
+        outcome,
+    } = about;
+
+    use crate::junos_transaction::ReleaseStaged as _;
+    let released = staged.release().await;
+
+    // Settle the operation. A terminal record is what unblocks the device —
+    // `LifecycleState::terminal()` counts only `Committed` and `Discarded`, and
+    // `insert` refuses a new operation while a non-terminal one exists — but it
+    // may only be written once the device state is actually known. An
+    // unconfirmed release leaves the candidate and the lock in question, so
+    // nothing is claimed and `state resolve` settles it after someone looks.
+    if released {
+        match coordinator.record(operation_id, principal, device).await {
+            Ok(mut record) => {
+                // A commit error does not mean the commit RPC was sent.
+                // `commit_operation` persists `Committing` immediately before it
+                // and returns earlier for the guard, cancellation, policy,
+                // fingerprint and confirm-timeout checks. A record that never
+                // reached `Committing` proves nothing was committed, so it can
+                // settle as cleanly as a validation failure.
+                let outcome = match outcome {
+                    AbandonOutcome::CommitOutcomeUnknown
+                        if !matches!(
+                            record.state,
+                            mecmcp_changeset::LifecycleState::Committing
+                                | mecmcp_changeset::LifecycleState::Indeterminate
+                        ) =>
+                    {
+                        AbandonOutcome::CandidateNotCommitted
+                    }
+                    other => other,
+                };
+                // The probes below exist only to justify claiming
+                // `Discarded`. A commit whose outcome is unknown ends
+                // non-terminal whatever they say, so on that path they are pure
+                // cost and pure risk — the session may have committed and
+                // unlocked cleanly, and opening probe sessions against the pool
+                // behind it can end up discarding a candidate this operation no
+                // longer owns.
+                let settled = if outcome == AbandonOutcome::CommitOutcomeUnknown {
+                    true
+                } else {
+                    // Two things have to be true before anything is recorded: the
+                    // candidate reverted, and the lock is free. Both are checked
+                    // under one lock so they cannot drift apart — an unlocked read
+                    // could be overtaken by another session between the read and
+                    // the lock, leaving a fingerprint that was true a moment ago.
+                    //
+                    // Taking the lock is also the only proof it was free.
+                    // rustnetconf's close sequence is best-effort throughout and
+                    // returns `Ok` even when `<close-session/>` fails, so a
+                    // completed release establishes neither fact on its own.
+                    //
+                    // Every probe is bounded by the per-phase cleanup budget: this
+                    // runs against a peer that has just failed an apply and may be
+                    // unresponsive, and the pool's own RPC timeout is hours.
+                    let budget = crate::tools::candidate_transaction::cleanup_timeout();
+                    match probe(budget, transaction.lock("changeset cleanup probe")).await {
+                        Ok(()) => {
+                            // `fingerprint` reads through the held session, so this
+                            // observes the candidate inside the lock.
+                            let observed = probe(budget, transaction.fingerprint()).await;
+
+                            // Give the lock back before deciding anything. Holding
+                            // it would leave the device locked by the cleanup, which
+                            // is no better for the next caller than the lock this is
+                            // checking for.
+                            let returned = matches!(
+                                probe(budget, transaction.unlock()).await,
+                                Ok(mecmcp_changeset::UnlockOutcome::Released)
+                            );
+                            if !returned {
+                                tracing::warn!(
+                                    operation_id = %operation_id,
+                                    device = %device,
+                                    "took the candidate lock to check the revert but could not \
+                                     confirm it back; leaving the operation for `state resolve`"
+                                );
+                            }
+
+                            match observed {
+                                Ok(current) if current == pre_stage_fingerprint => {
+                                    // Staging recorded the *staged* fingerprint;
+                                    // the revert means it now names a configuration
+                                    // the device threw away.
+                                    record.current = current;
+                                    returned
+                                }
+                                Ok(_) => {
+                                    tracing::warn!(
+                                        operation_id = %operation_id,
+                                        device = %device,
+                                        "the candidate did not return to its pre-stage fingerprint, \
+                                         so the staged change may still be there; leaving the \
+                                         operation for `state resolve`"
+                                    );
+                                    false
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        operation_id = %operation_id,
+                                        device = %device,
+                                        error = %error,
+                                        "could not read the candidate back, so the revert is \
+                                         unproven; leaving the operation for `state resolve`"
+                                    );
+                                    false
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                operation_id = %operation_id,
+                                device = %device,
+                                error = %error,
+                                "the candidate lock is still held after the release, so the session \
+                                 did not end; leaving the operation for `state resolve`"
+                            );
+                            false
+                        }
+                    }
+                };
+
+                if !settled {
+                    settle_change_set(coordinator, change_set_id, device, reason).await;
+                    return;
+                }
+                // Only claimed where the probe proved it. The unknown-outcome
+                // path deliberately does not probe, and rustnetconf's close
+                // reports success even when `<close-session/>` fails, so the
+                // lock may well still be held there.
+                if outcome == AbandonOutcome::CandidateNotCommitted {
+                    record.config_lock_held = false;
+                }
+                record.state = match outcome {
+                    AbandonOutcome::CandidateNotCommitted => {
+                        record.details = Some(format!(
+                            "candidate discarded with the staged session after a failed \
+                             apply: {reason}"
+                        ));
+                        mecmcp_changeset::LifecycleState::Discarded
+                    }
+                    // Not `Discarded`: the commit may have reached the device
+                    // even though this returned an error, and asserting a revert
+                    // that did not happen is the same class of lie as the
+                    // `Applied` this path exists to stop.
+                    AbandonOutcome::CommitOutcomeUnknown => {
+                        record.details = Some(format!(
+                            "commit outcome unknown after a failed apply; verify the device \
+                             and settle with `state resolve`: {reason}"
+                        ));
+                        mecmcp_changeset::LifecycleState::Indeterminate
+                    }
+                };
+                if let Err(error) = coordinator.update(record).await {
+                    tracing::error!(
+                        operation_id = %operation_id,
+                        device = %device,
+                        error = %error,
+                        "could not settle the operation; it stays non-terminal and blocks \
+                         later applies until `state resolve` clears it"
+                    );
+                }
+            }
+            Err(error) => tracing::error!(
+                operation_id = %operation_id,
+                device = %device,
+                error = %error,
+                "could not read the operation back to settle it"
+            ),
+        }
+    } else {
         tracing::warn!(
             operation_id = %operation_id,
             device = %device,
-            error = %error,
-            "could not discard the operation after a failed apply; the device may still \
-             hold a staged candidate and its configuration lock"
+            "could not confirm the staged session closed; the candidate may still be staged \
+             and its lock held, so the operation is left for `state resolve`"
         );
     }
 
+    settle_change_set(coordinator, change_set_id, device, reason).await;
+}
+
+/// Run one cleanup probe under the per-phase budget.
+///
+/// A timeout is reported as an error rather than a value, so a probe that never
+/// answers can never be read as proof of anything.
+async fn probe<F, T, E>(budget: std::time::Duration, future: F) -> Result<T, ProbeError<E>>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+{
+    match tokio::time::timeout(budget, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(ProbeError::Failed(error)),
+        Err(_) => Err(ProbeError::TimedOut),
+    }
+}
+
+/// Why a cleanup probe did not answer.
+#[derive(Debug)]
+enum ProbeError<E> {
+    /// The device answered, with an error.
+    Failed(E),
+    /// The device did not answer inside the cleanup budget.
+    TimedOut,
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for ProbeError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(error) => write!(f, "{error}"),
+            Self::TimedOut => f.write_str("timed out inside the cleanup budget"),
+        }
+    }
+}
+
+/// Stop a change set claiming it applied.
+///
+/// Always runs, whatever the device did. A wedged device is recoverable by an
+/// operator; a record asserting a change landed when it did not is not, because
+/// nothing downstream can tell it is wrong.
+async fn settle_change_set(
+    coordinator: &ChangesetCoordinator,
+    change_set_id: &str,
+    device: &str,
+    reason: &str,
+) {
     match coordinator.change_set(change_set_id, device).await {
         Ok(mut change_set) => {
             change_set.state = mecmcp_changeset::ChangeSetState::Failed;
-            // `ChangeSetRecord` has nowhere to carry the reason — it has no
-            // details field, unlike `OperationRecord` — so the device's own
-            // words are recorded here and returned to the caller in the error.
-            // Adding a field to the record is a mecmcp schema change and does
-            // not belong in this fix.
+            // `ChangeSetRecord` has nowhere to carry the reason — no details
+            // field, unlike `OperationRecord` — so the device's own words are
+            // recorded here and returned to the caller in the error.
             tracing::info!(
                 target: "audit",
                 change_set_id = %change_set_id,
@@ -218,7 +475,7 @@ async fn abandon_failed_apply<T: mecmcp_changeset::DeviceTransaction>(
             change_set_id = %change_set_id,
             device = %device,
             error = %error,
-            "could not re-read the change set to mark it failed; it still reads as applied"
+            "could not read the change set back to mark it failed"
         ),
     }
 }
@@ -621,13 +878,16 @@ pub async fn apply_change_set_with_cancel(
             abandon_failed_apply(
                 &coordinator,
                 &transaction,
-                &args.change_set_id,
-                &args.device,
-                &principal,
-                &result.operation_id,
-                &result.after_fingerprint,
-                &reason,
-                &ct,
+                &result.staged,
+                Abandon {
+                    change_set_id: &args.change_set_id,
+                    device: &args.device,
+                    principal: &principal,
+                    operation_id: &result.operation_id,
+                    pre_stage_fingerprint: &args.expected_fingerprint,
+                    reason: &reason,
+                    outcome: AbandonOutcome::CandidateNotCommitted,
+                },
             )
             .await;
             return Err(JmcpError::Validation(reason));
@@ -653,13 +913,16 @@ pub async fn apply_change_set_with_cancel(
             abandon_failed_apply(
                 &coordinator,
                 &transaction,
-                &args.change_set_id,
-                &args.device,
-                &principal,
-                &result.operation_id,
-                &result.after_fingerprint,
-                &reason,
-                &ct,
+                &result.staged,
+                Abandon {
+                    change_set_id: &args.change_set_id,
+                    device: &args.device,
+                    principal: &principal,
+                    operation_id: &result.operation_id,
+                    pre_stage_fingerprint: &args.expected_fingerprint,
+                    reason: &reason,
+                    outcome: AbandonOutcome::CandidateNotCommitted,
+                },
             )
             .await;
             return Err(JmcpError::Validation(reason));
@@ -684,13 +947,16 @@ pub async fn apply_change_set_with_cancel(
         abandon_failed_apply(
             &coordinator,
             &transaction,
-            &args.change_set_id,
-            &args.device,
-            &principal,
-            &result.operation_id,
-            &result.after_fingerprint,
-            &reason,
-            &ct,
+            &result.staged,
+            Abandon {
+                change_set_id: &args.change_set_id,
+                device: &args.device,
+                principal: &principal,
+                operation_id: &result.operation_id,
+                pre_stage_fingerprint: &args.expected_fingerprint,
+                reason: &reason,
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
         )
         .await;
         return Err(JmcpError::Validation(reason));
@@ -717,13 +983,16 @@ pub async fn apply_change_set_with_cancel(
             abandon_failed_apply(
                 &coordinator,
                 &transaction,
-                &args.change_set_id,
-                &args.device,
-                &principal,
-                &result.operation_id,
-                &result.after_fingerprint,
-                &reason,
-                &ct,
+                &result.staged,
+                Abandon {
+                    change_set_id: &args.change_set_id,
+                    device: &args.device,
+                    principal: &principal,
+                    operation_id: &result.operation_id,
+                    pre_stage_fingerprint: &args.expected_fingerprint,
+                    reason: &reason,
+                    outcome: AbandonOutcome::CommitOutcomeUnknown,
+                },
             )
             .await;
             return Err(JmcpError::Validation(reason));
@@ -765,17 +1034,60 @@ pub async fn apply_change_set_with_cancel(
             }
             Ok(result)
         }
+        // A device that refuses the commit reports it as an *outcome*, not an
+        // error, so this arm has to run the same cleanup as the error paths or
+        // the change set keeps reading `Applied` and the operation keeps
+        // blocking the device — the exact defect #309 and #312 are about, by a
+        // fifth route.
         CommitOutcome::Reconciled {
             succeeded: false,
             details,
             ..
-        } => Err(JmcpError::Validation(format!(
-            "commit failed: {}",
-            details.as_deref().unwrap_or("no details")
-        ))),
-        CommitOutcome::Indeterminate { reason } => Err(JmcpError::Validation(format!(
-            "commit outcome indeterminate, manual reconciliation required: {reason}"
-        ))),
+        } => {
+            let reason = format!(
+                "commit failed: {}",
+                details.as_deref().unwrap_or("no details")
+            );
+            abandon_failed_apply(
+                &coordinator,
+                &transaction,
+                &result.staged,
+                Abandon {
+                    change_set_id: &args.change_set_id,
+                    device: &args.device,
+                    principal: &principal,
+                    operation_id: &result.operation_id,
+                    pre_stage_fingerprint: &args.expected_fingerprint,
+                    reason: &reason,
+                    // The device said it did not commit. That is knowledge, not
+                    // an unknown — the revert and lock proofs still gate whether
+                    // anything is recorded.
+                    outcome: AbandonOutcome::CandidateNotCommitted,
+                },
+            )
+            .await;
+            Err(JmcpError::Validation(reason))
+        }
+        CommitOutcome::Indeterminate { reason } => {
+            let reason =
+                format!("commit outcome indeterminate, manual reconciliation required: {reason}");
+            abandon_failed_apply(
+                &coordinator,
+                &transaction,
+                &result.staged,
+                Abandon {
+                    change_set_id: &args.change_set_id,
+                    device: &args.device,
+                    principal: &principal,
+                    operation_id: &result.operation_id,
+                    pre_stage_fingerprint: &args.expected_fingerprint,
+                    reason: &reason,
+                    outcome: AbandonOutcome::CommitOutcomeUnknown,
+                },
+            )
+            .await;
+            Err(JmcpError::Validation(reason))
+        }
         CommitOutcome::Detached { job_id } => {
             let mut result = json!({
                 "change_set_id": args.change_set_id,
@@ -1030,6 +1342,7 @@ mod tests {
     use crate::junos_transaction::ConfigPayloadSpec;
     use mecmcp_audit::{ActorType, Attribution, Principal};
     use std::io::Write;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tempfile::TempDir;
 
     // ---- #309: a failed apply must not leave the change set `Applied` ----
@@ -1042,16 +1355,44 @@ mod tests {
 
     #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
     struct FakeAction;
+
+    /// The staged handle, modelling what vsrx-ci actually does.
+    ///
+    /// Releasing it closes the session, which on Junos discards the candidate
+    /// and frees the lock — so the shared fingerprint flips back to its
+    /// pre-stage value, and that is what a later read observes. Measured on 611:
+    /// after a failed apply the candidate is already back and the lock is free.
     #[derive(Debug)]
-    struct FakeStaged;
+    struct FakeStaged {
+        released: Arc<AtomicBool>,
+        /// Whether the close is allowed to complete. `false` models a peer that
+        /// black-holes it, where the device state cannot be assumed.
+        closes: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::junos_transaction::ReleaseStaged for FakeStaged {
+        async fn release(&self) -> bool {
+            if !self.closes {
+                return false;
+            }
+            self.released.store(true, Ordering::SeqCst);
+            true
+        }
+    }
     #[derive(Debug, serde::Serialize)]
     struct FakeDiff;
     #[derive(Debug, serde::Serialize)]
     struct FakeValidation;
 
     #[derive(Debug, thiserror::Error)]
-    #[error("fake transaction failure")]
-    struct FakeError;
+    enum FakeError {
+        #[error("fake transaction failure")]
+        Refused,
+        /// What the device says when another session holds the lock.
+        #[error("netconf error: RPC error: server error: [LockDenied]")]
+        LockDenied,
+    }
 
     /// A device that is not there.
     ///
@@ -1061,6 +1402,25 @@ mod tests {
     /// set claiming it applied.
     struct FakeTransaction {
         rollback_succeeds: bool,
+        /// Shared with the staged handle: set once the session has been
+        /// released, which is when the candidate has reverted.
+        staged_released: Arc<AtomicBool>,
+        /// Counts device writes. The cleanup path must make none.
+        rollbacks: Arc<AtomicUsize>,
+        /// Counts lock probes, so a test can pin which paths probe at all.
+        locks: Arc<AtomicUsize>,
+        /// Whether the probe can give the candidate lock back. `false` leaves
+        /// the device locked by the probe itself.
+        unlock_confirms: bool,
+        /// Whether the candidate lock can be taken after the release. `false`
+        /// models a session that did not actually end — rustnetconf returns
+        /// `Ok` from its close even when `<close-session/>` fails.
+        lock_free: bool,
+        /// What the candidate reads once released. Equal to the pre-stage value
+        /// when the discard worked; different when it silently did not, which
+        /// rustnetconf permits — it sends `<discard-changes/>` best-effort and
+        /// closes anyway.
+        post_release_fingerprint: String,
     }
 
     #[async_trait::async_trait]
@@ -1072,10 +1432,20 @@ mod tests {
         type Error = FakeError;
 
         async fn fingerprint(&self) -> Result<String, Self::Error> {
-            Ok(format!("sha256:{}", "a".repeat(64)))
+            // Before the release the candidate still carries the staged change;
+            // after it, the discard-on-close has put it back.
+            if self.staged_released.load(Ordering::SeqCst) {
+                // Released: the discard-on-close put the candidate back.
+                Ok(self.post_release_fingerprint.clone())
+            } else {
+                Ok(format!("sha256:{}", "a".repeat(64)))
+            }
         }
         async fn stage(&self, _actions: &[Self::Action]) -> Result<Self::Staged, Self::Error> {
-            Ok(FakeStaged)
+            Ok(FakeStaged {
+                released: Arc::clone(&self.staged_released),
+                closes: true,
+            })
         }
         async fn diff(&self, _staged: &Self::Staged) -> Result<Self::Diff, Self::Error> {
             Ok(FakeDiff)
@@ -1089,38 +1459,78 @@ mod tests {
             _attribution: &Attribution,
             _options: &CommitOptions,
         ) -> Result<mecmcp_changeset::CommitOutcome, Self::Error> {
-            Err(FakeError)
+            Err(FakeError::Refused)
         }
         async fn rollback(&self, _to: RollbackRef) -> Result<RollbackOutcome, Self::Error> {
+            self.rollbacks.fetch_add(1, Ordering::SeqCst);
             if self.rollback_succeeds {
                 Ok(RollbackOutcome {
                     succeeded: true,
                     details: None,
                 })
             } else {
-                Err(FakeError)
+                Err(FakeError::Refused)
+            }
+        }
+        async fn lock(&self, _comment: &str) -> Result<(), Self::Error> {
+            self.locks.fetch_add(1, Ordering::SeqCst);
+            if self.lock_free {
+                Ok(())
+            } else {
+                Err(FakeError::LockDenied)
             }
         }
         async fn unlock(&self) -> Result<UnlockOutcome, Self::Error> {
-            Ok(UnlockOutcome::Released)
+            if self.unlock_confirms {
+                Ok(UnlockOutcome::Released)
+            } else {
+                Err(FakeError::Refused)
+            }
         }
         async fn confirm_commit(
             &self,
             _operation_id: &str,
             _attribution: &Attribution,
         ) -> Result<mecmcp_changeset::CommitOutcome, Self::Error> {
-            Err(FakeError)
+            Err(FakeError::Refused)
         }
     }
 
+    /// What the candidate reads back once the release has discarded it — the
+    /// value it held before staging. The fake returns the staged fingerprint
+    /// until then.
+    const PRE_STAGE: &str = PRE_STAGE_HEX;
     const DEVICE: &str = "vsrx-ci";
     const OWNER: &str = "claude-test";
+    /// The pre-stage candidate, and the staged one that replaces it.
+    const PRE_STAGE_HEX: &str =
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const FINGERPRINT_HEX: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     /// Change-set and operation ids must be 64 hexadecimal characters.
     fn hex_id(seed: &str) -> String {
         format!("{seed:0>64}")
+    }
+
+    /// A transaction and the staged handle holding its lock, wired together.
+    ///
+    /// `closes` is whether the session close completes; when it does not, the
+    /// device state is unknown and nothing may be terminalised.
+    fn fake(closes: bool) -> (FakeTransaction, FakeStaged) {
+        let released = Arc::new(AtomicBool::new(false));
+        (
+            FakeTransaction {
+                rollback_succeeds: true,
+                staged_released: Arc::clone(&released),
+                rollbacks: Arc::new(AtomicUsize::new(0)),
+                locks: Arc::new(AtomicUsize::new(0)),
+                lock_free: true,
+                unlock_confirms: true,
+                post_release_fingerprint: PRE_STAGE.to_owned(),
+            },
+            FakeStaged { released, closes },
+        )
     }
 
     fn coordinator() -> (tempfile::TempDir, Arc<ChangesetCoordinator>) {
@@ -1152,6 +1562,18 @@ mod tests {
             policy_signature: String::new(),
             targets: Vec::new(),
             preview: None,
+        }
+    }
+
+    /// The operation left behind by a commit that was already in flight.
+    ///
+    /// `commit_operation` persists this state immediately before sending the
+    /// commit, so it is the only one from which the outcome is genuinely
+    /// unknown.
+    fn committing_operation(id: &str) -> OperationRecord {
+        OperationRecord {
+            state: LifecycleState::Committing,
+            ..validated_operation(id)
         }
     }
 
@@ -1190,19 +1612,21 @@ mod tests {
             .insert(validated_operation(&hex_id("01")))
             .await
             .unwrap();
+        let (transaction, staged) = fake(true);
 
         abandon_failed_apply(
             &coordinator,
-            &FakeTransaction {
-                rollback_succeeds: true,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c1"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("01"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
             },
-            &hex_id("c1"),
-            DEVICE,
-            OWNER,
-            &hex_id("01"),
-            &format!("sha256:{FINGERPRINT_HEX}"),
-            "configuration validation failed",
-            &CancellationToken::new(),
         )
         .await;
 
@@ -1210,13 +1634,18 @@ mod tests {
         assert_eq!(
             change_set.state,
             mecmcp_changeset::ChangeSetState::Failed,
-            "a change set the device rejected must not read as Applied"
+            "a change set the device rejected must not read as applied"
         );
     }
 
-    /// The second symptom: the device is wedged until someone edits state by hand.
+    /// mecmcp#312: the operation has to end terminal, or it blocks the device.
+    ///
+    /// `LifecycleState::terminal()` counts only `Committed` and `Discarded`, and
+    /// `insert` refuses a new operation while a non-terminal one exists for the
+    /// device. `Failed` is not terminal, which is why #309 left the wedge in
+    /// place.
     #[tokio::test]
-    async fn a_failed_apply_releases_the_operation() {
+    async fn a_failed_apply_settles_the_operation_terminally() {
         let (_dir, coordinator) = coordinator();
         coordinator
             .insert_change_set(applied_change_set(&hex_id("c2")))
@@ -1226,19 +1655,21 @@ mod tests {
             .insert(validated_operation(&hex_id("02")))
             .await
             .unwrap();
+        let (transaction, staged) = fake(true);
 
         abandon_failed_apply(
             &coordinator,
-            &FakeTransaction {
-                rollback_succeeds: true,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c2"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("02"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
             },
-            &hex_id("c2"),
-            DEVICE,
-            OWNER,
-            &hex_id("02"),
-            &format!("sha256:{FINGERPRINT_HEX}"),
-            "configuration validation failed",
-            &CancellationToken::new(),
         )
         .await;
 
@@ -1246,19 +1677,26 @@ mod tests {
             .record(&hex_id("02"), OWNER, DEVICE)
             .await
             .unwrap();
-        assert_ne!(
+        assert_eq!(
             operation.state,
-            LifecycleState::Validated,
-            "an unreconciled Validated operation blocks every later apply on the device"
+            LifecycleState::Discarded,
+            "only Committed or Discarded is terminal; anything else keeps the device blocked"
+        );
+        assert!(
+            !operation.config_lock_held,
+            "the release closed the session, so no lock of ours is held"
         );
     }
 
-    /// A device that refuses the cleanup must still not leave a lying record.
+    /// The cleanup must not touch the device.
     ///
-    /// A wedged device is recoverable; a change set asserting a change landed
-    /// when it never did is not, because nothing downstream can tell.
+    /// Releasing the staged session is already the revert — measured on
+    /// vsrx-ci, where the candidate is back to its pre-stage fingerprint the
+    /// instant a failed apply returns. `RollbackRef::Archive(0)` is not a
+    /// discard either: it loads rollback 0 and *commits* it, which on the
+    /// commit-failure path could undo a change that landed.
     #[tokio::test]
-    async fn a_failed_rollback_still_marks_the_change_set_failed() {
+    async fn the_cleanup_makes_no_device_write() {
         let (_dir, coordinator) = coordinator();
         coordinator
             .insert_change_set(applied_change_set(&hex_id("c3")))
@@ -1268,27 +1706,447 @@ mod tests {
             .insert(validated_operation(&hex_id("03")))
             .await
             .unwrap();
+        let (transaction, staged) = fake(true);
+        let rollbacks = Arc::clone(&transaction.rollbacks);
 
         abandon_failed_apply(
             &coordinator,
-            &FakeTransaction {
-                rollback_succeeds: false,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c3"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("03"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
             },
-            &hex_id("c3"),
-            DEVICE,
-            OWNER,
-            &hex_id("03"),
-            &format!("sha256:{FINGERPRINT_HEX}"),
-            "configuration validation failed",
-            &CancellationToken::new(),
         )
         .await;
 
-        let change_set = coordinator.change_set(&hex_id("c3"), DEVICE).await.unwrap();
+        assert_eq!(
+            rollbacks.load(Ordering::SeqCst),
+            0,
+            "the cleanup issued a rollback, which on Junos is a commit"
+        );
+    }
+
+    /// The record must name the candidate that is actually there now.
+    ///
+    /// Staging stores the *staged* fingerprint in `record.current`. After the
+    /// release the candidate has reverted, so leaving that value in place would
+    /// have the record identify the rejected configuration as current.
+    #[tokio::test]
+    async fn settling_refreshes_the_recorded_fingerprint() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c4")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("04")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(true);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c4"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("04"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("04"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_eq!(
+            operation.current, PRE_STAGE,
+            "the record still names the staged candidate the device threw away"
+        );
+    }
+
+    /// A commit that errored may have landed anyway.
+    ///
+    /// `commit_operation` can fail because its final state write failed after
+    /// the device already committed. Recording that as `Discarded` would assert
+    /// a revert that never happened, so it stays `Indeterminate` — non-terminal,
+    /// and settled by `state resolve` once someone has looked at the device.
+    #[tokio::test]
+    async fn a_failed_commit_is_left_indeterminate() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c5")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(committing_operation(&hex_id("05")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(true);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c5"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("05"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "commit failed",
+                outcome: AbandonOutcome::CommitOutcomeUnknown,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("05"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_eq!(
+            operation.state,
+            LifecycleState::Indeterminate,
+            "a commit whose outcome is unknown must not be recorded as discarded"
+        );
+    }
+
+    /// A release that could not complete leaves the device state unknown.
+    ///
+    /// Terminalising then would claim a clean candidate and a free lock without
+    /// either being established. The change set must still stop lying.
+    #[tokio::test]
+    async fn an_unconfirmed_release_does_not_terminalise() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c6")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("06")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(false);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c6"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("06"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("06"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_ne!(
+            operation.state,
+            LifecycleState::Discarded,
+            "an unconfirmed release must not be recorded as a clean discard"
+        );
+        let change_set = coordinator.change_set(&hex_id("c6"), DEVICE).await.unwrap();
         assert_eq!(
             change_set.state,
             mecmcp_changeset::ChangeSetState::Failed,
-            "the record must be honest even when the device cleanup fails"
+            "the change set must stop claiming it applied regardless"
+        );
+    }
+
+    /// A close that completed is not proof the candidate was discarded.
+    ///
+    /// rustnetconf sends `<discard-changes/>` best-effort inside its close
+    /// sequence and closes anyway when it fails, returning `Ok`. If the
+    /// operation were terminalised on that alone, the rejected candidate could
+    /// still be sitting there for a later apply to commit.
+    #[tokio::test]
+    async fn a_candidate_that_did_not_revert_is_not_recorded_as_discarded() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c7")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("07")))
+            .await
+            .unwrap();
+        let (mut transaction, staged) = fake(true);
+        // The close reported success, but the candidate still holds the staged
+        // change — the discard failed and was swallowed.
+        transaction.post_release_fingerprint = format!("sha256:{}", "c".repeat(64));
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c7"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("07"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("07"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_ne!(
+            operation.state,
+            LifecycleState::Discarded,
+            "an unproven revert must not be recorded as a clean discard"
+        );
+        let change_set = coordinator.change_set(&hex_id("c7"), DEVICE).await.unwrap();
+        assert_eq!(
+            change_set.state,
+            mecmcp_changeset::ChangeSetState::Failed,
+            "the change set must stop claiming it applied regardless"
+        );
+    }
+
+    /// A commit error before the RPC is not an unknown outcome.
+    ///
+    /// `commit_operation` persists `Committing` immediately before it sends the
+    /// commit and returns earlier for the guard, cancellation, policy,
+    /// fingerprint and confirm-timeout checks. Leaving those `Indeterminate`
+    /// would keep the device blocked for a commit that never happened.
+    #[tokio::test]
+    async fn a_commit_that_never_reached_the_device_settles_cleanly() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c8")))
+            .await
+            .unwrap();
+        // Still `Validated`: it never advanced to `Committing`.
+        coordinator
+            .insert(validated_operation(&hex_id("08")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(true);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c8"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("08"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "commit refused before it was sent",
+                outcome: AbandonOutcome::CommitOutcomeUnknown,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("08"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_eq!(
+            operation.state,
+            LifecycleState::Discarded,
+            "a commit that never reached the device leaves nothing unknown"
+        );
+    }
+
+    /// A candidate that reverted does not prove the session ended.
+    ///
+    /// rustnetconf's close is best-effort throughout and returns `Ok` even when
+    /// `<close-session/>` fails, so the lock can outlive a successful discard.
+    /// Recording `config_lock_held = false` then would be an assertion nobody
+    /// checked.
+    #[tokio::test]
+    async fn a_lock_still_held_after_release_is_not_terminalised() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("c9")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("09")))
+            .await
+            .unwrap();
+        let (mut transaction, staged) = fake(true);
+        transaction.lock_free = false;
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("c9"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("09"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("09"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_ne!(
+            operation.state,
+            LifecycleState::Discarded,
+            "the lock was never proven free, so nothing may be terminalised"
+        );
+    }
+
+    /// The probe must not leave the device locked by itself.
+    ///
+    /// `unlock` drops the owning session and leaves the close to `Drop`, which
+    /// only spawns it, so an unconfirmed unlock means the lock may still be
+    /// held — by this cleanup rather than by the failed apply, which is no
+    /// better for the next caller.
+    #[tokio::test]
+    async fn a_probe_that_cannot_return_the_lock_does_not_terminalise() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("ca")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("0a")))
+            .await
+            .unwrap();
+        let (mut transaction, staged) = fake(true);
+        transaction.unlock_confirms = false;
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("ca"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("0a"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        let operation = coordinator
+            .record(&hex_id("0a"), OWNER, DEVICE)
+            .await
+            .unwrap();
+        assert_ne!(
+            operation.state,
+            LifecycleState::Discarded,
+            "the probe still holds the lock, so nothing may be terminalised"
+        );
+    }
+
+    /// The probes exist to justify `Discarded`, so a path that cannot reach it
+    /// must not run them.
+    ///
+    /// A commit whose outcome is unknown ends non-terminal whatever the device
+    /// says. Probing anyway opens sessions against the pool behind a handle that
+    /// may have committed and unlocked cleanly, which can end up discarding a
+    /// candidate this operation no longer owns.
+    #[tokio::test]
+    async fn an_unknown_commit_outcome_does_not_probe_the_device() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("cb")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(committing_operation(&hex_id("0b")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(true);
+        let locks = Arc::clone(&transaction.locks);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("cb"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("0b"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "commit failed",
+                outcome: AbandonOutcome::CommitOutcomeUnknown,
+            },
+        )
+        .await;
+
+        assert_eq!(
+            locks.load(Ordering::SeqCst),
+            0,
+            "an outcome that cannot be terminalised has nothing to prove"
+        );
+    }
+
+    /// ...and a path that *can* reach `Discarded` must run them.
+    #[tokio::test]
+    async fn a_revert_that_can_be_terminalised_is_proved_on_the_device() {
+        let (_dir, coordinator) = coordinator();
+        coordinator
+            .insert_change_set(applied_change_set(&hex_id("cc")))
+            .await
+            .unwrap();
+        coordinator
+            .insert(validated_operation(&hex_id("0c")))
+            .await
+            .unwrap();
+        let (transaction, staged) = fake(true);
+        let locks = Arc::clone(&transaction.locks);
+
+        abandon_failed_apply(
+            &coordinator,
+            &transaction,
+            &staged,
+            Abandon {
+                change_set_id: &hex_id("cc"),
+                device: DEVICE,
+                principal: OWNER,
+                operation_id: &hex_id("0c"),
+                pre_stage_fingerprint: PRE_STAGE,
+                reason: "configuration validation failed",
+                outcome: AbandonOutcome::CandidateNotCommitted,
+            },
+        )
+        .await;
+
+        assert_eq!(
+            locks.load(Ordering::SeqCst),
+            1,
+            "the lock is the only proof it was free, so it has to be taken"
         );
     }
 

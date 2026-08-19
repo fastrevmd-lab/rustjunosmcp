@@ -107,6 +107,85 @@ pub struct JunosStagedTransaction {
     session: tokio::sync::Mutex<Option<crate::device_manager::PooledDevice>>,
 }
 
+/// A staged handle whose device session can be released on demand.
+///
+/// # Contract
+///
+/// `release` must leave the device with **no staged candidate and no lock held**
+/// by this handle, and report whether it confirmed that. On Junos both fall out
+/// of closing the session: rustnetconf's `CloseSequence::DiscardThenClose` sends
+/// `<discard-changes/>` before `<close-session/>`, and Junos frees a candidate
+/// lock when the session holding it closes.
+///
+/// Callers rely on that to settle a record without touching the device again,
+/// so an implementation that cannot guarantee it must return `false` rather
+/// than assume (mecmcp#312).
+#[async_trait]
+pub trait ReleaseStaged {
+    /// Release the session, returning `true` if the close completed.
+    ///
+    /// Never fails the caller: this is cleanup on a path already returning an
+    /// error. `false` means the device state is unknown, not that anything else
+    /// went wrong.
+    async fn release(&self) -> bool;
+}
+
+#[async_trait]
+impl ReleaseStaged for JunosStagedTransaction {
+    async fn release(&self) -> bool {
+        let Some(session) = self.session.lock().await.take() else {
+            // Already released, or `stage()` never handed the session over.
+            // Either way this handle holds nothing.
+            return true;
+        };
+
+        // A session that committed cleanly has already unlocked, and `commit`
+        // marks it reusable at that moment. Forcing a close on it would send
+        // `<discard-changes/>` against a candidate this operation no longer owns
+        // — which on a standalone device can wipe edits another session made
+        // after that unlock. Let it go back to the pool instead. This is the
+        // path where the device committed but the coordinator's own state write
+        // then failed.
+        if session.is_reusable() {
+            drop(session);
+            return true;
+        }
+
+        // Bounded by the same per-phase budget as rollback and unlock. The close
+        // is three RPCs — close-configuration, discard-changes, close-session —
+        // each carrying the device's own RPC timeout, which is measured in
+        // hours. A black-holed peer would otherwise hold a handler that is
+        // already returning an error for far longer than the cleanup budget.
+        //
+        // Awaiting rather than dropping is the point: `PooledDevice::drop` can
+        // only *spawn* the close, so a dropped handle frees the lock at some
+        // later moment the caller cannot observe.
+        match tokio::time::timeout(
+            crate::tools::candidate_transaction::cleanup_timeout(),
+            session.close_now(),
+        )
+        .await
+        {
+            Ok(Ok(())) => true,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    error = %error,
+                    "failed to close the staged session; the candidate may still be staged \
+                     and its configuration lock held"
+                );
+                false
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "timed out closing the staged session; the candidate may still be staged \
+                     and its configuration lock held"
+                );
+                false
+            }
+        }
+    }
+}
+
 /// Diff output: the text diff from Junos showing staged changes.
 ///
 /// Captures the output of `show | compare` as reported by the device. Used by
