@@ -46,6 +46,47 @@ All notable user-facing changes are recorded here. Format loosely follows
   stream is open, shutdown takes the full drain timeout (10s here, against the
   unit's `TimeoutStopSec`).
 
+## [0.21.1] — 2026-08-19
+
+### Fixed
+
+- **A failed apply no longer wedges the device** (#312). 0.21.0 stopped the
+  change set claiming it applied, but every later apply on that device was still
+  refused with "the device already has an active or unreconciled operation", and
+  the only way out was `state resolve` or hand-editing the state file.
+
+  The cleanup now releases the staged session — which on Junos *is* the revert,
+  since the close sends `<discard-changes/>` — and settles the records with **no
+  device write**. Verified on hardware: a refused apply, a second refused apply,
+  and then a valid change set that commits, with no operator intervention in
+  between.
+
+  Nothing is recorded that was not established. The lock is taken and returned
+  to prove it was free, the candidate fingerprint is read through that held lock
+  and must match its pre-stage value, and any failure leaves the operation
+  non-terminal for `state resolve`. A commit that may have reached the device is
+  recorded `Indeterminate`, never `Discarded`.
+
+  Also fixes a **fifth failure path** that 0.21.0 missed entirely: a device that
+  *refuses* a commit reports it as an outcome rather than an error
+  (`Ok(CommitOutcome::Reconciled { succeeded: false })`), so the cleanup never
+  ran and the change set kept reading `Applied`.
+
+### Changed
+
+- `--cleanup-timeout-secs` now advertises the correct worst case. A failed apply
+  can spend four cleanup phases in series — the session close plus the lock,
+  fingerprint and unlock probes — so the startup log, `--help`, and
+  `worst_case_duration` all report `timeout + 4 × cleanup` (**480s** with the
+  defaults, previously under-reported as 420s). Size client idle timeouts from
+  the new number.
+
+### Known issues
+
+- **#316**: on a standalone device with a shared candidate, the discard-on-close
+  clears the whole candidate, so uncommitted work another session left there can
+  be lost. Pre-existing behaviour, not introduced by #312, and unchanged here.
+
 ## [0.21.0] — 2026-08-19
 
 ### Added
