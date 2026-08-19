@@ -46,6 +46,27 @@ All notable user-facing changes are recorded here. Format loosely follows
   stream is open, shutdown takes the full drain timeout (10s here, against the
   unit's `TimeoutStopSec`).
 
+## [0.21.2] — 2026-08-19
+
+### Fixed
+
+- **`tools/list` carries the cache descriptor a 2026-07-28 client requires.**
+  A client on that protocol validates the result and rejects one without
+  `ttlMs` and `cacheScope`, which Claude Code reports as **"tools fetch
+  failed"** against a server that is healthy and answering in milliseconds —
+  the connection succeeds and the tool surface is simply never fetched, so
+  every tool from this server is invisible.
+
+  `ListToolsResult::with_all_items` leaves both fields unset and both are
+  omitted on the wire. Servers that do not override `list_tools` get them from
+  rmcp's generated handler; this one overrides it to filter the surface by
+  token scope, so it has to supply them itself.
+
+  Gated on the negotiated version exactly as rmcp does, because the fields are
+  not part of the older result shape. `cacheScope` is `private`, where rmcp's
+  unfiltered list says `public`: this list is per token, so a cache keyed only
+  on the URL must not serve one caller's permitted surface to another.
+
 ## [0.21.1] — 2026-08-19
 
 ### Fixed
