@@ -12,6 +12,7 @@
 
 mod cli;
 mod env_compat;
+mod state_cmd;
 #[cfg(feature = "tls")]
 mod tls;
 mod token_cmd;
@@ -52,8 +53,10 @@ async fn main() -> Result<()> {
     mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
     env_compat::emit_warnings(&warnings);
 
-    if let Some(Command::Token { action }) = args.command {
-        return token_cmd::run(action);
+    match args.command {
+        Some(Command::Token { action }) => return token_cmd::run(action),
+        Some(Command::State { action }) => return state_cmd::run(action),
+        None => {}
     }
 
     // Convert to shared CLI for validation

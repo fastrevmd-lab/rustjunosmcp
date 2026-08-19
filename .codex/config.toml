@@ -18,7 +18,12 @@ enabled = false
 [mcp_servers.unifi-mcp]
 enabled = false
 
-[mcp_servers.rust-junosmcp]
+# Renamed 2026-08-19: the fleet moved to `prod-*` names on 2026-08-16 and no
+# server called `rust-junosmcp` exists in the global config any more. An
+# override for a server that is defined nowhere has no transport, which newer
+# codex rejects outright — `Error loading config.toml: invalid transport` — so
+# this file blocked `codex exec review` in this repo entirely.
+[mcp_servers.prod-labmode-junos]
 enabled = true
 enabled_tools = ["get_router_list", "gather_device_facts", "get_junos_config", "junos_config_diff", "commit_check_config"]
 default_tools_approval_mode = "writes"

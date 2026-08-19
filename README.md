@@ -601,6 +601,26 @@ complete archive before changing system state. The packaged server exposes all
 enabled Junos and SRX tools at `127.0.0.1:30030/mcp` and requires bearer
 authentication. Use an SSH tunnel or a TLS reverse proxy for remote clients.
 
+> **Clearing a stuck operation:** `state resolve` settles an operation that is
+> stuck in a non-terminal state after a failed apply. One such record blocks
+> every later change on its device, and no tool can clear it — `cancel_junos_
+> change_set` refuses a change set that is already terminal. **Stop the service
+> first**, or the running server will overwrite the file from memory:
+>
+> ```bash
+> systemctl stop rust-junosmcp
+> runuser -u jmcp -- /usr/local/bin/rust-junosmcp state resolve \
+>   --state-file /var/lib/jmcp/changeset-state.json \
+>   --operation-id <64-hex-operation-id> \
+>   --disposition discarded \
+>   --confirmation "RESOLVED <64-hex-operation-id> AS DISCARDED"
+> systemctl start rust-junosmcp
+> ```
+>
+> The confirmation string must match exactly: it is the operator asserting they
+> looked at the device and this is what is true. Use `committed` only when the
+> device's own commit log proves the change landed.
+
 > **Narrowing an existing token:** `token set-scope` changes a token's router or
 > tool scopes **without reissuing its secret**, so clients keep working with the
 > same bearer token. Useful for removing access without reconfiguring every

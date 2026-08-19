@@ -1,7 +1,7 @@
 //! Command-line arguments. Two top-level modes: serve (default) and token
 //! management subcommand.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 // Re-export from mecmcp-runtime for compatibility
@@ -280,6 +280,48 @@ pub enum Command {
         #[command(subcommand)]
         action: TokenAction,
     },
+    /// Recover the persisted change-set state file offline.
+    State {
+        #[command(subcommand)]
+        action: StateAction,
+    },
+}
+
+/// Offline recovery on the persisted change-set state file.
+#[derive(Debug, Subcommand)]
+pub enum StateAction {
+    /// Settle a stuck operation after reconciling the device by hand.
+    ///
+    /// One non-terminal operation blocks every later change on its device, and
+    /// nothing in the tool surface can clear it — `cancel_junos_change_set`
+    /// refuses a terminal change set, and a failed discard leaves the operation
+    /// behind. Without this the only way out was editing the JSON (mecmcp#313).
+    ///
+    /// Stop the service first: the running server holds its state in memory and
+    /// will overwrite the file.
+    Resolve {
+        /// Absolute path to the change-set state file.
+        #[arg(long)]
+        state_file: PathBuf,
+        /// Exact persisted operation identifier, 64 hex characters.
+        #[arg(long)]
+        operation_id: String,
+        /// What the device was verified to have actually done.
+        #[arg(long, value_enum)]
+        disposition: StateDisposition,
+        /// Exact `RESOLVED <operation-id> AS COMMITTED|DISCARDED` confirmation.
+        #[arg(long)]
+        confirmation: String,
+    },
+}
+
+/// The outcome an operator verified on the device itself.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StateDisposition {
+    /// `show system commit` proves the change committed.
+    Committed,
+    /// The candidate was reverted and the configuration lock released.
+    Discarded,
 }
 
 #[derive(Debug, Subcommand)]
@@ -363,6 +405,44 @@ mod tests {
     /// together with `--allow-password-auth-add` while the doc comment on the
     /// latter still promised they were mutually exclusive. Asserting on the
     /// parsed flags here keeps the pair coupled to something that fails.
+    /// mecmcp#313: the recovery command has to exist and bind every field the
+    /// shared resolver needs, or a wedged device still has no supported way out.
+    #[test]
+    fn state_resolve_parses_every_field_the_resolver_needs() {
+        let cli = Cli::parse_from([
+            "rust-junosmcp",
+            "state",
+            "resolve",
+            "--state-file",
+            "/var/lib/jmcp/changeset-state.json",
+            "--operation-id",
+            "99c21bcdbc0ad34940cfdb6ed561dbdb971589534c14cad6a77c66b954b524cb",
+            "--disposition",
+            "discarded",
+            "--confirmation",
+            "RESOLVED 99c21bcdbc0ad34940cfdb6ed561dbdb971589534c14cad6a77c66b954b524cb AS DISCARDED",
+        ]);
+        let Some(Command::State {
+            action:
+                StateAction::Resolve {
+                    state_file,
+                    operation_id,
+                    disposition,
+                    confirmation,
+                },
+        }) = cli.command
+        else {
+            panic!("state resolve did not parse into the recovery command");
+        };
+        assert_eq!(
+            state_file,
+            PathBuf::from("/var/lib/jmcp/changeset-state.json")
+        );
+        assert_eq!(operation_id.len(), 64);
+        assert!(matches!(disposition, StateDisposition::Discarded));
+        assert!(confirmation.ends_with("AS DISCARDED"));
+    }
+
     #[test]
     fn junos_only_cli_rules_are_still_reachable() {
         // Both flags parse, so the refusal has to come from main's vendor block
