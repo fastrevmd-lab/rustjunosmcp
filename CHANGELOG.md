@@ -46,6 +46,78 @@ All notable user-facing changes are recorded here. Format loosely follows
   stream is open, shutdown takes the full drain timeout (10s here, against the
   unit's `TimeoutStopSec`).
 
+## [0.21.0] — 2026-08-19
+
+### Added
+
+- **`state resolve`** settles an operation stuck in a non-terminal state
+  (#313). One such record blocks every later change on its device, and nothing
+  in the tool surface could clear it, so the only recovery was editing
+  `changeset-state.json` by hand. Wraps `mecmcp_changeset::resolve_persisted_
+  operation` and takes the same exact `RESOLVED <id> AS COMMITTED|DISCARDED`
+  confirmation rust-panosmcp uses. **Stop the service first** — the running
+  server holds its state in memory and will overwrite the file.
+
+- **The Junos commit comment names the approver and the change set** (#307):
+  `approved-by=<token> change-set=<16-hex prefix>`. Under two-person control the
+  device's own history previously could not say who authorised a change. Both
+  segments are omitted rather than emitted empty, so a lab-mode apply names
+  nobody. Verified on hardware, including Junos's 512-character comment ceiling
+  (513 is refused with `Length 513 is not within range (1..512)`).
+
+### Fixed
+
+- **A change set whose apply fails past staging no longer reads `applied`**
+  (#309). It reads `failed`, so a drift check or audit is no longer told a
+  change landed that the device rejected.
+
+  **This does not unwedge the device.** The cleanup's discard is still refused
+  by the configuration lock the staged session holds, so the operation is left
+  non-terminal and blocks every later apply on that device. That is **#312**,
+  which remains open. `state resolve` above is the supported way out until it
+  lands.
+
+- `h2` moves to 0.4.16 for RUSTSEC-2026-0258 (unbounded empty DATA frames in
+  hyper's HTTP/2 layer).
+
+### Changed — breaking
+
+- **`--allow-insecure-bind` and `--allowed-origin` now reach the transport**
+  (35fbc28). Both were parsed and shown in `--help`, and neither was ever
+  passed to `HttpTransportConfig`. They are active as of this release, which
+  changes behaviour for anyone already supplying them:
+
+  - a plaintext off-loopback listener now *needs* `--allow-insecure-bind`; under
+    mecmcp 0.9.x the transport refuses one without that acknowledgement. This
+    took LXC 950 down during the 0.20.0 upgrade — it crash-looped on a flag its
+    unit had supplied since the day it was built.
+  - `--allowed-origin` values now actually govern browser Origin admission,
+    where previously an empty list was passed regardless of what was
+    configured.
+
+  Check any unit that passes either flag before upgrading, and read the values
+  as meaningful rather than decorative.
+
+### Changed
+
+- **`mecmcp` moves from 0.9.1 to 0.12.0.**
+
+  **Upgrading is one-way for change-set state that holds a waiver.** v0.9.1
+  reads on-disk state versions 1 and 2; v0.12.0 reads 1, 2 and 3, so an existing
+  file is accepted as it stands and nothing in flight is orphaned. But
+  `read_state` re-signs legacy waiver digests with the v3 scheme, and the next
+  write stamps the file version 3 — which v0.9.1 refuses as unsupported. A
+  `--lab-mode` server's approvals all carry waivers.
+
+  **Rolling back to 0.20.0 therefore means restoring the state file or the
+  guest snapshot, not just swapping the binary.** Do not assume the file is
+  untouched because the server answered no requests: `ChangesetCoordinator::
+  load` performs restart recovery on startup and persists immediately when it
+  finds an operation in `Staging`, `Staged`, `Validating` or `Committing`, or a
+  change set in `Applying`. With a waiver anywhere in the file, that startup
+  write is already the v3 stamp. **Snapshot before installing**, and treat the
+  state file as migrated the moment 0.21.0 starts.
+
 ## [0.17.0] — 2026-08-07
 
 Hardening release. The server no longer spawns any external process, and the
