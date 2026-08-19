@@ -1691,6 +1691,22 @@ fn record_rejected_call(
     // Emitted on drop.
 }
 
+/// Wrap a scope-filtered tool list in the result shape the negotiated protocol
+/// expects.
+///
+/// `cache_hints` mirrors rmcp's own gate: the fields belong to 2026-07-28 and
+/// later, and a client on that protocol rejects a `tools/list` without them.
+fn listed_tools(tools: Vec<rmcp::model::Tool>, cache_hints: bool) -> ListToolsResult {
+    let listed = ListToolsResult::with_all_items(tools);
+    if cache_hints {
+        listed
+            .with_ttl_ms(0)
+            .with_cache_scope(rmcp::model::CacheScope::Private)
+    } else {
+        listed
+    }
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
     fn get_info(&self) -> ServerInfo {
@@ -1777,7 +1793,24 @@ impl ServerHandler for JmcpHandler {
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
         let tools =
             filter_tools_for_scope(self.tool_router.list_all(), caller_ctx(&context.extensions));
-        Ok(ListToolsResult::with_all_items(tools))
+        // `with_all_items` leaves `ttl_ms` and `cache_scope` unset, and both are
+        // omitted on the wire. A 2026-07-28 client validates the tools/list
+        // result and rejects one without them — reported as "tools fetch
+        // failed" against a server that is otherwise healthy and fast. Servers
+        // that do not override `list_tools` get these from rmcp's generated
+        // handler; this one filters by scope, so it supplies them itself.
+        //
+        // Gated on the negotiated version exactly as rmcp does, because the
+        // fields are not part of the older result shape and a strict legacy
+        // client would reject them in turn.
+        //
+        // `private`, where rmcp's unfiltered list says `public`: this list is
+        // per token, so a cache keyed only on the URL must not serve one
+        // caller's permitted surface to another.
+        let cache_hints = context
+            .protocol_version()
+            .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        Ok(listed_tools(tools, cache_hints))
     }
 }
 
@@ -1785,6 +1818,27 @@ impl ServerHandler for JmcpHandler {
 mod scope_tests {
     use super::*;
     use rust_junosmcp_auth::{CallerCtx, ScopeSet};
+
+    /// mecmcp: a 2026-07-28 client rejects a tools/list without these.
+    #[test]
+    fn a_modern_client_gets_a_private_cache_descriptor() {
+        let listed = listed_tools(Vec::new(), true);
+        assert_eq!(listed.ttl_ms, Some(0));
+        assert_eq!(
+            listed.cache_scope,
+            Some(rmcp::model::CacheScope::Private),
+            "the list is filtered per token, so it must not be shared"
+        );
+    }
+
+    /// The fields are not part of the older result shape, and a strict legacy
+    /// client rejects what it did not negotiate.
+    #[test]
+    fn a_legacy_client_gets_no_cache_descriptor() {
+        let listed = listed_tools(Vec::new(), false);
+        assert_eq!(listed.ttl_ms, None);
+        assert_eq!(listed.cache_scope, None);
+    }
 
     fn test_transfer_cfg() -> rust_junosmcp_core::TransferConfig {
         rust_junosmcp_core::TransferConfig {
