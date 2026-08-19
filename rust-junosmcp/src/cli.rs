@@ -148,11 +148,13 @@ pub struct Cli {
     pub changeset_approval_timeout_secs: u64,
 
     /// Budget in seconds for each post-operation cleanup phase on a device:
-    /// rollback, unlock, and session close.
+    /// rollback, unlock, session close, and the lock, fingerprint and unlock
+    /// probes that a failed change-set apply uses to establish what the device
+    /// actually did.
     ///
     /// A stalled device can burn the operation budget and then each cleanup
     /// budget in series, so the worst case for one configuration call is
-    /// `timeout + 2 × this`. With the defaults that is `360 + 2 × 30 = 420s`,
+    /// `timeout + 4 × this`. With the defaults that is `360 + 4 × 30 = 480s`,
     /// which exceeds the 300s idle timeout typical of MCP clients. Progress
     /// notifications keep a client attached across that window; lower this, or
     /// raise the client's timeout, if yours does not honour them (#257).

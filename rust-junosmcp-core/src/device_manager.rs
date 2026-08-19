@@ -289,6 +289,31 @@ impl PooledDevice {
     pub(crate) fn allow_reuse(&mut self) {
         self.reuse_allowed = true;
     }
+
+    /// Whether this session is clean enough to go back to the pool.
+    ///
+    /// `commit` sets it after a successful commit *and* unlock, so it doubles as
+    /// "this session holds no lock and has nothing staged" — which is what tells
+    /// cleanup not to force a discarding close on it (mecmcp#312).
+    pub(crate) fn is_reusable(&self) -> bool {
+        // Mirror `Drop`'s check. A confirmed commit calls `allow_reuse` without
+        // unlocking, so the flag alone can be true while the device still has an
+        // open configuration database — and therefore still holds the lock.
+        self.reuse_allowed && !self.dev.as_ref().is_some_and(Device::is_config_db_open)
+    }
+
+    /// Close the session now, rather than leaving it to `Drop`.
+    ///
+    /// `Drop` can only *spawn* the close, so a caller that needs the device's
+    /// configuration lock free — or its candidate discarded — before it looks
+    /// again cannot rely on it (mecmcp#312). Taking `self` by value leaves
+    /// `Drop` nothing to do.
+    pub(crate) async fn close_now(mut self) -> Result<(), JmcpError> {
+        match self.dev.take() {
+            Some(mut dev) => dev.close().await.map_err(JmcpError::from),
+            None => Ok(()),
+        }
+    }
 }
 
 impl Deref for PooledDevice {
