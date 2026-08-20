@@ -38,6 +38,19 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **Client-asserted provenance is no longer permanently empty (#267).**
+  `client_name`, `model_id` and `session_id` were structurally present in every
+  audit record and never populated, so a consumer could not tell "no client
+  asserted one" from "this server never asks". Taking mecmcp 0.13.0 supplies the
+  capture: a client that sends `_meta.mecmcp/provenance` now has those fields
+  recorded, and `clientInfo.name` populates `client_name` on its own.
+
+  Verified on `vsrx-ci` via 611. A call carrying provenance records
+  `model_id=claude-opus-5 session_id=probe-session-267
+  client_name=provenance-probe client_version=9.9 client_call_id=toolu_probe267`.
+  These remain **client-asserted and unverifiable** — `token_verified_fields`
+  is what separates them from the token-bound subset, and it is unchanged.
+
 - **A refused lock no longer destroys an operator's uncommitted work
   (#316).** Junos's candidate datastore is shared, and rustnetconf closed every
   session with an unconditional `<discard-changes/>` — so a session that only
