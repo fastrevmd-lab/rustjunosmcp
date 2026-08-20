@@ -50,6 +50,15 @@ All notable user-facing changes are recorded here. Format loosely follows
   rollback load all still leave the candidate dirty and must close under the
   lock. The flag simply reports `false` in the case that used to dominate.
 
+- **A commit whose reply never arrives is no longer recorded as a rejection
+  (#322).** rustnetconf 0.14.3 raises `RpcError::CommitUnknown` when the
+  connection drops after `<commit>` is sent, instead of a generic transport
+  error. The classifier had no arm for it and its text backstop did not match
+  "connection lost", so it fell through to *known rejection*: the apply was
+  recorded as failed and cleanup ran against a device that may already hold the
+  change. It is now classified as uncertainty, which is what leaves the
+  operation indeterminate for an operator to reconcile.
+
   Measured on `vsrx-ci` via 611: an apply now records `commit succeeded` rather
   than `session closed to release the candidate lock, release not acknowledged
   by the device`, which is the acknowledged-unlock path, and no
