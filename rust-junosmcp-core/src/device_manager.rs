@@ -328,6 +328,43 @@ impl PooledDevice {
     /// again cannot rely on it (mecmcp#312). Taking `self` by value leaves
     /// `Drop` nothing to do.
     pub(crate) async fn close_now(mut self) -> Result<(), JmcpError> {
+        self.close_in_place().await
+    }
+
+    /// Give up the candidate lock this session holds.
+    ///
+    /// A session whose candidate is still flagged dirty carries an armed
+    /// `<discard-changes/>` into its eventual close: rustez's
+    /// `commit_with_comment` commits through the raw `rpc()` path and cannot
+    /// clear rustnetconf's flag, and `rollback` sets it. Unlocking such a
+    /// session and letting it live on would fire that discard later, against a
+    /// candidate this operation no longer owns — on standalone Junos the
+    /// candidate is shared, so what it erases is an operator's work.
+    ///
+    /// So a dirty session is closed here instead, while the lock is still ours:
+    /// the discard can only reach what we own, and closing the session releases
+    /// the lock on the device just as `unlock` would. A clean session unlocks
+    /// and becomes poolable as before (mecmcp#316).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unlock or the close failed — in either case the
+    /// caller has no proof the lock was released.
+    pub(crate) async fn release_lock(&mut self) -> Result<(), JmcpError> {
+        if self.dev.as_ref().is_some_and(Device::touched_candidate) {
+            return self.close_in_place().await;
+        }
+        self.config()?.unlock().await?;
+        self.allow_reuse();
+        Ok(())
+    }
+
+    /// Close the session through a mutable borrow.
+    ///
+    /// Callers that hold the session behind a guard cannot move out of it to
+    /// call [`close_now`](Self::close_now). Afterwards the handle owns no
+    /// session, so `Drop` has nothing to close or pool.
+    pub(crate) async fn close_in_place(&mut self) -> Result<(), JmcpError> {
         match self.dev.take() {
             Some(mut dev) => dev.close().await.map_err(JmcpError::from),
             None => Ok(()),
