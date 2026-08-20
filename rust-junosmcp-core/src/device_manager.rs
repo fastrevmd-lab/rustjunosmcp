@@ -436,6 +436,22 @@ impl Drop for PooledDevice {
                 dev.touched_candidate(),
             ) {
                 // Candidate state is uncertain or a config DB was left open.
+                if dev.touched_candidate() {
+                    // Every path that gives up a lock is supposed to have
+                    // released this session explicitly, under the lock, via
+                    // `release_lock`. Reaching `Drop` still dirty means the
+                    // discard goes out on a spawned task instead — after the
+                    // call returned, against a candidate that is shared again.
+                    // That is the #316 hazard re-entering by the back door, so
+                    // it is logged rather than left silent.
+                    tracing::warn!(
+                        router = %self.router_name,
+                        reuse_allowed = self.reuse_allowed,
+                        config_db_open = dev.is_config_db_open(),
+                        "closing a candidate-dirty session from Drop; its discard is not \
+                         bounded by the lock that made it safe (mecmcp#316)"
+                    );
+                }
                 handle.spawn(async move {
                     let mut d = dev;
                     let _ = d.close().await;
