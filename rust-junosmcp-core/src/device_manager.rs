@@ -279,6 +279,22 @@ pub struct PooledDevice {
     reuse_allowed: bool,
 }
 
+/// Whether a session in this state may go back into the pool.
+///
+/// Three ways a session fails to qualify:
+/// - `reuse_allowed` is false — candidate state is uncertain.
+/// - The configuration database is open. A confirmed commit calls `allow_reuse`
+///   without unlocking, so the flag alone can be true while the session still
+///   holds the lock.
+/// - The candidate is still marked dirty. `commit_with_comment` commits through
+///   rustez's raw `rpc()` path, which cannot clear rustnetconf's flag, so the
+///   session carries an armed `<discard-changes/>` into its eventual close. That
+///   is harmless for its own changes but not for whatever the shared candidate
+///   holds by the time the pool evicts it (mecmcp#316).
+fn should_pool(reuse_allowed: bool, config_db_open: bool, touched_candidate: bool) -> bool {
+    reuse_allowed && !config_db_open && !touched_candidate
+}
+
 impl PooledDevice {
     /// Keep a session with uncertain candidate state out of the pool.
     pub(crate) fn prevent_reuse(&mut self) {
@@ -296,10 +312,13 @@ impl PooledDevice {
     /// "this session holds no lock and has nothing staged" — which is what tells
     /// cleanup not to force a discarding close on it (mecmcp#312).
     pub(crate) fn is_reusable(&self) -> bool {
-        // Mirror `Drop`'s check. A confirmed commit calls `allow_reuse` without
-        // unlocking, so the flag alone can be true while the device still has an
-        // open configuration database — and therefore still holds the lock.
-        self.reuse_allowed && !self.dev.as_ref().is_some_and(Device::is_config_db_open)
+        // Same rule `Drop` applies, so "clean enough to pool" and "clean enough
+        // to skip a discarding close" can never disagree.
+        should_pool(
+            self.reuse_allowed,
+            self.dev.as_ref().is_some_and(Device::is_config_db_open),
+            self.dev.as_ref().is_some_and(Device::touched_candidate),
+        )
     }
 
     /// Close the session now, rather than leaving it to `Drop`.
@@ -335,7 +354,11 @@ impl Drop for PooledDevice {
             let Ok(handle) = tokio::runtime::Handle::try_current() else {
                 return; // No runtime — session leaks but process doesn't crash
             };
-            if !self.reuse_allowed || dev.is_config_db_open() {
+            if !should_pool(
+                self.reuse_allowed,
+                dev.is_config_db_open(),
+                dev.touched_candidate(),
+            ) {
                 // Candidate state is uncertain or a config DB was left open.
                 handle.spawn(async move {
                     let mut d = dev;
@@ -641,6 +664,35 @@ mod tests {
     }
 
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    // ── should_pool: what may go back in the pool (issue #316) ──────────
+
+    #[test]
+    fn a_clean_committed_session_is_pooled() {
+        assert!(should_pool(true, false, false));
+    }
+
+    #[test]
+    fn an_open_config_db_is_never_pooled() {
+        // A confirmed commit re-allows reuse without unlocking, so the flag
+        // alone can be true while the session still holds the lock.
+        assert!(!should_pool(true, true, false));
+    }
+
+    #[test]
+    fn an_uncertain_candidate_is_never_pooled() {
+        assert!(!should_pool(false, false, false));
+    }
+
+    /// `commit_with_comment` goes through rustez's raw `rpc()` path, which
+    /// cannot clear rustnetconf's candidate-dirty flag. Pooling such a session
+    /// arms a `<discard-changes/>` that fires whenever the pool later closes it
+    /// — by then the shared candidate may hold an operator's edits, made after
+    /// the MCP released its lock, and the discard erases them.
+    #[test]
+    fn a_session_that_touched_the_candidate_is_never_pooled() {
+        assert!(!should_pool(true, false, true));
+    }
 
     // ── error_is_transient classifier (issue #83) ───────────────────────
 
