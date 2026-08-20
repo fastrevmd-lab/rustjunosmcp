@@ -4,7 +4,7 @@
 //! tool surface cannot clear it: a failed discard leaves the operation behind,
 //! and `cancel_junos_change_set` refuses a change set that is already terminal.
 //! Until this command existed the only way out was editing the JSON by hand
-//! (mecmcp#313).
+//! (#313).
 
 use crate::cli::{StateAction, StateDisposition};
 use anyhow::{Result, anyhow};

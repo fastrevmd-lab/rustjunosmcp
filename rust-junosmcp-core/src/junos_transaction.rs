@@ -119,7 +119,7 @@ pub struct JunosStagedTransaction {
 ///
 /// Callers rely on that to settle a record without touching the device again,
 /// so an implementation that cannot guarantee it must return `false` rather
-/// than assume (mecmcp#312).
+/// than assume (#312).
 #[async_trait]
 pub trait ReleaseStaged {
     /// Release the session, returning `true` if the close completed.
@@ -1024,6 +1024,14 @@ fn is_transport_uncertainty(error: &rustez::RustEzError) -> bool {
         // rendered a verdict. This is a known rejection, NOT uncertainty.
         RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError { .. })) => false,
 
+        // The connection dropped after `<commit>` was sent and before its reply.
+        // rustnetconf 0.14.3 raises this instead of a generic transport error
+        // precisely so a caller can tell it apart: the device may hold the
+        // change. This is the one error where guessing "rejected" is worst —
+        // the apply would be recorded as failed and cleanup would run against a
+        // device that already committed (#322).
+        RustEzError::Netconf(NetconfError::Rpc(RpcError::CommitUnknown)) => true,
+
         // ParseError can be a framing failure, a multi-RE cluster reply that
         // won't parse, or a device rejection wrapped in unparseable XML. Without
         // more context, treat it as uncertainty (the safer default).
@@ -1058,6 +1066,10 @@ fn is_transport_uncertainty(error: &rustez::RustEzError) -> bool {
                 "broken pipe",
                 "unexpected eof",
                 "channel closed",
+                // The wording rustnetconf uses for a commit whose reply never
+                // arrived, in case it reaches here as text rather than a variant.
+                "connection lost",
+                "commit status unknown",
             ]
             .iter()
             .any(|needle| err_str.contains(needle))
@@ -1836,6 +1848,25 @@ mod tests {
         assert!(
             norm.contains("junos:style configuration"),
             "element text 'junos:style configuration' must be preserved"
+        );
+    }
+
+    /// rustnetconf 0.14.3 reports a connection lost *after* `<commit>` was sent
+    /// as its own variant rather than as a generic transport error. The device
+    /// may have committed, so this is the single most important thing to call
+    /// uncertain: classified as a known rejection, the apply is recorded as
+    /// failed and cleanup runs against a device that may already hold the
+    /// change (#322).
+    #[test]
+    fn a_lost_connection_after_commit_is_uncertainty_not_a_rejection() {
+        use rustez::RustEzError;
+        use rustnetconf::error::{NetconfError, RpcError};
+
+        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::CommitUnknown));
+
+        assert!(
+            is_transport_uncertainty(&error),
+            "CommitUnknown means the commit may have landed: {error}"
         );
     }
 
