@@ -283,7 +283,7 @@ pub struct PooledDevice {
 ///
 /// The distinction is the difference between a device telling us the lock is
 /// free and our inferring it from a closed socket, and it decides whether an
-/// operation may be reported as reconciled (mecmcp#316).
+/// operation may be reported as reconciled (#316).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LockRelease {
     /// `<unlock>` was acknowledged by the device.
@@ -302,11 +302,18 @@ pub(crate) enum LockRelease {
 /// - The configuration database is open. A confirmed commit calls `allow_reuse`
 ///   without unlocking, so the flag alone can be true while the session still
 ///   holds the lock.
-/// - The candidate is still marked dirty. `commit_with_comment` commits through
-///   rustez's raw `rpc()` path, which cannot clear rustnetconf's flag, so the
-///   session carries an armed `<discard-changes/>` into its eventual close. That
-///   is harmless for its own changes but not for whatever the shared candidate
-///   holds by the time the pool evicts it (mecmcp#316).
+/// - The candidate is still marked dirty, so the session carries an armed
+///   `<discard-changes/>` into its eventual close. That is harmless for its own
+///   changes but not for whatever the shared candidate holds by the time the
+///   pool evicts it (#316).
+///
+///   Since rustez 0.14.2 a successful `commit_with_comment` **clears** that flag
+///   — it goes through rustnetconf's typed `commit_configuration_with_log`
+///   rather than the raw `rpc()` path — so an attributed commit pools normally
+///   again and stops costing a reconnect (#322). The guard stays because the
+///   cases it was written for have not gone anywhere: a failed apply, a staged
+///   session that never committed, or a rollback load all still leave the
+///   candidate dirty, and those must close under the lock rather than pool.
 fn should_pool(reuse_allowed: bool, config_db_open: bool, touched_candidate: bool) -> bool {
     reuse_allowed && !config_db_open && !touched_candidate
 }
@@ -326,7 +333,7 @@ impl PooledDevice {
     ///
     /// `commit` sets it after a successful commit *and* unlock, so it doubles as
     /// "this session holds no lock and has nothing staged" — which is what tells
-    /// cleanup not to force a discarding close on it (mecmcp#312).
+    /// cleanup not to force a discarding close on it (#312).
     pub(crate) fn is_reusable(&self) -> bool {
         // Same rule `Drop` applies, so "clean enough to pool" and "clean enough
         // to skip a discarding close" can never disagree.
@@ -341,7 +348,7 @@ impl PooledDevice {
     ///
     /// `Drop` can only *spawn* the close, so a caller that needs the device's
     /// configuration lock free — or its candidate discarded — before it looks
-    /// again cannot rely on it (mecmcp#312). Taking `self` by value leaves
+    /// again cannot rely on it (#312). Taking `self` by value leaves
     /// `Drop` nothing to do.
     pub(crate) async fn close_now(mut self) -> Result<(), JmcpError> {
         self.close_in_place().await
@@ -360,7 +367,7 @@ impl PooledDevice {
     /// So a dirty session is closed here instead, while the lock is still ours:
     /// the discard can only reach what we own, and ending the session is how
     /// Junos frees a candidate lock. A clean session unlocks and becomes
-    /// poolable as before (mecmcp#316).
+    /// poolable as before (#316).
     ///
     /// The two are not equally strong, and the returned value says which
     /// happened. An `<unlock>` is acknowledged by the device. A close is not:
@@ -449,7 +456,7 @@ impl Drop for PooledDevice {
                         reuse_allowed = self.reuse_allowed,
                         config_db_open = dev.is_config_db_open(),
                         "closing a candidate-dirty session from Drop; its discard is not \
-                         bounded by the lock that made it safe (mecmcp#316)"
+                         bounded by the lock that made it safe (#316)"
                     );
                 }
                 handle.spawn(async move {

@@ -181,7 +181,7 @@ enum AbandonOutcome {
 /// holding the candidate lock, and releasing it is itself the revert on Junos,
 /// so the device needs nothing further — measured on vsrx-ci, where the
 /// candidate is back to its pre-stage fingerprint and the lock free the instant
-/// a failed apply returns. What remains is settling the records (mecmcp#312).
+/// a failed apply returns. What remains is settling the records (#312).
 /// What the cleanup needs to name: which records, on whose behalf, and why.
 struct Abandon<'a> {
     change_set_id: &'a str,
@@ -1638,7 +1638,7 @@ mod tests {
         );
     }
 
-    /// mecmcp#312: the operation has to end terminal, or it blocks the device.
+    /// #312: the operation has to end terminal, or it blocks the device.
     ///
     /// `LifecycleState::terminal()` counts only `Committed` and `Discarded`, and
     /// `insert` refuses a new operation while a non-terminal one exists for the

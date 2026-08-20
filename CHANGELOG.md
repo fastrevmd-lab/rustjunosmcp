@@ -38,6 +38,23 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **An attributed commit no longer costs a reconnect (#322).** #316 had to close
+  a session under its own lock after `commit_with_comment`, because rustez could
+  not clear rustnetconf's candidate-dirty flag through the raw `rpc()` path — so
+  every apply ended by tearing down its SSH session. rustez 0.14.2 commits
+  through the typed `commit_configuration_with_log`, which clears the flag on
+  success, so such a session pools normally again.
+
+  No manifest change: the pin already said `0.14`. Every `touched_candidate`
+  guard stays — a failed apply, a staged session that never committed, and a
+  rollback load all still leave the candidate dirty and must close under the
+  lock. The flag simply reports `false` in the case that used to dominate.
+
+  Measured on `vsrx-ci` via 611: an apply now records `commit succeeded` rather
+  than `session closed to release the candidate lock, release not acknowledged
+  by the device`, which is the acknowledged-unlock path, and no
+  candidate-dirty-at-Drop warning fires.
+
 - **Client-asserted provenance is no longer permanently empty (#267).**
   `client_name`, `model_id` and `session_id` were structurally present in every
   audit record and never populated, so a consumer could not tell "no client

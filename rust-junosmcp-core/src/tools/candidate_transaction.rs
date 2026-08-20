@@ -35,7 +35,7 @@ pub(crate) fn cleanup_timeout() -> Duration {
 ///
 /// The longest chain is a failed change-set apply: the staged session close,
 /// then the lock, fingerprint and unlock probes that establish whether anything
-/// may be recorded (mecmcp#312). The older rollback-then-unlock path spends two
+/// may be recorded (#312). The older rollback-then-unlock path spends two
 /// of these; the bound has to cover the worst case, not the common one.
 const CLEANUP_PHASES: u32 = 4;
 

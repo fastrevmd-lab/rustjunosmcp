@@ -297,7 +297,7 @@ pub enum StateAction {
     /// One non-terminal operation blocks every later change on its device, and
     /// nothing in the tool surface can clear it — `cancel_junos_change_set`
     /// refuses a terminal change set, and a failed discard leaves the operation
-    /// behind. Without this the only way out was editing the JSON (mecmcp#313).
+    /// behind. Without this the only way out was editing the JSON (#313).
     ///
     /// Stop the service first: the running server holds its state in memory and
     /// will overwrite the file.
@@ -407,7 +407,7 @@ mod tests {
     /// together with `--allow-password-auth-add` while the doc comment on the
     /// latter still promised they were mutually exclusive. Asserting on the
     /// parsed flags here keeps the pair coupled to something that fails.
-    /// mecmcp#313: the recovery command has to exist and bind every field the
+    /// #313: the recovery command has to exist and bind every field the
     /// shared resolver needs, or a wedged device still has no supported way out.
     #[test]
     fn state_resolve_parses_every_field_the_resolver_needs() {

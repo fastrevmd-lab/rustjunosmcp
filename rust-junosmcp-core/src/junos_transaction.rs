@@ -119,7 +119,7 @@ pub struct JunosStagedTransaction {
 ///
 /// Callers rely on that to settle a record without touching the device again,
 /// so an implementation that cannot guarantee it must return `false` rather
-/// than assume (mecmcp#312).
+/// than assume (#312).
 #[async_trait]
 pub trait ReleaseStaged {
     /// Release the session, returning `true` if the close completed.
