@@ -1052,7 +1052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2236,7 +2236,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2664,7 +2664,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3221,9 +3221,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f2f15e05758598d6a07356beb4c8c6898b9f68ea90f9359e9836c1706ff80f"
+checksum = "a1b88b71ff6b117a264730ec632105ed00e45c096fdd1d8963c0b6775696fef4"
 dependencies = [
  "quick-xml",
  "rustnetconf",
@@ -3265,7 +3265,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3306,9 +3306,9 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10efcec759e77eb118ef6f2eb136582e938723e010aaabc8c3c31a247093d4a1"
+checksum = "d7eaa03eb13bd7fe657139edf81a771e288eda7f16eccae3fd5ed8a9cf75438e"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -3821,7 +3821,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
