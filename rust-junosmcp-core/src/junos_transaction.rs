@@ -610,7 +610,12 @@ impl DeviceTransaction for JunosTransaction {
                                 "commit succeeded".into()
                             }
                             crate::device_manager::LockRelease::ClosedUnverified => {
-                                "commit succeeded; candidate lock released by closing the session"
+                                // Say what is known, not what is likely. The
+                                // session was closed at our end; the device
+                                // never acknowledged the release, and
+                                // rustnetconf reports success either way.
+                                "commit succeeded; session closed to release the candidate lock, \
+                                 release not acknowledged by the device"
                                     .to_owned()
                             }
                         }),
