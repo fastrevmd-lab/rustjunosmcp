@@ -279,6 +279,38 @@ pub struct PooledDevice {
     reuse_allowed: bool,
 }
 
+/// How a candidate lock was given up.
+///
+/// The distinction is the difference between a device telling us the lock is
+/// free and our inferring it from a closed socket, and it decides whether an
+/// operation may be reported as reconciled (mecmcp#316).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockRelease {
+    /// `<unlock>` was acknowledged by the device.
+    Confirmed,
+    /// The session was closed instead, because its candidate was still flagged
+    /// dirty. Junos frees the lock when a session ends, but rustnetconf's close
+    /// is best-effort and reports success regardless, so this is an inference
+    /// from our own transport being shut — not proof.
+    ClosedUnverified,
+}
+
+/// Whether a session in this state may go back into the pool.
+///
+/// Three ways a session fails to qualify:
+/// - `reuse_allowed` is false — candidate state is uncertain.
+/// - The configuration database is open. A confirmed commit calls `allow_reuse`
+///   without unlocking, so the flag alone can be true while the session still
+///   holds the lock.
+/// - The candidate is still marked dirty. `commit_with_comment` commits through
+///   rustez's raw `rpc()` path, which cannot clear rustnetconf's flag, so the
+///   session carries an armed `<discard-changes/>` into its eventual close. That
+///   is harmless for its own changes but not for whatever the shared candidate
+///   holds by the time the pool evicts it (mecmcp#316).
+fn should_pool(reuse_allowed: bool, config_db_open: bool, touched_candidate: bool) -> bool {
+    reuse_allowed && !config_db_open && !touched_candidate
+}
+
 impl PooledDevice {
     /// Keep a session with uncertain candidate state out of the pool.
     pub(crate) fn prevent_reuse(&mut self) {
@@ -296,10 +328,13 @@ impl PooledDevice {
     /// "this session holds no lock and has nothing staged" — which is what tells
     /// cleanup not to force a discarding close on it (mecmcp#312).
     pub(crate) fn is_reusable(&self) -> bool {
-        // Mirror `Drop`'s check. A confirmed commit calls `allow_reuse` without
-        // unlocking, so the flag alone can be true while the device still has an
-        // open configuration database — and therefore still holds the lock.
-        self.reuse_allowed && !self.dev.as_ref().is_some_and(Device::is_config_db_open)
+        // Same rule `Drop` applies, so "clean enough to pool" and "clean enough
+        // to skip a discarding close" can never disagree.
+        should_pool(
+            self.reuse_allowed,
+            self.dev.as_ref().is_some_and(Device::is_config_db_open),
+            self.dev.as_ref().is_some_and(Device::touched_candidate),
+        )
     }
 
     /// Close the session now, rather than leaving it to `Drop`.
@@ -309,6 +344,66 @@ impl PooledDevice {
     /// again cannot rely on it (mecmcp#312). Taking `self` by value leaves
     /// `Drop` nothing to do.
     pub(crate) async fn close_now(mut self) -> Result<(), JmcpError> {
+        self.close_in_place().await
+    }
+
+    /// Give up the candidate lock this session holds.
+    ///
+    /// A session whose candidate is still flagged dirty carries an armed
+    /// `<discard-changes/>` into its eventual close: rustez's
+    /// `commit_with_comment` commits through the raw `rpc()` path and cannot
+    /// clear rustnetconf's flag, and `rollback` sets it. Unlocking such a
+    /// session and letting it live on would fire that discard later, against a
+    /// candidate this operation no longer owns — on standalone Junos the
+    /// candidate is shared, so what it erases is an operator's work.
+    ///
+    /// So a dirty session is closed here instead, while the lock is still ours:
+    /// the discard can only reach what we own, and ending the session is how
+    /// Junos frees a candidate lock. A clean session unlocks and becomes
+    /// poolable as before (mecmcp#316).
+    ///
+    /// The two are not equally strong, and the returned value says which
+    /// happened. An `<unlock>` is acknowledged by the device. A close is not:
+    /// rustnetconf's close sequence is best-effort throughout and returns `Ok`
+    /// even when `<close-session/>` never lands, so the only thing it
+    /// establishes is that *our* end of the transport is shut — which frees the
+    /// lock on any device still reachable, and says nothing about one that is
+    /// not. Callers that report a lock as released must not treat the two the
+    /// same.
+    ///
+    /// The close is bounded by the per-phase cleanup budget. `Device::close`
+    /// applies no timeout of its own — unlike rustez's config wrappers — so a
+    /// peer that acknowledges the commit and then stops replying would
+    /// otherwise hold this future open indefinitely, on the path every
+    /// attributed commit now takes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unlock failed, or if the close failed or
+    /// exceeded the cleanup budget. In each case the caller has no proof the
+    /// lock was released.
+    pub(crate) async fn release_lock(&mut self) -> Result<LockRelease, JmcpError> {
+        if self.dev.as_ref().is_some_and(Device::touched_candidate) {
+            let budget = crate::tools::candidate_transaction::cleanup_timeout();
+            return match tokio::time::timeout(budget, self.close_in_place()).await {
+                Ok(result) => result.map(|()| LockRelease::ClosedUnverified),
+                Err(_) => Err(JmcpError::Validation(format!(
+                    "closing the session to release the candidate lock exceeded the {}s cleanup budget; lock state unknown",
+                    budget.as_secs()
+                ))),
+            };
+        }
+        self.config()?.unlock().await?;
+        self.allow_reuse();
+        Ok(LockRelease::Confirmed)
+    }
+
+    /// Close the session through a mutable borrow.
+    ///
+    /// Callers that hold the session behind a guard cannot move out of it to
+    /// call [`close_now`](Self::close_now). Afterwards the handle owns no
+    /// session, so `Drop` has nothing to close or pool.
+    pub(crate) async fn close_in_place(&mut self) -> Result<(), JmcpError> {
         match self.dev.take() {
             Some(mut dev) => dev.close().await.map_err(JmcpError::from),
             None => Ok(()),
@@ -335,8 +430,28 @@ impl Drop for PooledDevice {
             let Ok(handle) = tokio::runtime::Handle::try_current() else {
                 return; // No runtime — session leaks but process doesn't crash
             };
-            if !self.reuse_allowed || dev.is_config_db_open() {
+            if !should_pool(
+                self.reuse_allowed,
+                dev.is_config_db_open(),
+                dev.touched_candidate(),
+            ) {
                 // Candidate state is uncertain or a config DB was left open.
+                if dev.touched_candidate() {
+                    // Every path that gives up a lock is supposed to have
+                    // released this session explicitly, under the lock, via
+                    // `release_lock`. Reaching `Drop` still dirty means the
+                    // discard goes out on a spawned task instead — after the
+                    // call returned, against a candidate that is shared again.
+                    // That is the #316 hazard re-entering by the back door, so
+                    // it is logged rather than left silent.
+                    tracing::warn!(
+                        router = %self.router_name,
+                        reuse_allowed = self.reuse_allowed,
+                        config_db_open = dev.is_config_db_open(),
+                        "closing a candidate-dirty session from Drop; its discard is not \
+                         bounded by the lock that made it safe (mecmcp#316)"
+                    );
+                }
                 handle.spawn(async move {
                     let mut d = dev;
                     let _ = d.close().await;
@@ -641,6 +756,35 @@ mod tests {
     }
 
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    // ── should_pool: what may go back in the pool (issue #316) ──────────
+
+    #[test]
+    fn a_clean_committed_session_is_pooled() {
+        assert!(should_pool(true, false, false));
+    }
+
+    #[test]
+    fn an_open_config_db_is_never_pooled() {
+        // A confirmed commit re-allows reuse without unlocking, so the flag
+        // alone can be true while the session still holds the lock.
+        assert!(!should_pool(true, true, false));
+    }
+
+    #[test]
+    fn an_uncertain_candidate_is_never_pooled() {
+        assert!(!should_pool(false, false, false));
+    }
+
+    /// `commit_with_comment` goes through rustez's raw `rpc()` path, which
+    /// cannot clear rustnetconf's candidate-dirty flag. Pooling such a session
+    /// arms a `<discard-changes/>` that fires whenever the pool later closes it
+    /// — by then the shared candidate may hold an operator's edits, made after
+    /// the MCP released its lock, and the discard erases them.
+    #[test]
+    fn a_session_that_touched_the_candidate_is_never_pooled() {
+        assert!(!should_pool(true, false, true));
+    }
 
     // ── error_is_transient classifier (issue #83) ───────────────────────
 

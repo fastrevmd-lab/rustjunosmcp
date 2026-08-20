@@ -38,6 +38,26 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **A refused lock no longer destroys an operator's uncommitted work
+  (#316).** Junos's candidate datastore is shared, and rustnetconf closed every
+  session with an unconditional `<discard-changes/>` — so a session that only
+  read, or whose `<lock>` was refused *because* someone had uncommitted work,
+  threw away exactly that work. Silently: no error, no log. Fixed upstream in
+  rustnetconf 0.14.0 / rustez 0.14.0, which discard only when the session itself
+  dirtied the candidate; this release takes those pins. Verified on `vsrx-ci`
+  standalone: `commit_check_config`, `rollback_config` preview and
+  `apply_junos_change_set` all previously destroyed out-of-band edits and now
+  preserve them, while still being correctly refused.
+
+- **Sessions that touched the candidate are no longer pooled (#316).**
+  `commit_with_comment` commits through rustez's raw `rpc()` path, which cannot
+  clear the new candidate-dirty flag, so such a session carries an armed
+  `<discard-changes/>` into its eventual close. Harmless for its own changes —
+  but the pool may hold it long past the unlock, and the discard then fires
+  against whatever the shared candidate holds by that point. Any session with a
+  dirty candidate is now closed rather than returned to the pool, at the cost of
+  one reconnect after each attributed commit.
+
 - **`systemctl restart` drains in-flight calls instead of dropping them.** This
   needed three mecmcp releases: 0.7.0's shutdown signal could never fire, and
   0.7.1 terminated rmcp's sessions at the instant shutdown began — and an MCP

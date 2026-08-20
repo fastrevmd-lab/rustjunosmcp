@@ -139,13 +139,14 @@ impl ReleaseStaged for JunosStagedTransaction {
             return true;
         };
 
-        // A session that committed cleanly has already unlocked, and `commit`
-        // marks it reusable at that moment. Forcing a close on it would send
-        // `<discard-changes/>` against a candidate this operation no longer owns
-        // — which on a standalone device can wipe edits another session made
-        // after that unlock. Let it go back to the pool instead. This is the
-        // path where the device committed but the coordinator's own state write
-        // then failed.
+        // A session that committed cleanly released its lock in `commit` — by
+        // closing, since `commit_with_comment` leaves the candidate flagged
+        // dirty (#316) — so this handle owns nothing to clean up. Forcing a
+        // close on a session that had unlocked and been pooled would send
+        // `<discard-changes/>` against a candidate this operation no longer
+        // owns, which on a standalone device can wipe edits another session made
+        // after that unlock. This is the path where the device committed but the
+        // coordinator's own state write then failed.
         if session.is_reusable() {
             drop(session);
             return true;
@@ -302,21 +303,19 @@ impl DeviceTransaction for JunosTransaction {
             return Ok(mecmcp_changeset::UnlockOutcome::Released);
         };
 
-        let unlock_result = {
-            let mut cfg = dev.config()?;
-            cfg.unlock().await
-        };
-
-        match unlock_result {
-            Ok(()) => {
-                dev.allow_reuse();
-                Ok(mecmcp_changeset::UnlockOutcome::Released)
-            }
+        // `release_lock` unlocks a clean session and closes a dirty one; either
+        // way the device holds no lock of ours afterwards (#316).
+        match dev.release_lock().await {
+            // `Released` covers both: an acknowledged `<unlock>`, and a close
+            // that ends the session Junos holds the lock against. What the
+            // coordinator must not be told is that a lock is free when the
+            // attempt failed — and that is the `Err` arm.
+            Ok(_) => Ok(mecmcp_changeset::UnlockOutcome::Released),
             // The session is dropped without `allow_reuse`, so it closes rather
             // than returning to the pool — which releases the lock on the device
             // regardless. The error still propagates: the caller asked for a
             // confirmed release and did not get one.
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 
@@ -443,18 +442,16 @@ impl DeviceTransaction for JunosTransaction {
                     revert_err_opt = Some(revert_error.to_string());
                 }
 
-                if let Err(unlock_error) = cfg.unlock().await {
+                // The revert above dirtied the candidate, so this closes rather
+                // than unlocks — under our own lock, never after it (#316).
+                if let Err(unlock_error) = dev.release_lock().await {
                     tracing::error!(
                         router = %self.router,
                         primary_error = %error,
                         unlock_error = %unlock_error,
-                        "failed to unlock after load failure; session tainted"
+                        "failed to release lock after load failure; session tainted"
                     );
                     unlock_err_opt = Some(unlock_error.to_string());
-                }
-
-                if revert_err_opt.is_none() && unlock_err_opt.is_none() {
-                    dev.allow_reuse();
                 }
 
                 // Return the cleanup-aware error if cleanup failed, otherwise the primary.
@@ -588,28 +585,47 @@ impl DeviceTransaction for JunosTransaction {
                 // Commit succeeded. Unlock and allow the session to be pooled.
                 // If unlock fails, the commit already succeeded, but the lock state
                 // is unknown — that's Indeterminate.
-                match cfg.unlock().await {
-                    Ok(()) => {
-                        // Finding 4 (P2): After commit and unlock both succeed, allow
-                        // the session to be pooled. The previous code left prevent_reuse
-                        // set, forcing a fresh SSH connection for every successful change
-                        // set. ConfigManager doesn't implement Drop, so we can just allow
-                        // reuse on the session directly (the borrow ends at the match arm).
-                        session.allow_reuse();
-
-                        Ok(CommitOutcome::Reconciled {
-                            succeeded: true,
-                            job_id: None,
-                            details: Some("commit succeeded".into()),
-                        })
-                    }
-                    Err(unlock_error) => {
-                        // Commit succeeded but unlock failed or timed out. The lock
-                        // state is unknown. Return Indeterminate.
+                // `commit_with_comment` leaves rustnetconf's candidate flag set,
+                // so this closes the session under our lock rather than unlocking
+                // and pooling an armed `<discard-changes/>` (#316).
+                match session.release_lock().await {
+                    // How the lock went is recorded, not glossed. An `<unlock>`
+                    // was acknowledged by the device; a close was not — see
+                    // `release_lock`. Neither is reported as `Indeterminate`,
+                    // and deliberately: that state is non-terminal
+                    // (`LifecycleState::terminal` is `Committed | Discarded`
+                    // alone), so one per device blocks every later apply until
+                    // an operator runs `state resolve`. The commit itself is
+                    // device-acknowledged here; making every attributed commit
+                    // need manual reconciliation to express a weaker fact about
+                    // the lock would trade a small uncertainty for a certain
+                    // outage. The uncertainty that does matter — a peer that
+                    // stopped answering — arrives as the `Err` arm, because the
+                    // close is bounded.
+                    Ok(release) => Ok(CommitOutcome::Reconciled {
+                        succeeded: true,
+                        job_id: None,
+                        details: Some(match release {
+                            crate::device_manager::LockRelease::Confirmed => {
+                                "commit succeeded".into()
+                            }
+                            crate::device_manager::LockRelease::ClosedUnverified => {
+                                // Say what is known, not what is likely. The
+                                // session was closed at our end; the device
+                                // never acknowledged the release, and
+                                // rustnetconf reports success either way.
+                                "commit succeeded; session closed to release the candidate lock, \
+                                 release not acknowledged by the device"
+                                    .to_owned()
+                            }
+                        }),
+                    }),
+                    Err(release_error) => {
+                        // Commit succeeded but the release failed or exceeded the
+                        // cleanup budget. The lock state is unknown.
                         Ok(CommitOutcome::Indeterminate {
                             reason: format!(
-                                "commit succeeded but unlock failed: {}; lock state unknown",
-                                unlock_error
+                                "commit succeeded but releasing the candidate lock failed: {release_error}; lock state unknown"
                             ),
                         })
                     }
@@ -658,7 +674,6 @@ impl DeviceTransaction for JunosTransaction {
                 // before unlocking.
                 let load_result = cfg.rollback(n).await;
                 if let Err(load_error) = load_result {
-                    let mut cleanup_failed = false;
                     if let Err(revert_error) = cfg.rollback(0).await {
                         tracing::error!(
                             router = %self.router,
@@ -667,18 +682,15 @@ impl DeviceTransaction for JunosTransaction {
                             revert_error = %revert_error,
                             "failed to revert after archive load failure; session tainted"
                         );
-                        cleanup_failed = true;
                     }
-                    if let Err(unlock_error) = cfg.unlock().await {
+                    // The revert dirtied the candidate, so this closes under our
+                    // own lock instead of unlocking and discarding later (#316).
+                    if let Err(unlock_error) = dev.release_lock().await {
                         tracing::error!(
                             router = %self.router,
                             unlock_error = %unlock_error,
-                            "failed to unlock after archive load failure; session tainted"
+                            "failed to release lock after archive load failure; session tainted"
                         );
-                        cleanup_failed = true;
-                    }
-                    if !cleanup_failed {
-                        dev.allow_reuse();
                     }
                     return Err(load_error.into());
                 }
@@ -689,16 +701,16 @@ impl DeviceTransaction for JunosTransaction {
 
                 match commit_result {
                     Ok(()) => {
-                        // Commit succeeded. Unlock and allow pooling.
-                        if let Err(unlock_error) = cfg.unlock().await {
+                        // Commit succeeded. The commit went through
+                        // `commit_with_comment`, which leaves the candidate flagged
+                        // dirty, so releasing closes the session under our lock
+                        // rather than pooling an armed discard (#316).
+                        if let Err(unlock_error) = dev.release_lock().await {
                             tracing::error!(
                                 router = %self.router,
                                 unlock_error = %unlock_error,
-                                "unlock failed after successful archive rollback commit; session tainted"
+                                "lock release failed after successful archive rollback commit; session tainted"
                             );
-                            // Session stays tainted (prevent_reuse).
-                        } else {
-                            dev.allow_reuse();
                         }
                         Ok(RollbackOutcome {
                             succeeded: true,
@@ -708,7 +720,6 @@ impl DeviceTransaction for JunosTransaction {
                     Err(commit_error) => {
                         // Commit failed. The candidate is dirty (has rollback N loaded).
                         // Revert (rollback 0) and unlock before returning.
-                        let mut cleanup_failed = false;
                         if let Err(revert_error) = cfg.rollback(0).await {
                             tracing::error!(
                                 router = %self.router,
@@ -716,18 +727,15 @@ impl DeviceTransaction for JunosTransaction {
                                 revert_error = %revert_error,
                                 "failed to revert after archive commit failure; session tainted"
                             );
-                            cleanup_failed = true;
                         }
-                        if let Err(unlock_error) = cfg.unlock().await {
+                        // Same as the load-failure path: the revert dirtied the
+                        // candidate, so release closes rather than unlocks (#316).
+                        if let Err(unlock_error) = dev.release_lock().await {
                             tracing::error!(
                                 router = %self.router,
                                 unlock_error = %unlock_error,
-                                "failed to unlock after archive commit failure; session tainted"
+                                "failed to release lock after archive commit failure; session tainted"
                             );
-                            cleanup_failed = true;
-                        }
-                        if !cleanup_failed {
-                            dev.allow_reuse();
                         }
                         Ok(RollbackOutcome {
                             succeeded: false,
@@ -796,18 +804,32 @@ impl DeviceTransaction for JunosTransaction {
 
         let comment = format!("Confirming commit: {}", format_attribution(attribution));
 
-        match cfg.commit_with_comment(&comment).await {
-            Ok(()) => Ok(CommitOutcome::Reconciled {
+        let outcome = match cfg.commit_with_comment(&comment).await {
+            Ok(()) => CommitOutcome::Reconciled {
                 succeeded: true,
                 job_id: None,
                 details: Some("confirming commit succeeded".into()),
-            }),
-            Err(error) => Ok(CommitOutcome::Reconciled {
+            },
+            Err(error) => CommitOutcome::Reconciled {
                 succeeded: false,
                 job_id: None,
                 details: Some(error.to_string()),
-            }),
+            },
+        };
+
+        // No lock is taken on this path, and `commit_with_comment` leaves the
+        // candidate flagged dirty, so the session carries an armed
+        // `<discard-changes/>`. Close it now rather than letting it sit in the
+        // pool with that discard pending against a candidate anyone may write
+        // (#316). A close failure does not change the commit's outcome.
+        if let Err(close_error) = dev.close_in_place().await {
+            tracing::warn!(
+                router = %self.router,
+                close_error = %close_error,
+                "failed to close session after confirming commit"
+            );
         }
+        Ok(outcome)
     }
 }
 
