@@ -306,7 +306,11 @@ impl DeviceTransaction for JunosTransaction {
         // `release_lock` unlocks a clean session and closes a dirty one; either
         // way the device holds no lock of ours afterwards (#316).
         match dev.release_lock().await {
-            Ok(()) => Ok(mecmcp_changeset::UnlockOutcome::Released),
+            // `Released` covers both: an acknowledged `<unlock>`, and a close
+            // that ends the session Junos holds the lock against. What the
+            // coordinator must not be told is that a lock is free when the
+            // attempt failed — and that is the `Err` arm.
+            Ok(_) => Ok(mecmcp_changeset::UnlockOutcome::Released),
             // The session is dropped without `allow_reuse`, so it closes rather
             // than returning to the pool — which releases the lock on the device
             // regardless. The error still propagates: the caller asked for a
@@ -585,18 +589,38 @@ impl DeviceTransaction for JunosTransaction {
                 // so this closes the session under our lock rather than unlocking
                 // and pooling an armed `<discard-changes/>` (#316).
                 match session.release_lock().await {
-                    Ok(()) => Ok(CommitOutcome::Reconciled {
+                    // How the lock went is recorded, not glossed. An `<unlock>`
+                    // was acknowledged by the device; a close was not — see
+                    // `release_lock`. Neither is reported as `Indeterminate`,
+                    // and deliberately: that state is non-terminal
+                    // (`LifecycleState::terminal` is `Committed | Discarded`
+                    // alone), so one per device blocks every later apply until
+                    // an operator runs `state resolve`. The commit itself is
+                    // device-acknowledged here; making every attributed commit
+                    // need manual reconciliation to express a weaker fact about
+                    // the lock would trade a small uncertainty for a certain
+                    // outage. The uncertainty that does matter — a peer that
+                    // stopped answering — arrives as the `Err` arm, because the
+                    // close is bounded.
+                    Ok(release) => Ok(CommitOutcome::Reconciled {
                         succeeded: true,
                         job_id: None,
-                        details: Some("commit succeeded".into()),
+                        details: Some(match release {
+                            crate::device_manager::LockRelease::Confirmed => {
+                                "commit succeeded".into()
+                            }
+                            crate::device_manager::LockRelease::ClosedUnverified => {
+                                "commit succeeded; candidate lock released by closing the session"
+                                    .to_owned()
+                            }
+                        }),
                     }),
-                    Err(unlock_error) => {
-                        // Commit succeeded but unlock failed or timed out. The lock
-                        // state is unknown. Return Indeterminate.
+                    Err(release_error) => {
+                        // Commit succeeded but the release failed or exceeded the
+                        // cleanup budget. The lock state is unknown.
                         Ok(CommitOutcome::Indeterminate {
                             reason: format!(
-                                "commit succeeded but unlock failed: {}; lock state unknown",
-                                unlock_error
+                                "commit succeeded but releasing the candidate lock failed: {release_error}; lock state unknown"
                             ),
                         })
                     }

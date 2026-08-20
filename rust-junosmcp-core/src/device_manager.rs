@@ -279,6 +279,22 @@ pub struct PooledDevice {
     reuse_allowed: bool,
 }
 
+/// How a candidate lock was given up.
+///
+/// The distinction is the difference between a device telling us the lock is
+/// free and our inferring it from a closed socket, and it decides whether an
+/// operation may be reported as reconciled (mecmcp#316).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockRelease {
+    /// `<unlock>` was acknowledged by the device.
+    Confirmed,
+    /// The session was closed instead, because its candidate was still flagged
+    /// dirty. Junos frees the lock when a session ends, but rustnetconf's close
+    /// is best-effort and reports success regardless, so this is an inference
+    /// from our own transport being shut — not proof.
+    ClosedUnverified,
+}
+
 /// Whether a session in this state may go back into the pool.
 ///
 /// Three ways a session fails to qualify:
@@ -342,21 +358,44 @@ impl PooledDevice {
     /// candidate is shared, so what it erases is an operator's work.
     ///
     /// So a dirty session is closed here instead, while the lock is still ours:
-    /// the discard can only reach what we own, and closing the session releases
-    /// the lock on the device just as `unlock` would. A clean session unlocks
-    /// and becomes poolable as before (mecmcp#316).
+    /// the discard can only reach what we own, and ending the session is how
+    /// Junos frees a candidate lock. A clean session unlocks and becomes
+    /// poolable as before (mecmcp#316).
+    ///
+    /// The two are not equally strong, and the returned value says which
+    /// happened. An `<unlock>` is acknowledged by the device. A close is not:
+    /// rustnetconf's close sequence is best-effort throughout and returns `Ok`
+    /// even when `<close-session/>` never lands, so the only thing it
+    /// establishes is that *our* end of the transport is shut — which frees the
+    /// lock on any device still reachable, and says nothing about one that is
+    /// not. Callers that report a lock as released must not treat the two the
+    /// same.
+    ///
+    /// The close is bounded by the per-phase cleanup budget. `Device::close`
+    /// applies no timeout of its own — unlike rustez's config wrappers — so a
+    /// peer that acknowledges the commit and then stops replying would
+    /// otherwise hold this future open indefinitely, on the path every
+    /// attributed commit now takes.
     ///
     /// # Errors
     ///
-    /// Returns an error if the unlock or the close failed — in either case the
-    /// caller has no proof the lock was released.
-    pub(crate) async fn release_lock(&mut self) -> Result<(), JmcpError> {
+    /// Returns an error if the unlock failed, or if the close failed or
+    /// exceeded the cleanup budget. In each case the caller has no proof the
+    /// lock was released.
+    pub(crate) async fn release_lock(&mut self) -> Result<LockRelease, JmcpError> {
         if self.dev.as_ref().is_some_and(Device::touched_candidate) {
-            return self.close_in_place().await;
+            let budget = crate::tools::candidate_transaction::cleanup_timeout();
+            return match tokio::time::timeout(budget, self.close_in_place()).await {
+                Ok(result) => result.map(|()| LockRelease::ClosedUnverified),
+                Err(_) => Err(JmcpError::Validation(format!(
+                    "closing the session to release the candidate lock exceeded the {}s cleanup budget; lock state unknown",
+                    budget.as_secs()
+                ))),
+            };
         }
         self.config()?.unlock().await?;
         self.allow_reuse();
-        Ok(())
+        Ok(LockRelease::Confirmed)
     }
 
     /// Close the session through a mutable borrow.
