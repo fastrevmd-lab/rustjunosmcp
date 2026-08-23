@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
         audit_journald: args.audit_journald,
         audit_redact: args.audit_redact.clone(),
         audit_hmac_key_file: args.audit_hmac_key_file.clone(),
+        evidence: args.evidence.clone(),
     };
     mecmcp_runtime::cli_validate::validate(&shared_cli).map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -240,20 +241,51 @@ async fn main() -> Result<()> {
         );
     }
 
-    let coordinator = std::sync::Arc::new(
-        mecmcp_changeset::ChangesetCoordinator::load(
+    // The SSDF evidence pipeline, when configured. Built before the coordinator
+    // because the coordinator takes its recorder, and started here rather than
+    // lazily so a misconfiguration -- an unwritable spool, a credential with
+    // the wrong mode, an unreachable ClickHouse -- fails the server at startup
+    // instead of at the first change, which is the worst moment to discover it.
+    let evidence = match args.evidence.into_config() {
+        Ok(Some(config)) => {
+            tracing::info!(
+                server_id = %config.server_id,
+                run_id = %config.run_id,
+                "SSDF evidence pipeline enabled"
+            );
+            let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+            let transport = std::sync::Arc::new(
+                mecmcp_transport::evidence_transport::EvidenceHttpTransport::new(
+                    args.evidence.ca_file(),
+                    provider,
+                )
+                .context("building the SSDF evidence transport")?,
+            );
+            Some(
+                mecmcp_audit::EvidenceService::start_with_transport(config, transport)
+                    .context("starting the SSDF evidence pipeline")?,
+            )
+        }
+        Ok(None) => None,
+        Err(error) => anyhow::bail!("SSDF evidence configuration: {error}"),
+    };
+
+    let mut changeset_coordinator = mecmcp_changeset::ChangesetCoordinator::load(
             Some(&args.changeset_state_file),
             mecmcp_changeset::OperationLimits::default(),
             std::time::Duration::from_secs(args.changeset_approval_timeout_secs),
             args.lab_mode,
         )
-        .with_context(|| {
-            format!(
-                "initializing changeset coordinator at {}",
-                args.changeset_state_file.display()
-            )
-        })?,
-    );
+    .with_context(|| {
+        format!(
+            "initializing changeset coordinator at {}",
+            args.changeset_state_file.display()
+        )
+    })?;
+    if let Some(service) = &evidence {
+        changeset_coordinator = changeset_coordinator.with_evidence(service.recorder());
+    }
+    let coordinator = std::sync::Arc::new(changeset_coordinator);
     let handler = JmcpHandler::new(
         dev_manager.clone(),
         policy,
@@ -415,5 +447,18 @@ async fn main() -> Result<()> {
             .await?;
         }
     }
+
+    // Deliver what is still spooled before the process leaves. The drain ships
+    // on an interval, so without this every record written since the last tick
+    // waits for the next start -- and a segment still open has never been
+    // spooled at all. A failure here is reported rather than swallowed: the
+    // records stay in the outbox and the next start replays them, but an
+    // operator stopping a server has no other signal that its trail is behind.
+    if let Some(service) = evidence
+        && let Err(error) = service.shutdown()
+    {
+        tracing::error!(%error, "the SSDF evidence pipeline did not flush cleanly");
+    }
+
     Ok(())
 }
