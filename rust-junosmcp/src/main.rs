@@ -353,7 +353,14 @@ async fn main() -> Result<()> {
         });
     }
 
-    match args.transport {
+    // Bound rather than propagated with `?`, so the evidence flush below runs
+    // whichever way serving ended. Returning the error directly would skip it,
+    // and `EvidenceService::Drop` deliberately does not spool -- a Drop that
+    // performs network I/O turns teardown into an unpredictable stall -- so
+    // every proposal and approval the recorder still held would be lost on a
+    // controlled transport failure. That is the case the trail exists for.
+    let served: anyhow::Result<()> = async {
+        match args.transport {
         Transport::Stdio => {
             let service = handler
                 .serve((tokio::io::stdin(), tokio::io::stdout()))
@@ -446,7 +453,10 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        }
+        Ok(())
     }
+    .await;
 
     // Deliver what is still spooled before the process leaves. The drain ships
     // on an interval, so without this every record written since the last tick
@@ -460,5 +470,5 @@ async fn main() -> Result<()> {
         tracing::error!(%error, "the SSDF evidence pipeline did not flush cleanly");
     }
 
-    Ok(())
+    served
 }
