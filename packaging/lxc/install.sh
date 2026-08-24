@@ -143,8 +143,28 @@ install -m 0644 "$PACKAGE_ROOT/etc/systemd/system/rust-junosmcp.service" "$UNIT_
 # it in the new location if it does not exist. Do NOT copy from the old location
 # — the runtime handles fallback and warns loudly so the operator can migrate
 # explicitly and remove the stale secret.
+# tokens.json moved from /etc/jmcp to /var/lib/jmcp (#333).
+#
+# Create an empty store ONLY when no legacy store exists. The runtime prefers an
+# existing primary, so writing an empty file here while the live tokens are still
+# at "$CONFIG_DIR/tokens.json" would shadow them: the service starts and rejects every
+# existing bearer token. A silent auth wipe on upgrade is worse than a refusal.
+#
+# The file is never copied automatically — that would leave a duplicate secret
+# behind, which is exactly what the stale-secret scan exists to flag.
 if [[ ! -e "$STATE_DIR/tokens.json" ]]; then
-    printf '%s\n' '{"version":1,"tokens":[]}' >"$STATE_DIR/tokens.json"
+    if [[ -e "$CONFIG_DIR/tokens.json" ]]; then
+        printf '%s\n' ">> Not creating $STATE_DIR/tokens.json: a token store already exists at"
+        printf '%s\n' ">> $CONFIG_DIR/tokens.json. The server reads it via the legacy fallback and warns."
+        printf '%s\n' ">> Migrate it deliberately, then remove the old copy:"
+        printf '>>   install -m 0600 -o %s -g %s %s %s\n' \
+            "$SERVICE_USER" "$SERVICE_GROUP" \
+            "$CONFIG_DIR/tokens.json" "$STATE_DIR/tokens.json"
+        printf '%s\n' ">>   rm $CONFIG_DIR/tokens.json"
+    else
+        printf '%s\n' '{"version":1,"tokens":[]}' >"$STATE_DIR/tokens.json"
+        chmod 0600 "$STATE_DIR/tokens.json"
+    fi
 fi
 
 if [[ ! -e "$CONFIG_DIR/known_hosts" ]]; then
