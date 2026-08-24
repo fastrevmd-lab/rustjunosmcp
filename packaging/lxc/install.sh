@@ -24,6 +24,40 @@ target_path() {
     fi
 }
 
+# Resolve the journald drop-in directory and prove it is safe to touch.
+#
+# Echoes the canonical directory, or nothing when it does not exist. Fails
+# closed on anything unexpected rather than skipping silently.
+#
+# This is called TWICE, deliberately: once in preflight so a refusal costs no
+# mutation, and again immediately before unlinking. Caching the preflight
+# result and reusing it is not sufficient — the cached value is a path *string*,
+# so if the directory is replaced by a symlink in between, that same string
+# traverses the new link at `rm` time and reaches outside the install root.
+# Testing `-L` on the file does not catch a symlinked *parent*.
+resolve_journald_dropins() {
+    local dir resolved root_resolved
+    dir="$(target_path /etc/systemd/journald.conf.d)"
+
+    [[ -d "$dir" ]] || return 0
+
+    [[ -L "$dir" ]] && fail "refusing to touch journald drop-ins: $dir is a symlink"
+
+    resolved="$(readlink -f "$dir")" \
+        || fail "refusing to touch journald drop-ins: cannot resolve $dir"
+
+    if [[ "$INSTALL_ROOT" != "/" ]]; then
+        root_resolved="$(readlink -f "$INSTALL_ROOT")" \
+            || fail "refusing to touch journald drop-ins: cannot resolve $INSTALL_ROOT"
+        case "$resolved/" in
+            "$root_resolved"/*) ;;
+            *) fail "refusing to touch journald drop-ins: $resolved escapes $root_resolved" ;;
+        esac
+    fi
+
+    printf '%s\n' "$resolved"
+}
+
 required_files=(
     usr/local/bin/rust-junosmcp
     etc/jmcp/devices.json.example
@@ -44,6 +78,10 @@ fi
 if [[ "$SKIP_USER_SETUP" != "1" && "$EUID" -ne 0 ]]; then
     fail "run as root, or use JMCP_INSTALL_SKIP_USER=1 for a staged smoke test"
 fi
+
+# Preflight, before ANY mutation — including groupadd/useradd, which create a
+# system account and /var/lib/jmcp. A refused install must leave the host alone.
+resolve_journald_dropins >/dev/null
 
 if [[ "$SKIP_USER_SETUP" != "1" ]] && ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
     groupadd --system "$SERVICE_GROUP"
@@ -77,40 +115,6 @@ remove_legacy_runtime() {
 
     rm -f "$legacy_binary" "$legacy_unit"
 }
-
-# Preflight: validate the journald drop-in directory BEFORE any mutation.
-#
-# The cleanup itself happens near the end of this script, but its safety checks
-# belong here. Package lifecycle is high-risk (AGENTS.md), and refusing after
-# the binary, unit, and config have already been written leaves the target
-# partially upgraded while automation sees exit 1 — the worst of both.
-#
-# `target_path` is plain string concatenation and this installer has no other
-# path guard, so a symlinked journald.conf.d could otherwise let the later
-# `rm -f` reach outside a staged root.
-JOURNALD_DROPINS="$(target_path /etc/systemd/journald.conf.d)"
-JOURNALD_DROPINS_RESOLVED=""
-if [[ -d "$JOURNALD_DROPINS" ]]; then
-    [[ -L "$JOURNALD_DROPINS" ]] \
-        && fail "refusing to install: $JOURNALD_DROPINS is a symlink"
-
-    JOURNALD_DROPINS_RESOLVED="$(readlink -f "$JOURNALD_DROPINS")" \
-        || fail "refusing to install: cannot resolve $JOURNALD_DROPINS"
-
-    if [[ "$INSTALL_ROOT" != "/" ]]; then
-        install_root_resolved="$(readlink -f "$INSTALL_ROOT")" \
-            || fail "refusing to install: cannot resolve install root $INSTALL_ROOT"
-        case "$JOURNALD_DROPINS_RESOLVED/" in
-            "$install_root_resolved"/*) ;;
-            *) fail "refusing to install: $JOURNALD_DROPINS_RESOLVED escapes $install_root_resolved" ;;
-        esac
-    fi
-
-    for stale in "$JOURNALD_DROPINS_RESOLVED/retention.conf" "$JOURNALD_DROPINS_RESOLVED/jmcp.conf"; do
-        [[ -L "$stale" ]] \
-            && fail "refusing to install: symlinked journald drop-in $stale"
-    done
-fi
 
 install -d -m 0755 "$BIN_DIR" "$UNIT_DIR"
 install -d -m 0750 "$CONFIG_DIR" "$STATE_DIR" "$JUNOS_STAGING_DIR" "$SRX_STAGING_DIR"
@@ -242,13 +246,13 @@ fi
 #     configuration, not journald.conf — journald must be signalled to reread
 #     it. Without this, the stale 30-day retention stays active until a manual
 #     reload or a reboot, which is exactly the defect #331 exists to fix.
-#  3. The path safety checks for this cleanup run in preflight, above, so a
-#     refusal happens before anything is written rather than after.
+#  3. The directory is re-resolved and re-contained HERE, not trusted from
+#     preflight. Preflight exists so a refusal costs no mutation; this call
+#     exists so the path is validated at the moment it is used.
 JOURNALD_CLEANED=0
+JOURNALD_DROPINS_RESOLVED="$(resolve_journald_dropins)"
 if [[ -n "$JOURNALD_DROPINS_RESOLVED" ]]; then
     for stale in "$JOURNALD_DROPINS_RESOLVED/retention.conf" "$JOURNALD_DROPINS_RESOLVED/jmcp.conf"; do
-        # Re-checked immediately before removal: preflight ran earlier, and this
-        # narrows the window in which the entry could have become a symlink.
         [[ -L "$stale" ]] \
             && fail "refusing to remove symlinked journald drop-in: $stale"
         if [[ -f "$stale" ]]; then
