@@ -44,34 +44,6 @@ fn token_path_pair(configured: &std::path::Path) -> (std::path::PathBuf, std::pa
     )
 }
 
-#[cfg(test)]
-mod token_path_tests {
-    use super::token_path_pair;
-    use std::path::Path;
-
-    /// The shipped unit passes `--tokens-file /var/lib/jmcp/tokens.json`. If the
-    /// primary is hardcoded to that value the two arguments become identical and
-    /// the /etc fallback silently disappears.
-    #[test]
-    fn shipped_unit_path_still_leaves_a_distinct_fallback() {
-        let (primary, legacy) = token_path_pair(Path::new("/var/lib/jmcp/tokens.json"));
-        assert_ne!(
-            primary, legacy,
-            "primary and fallback collapsed to one path - the /etc fallback is gone"
-        );
-        assert_eq!(primary, Path::new("/var/lib/jmcp/tokens.json"));
-        assert_eq!(legacy, Path::new("/etc/jmcp/tokens.json"));
-    }
-
-    /// An operator-supplied path must be honoured as the primary, not discarded.
-    #[test]
-    fn an_explicit_path_is_used_as_the_primary() {
-        let (primary, legacy) = token_path_pair(Path::new("/srv/custom/tokens.json"));
-        assert_eq!(primary, Path::new("/srv/custom/tokens.json"));
-        assert_ne!(primary, legacy);
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let env_compat::ParsedCli {
@@ -547,4 +519,32 @@ async fn main() -> Result<()> {
     }
 
     served
+}
+
+#[cfg(test)]
+mod token_path_tests {
+    use super::token_path_pair;
+    use std::path::Path;
+
+    /// The shipped unit passes `--tokens-file /var/lib/jmcp/tokens.json`. If the
+    /// primary is hardcoded to that value the two arguments become identical and
+    /// the /etc fallback silently disappears.
+    #[test]
+    fn shipped_unit_path_still_leaves_a_distinct_fallback() {
+        let (primary, legacy) = token_path_pair(Path::new("/var/lib/jmcp/tokens.json"));
+        assert_ne!(
+            primary, legacy,
+            "primary and fallback collapsed to one path - the /etc fallback is gone"
+        );
+        assert_eq!(primary, Path::new("/var/lib/jmcp/tokens.json"));
+        assert_eq!(legacy, Path::new("/etc/jmcp/tokens.json"));
+    }
+
+    /// An operator-supplied path must be honoured as the primary, not discarded.
+    #[test]
+    fn an_explicit_path_is_used_as_the_primary() {
+        let (primary, legacy) = token_path_pair(Path::new("/srv/custom/tokens.json"));
+        assert_eq!(primary, Path::new("/srv/custom/tokens.json"));
+        assert_ne!(primary, legacy);
+    }
 }
