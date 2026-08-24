@@ -98,6 +98,10 @@ jobs:
         working-directory: RustJunosMCP
         run: ./packaging/tests/journald-dropin-ordering.sh dist/rust-junosmcp_*_amd64.tar.gz
 
+      - name: Token migration guard
+        working-directory: RustJunosMCP
+        run: ./packaging/tests/token-migration-guard.sh dist/rust-junosmcp_*_amd64.tar.gz
+
       - name: Debian and Ubuntu install smoke tests
         working-directory: RustJunosMCP
         run: ./scripts/test-lxc-distributions.sh dist/rust-junosmcp_*_amd64.tar.gz

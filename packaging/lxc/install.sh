@@ -156,11 +156,17 @@ if [[ ! -e "$STATE_DIR/tokens.json" ]]; then
     if [[ -e "$CONFIG_DIR/tokens.json" ]]; then
         printf '%s\n' ">> Not creating $STATE_DIR/tokens.json: a token store already exists at"
         printf '%s\n' ">> $CONFIG_DIR/tokens.json. The server reads it via the legacy fallback and warns."
-        printf '%s\n' ">> Migrate it deliberately, then remove the old copy:"
+        printf '%s\n' ">>"
+        printf '%s\n' ">> Migrate it deliberately. The service must be RESTARTED, not reloaded:"
+        printf '%s\n' ">> the token store is bound to the path resolved at startup, so SIGHUP"
+        printf '%s\n' ">> keeps reloading the old file. Rotations and revocations would silently"
+        printf '%s\n' ">> stop applying — revoked credentials would stay active."
         printf '>>   install -m 0600 -o %s -g %s %s %s\n' \
             "$SERVICE_USER" "$SERVICE_GROUP" \
             "$CONFIG_DIR/tokens.json" "$STATE_DIR/tokens.json"
-        printf '%s\n' ">>   rm $CONFIG_DIR/tokens.json"
+        printf '%s\n' ">>   systemctl restart rust-junosmcp"
+        printf '%s\n' ">>   systemctl status rust-junosmcp    # confirm it came back"
+        printf '%s\n' ">>   shred -u $CONFIG_DIR/tokens.json  # secure erase, per packaging/FILESYSTEM.md"
     else
         printf '%s\n' '{"version":1,"tokens":[]}' >"$STATE_DIR/tokens.json"
         chmod 0600 "$STATE_DIR/tokens.json"
