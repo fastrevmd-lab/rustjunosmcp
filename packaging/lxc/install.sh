@@ -198,6 +198,12 @@ fi
 # Set modes on files that exist. devices.json may not exist on first install.
 [[ -e "$CONFIG_DIR/devices.json" ]] && chmod 0600 "$CONFIG_DIR/devices.json"
 [[ -e "$STATE_DIR/tokens.json" ]] && chmod 0600 "$STATE_DIR/tokens.json"
+# The legacy /etc store is hardened too, when present. It is not vestigial: under
+# the migration fallback it is the store the service actually reads, so leaving it
+# at whatever mode it happened to have is a live credential exposure. Dropping
+# this when the primary moved to /var/lib was a regression the distribution smoke
+# test caught by asserting mode 600 on /etc/jmcp/tokens.json.
+[[ -e "$CONFIG_DIR/tokens.json" ]] && chmod 0600 "$CONFIG_DIR/tokens.json"
 chmod 0644 "$CONFIG_DIR/known_hosts"
 chmod 0600 "$STATE_DIR/changeset-state.json"
 [[ -e "$STATE_DIR/audit-hmac.key" ]] && chmod 0600 "$STATE_DIR/audit-hmac.key"
