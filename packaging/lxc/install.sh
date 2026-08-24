@@ -208,10 +208,33 @@ fi
 #     configuration, not journald.conf — journald must be signalled to reread
 #     it. Without this, the stale 30-day retention stays active until a manual
 #     reload or a reboot, which is exactly the defect #331 exists to fix.
+#  3. `target_path` is plain string concatenation, and this installer has no
+#     other path-safety guard. Now that the cleanup also runs for a staged
+#     install, a symlinked journald.conf.d — plausible during chroot or image
+#     prep — would make `rm -f` delete a file *outside* the staged tree. So the
+#     directory and each candidate file are checked, and anything unexpected
+#     fails closed rather than being skipped silently.
 JOURNALD_DROPINS="$(target_path /etc/systemd/journald.conf.d)"
 JOURNALD_CLEANED=0
 if [[ -d "$JOURNALD_DROPINS" ]]; then
-    for stale in "$JOURNALD_DROPINS/retention.conf" "$JOURNALD_DROPINS/jmcp.conf"; do
+    [[ -L "$JOURNALD_DROPINS" ]] &&
+        fail "refusing to clean journald drop-ins: $JOURNALD_DROPINS is a symlink"
+
+    journald_resolved="$(readlink -f "$JOURNALD_DROPINS")" ||
+        fail "cannot resolve $JOURNALD_DROPINS"
+
+    if [[ "$INSTALL_ROOT" != "/" ]]; then
+        install_root_resolved="$(readlink -f "$INSTALL_ROOT")" ||
+            fail "cannot resolve install root $INSTALL_ROOT"
+        case "$journald_resolved/" in
+            "$install_root_resolved"/*) ;;
+            *) fail "refusing to clean journald drop-ins: $journald_resolved escapes $install_root_resolved" ;;
+        esac
+    fi
+
+    for stale in "$journald_resolved/retention.conf" "$journald_resolved/jmcp.conf"; do
+        [[ -L "$stale" ]] &&
+            fail "refusing to remove symlinked journald drop-in: $stale"
         if [[ -f "$stale" ]]; then
             echo ">> Removing stale journald drop-in: $stale"
             rm -f "$stale"

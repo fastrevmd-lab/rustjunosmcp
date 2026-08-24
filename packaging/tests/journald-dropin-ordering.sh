@@ -86,3 +86,36 @@ if [[ "${dropins[*]}" != "${expected[*]}" ]]; then
 fi
 
 echo ">> journald drop-in ordering test passed"
+
+# --- Symlink escape: the cleanup must fail closed, not delete outside the root.
+#
+# `target_path` is string concatenation and this installer has no other
+# path-safety guard, so a symlinked journald.conf.d would otherwise let `rm -f`
+# reach a file outside the staged tree.
+ESCAPE="$WORK/escape"
+mkdir -p "$ESCAPE"
+printf '%s\n' 'MaxRetentionSec=90day' >"$ESCAPE/retention.conf"
+
+ROOTFS2="$WORK/rootfs-symlink"
+mkdir -p "$ROOTFS2/etc/systemd"
+ln -s "$ESCAPE" "$ROOTFS2/etc/systemd/journald.conf.d"
+
+set +e
+JMCP_INSTALL_ROOT="$ROOTFS2" \
+    JMCP_INSTALL_SKIP_USER=1 \
+    JMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    "$PACKAGE_ROOT/install.sh" >/dev/null 2>&1
+symlink_status=$?
+set -e
+
+if [[ "$symlink_status" -eq 0 ]]; then
+    echo "FAIL: installer accepted a symlinked journald.conf.d instead of failing closed" >&2
+    exit 1
+fi
+
+if [[ ! -f "$ESCAPE/retention.conf" ]]; then
+    echo "FAIL: installer deleted a file outside the staged root via a symlink" >&2
+    exit 1
+fi
+
+echo ">> journald symlink-escape test passed"
