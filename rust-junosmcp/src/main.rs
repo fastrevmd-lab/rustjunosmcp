@@ -271,11 +271,11 @@ async fn main() -> Result<()> {
     };
 
     let mut changeset_coordinator = mecmcp_changeset::ChangesetCoordinator::load(
-            Some(&args.changeset_state_file),
-            mecmcp_changeset::OperationLimits::default(),
-            std::time::Duration::from_secs(args.changeset_approval_timeout_secs),
-            args.lab_mode,
-        )
+        Some(&args.changeset_state_file),
+        mecmcp_changeset::OperationLimits::default(),
+        std::time::Duration::from_secs(args.changeset_approval_timeout_secs),
+        args.lab_mode,
+    )
     .with_context(|| {
         format!(
             "initializing changeset coordinator at {}",
