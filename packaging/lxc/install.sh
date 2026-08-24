@@ -78,6 +78,40 @@ remove_legacy_runtime() {
     rm -f "$legacy_binary" "$legacy_unit"
 }
 
+# Preflight: validate the journald drop-in directory BEFORE any mutation.
+#
+# The cleanup itself happens near the end of this script, but its safety checks
+# belong here. Package lifecycle is high-risk (AGENTS.md), and refusing after
+# the binary, unit, and config have already been written leaves the target
+# partially upgraded while automation sees exit 1 — the worst of both.
+#
+# `target_path` is plain string concatenation and this installer has no other
+# path guard, so a symlinked journald.conf.d could otherwise let the later
+# `rm -f` reach outside a staged root.
+JOURNALD_DROPINS="$(target_path /etc/systemd/journald.conf.d)"
+JOURNALD_DROPINS_RESOLVED=""
+if [[ -d "$JOURNALD_DROPINS" ]]; then
+    [[ -L "$JOURNALD_DROPINS" ]] \
+        && fail "refusing to install: $JOURNALD_DROPINS is a symlink"
+
+    JOURNALD_DROPINS_RESOLVED="$(readlink -f "$JOURNALD_DROPINS")" \
+        || fail "refusing to install: cannot resolve $JOURNALD_DROPINS"
+
+    if [[ "$INSTALL_ROOT" != "/" ]]; then
+        install_root_resolved="$(readlink -f "$INSTALL_ROOT")" \
+            || fail "refusing to install: cannot resolve install root $INSTALL_ROOT"
+        case "$JOURNALD_DROPINS_RESOLVED/" in
+            "$install_root_resolved"/*) ;;
+            *) fail "refusing to install: $JOURNALD_DROPINS_RESOLVED escapes $install_root_resolved" ;;
+        esac
+    fi
+
+    for stale in "$JOURNALD_DROPINS_RESOLVED/retention.conf" "$JOURNALD_DROPINS_RESOLVED/jmcp.conf"; do
+        [[ -L "$stale" ]] \
+            && fail "refusing to install: symlinked journald drop-in $stale"
+    done
+fi
+
 install -d -m 0755 "$BIN_DIR" "$UNIT_DIR"
 install -d -m 0750 "$CONFIG_DIR" "$STATE_DIR" "$JUNOS_STAGING_DIR" "$SRX_STAGING_DIR"
 install -d -m 0700 "$DEVICE_LEASE_DIR"
@@ -208,33 +242,15 @@ fi
 #     configuration, not journald.conf — journald must be signalled to reread
 #     it. Without this, the stale 30-day retention stays active until a manual
 #     reload or a reboot, which is exactly the defect #331 exists to fix.
-#  3. `target_path` is plain string concatenation, and this installer has no
-#     other path-safety guard. Now that the cleanup also runs for a staged
-#     install, a symlinked journald.conf.d — plausible during chroot or image
-#     prep — would make `rm -f` delete a file *outside* the staged tree. So the
-#     directory and each candidate file are checked, and anything unexpected
-#     fails closed rather than being skipped silently.
-JOURNALD_DROPINS="$(target_path /etc/systemd/journald.conf.d)"
+#  3. The path safety checks for this cleanup run in preflight, above, so a
+#     refusal happens before anything is written rather than after.
 JOURNALD_CLEANED=0
-if [[ -d "$JOURNALD_DROPINS" ]]; then
-    [[ -L "$JOURNALD_DROPINS" ]] &&
-        fail "refusing to clean journald drop-ins: $JOURNALD_DROPINS is a symlink"
-
-    journald_resolved="$(readlink -f "$JOURNALD_DROPINS")" ||
-        fail "cannot resolve $JOURNALD_DROPINS"
-
-    if [[ "$INSTALL_ROOT" != "/" ]]; then
-        install_root_resolved="$(readlink -f "$INSTALL_ROOT")" ||
-            fail "cannot resolve install root $INSTALL_ROOT"
-        case "$journald_resolved/" in
-            "$install_root_resolved"/*) ;;
-            *) fail "refusing to clean journald drop-ins: $journald_resolved escapes $install_root_resolved" ;;
-        esac
-    fi
-
-    for stale in "$journald_resolved/retention.conf" "$journald_resolved/jmcp.conf"; do
-        [[ -L "$stale" ]] &&
-            fail "refusing to remove symlinked journald drop-in: $stale"
+if [[ -n "$JOURNALD_DROPINS_RESOLVED" ]]; then
+    for stale in "$JOURNALD_DROPINS_RESOLVED/retention.conf" "$JOURNALD_DROPINS_RESOLVED/jmcp.conf"; do
+        # Re-checked immediately before removal: preflight ran earlier, and this
+        # narrows the window in which the entry could have become a symlink.
+        [[ -L "$stale" ]] \
+            && fail "refusing to remove symlinked journald drop-in: $stale"
         if [[ -f "$stale" ]]; then
             echo ">> Removing stale journald drop-in: $stale"
             rm -f "$stale"

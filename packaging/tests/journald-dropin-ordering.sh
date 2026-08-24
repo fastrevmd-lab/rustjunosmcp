@@ -118,4 +118,18 @@ if [[ ! -f "$ESCAPE/retention.conf" ]]; then
     exit 1
 fi
 
-echo ">> journald symlink-escape test passed"
+# The refusal must happen in preflight, before anything is written. Failing
+# after the binary and unit are in place leaves a partially upgraded target
+# while automation only sees exit 1.
+for written in \
+    "$ROOTFS2/usr/local/bin/rust-junosmcp" \
+    "$ROOTFS2/etc/systemd/system/rust-junosmcp.service" \
+    "$ROOTFS2/etc/jmcp/devices.json.example"
+do
+    if [[ -e "$written" ]]; then
+        echo "FAIL: installer refused only after mutating the target ($written exists)" >&2
+        exit 1
+    fi
+done
+
+echo ">> journald symlink-escape test passed (refused before any write)"
