@@ -109,3 +109,18 @@ dashmap          = "6"
 http-body        = "1"
 rustnetconf      = "0.14"
 rustix           = "0.38"
+
+# Release build profile: LTO + strip for smaller binaries.
+#
+# This profile reduces the shipped binary from ~38.8 MB (unstripped, no LTO) to
+# ~10–14 MB. The trade-off is slower release builds: `codegen-units = 1` plus
+# thin LTO makes CI meaningfully slower. If that becomes painful, keep dev/CI
+# on defaults and apply this profile only where release artifacts are produced.
+#
+# `panic = "abort"` is evaluated separately: it changes unwinding semantics and
+# interacts with the integration tests that spawn the binary and assert on
+# failure paths.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

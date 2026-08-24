@@ -127,11 +127,13 @@ fi
 
 # Runtime dependencies.
 #
-# `ssh` and `scp` are not conveniences: transfer_file and fetch_file spawn
-# them, so the server is partly broken without them. They happen to be present
-# in Debian's *standard* LXC template, which is why nothing noticed — but that
-# is luck of template choice, not a guarantee, and a minimal template has
-# neither.
+# `ssh` and `scp` were here under a rationale claiming transfer_file and
+# fetch_file spawned them as subprocesses. That stopped being true in #212,
+# which removed the last `Command::new` spawn — transfers now run through
+# mecmcp-scp (russh + aws-lc-rs), and the server no longer shells out.
+# The repo's own Dockerfile switched to a distroless base *because* of that:
+# there is no subprocess to spawn, so the runtime needs neither a shell nor
+# utilities. The LXC path is catching up: the SSH client is dead code.
 #
 # `tar` was here for collect_jtac_support_bundle, which no longer spawns it —
 # the bundle is built in-process with the `tar` and `flate2` crates (#212). It
@@ -139,38 +141,52 @@ fi
 # unpack the release archive that contains this script.
 #
 # `curl` is needed by the verification step in the README, and the Debian 13
-# standard template does not ship it (mecmcp#33).
-#
-# Installing here is deliberate for LXC and deliberate *not* for the container
-# images: an LXC already has a shell and a package manager, so curl changes
-# nothing about its attack surface, whereas adding an HTTP client to a
-# distroless image hands an attacker a pivot tool after an RCE.
+# standard template does not ship it (mecmcp#33). Installing an HTTP client on
+# every deploy is deliberate for the LXC path and deliberate *not* for the
+# container image: an LXC already has a shell and a package manager, so curl
+# changes nothing about its attack surface, whereas adding it to a distroless
+# image hands an attacker a pivot tool after an RCE. That said, README
+# verification is an operator convenience, not a server runtime requirement,
+# so the curl install is now behind an opt-in flag.
 if [[ "$INSTALL_ROOT" == "/" && "$SKIP_RUNTIME_DEPS" != "1" ]]; then
     missing=()
-    for cmd in curl ssh scp; do
-        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-    done
+    if [[ "${JMCP_INSTALL_VERIFY_TOOLS:-0}" == "1" ]]; then
+        command -v curl >/dev/null 2>&1 || missing+=(curl)
+    fi
 
     if (( ${#missing[@]} > 0 )); then
-        declare -A pkg_for=(
-            [curl]=curl [ssh]=openssh-client [scp]=openssh-client
-        )
-        packages=()
-        for cmd in "${missing[@]}"; do packages+=("${pkg_for[$cmd]}"); done
-        # De-duplicate: ssh and scp both come from openssh-client.
-        mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
-
         if command -v apt-get >/dev/null 2>&1; then
-            echo ">> Installing runtime dependencies: ${packages[*]}"
+            echo ">> Installing verification tools: ${missing[*]}"
             DEBIAN_FRONTEND=noninteractive apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates "${packages[@]}"
+                ca-certificates "${missing[@]}"
+            # Clean up apt cache to avoid leaving 98 MB in /var/cache.
+            apt-get clean
         else
-            # Not fatal: a non-Debian host may satisfy these another way, and
-            # refusing to install over it would be worse than saying so.
             echo ">> WARNING: missing ${missing[*]} and no apt-get to install them." >&2
-            echo ">> WARNING: install ${packages[*]} or these tools will fail at runtime." >&2
+            echo ">> WARNING: install these if you need the README verification steps." >&2
         fi
+    fi
+fi
+
+# Clean up stale journald drop-ins.
+#
+# An unnumbered /etc/systemd/journald.conf.d/retention.conf sorts after the
+# numbered fleet policy drop-ins (10-audit-sealing.conf,
+# 20-audit-retention.conf) and silently overrides them. Previous versions of
+# this installer did not write any journald drop-ins, but if one exists from a
+# manual edit or another tool, remove it so the numbered fleet policy wins.
+# This repo's policy is: journald retention is set by the numbered drop-ins
+# shipped by the fleet management layer, not by this installer.
+if [[ "$INSTALL_ROOT" == "/" ]]; then
+    JOURNALD_DROPINS="/etc/systemd/journald.conf.d"
+    if [[ -d "$JOURNALD_DROPINS" ]]; then
+        for stale in "$JOURNALD_DROPINS/retention.conf" "$JOURNALD_DROPINS/jmcp.conf"; do
+            if [[ -f "$stale" ]]; then
+                echo ">> Removing stale journald drop-in: $stale"
+                rm -f "$stale"
+            fi
+        done
     fi
 fi
 
