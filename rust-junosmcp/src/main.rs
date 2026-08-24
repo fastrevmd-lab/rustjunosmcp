@@ -25,23 +25,39 @@ use rust_junosmcp_auth::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, MecmcpScpRunner, Policy, TransferConfig};
 use std::sync::Arc;
 
-/// The (primary, legacy) pair handed to [`mecmcp_auth::resolve_token_path`].
+/// Resolve the token store, applying the legacy fallback ONLY for the canonical path.
 ///
-/// The configured path is ALWAYS the primary. `/etc/jmcp/tokens.json` is the
-/// legacy fallback that keeps an un-migrated upgrade starting.
-///
-/// Kept as a named function so the wiring is testable. The defect this guards
-/// against is not in the resolution logic but in which arguments reach it:
-/// hardcoding `/var/lib/jmcp/tokens.json` as the primary and passing the CLI
-/// value as the fallback collapses both to one path, because the shipped unit
-/// passes exactly that. There is then no fallback at all, and an upgraded guest
-/// whose tokens are still in /etc fails to start.
-fn token_path_pair(configured: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    const LEGACY_TOKENS: &str = "/etc/jmcp/tokens.json";
-    (
-        configured.to_path_buf(),
-        std::path::PathBuf::from(LEGACY_TOKENS),
+/// The migration fallback exists so an upgrade that has not yet moved
+/// `/etc/jmcp/tokens.json` still starts. It must not apply to an operator's own
+/// path: if `--tokens-file /srv/custom.json` is missing — a typo, or a deleted
+/// store — falling back to the legacy file would silently reactivate unrelated
+/// or revoked credentials. A non-canonical path is loaded directly and fails if
+/// absent, which is the honest outcome.
+fn resolve_tokens(configured: &std::path::Path) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    resolve_tokens_with(
+        configured,
+        std::path::Path::new("/var/lib/jmcp/tokens.json"),
+        std::path::Path::new("/etc/jmcp/tokens.json"),
     )
+}
+
+/// The rule behind [`resolve_tokens`], with the two well-known paths injected so
+/// it can be exercised against real files in a test rather than against absolute
+/// paths that never exist there.
+fn resolve_tokens_with(
+    configured: &std::path::Path,
+    canonical: &std::path::Path,
+    legacy: &std::path::Path,
+) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    if configured != canonical {
+        return Ok(mecmcp_auth::ResolvedTokenPath {
+            path: configured.to_path_buf(),
+            used_fallback: false,
+            fallback_from: None,
+        });
+    }
+
+    mecmcp_auth::resolve_token_path(configured, legacy).context("resolving token file path")
 }
 
 #[tokio::main]
@@ -163,28 +179,18 @@ async fn main() -> Result<()> {
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
         (Some(configured_path), _) => {
-            // The CONFIGURED path is the primary; the legacy /etc/jmcp location is
-            // the fallback, so an upgrade whose tokens have not been moved yet still
-            // starts.
-            //
-            // Do NOT hardcode /var/lib as the primary and pass the CLI value as the
-            // fallback. The shipped unit passes
-            // `--tokens-file /var/lib/jmcp/tokens.json`, so both arguments would
-            // collapse to the same path and there would be no fallback at all — an
-            // upgraded guest with tokens still in /etc/jmcp fails to start, which is
-            // the client lockout #333 exists to prevent.
-            let (primary, legacy) = token_path_pair(configured_path);
-            let resolved = mecmcp_auth::resolve_token_path(&primary, &legacy)
-                .context("resolving token file path")?;
+            // See resolve_tokens: the legacy /etc fallback applies only to the
+            // canonical path, never to an operator-supplied one.
+            let resolved = resolve_tokens(configured_path)?;
 
-            if resolved.used_fallback {
+            if let Some(from) = &resolved.fallback_from {
                 tracing::warn!(
-                    primary = %primary.display(),
-                    fallback = %legacy.display(),
-                    "tokens.json found in the legacy /etc location; migrate it to {} and remove \
-                     the stale copy. It is NOT copied automatically, and /etc is read-only to \
-                     the service under ProtectSystem=strict.",
-                    primary.display()
+                    configured = %configured_path.display(),
+                    legacy = %from.display(),
+                    "tokens.json read from the legacy /etc location; migrate it to the \
+                     configured path and remove the stale copy. It is NOT copied \
+                     automatically, and /etc is read-only to the service under \
+                     ProtectSystem=strict."
                 );
             }
 
@@ -522,29 +528,46 @@ async fn main() -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod token_path_tests {
-    use super::token_path_pair;
-    use std::path::Path;
+    use super::resolve_tokens_with;
 
-    /// The shipped unit passes `--tokens-file /var/lib/jmcp/tokens.json`. If the
-    /// primary is hardcoded to that value the two arguments become identical and
-    /// the /etc fallback silently disappears.
+    /// The canonical path is absent and the legacy store exists: the fallback
+    /// must fire, so an upgrade that has not migrated yet still starts.
     #[test]
-    fn shipped_unit_path_still_leaves_a_distinct_fallback() {
-        let (primary, legacy) = token_path_pair(Path::new("/var/lib/jmcp/tokens.json"));
-        assert_ne!(
-            primary, legacy,
-            "primary and fallback collapsed to one path - the /etc fallback is gone"
+    fn canonical_path_falls_back_to_an_existing_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let resolved = resolve_tokens_with(&canonical, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, legacy,
+            "the legacy store should have been used"
         );
-        assert_eq!(primary, Path::new("/var/lib/jmcp/tokens.json"));
-        assert_eq!(legacy, Path::new("/etc/jmcp/tokens.json"));
+        assert!(resolved.used_fallback);
     }
 
-    /// An operator-supplied path must be honoured as the primary, not discarded.
+    /// The same legacy store exists, but the operator configured a DIFFERENT
+    /// path. Falling back here would silently reactivate credentials they did
+    /// not ask for — a typo or a deleted store must fail, not resurrect tokens.
     #[test]
-    fn an_explicit_path_is_used_as_the_primary() {
-        let (primary, legacy) = token_path_pair(Path::new("/srv/custom/tokens.json"));
-        assert_eq!(primary, Path::new("/srv/custom/tokens.json"));
-        assert_ne!(primary, legacy);
+    fn a_custom_path_never_falls_back_to_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+        let custom = dir.path().join("operator-chosen.json");
+
+        let resolved = resolve_tokens_with(&custom, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, custom,
+            "an operator-supplied path must be used verbatim"
+        );
+        assert!(
+            !resolved.used_fallback,
+            "a custom path must never resolve to the legacy /etc store"
+        );
     }
 }
