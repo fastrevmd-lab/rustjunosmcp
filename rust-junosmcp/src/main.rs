@@ -25,6 +25,53 @@ use rust_junosmcp_auth::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, MecmcpScpRunner, Policy, TransferConfig};
 use std::sync::Arc;
 
+/// The (primary, legacy) pair handed to [`mecmcp_auth::resolve_token_path`].
+///
+/// The configured path is ALWAYS the primary. `/etc/jmcp/tokens.json` is the
+/// legacy fallback that keeps an un-migrated upgrade starting.
+///
+/// Kept as a named function so the wiring is testable. The defect this guards
+/// against is not in the resolution logic but in which arguments reach it:
+/// hardcoding `/var/lib/jmcp/tokens.json` as the primary and passing the CLI
+/// value as the fallback collapses both to one path, because the shipped unit
+/// passes exactly that. There is then no fallback at all, and an upgraded guest
+/// whose tokens are still in /etc fails to start.
+fn token_path_pair(configured: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    const LEGACY_TOKENS: &str = "/etc/jmcp/tokens.json";
+    (
+        configured.to_path_buf(),
+        std::path::PathBuf::from(LEGACY_TOKENS),
+    )
+}
+
+#[cfg(test)]
+mod token_path_tests {
+    use super::token_path_pair;
+    use std::path::Path;
+
+    /// The shipped unit passes `--tokens-file /var/lib/jmcp/tokens.json`. If the
+    /// primary is hardcoded to that value the two arguments become identical and
+    /// the /etc fallback silently disappears.
+    #[test]
+    fn shipped_unit_path_still_leaves_a_distinct_fallback() {
+        let (primary, legacy) = token_path_pair(Path::new("/var/lib/jmcp/tokens.json"));
+        assert_ne!(
+            primary, legacy,
+            "primary and fallback collapsed to one path - the /etc fallback is gone"
+        );
+        assert_eq!(primary, Path::new("/var/lib/jmcp/tokens.json"));
+        assert_eq!(legacy, Path::new("/etc/jmcp/tokens.json"));
+    }
+
+    /// An operator-supplied path must be honoured as the primary, not discarded.
+    #[test]
+    fn an_explicit_path_is_used_as_the_primary() {
+        let (primary, legacy) = token_path_pair(Path::new("/srv/custom/tokens.json"));
+        assert_eq!(primary, Path::new("/srv/custom/tokens.json"));
+        assert_ne!(primary, legacy);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let env_compat::ParsedCli {
@@ -143,18 +190,28 @@ async fn main() -> Result<()> {
 
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
-        (Some(fallback_path), _) => {
-            // Prefer /var/lib/jmcp/tokens.json (writable under ProtectSystem=strict),
-            // fall back to the legacy /etc/jmcp path only when the new path is absent.
-            let primary = std::path::PathBuf::from("/var/lib/jmcp/tokens.json");
-            let resolved = mecmcp_auth::resolve_token_path(&primary, fallback_path)
+        (Some(configured_path), _) => {
+            // The CONFIGURED path is the primary; the legacy /etc/jmcp location is
+            // the fallback, so an upgrade whose tokens have not been moved yet still
+            // starts.
+            //
+            // Do NOT hardcode /var/lib as the primary and pass the CLI value as the
+            // fallback. The shipped unit passes
+            // `--tokens-file /var/lib/jmcp/tokens.json`, so both arguments would
+            // collapse to the same path and there would be no fallback at all — an
+            // upgraded guest with tokens still in /etc/jmcp fails to start, which is
+            // the client lockout #333 exists to prevent.
+            let (primary, legacy) = token_path_pair(configured_path);
+            let resolved = mecmcp_auth::resolve_token_path(&primary, &legacy)
                 .context("resolving token file path")?;
 
             if resolved.used_fallback {
                 tracing::warn!(
                     primary = %primary.display(),
-                    fallback = %fallback_path.display(),
-                    "tokens.json found in fallback location; migrate to {} and remove the stale copy",
+                    fallback = %legacy.display(),
+                    "tokens.json found in the legacy /etc location; migrate it to {} and remove \
+                     the stale copy. It is NOT copied automatically, and /etc is read-only to \
+                     the service under ProtectSystem=strict.",
                     primary.display()
                 );
             }
