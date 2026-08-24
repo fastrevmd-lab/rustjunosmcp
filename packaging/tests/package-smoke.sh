@@ -62,22 +62,36 @@ run_installer
 [[ ! -e "$ROOTFS/etc/systemd/system/rust-srxmcp.service" ]]
 grep -Fqx preserve-me "$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
 printf '%s\n' '{"preserved":"devices"}' >"$ROOTFS/etc/jmcp/devices.json"
-printf '%s\n' '{ "version": 1, "tokens": [] }' >"$ROOTFS/etc/jmcp/tokens.json"
 printf '%s\n' 'preserved-known-host' >"$ROOTFS/etc/jmcp/known_hosts"
+# Place a legacy tokens.json in /etc to verify the installer does NOT copy it
+printf '%s\n' '{ "version": 1, "tokens": [{"name":"legacy"}] }' >"$ROOTFS/etc/jmcp/tokens.json"
 devices_before="$(sha256sum "$ROOTFS/etc/jmcp/devices.json")"
-tokens_before="$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")"
+legacy_tokens_before="$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")"
 known_hosts_before="$(sha256sum "$ROOTFS/etc/jmcp/known_hosts")"
 run_installer
 [[ ! -e "$ROOTFS/usr/local/bin/rust-srxmcp" ]]
 [[ ! -e "$ROOTFS/etc/systemd/system/rust-srxmcp.service" ]]
 grep -Fqx preserve-me "$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
 [[ "$devices_before" == "$(sha256sum "$ROOTFS/etc/jmcp/devices.json")" ]]
-[[ "$tokens_before" == "$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")" ]]
+# The legacy /etc/jmcp/tokens.json must NOT be copied or touched
+[[ "$legacy_tokens_before" == "$(sha256sum "$ROOTFS/etc/jmcp/tokens.json")" ]]
 [[ "$known_hosts_before" == "$(sha256sum "$ROOTFS/etc/jmcp/known_hosts")" ]]
+
+# First install created tokens.json and audit-hmac.key in /var/lib/jmcp
+[[ -f "$ROOTFS/var/lib/jmcp/tokens.json" ]]
+[[ -f "$ROOTFS/var/lib/jmcp/audit-hmac.key" ]]
+tokens_new_before="$(sha256sum "$ROOTFS/var/lib/jmcp/tokens.json")"
+hmac_key_before="$(sha256sum "$ROOTFS/var/lib/jmcp/audit-hmac.key")"
+
+# Second install must preserve both files (no regeneration)
+run_installer
+[[ "$tokens_new_before" == "$(sha256sum "$ROOTFS/var/lib/jmcp/tokens.json")" ]]
+[[ "$hmac_key_before" == "$(sha256sum "$ROOTFS/var/lib/jmcp/audit-hmac.key")" ]]
 
 [[ "$(stat -c '%a' "$ROOTFS/usr/local/bin/rust-junosmcp")" == "755" ]]
 [[ "$(stat -c '%a' "$ROOTFS/etc/jmcp/devices.json")" == "600" ]]
-[[ "$(stat -c '%a' "$ROOTFS/etc/jmcp/tokens.json")" == "600" ]]
+[[ "$(stat -c '%a' "$ROOTFS/var/lib/jmcp/tokens.json")" == "600" ]]
+[[ "$(stat -c '%a' "$ROOTFS/var/lib/jmcp/audit-hmac.key")" == "600" ]]
 [[ -d "$ROOTFS/var/lib/jmcp/staging" ]]
 [[ -d "$ROOTFS/var/lib/jmcp/srx-staging/bundles" ]]
 [[ -d "$ROOTFS/var/lib/jmcp/device-leases" ]]
@@ -85,7 +99,8 @@ grep -Fqx preserve-me "$ROOTFS/var/lib/jmcp/srx-staging/bundles/existing.tgz"
 
 JUNOS_UNIT="$ROOTFS/etc/systemd/system/rust-junosmcp.service"
 grep -Fq -- '--transport streamable-http' "$JUNOS_UNIT"
-grep -Fq -- '--tokens-file /etc/jmcp/tokens.json' "$JUNOS_UNIT"
+grep -Fq -- '--tokens-file /var/lib/jmcp/tokens.json' "$JUNOS_UNIT"
+grep -Fq -- '--audit-hmac-key-file /var/lib/jmcp/audit-hmac.key' "$JUNOS_UNIT"
 grep -Fq -- '--host 127.0.0.1' "$JUNOS_UNIT"
 grep -Fq -- '--device-lease-dir /var/lib/jmcp/device-leases' "$JUNOS_UNIT"
 grep -Fq 'JMCP_SUPPORT_BUNDLE_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles' "$JUNOS_UNIT"
@@ -106,7 +121,7 @@ cat >"$ROOTFS/etc/jmcp/devices.json" <<'JSON'
 }
 JSON
 SECRET="$("$ROOTFS/usr/local/bin/rust-junosmcp" token add \
-    --tokens-file "$ROOTFS/etc/jmcp/tokens.json" \
+    --tokens-file "$ROOTFS/var/lib/jmcp/tokens.json" \
     --name packaging-smoke \
     --routers '*' \
     --tools '*')"
@@ -116,7 +131,7 @@ PORT="${JMCP_PACKAGE_SMOKE_PORT:-39030}"
     --transport streamable-http \
     --host 127.0.0.1 \
     --port "$PORT" \
-    --tokens-file "$ROOTFS/etc/jmcp/tokens.json" \
+    --tokens-file "$ROOTFS/var/lib/jmcp/tokens.json" \
     --device-lease-dir "$ROOTFS/var/lib/jmcp/device-leases" \
     --inventory-readonly \
     >"$WORK/server.log" 2>&1 &

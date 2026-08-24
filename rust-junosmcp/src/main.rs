@@ -25,6 +25,47 @@ use rust_junosmcp_auth::TokenStoreFile;
 use rust_junosmcp_core::{DeviceManager, MecmcpScpRunner, Policy, TransferConfig};
 use std::sync::Arc;
 
+/// Resolve the token store, applying the legacy fallback ONLY for the canonical path.
+///
+/// The migration fallback exists so an upgrade that has not yet moved
+/// `/etc/jmcp/tokens.json` still starts. It must not apply to an operator's own
+/// path: if `--tokens-file /srv/custom.json` is missing — a typo, or a deleted
+/// store — falling back to the legacy file would silently reactivate unrelated
+/// or revoked credentials. A non-canonical path is loaded directly and fails if
+/// absent, which is the honest outcome.
+fn resolve_tokens(configured: &std::path::Path) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    resolve_tokens_with(
+        configured,
+        std::path::Path::new("/var/lib/jmcp/tokens.json"),
+        std::path::Path::new("/etc/jmcp/tokens.json"),
+    )
+}
+
+/// The rule behind [`resolve_tokens`], with the two well-known paths injected so
+/// it can be exercised against real files in a test rather than against absolute
+/// paths that never exist there.
+fn resolve_tokens_with(
+    configured: &std::path::Path,
+    canonical: &std::path::Path,
+    legacy: &std::path::Path,
+) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    // Byte-exact, not `Path` equality. `Path` comparison normalizes away trailing
+    // separators and `.` components, so `/var/lib/<svc>/tokens.json/` compares
+    // EQUAL to the canonical path — while `metadata()` on that spelling returns
+    // NotFound when the file is absent, indistinguishable from the plain form.
+    // A typo would therefore pass this gate and activate the legacy store, which
+    // is exactly the fail-closed behaviour this check exists to provide.
+    if configured.as_os_str() != canonical.as_os_str() {
+        return Ok(mecmcp_auth::ResolvedTokenPath {
+            path: configured.to_path_buf(),
+            used_fallback: false,
+            fallback_from: None,
+        });
+    }
+
+    mecmcp_auth::resolve_token_path(configured, legacy).context("resolving token file path")
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let env_compat::ParsedCli {
@@ -143,10 +184,29 @@ async fn main() -> Result<()> {
 
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
-        (Some(path), _) => {
-            let store_file = TokenStoreFile::load(path)
-                .with_context(|| format!("loading {}", path.display()))?;
-            tracing::info!(tokens = store_file.store().len(), "token store loaded");
+        (Some(configured_path), _) => {
+            // See resolve_tokens: the legacy /etc fallback applies only to the
+            // canonical path, never to an operator-supplied one.
+            let resolved = resolve_tokens(configured_path)?;
+
+            if let Some(from) = &resolved.fallback_from {
+                tracing::warn!(
+                    configured = %configured_path.display(),
+                    legacy = %from.display(),
+                    "tokens.json read from the legacy /etc location; migrate it to the \
+                     configured path and remove the stale copy. It is NOT copied \
+                     automatically, and /etc is read-only to the service under \
+                     ProtectSystem=strict."
+                );
+            }
+
+            let store_file = TokenStoreFile::load(&resolved.path)
+                .with_context(|| format!("loading {}", resolved.path.display()))?;
+            tracing::info!(
+                tokens = store_file.store().len(),
+                path = %resolved.path.display(),
+                "token store loaded"
+            );
             Some(Arc::new(store_file))
         }
         (None, true) => {
@@ -471,4 +531,79 @@ async fn main() -> Result<()> {
     }
 
     served
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod token_path_tests {
+    use super::resolve_tokens_with;
+
+    /// The canonical path is absent and the legacy store exists: the fallback
+    /// must fire, so an upgrade that has not migrated yet still starts.
+    #[test]
+    fn canonical_path_falls_back_to_an_existing_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let resolved = resolve_tokens_with(&canonical, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, legacy,
+            "the legacy store should have been used"
+        );
+        assert!(resolved.used_fallback);
+    }
+
+    /// The same legacy store exists, but the operator configured a DIFFERENT
+    /// path. Falling back here would silently reactivate credentials they did
+    /// not ask for — a typo or a deleted store must fail, not resurrect tokens.
+    #[test]
+    fn a_custom_path_never_falls_back_to_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+        let custom = dir.path().join("operator-chosen.json");
+
+        let resolved = resolve_tokens_with(&custom, &canonical, &legacy).unwrap();
+        assert_eq!(
+            resolved.path, custom,
+            "an operator-supplied path must be used verbatim"
+        );
+        assert!(
+            !resolved.used_fallback,
+            "a custom path must never resolve to the legacy /etc store"
+        );
+    }
+
+    /// A malformed spelling of the canonical path must NOT reach the fallback.
+    ///
+    /// `Path` equality normalizes away a trailing separator, so
+    /// `.../tokens.json/` compares equal to the canonical path; and when the
+    /// file is absent `metadata()` returns NotFound for that spelling too,
+    /// indistinguishable from the plain form. A typo would therefore activate
+    /// the legacy store — the opposite of fail-closed. The comparison is
+    /// byte-exact for this reason.
+    #[test]
+    fn a_trailing_slash_spelling_does_not_reach_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let mut malformed = canonical.clone().into_os_string();
+        malformed.push("/");
+        let malformed = std::path::PathBuf::from(malformed);
+
+        let resolved = resolve_tokens_with(&malformed, &canonical, &legacy).unwrap();
+        assert!(
+            !resolved.used_fallback,
+            "a trailing-slash spelling must not activate the legacy store"
+        );
+        assert_eq!(
+            resolved.path, malformed,
+            "the given path must be used verbatim"
+        );
+    }
 }
