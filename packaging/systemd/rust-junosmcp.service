@@ -12,8 +12,9 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --transport streamable-http \
     --host 127.0.0.1 \
     --port 30030 \
-    --tokens-file /etc/jmcp/tokens.json \
+    --tokens-file /var/lib/jmcp/tokens.json \
     --device-lease-dir /var/lib/jmcp/device-leases \
+    --audit-hmac-key-file /var/lib/jmcp/audit-hmac.key \
     --inventory-readonly
 Restart=on-failure
 RestartSec=5
@@ -22,23 +23,39 @@ Environment=JMCP_SUPPORT_BUNDLE_STAGING_DIR=/var/lib/jmcp/srx-staging/bundles
 Environment=JMCP_SUPPORT_BUNDLE_STAGING_MAX_BYTES=524288000
 UMask=0077
 StateDirectory=jmcp
-StateDirectoryMode=0750
+StateDirectoryMode=0700
 
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/jmcp
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
 RestrictNamespaces=true
 LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
 SystemCallErrorNumber=EPERM
+IPAddressDeny=169.254.169.254/32
+IPAddressAllow=localhost
+IPAddressAllow=192.168.0.0/16
 
 [Install]
 WantedBy=multi-user.target

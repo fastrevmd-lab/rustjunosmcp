@@ -143,10 +143,29 @@ async fn main() -> Result<()> {
 
     // Build the token store (or None for --allow-no-auth / stdio).
     let token_store = match (&args.tokens_file, args.allow_no_auth) {
-        (Some(path), _) => {
-            let store_file = TokenStoreFile::load(path)
-                .with_context(|| format!("loading {}", path.display()))?;
-            tracing::info!(tokens = store_file.store().len(), "token store loaded");
+        (Some(fallback_path), _) => {
+            // Prefer /var/lib/jmcp/tokens.json (writable under ProtectSystem=strict),
+            // fall back to the legacy /etc/jmcp path only when the new path is absent.
+            let primary = std::path::PathBuf::from("/var/lib/jmcp/tokens.json");
+            let resolved = mecmcp_auth::resolve_token_path(&primary, fallback_path)
+                .context("resolving token file path")?;
+
+            if resolved.used_fallback {
+                tracing::warn!(
+                    primary = %primary.display(),
+                    fallback = %fallback_path.display(),
+                    "tokens.json found in fallback location; migrate to {} and remove the stale copy",
+                    primary.display()
+                );
+            }
+
+            let store_file = TokenStoreFile::load(&resolved.path)
+                .with_context(|| format!("loading {}", resolved.path.display()))?;
+            tracing::info!(
+                tokens = store_file.store().len(),
+                path = %resolved.path.display(),
+                "token store loaded"
+            );
             Some(Arc::new(store_file))
         }
         (None, true) => {

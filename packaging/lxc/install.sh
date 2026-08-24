@@ -138,9 +138,15 @@ install -m 0644 "$PACKAGE_ROOT/etc/systemd/system/rust-junosmcp.service" "$UNIT_
 # DO NOT create devices.json on first install — the server will fail with a
 # clear actionable error telling the operator to copy the example and edit it.
 # Only preserve an existing devices.json on upgrade (it already exists).
-if [[ ! -e "$CONFIG_DIR/tokens.json" ]]; then
-    printf '%s\n' '{"version":1,"tokens":[]}' >"$CONFIG_DIR/tokens.json"
+
+# tokens.json moved from /etc/jmcp to /var/lib/jmcp in v0.22.0 (#333). Create
+# it in the new location if it does not exist. Do NOT copy from the old location
+# — the runtime handles fallback and warns loudly so the operator can migrate
+# explicitly and remove the stale secret.
+if [[ ! -e "$STATE_DIR/tokens.json" ]]; then
+    printf '%s\n' '{"version":1,"tokens":[]}' >"$STATE_DIR/tokens.json"
 fi
+
 if [[ ! -e "$CONFIG_DIR/known_hosts" ]]; then
     : >"$CONFIG_DIR/known_hosts"
 fi
@@ -148,22 +154,34 @@ if [[ ! -e "$STATE_DIR/changeset-state.json" ]]; then
     printf '%s\n' '{"version":1,"state":{"operations":{},"change_sets":{}}}' >"$STATE_DIR/changeset-state.json"
 fi
 
+# Generate audit HMAC key if it does not exist. Do NOT regenerate on upgrade —
+# a new key breaks verification of every prior record (#334).
+if [[ ! -e "$STATE_DIR/audit-hmac.key" ]]; then
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32 >"$STATE_DIR/audit-hmac.key"
+    elif command -v head >/dev/null 2>&1 && [[ -e /dev/urandom ]]; then
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$STATE_DIR/audit-hmac.key"
+    else
+        echo ">> WARNING: cannot generate audit-hmac.key (no openssl or /dev/urandom)" >&2
+        echo ">> WARNING: audit log will not be tamper-evident until the key is created" >&2
+    fi
+fi
+
 # Set modes on files that exist. devices.json may not exist on first install.
 [[ -e "$CONFIG_DIR/devices.json" ]] && chmod 0600 "$CONFIG_DIR/devices.json"
-chmod 0600 "$CONFIG_DIR/tokens.json"
+[[ -e "$STATE_DIR/tokens.json" ]] && chmod 0600 "$STATE_DIR/tokens.json"
 chmod 0644 "$CONFIG_DIR/known_hosts"
 chmod 0600 "$STATE_DIR/changeset-state.json"
+[[ -e "$STATE_DIR/audit-hmac.key" ]] && chmod 0600 "$STATE_DIR/audit-hmac.key"
 
 if [[ "$SKIP_USER_SETUP" != "1" ]]; then
     chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR"
     # chown only files that exist. devices.json may not exist on first install.
     [[ -e "$CONFIG_DIR/devices.json" ]] && \
         chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR/devices.json"
-    chown "$SERVICE_USER:$SERVICE_GROUP" \
-        "$CONFIG_DIR/tokens.json" \
-        "$CONFIG_DIR/known_hosts"
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_DIR/known_hosts"
     # chown -R covers device-leases/, staging/, and srx-staging/ subdirs,
-    # plus changeset-state.json.
+    # plus changeset-state.json, tokens.json, and audit-hmac.key.
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
 fi
 
