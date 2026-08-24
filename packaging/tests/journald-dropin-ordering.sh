@@ -73,7 +73,9 @@ fi
 # Assert that systemd would parse them in the correct order.
 # Numbered drop-ins sort before unnumbered ones, so 10-*.conf and 20-*.conf
 # should be the only drop-ins present after install.
-dropins=($(find "$ROOTFS/etc/systemd/journald.conf.d" -name '*.conf' -type f -printf '%f\n' | sort))
+# mapfile, not $( ) word-splitting: the packaging job runs shellcheck over
+# packaging/tests/*.sh and SC2207 makes it exit 1 before this test ever runs.
+mapfile -t dropins < <(find "$ROOTFS/etc/systemd/journald.conf.d" -name '*.conf' -type f -printf '%f\n' | sort)
 expected=("10-audit-sealing.conf" "20-audit-retention.conf")
 
 if [[ "${dropins[*]}" != "${expected[*]}" ]]; then

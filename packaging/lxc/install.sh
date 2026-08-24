@@ -127,13 +127,29 @@ fi
 
 # Runtime dependencies.
 #
-# `ssh` and `scp` were here under a rationale claiming transfer_file and
-# fetch_file spawned them as subprocesses. That stopped being true in #212,
-# which removed the last `Command::new` spawn — transfers now run through
-# mecmcp-scp (russh + aws-lc-rs), and the server no longer shells out.
-# The repo's own Dockerfile switched to a distroless base *because* of that:
-# there is no subprocess to spawn, so the runtime needs neither a shell nor
-# utilities. The LXC path is catching up: the SSH client is dead code.
+# `openssh-client` is REQUIRED. Do not remove it without reading this.
+#
+# The old rationale here claimed transfer_file and fetch_file spawn ssh/scp.
+# That part is genuinely obsolete: #212 removed the last `Command::new` in this
+# repo, and transfers run through mecmcp-scp (russh + aws-lc-rs). Grepping this
+# repo for `Command::new` returns nothing, which is what led #329 to conclude
+# the dependency was dead.
+#
+# It is not dead. The subprocess moved one crate down, it did not go away:
+#
+#   rust-junosmcp-core/src/inventory.rs:319   `ssh_config: Option<PathBuf>`
+#   rust-junosmcp-core/src/device_manager.rs  forwards it on connect
+#   rustnetconf/src/client.rs                 maps ProxyCommand into the builder
+#   rustnetconf/src/transport/ssh.rs          spawn_proxy_command runs
+#                                             `Command::new("sh")` with it
+#
+# A supported inventory entry carrying `ProxyCommand ssh -W %h:%p bastion`
+# therefore needs the ssh binary at runtime. Without it, every NETCONF
+# connection for a device behind a jump host fails with `ssh: not found` —
+# silently, and only for those devices.
+#
+# This can be dropped only when ProxyJump/ProxyCommand inventory support is
+# dropped, or when that path stops shelling out. Not before.
 #
 # `tar` was here for collect_jtac_support_bundle, which no longer spawns it —
 # the bundle is built in-process with the `tar` and `flate2` crates (#212). It
@@ -150,13 +166,15 @@ fi
 # so the curl install is now behind an opt-in flag.
 if [[ "$INSTALL_ROOT" == "/" && "$SKIP_RUNTIME_DEPS" != "1" ]]; then
     missing=()
+    # Required: see the ProxyCommand rationale above.
+    command -v ssh >/dev/null 2>&1 || missing+=(openssh-client)
     if [[ "${JMCP_INSTALL_VERIFY_TOOLS:-0}" == "1" ]]; then
         command -v curl >/dev/null 2>&1 || missing+=(curl)
     fi
 
     if (( ${#missing[@]} > 0 )); then
         if command -v apt-get >/dev/null 2>&1; then
-            echo ">> Installing verification tools: ${missing[*]}"
+            echo ">> Installing runtime dependencies: ${missing[*]}"
             DEBIAN_FRONTEND=noninteractive apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates "${missing[@]}"
@@ -178,16 +196,34 @@ fi
 # manual edit or another tool, remove it so the numbered fleet policy wins.
 # This repo's policy is: journald retention is set by the numbered drop-ins
 # shipped by the fleet management layer, not by this installer.
-if [[ "$INSTALL_ROOT" == "/" ]]; then
-    JOURNALD_DROPINS="/etc/systemd/journald.conf.d"
-    if [[ -d "$JOURNALD_DROPINS" ]]; then
-        for stale in "$JOURNALD_DROPINS/retention.conf" "$JOURNALD_DROPINS/jmcp.conf"; do
-            if [[ -f "$stale" ]]; then
-                echo ">> Removing stale journald drop-in: $stale"
-                rm -f "$stale"
-            fi
-        done
-    fi
+#
+# Two details that are easy to get wrong:
+#
+#  1. This runs through `target_path` rather than hard-coding /etc, so a staged
+#     install (JMCP_INSTALL_ROOT=...) actually exercises this branch. Guarding
+#     on INSTALL_ROOT == "/" meant the packaging test could never reach it, so
+#     the test asserted nothing.
+#  2. Unlinking a drop-in journald has ALREADY loaded does not change the
+#     running daemon. `systemctl daemon-reload` above reloads systemd *unit*
+#     configuration, not journald.conf — journald must be signalled to reread
+#     it. Without this, the stale 30-day retention stays active until a manual
+#     reload or a reboot, which is exactly the defect #331 exists to fix.
+JOURNALD_DROPINS="$(target_path /etc/systemd/journald.conf.d)"
+JOURNALD_CLEANED=0
+if [[ -d "$JOURNALD_DROPINS" ]]; then
+    for stale in "$JOURNALD_DROPINS/retention.conf" "$JOURNALD_DROPINS/jmcp.conf"; do
+        if [[ -f "$stale" ]]; then
+            echo ">> Removing stale journald drop-in: $stale"
+            rm -f "$stale"
+            JOURNALD_CLEANED=1
+        fi
+    done
+fi
+
+if [[ "$INSTALL_ROOT" == "/" && "$JOURNALD_CLEANED" == "1" && "$SKIP_SYSTEMD_RELOAD" != "1" ]]; then
+    command -v systemctl >/dev/null 2>&1 || fail "systemctl is required to reload journald"
+    echo ">> Reloading systemd-journald so the fleet retention policy takes effect"
+    systemctl reload-or-restart systemd-journald.service
 fi
 
 echo ">> RustJunosMCP package installed."
