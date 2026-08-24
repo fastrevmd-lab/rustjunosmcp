@@ -49,7 +49,13 @@ fn resolve_tokens_with(
     canonical: &std::path::Path,
     legacy: &std::path::Path,
 ) -> Result<mecmcp_auth::ResolvedTokenPath> {
-    if configured != canonical {
+    // Byte-exact, not `Path` equality. `Path` comparison normalizes away trailing
+    // separators and `.` components, so `/var/lib/<svc>/tokens.json/` compares
+    // EQUAL to the canonical path — while `metadata()` on that spelling returns
+    // NotFound when the file is absent, indistinguishable from the plain form.
+    // A typo would therefore pass this gate and activate the legacy store, which
+    // is exactly the fail-closed behaviour this check exists to provide.
+    if configured.as_os_str() != canonical.as_os_str() {
         return Ok(mecmcp_auth::ResolvedTokenPath {
             path: configured.to_path_buf(),
             used_fallback: false,
@@ -568,6 +574,36 @@ mod token_path_tests {
         assert!(
             !resolved.used_fallback,
             "a custom path must never resolve to the legacy /etc store"
+        );
+    }
+
+    /// A malformed spelling of the canonical path must NOT reach the fallback.
+    ///
+    /// `Path` equality normalizes away a trailing separator, so
+    /// `.../tokens.json/` compares equal to the canonical path; and when the
+    /// file is absent `metadata()` returns NotFound for that spelling too,
+    /// indistinguishable from the plain form. A typo would therefore activate
+    /// the legacy store — the opposite of fail-closed. The comparison is
+    /// byte-exact for this reason.
+    #[test]
+    fn a_trailing_slash_spelling_does_not_reach_the_legacy_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("var-lib-tokens.json");
+        let legacy = dir.path().join("etc-tokens.json");
+        std::fs::write(&legacy, "{}").unwrap();
+
+        let mut malformed = canonical.clone().into_os_string();
+        malformed.push("/");
+        let malformed = std::path::PathBuf::from(malformed);
+
+        let resolved = resolve_tokens_with(&malformed, &canonical, &legacy).unwrap();
+        assert!(
+            !resolved.used_fallback,
+            "a trailing-slash spelling must not activate the legacy store"
+        );
+        assert_eq!(
+            resolved.path, malformed,
+            "the given path must be used verbatim"
         );
     }
 }
