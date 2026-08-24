@@ -24,6 +24,49 @@ target_path() {
     fi
 }
 
+# Resolve the journald drop-in directory and prove it is safe to touch.
+#
+# Echoes the canonical directory, or nothing when it does not exist. Fails
+# closed on anything unexpected rather than skipping silently.
+#
+# This is called TWICE, deliberately: once in preflight so a refusal costs no
+# mutation, and again immediately before unlinking. Caching the preflight
+# result and reusing it is not sufficient — the cached value is a path *string*,
+# so if the directory is replaced by a symlink in between, that same string
+# traverses the new link at `rm` time and reaches outside the install root.
+# Testing `-L` on the file does not catch a symlinked *parent*.
+resolve_journald_dropins() {
+    local dir resolved root_resolved
+    dir="$(target_path /etc/systemd/journald.conf.d)"
+
+    [[ -d "$dir" ]] || return 0
+
+    [[ -L "$dir" ]] && fail "refusing to touch journald drop-ins: $dir is a symlink"
+
+    resolved="$(readlink -f "$dir")" \
+        || fail "refusing to touch journald drop-ins: cannot resolve $dir"
+
+    if [[ "$INSTALL_ROOT" != "/" ]]; then
+        root_resolved="$(readlink -f "$INSTALL_ROOT")" \
+            || fail "refusing to touch journald drop-ins: cannot resolve $INSTALL_ROOT"
+        case "$resolved/" in
+            "$root_resolved"/*) ;;
+            *) fail "refusing to touch journald drop-ins: $resolved escapes $root_resolved" ;;
+        esac
+    fi
+
+    # Candidate files too, not just the directory. A real journald.conf.d
+    # containing a symlinked retention.conf must be refused in preflight as
+    # well, or the refusal lands after the install has already written.
+    local candidate
+    for candidate in "$resolved/retention.conf" "$resolved/jmcp.conf"; do
+        [[ -L "$candidate" ]] \
+            && fail "refusing to touch journald drop-ins: $candidate is a symlink"
+    done
+
+    printf '%s\n' "$resolved"
+}
+
 required_files=(
     usr/local/bin/rust-junosmcp
     etc/jmcp/devices.json.example
@@ -44,6 +87,10 @@ fi
 if [[ "$SKIP_USER_SETUP" != "1" && "$EUID" -ne 0 ]]; then
     fail "run as root, or use JMCP_INSTALL_SKIP_USER=1 for a staged smoke test"
 fi
+
+# Preflight, before ANY mutation — including groupadd/useradd, which create a
+# system account and /var/lib/jmcp. A refused install must leave the host alone.
+resolve_journald_dropins >/dev/null
 
 if [[ "$SKIP_USER_SETUP" != "1" ]] && ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
     groupadd --system "$SERVICE_GROUP"
@@ -127,11 +174,29 @@ fi
 
 # Runtime dependencies.
 #
-# `ssh` and `scp` are not conveniences: transfer_file and fetch_file spawn
-# them, so the server is partly broken without them. They happen to be present
-# in Debian's *standard* LXC template, which is why nothing noticed — but that
-# is luck of template choice, not a guarantee, and a minimal template has
-# neither.
+# `openssh-client` is REQUIRED. Do not remove it without reading this.
+#
+# The old rationale here claimed transfer_file and fetch_file spawn ssh/scp.
+# That part is genuinely obsolete: #212 removed the last `Command::new` in this
+# repo, and transfers run through mecmcp-scp (russh + aws-lc-rs). Grepping this
+# repo for `Command::new` returns nothing, which is what led #329 to conclude
+# the dependency was dead.
+#
+# It is not dead. The subprocess moved one crate down, it did not go away:
+#
+#   rust-junosmcp-core/src/inventory.rs:319   `ssh_config: Option<PathBuf>`
+#   rust-junosmcp-core/src/device_manager.rs  forwards it on connect
+#   rustnetconf/src/client.rs                 maps ProxyCommand into the builder
+#   rustnetconf/src/transport/ssh.rs          spawn_proxy_command runs
+#                                             `Command::new("sh")` with it
+#
+# A supported inventory entry carrying `ProxyCommand ssh -W %h:%p bastion`
+# therefore needs the ssh binary at runtime. Without it, every NETCONF
+# connection for a device behind a jump host fails with `ssh: not found` —
+# silently, and only for those devices.
+#
+# This can be dropped only when ProxyJump/ProxyCommand inventory support is
+# dropped, or when that path stops shelling out. Not before.
 #
 # `tar` was here for collect_jtac_support_bundle, which no longer spawns it —
 # the bundle is built in-process with the `tar` and `flate2` crates (#212). It
@@ -139,39 +204,78 @@ fi
 # unpack the release archive that contains this script.
 #
 # `curl` is needed by the verification step in the README, and the Debian 13
-# standard template does not ship it (mecmcp#33).
-#
-# Installing here is deliberate for LXC and deliberate *not* for the container
-# images: an LXC already has a shell and a package manager, so curl changes
-# nothing about its attack surface, whereas adding an HTTP client to a
-# distroless image hands an attacker a pivot tool after an RCE.
+# standard template does not ship it (mecmcp#33). Installing an HTTP client on
+# every deploy is deliberate for the LXC path and deliberate *not* for the
+# container image: an LXC already has a shell and a package manager, so curl
+# changes nothing about its attack surface, whereas adding it to a distroless
+# image hands an attacker a pivot tool after an RCE. That said, README
+# verification is an operator convenience, not a server runtime requirement,
+# so the curl install is now behind an opt-in flag.
 if [[ "$INSTALL_ROOT" == "/" && "$SKIP_RUNTIME_DEPS" != "1" ]]; then
     missing=()
-    for cmd in curl ssh scp; do
-        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-    done
+    # Required: see the ProxyCommand rationale above.
+    command -v ssh >/dev/null 2>&1 || missing+=(openssh-client)
+    if [[ "${JMCP_INSTALL_VERIFY_TOOLS:-0}" == "1" ]]; then
+        command -v curl >/dev/null 2>&1 || missing+=(curl)
+    fi
 
     if (( ${#missing[@]} > 0 )); then
-        declare -A pkg_for=(
-            [curl]=curl [ssh]=openssh-client [scp]=openssh-client
-        )
-        packages=()
-        for cmd in "${missing[@]}"; do packages+=("${pkg_for[$cmd]}"); done
-        # De-duplicate: ssh and scp both come from openssh-client.
-        mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
-
         if command -v apt-get >/dev/null 2>&1; then
-            echo ">> Installing runtime dependencies: ${packages[*]}"
+            echo ">> Installing runtime dependencies: ${missing[*]}"
             DEBIAN_FRONTEND=noninteractive apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates "${packages[@]}"
+                ca-certificates "${missing[@]}"
+            # Clean up apt cache to avoid leaving 98 MB in /var/cache.
+            apt-get clean
         else
-            # Not fatal: a non-Debian host may satisfy these another way, and
-            # refusing to install over it would be worse than saying so.
             echo ">> WARNING: missing ${missing[*]} and no apt-get to install them." >&2
-            echo ">> WARNING: install ${packages[*]} or these tools will fail at runtime." >&2
+            echo ">> WARNING: install these if you need the README verification steps." >&2
         fi
     fi
+fi
+
+# Clean up stale journald drop-ins.
+#
+# An unnumbered /etc/systemd/journald.conf.d/retention.conf sorts after the
+# numbered fleet policy drop-ins (10-audit-sealing.conf,
+# 20-audit-retention.conf) and silently overrides them. Previous versions of
+# this installer did not write any journald drop-ins, but if one exists from a
+# manual edit or another tool, remove it so the numbered fleet policy wins.
+# This repo's policy is: journald retention is set by the numbered drop-ins
+# shipped by the fleet management layer, not by this installer.
+#
+# Two details that are easy to get wrong:
+#
+#  1. This runs through `target_path` rather than hard-coding /etc, so a staged
+#     install (JMCP_INSTALL_ROOT=...) actually exercises this branch. Guarding
+#     on INSTALL_ROOT == "/" meant the packaging test could never reach it, so
+#     the test asserted nothing.
+#  2. Unlinking a drop-in journald has ALREADY loaded does not change the
+#     running daemon. `systemctl daemon-reload` above reloads systemd *unit*
+#     configuration, not journald.conf — journald must be signalled to reread
+#     it. Without this, the stale 30-day retention stays active until a manual
+#     reload or a reboot, which is exactly the defect #331 exists to fix.
+#  3. The directory is re-resolved and re-contained HERE, not trusted from
+#     preflight. Preflight exists so a refusal costs no mutation; this call
+#     exists so the path is validated at the moment it is used.
+JOURNALD_CLEANED=0
+JOURNALD_DROPINS_RESOLVED="$(resolve_journald_dropins)"
+if [[ -n "$JOURNALD_DROPINS_RESOLVED" ]]; then
+    for stale in "$JOURNALD_DROPINS_RESOLVED/retention.conf" "$JOURNALD_DROPINS_RESOLVED/jmcp.conf"; do
+        [[ -L "$stale" ]] \
+            && fail "refusing to remove symlinked journald drop-in: $stale"
+        if [[ -f "$stale" ]]; then
+            echo ">> Removing stale journald drop-in: $stale"
+            rm -f "$stale"
+            JOURNALD_CLEANED=1
+        fi
+    done
+fi
+
+if [[ "$INSTALL_ROOT" == "/" && "$JOURNALD_CLEANED" == "1" && "$SKIP_SYSTEMD_RELOAD" != "1" ]]; then
+    command -v systemctl >/dev/null 2>&1 || fail "systemctl is required to reload journald"
+    echo ">> Reloading systemd-journald so the fleet retention policy takes effect"
+    systemctl reload-or-restart systemd-journald.service
 fi
 
 echo ">> RustJunosMCP package installed."

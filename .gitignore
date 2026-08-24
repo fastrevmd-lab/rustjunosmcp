@@ -43,3 +43,6 @@ coverage/
 *.agekey
 *.decrypted.*
 target-deb/
+
+# Scratch tree left by `codex exec review`; contains a copy of the built binary.
+.review-codex/

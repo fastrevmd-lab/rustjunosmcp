@@ -94,6 +94,10 @@ jobs:
         working-directory: RustJunosMCP
         run: ./packaging/tests/package-smoke.sh dist/rust-junosmcp_*_amd64.tar.gz
 
+      - name: journald drop-in ordering test
+        working-directory: RustJunosMCP
+        run: ./packaging/tests/journald-dropin-ordering.sh dist/rust-junosmcp_*_amd64.tar.gz
+
       - name: Debian and Ubuntu install smoke tests
         working-directory: RustJunosMCP
         run: ./scripts/test-lxc-distributions.sh dist/rust-junosmcp_*_amd64.tar.gz
