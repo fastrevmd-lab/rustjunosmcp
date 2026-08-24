@@ -101,6 +101,10 @@ pub struct Cli {
     #[arg(long)]
     pub audit_hmac_key_file: Option<PathBuf>,
 
+    /// SSDF evidence pipeline. Inert unless `--ssdf-audit-endpoint` is given.
+    #[command(flatten)]
+    pub evidence: mecmcp_runtime::cli::EvidenceArgs,
+
     // Junos-specific flags below
     /// Reject add_device and reload_devices unconditionally.
     /// Independent of token scopes.
