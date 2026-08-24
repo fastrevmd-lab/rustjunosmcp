@@ -133,3 +133,34 @@ do
 done
 
 echo ">> journald symlink-escape test passed (refused before any write)"
+
+# --- A symlinked candidate file inside a real directory must also be refused
+# --- in preflight, not after the install has written.
+ROOTFS3="$WORK/rootfs-file-symlink"
+mkdir -p "$ROOTFS3/etc/systemd/journald.conf.d"
+ln -s "$ESCAPE/retention.conf" "$ROOTFS3/etc/systemd/journald.conf.d/retention.conf"
+
+set +e
+JMCP_INSTALL_ROOT="$ROOTFS3" \
+    JMCP_INSTALL_SKIP_USER=1 \
+    JMCP_INSTALL_SKIP_SYSTEMD_RELOAD=1 \
+    "$PACKAGE_ROOT/install.sh" >/dev/null 2>&1
+file_symlink_status=$?
+set -e
+
+if [[ "$file_symlink_status" -eq 0 ]]; then
+    echo "FAIL: installer accepted a symlinked drop-in file instead of failing closed" >&2
+    exit 1
+fi
+
+if [[ ! -f "$ESCAPE/retention.conf" ]]; then
+    echo "FAIL: installer followed a symlinked drop-in file and deleted outside the root" >&2
+    exit 1
+fi
+
+if [[ -e "$ROOTFS3/usr/local/bin/rust-junosmcp" ]]; then
+    echo "FAIL: symlinked drop-in file refused only after mutating the target" >&2
+    exit 1
+fi
+
+echo ">> journald symlinked-file test passed (refused before any write)"

@@ -55,6 +55,15 @@ resolve_journald_dropins() {
         esac
     fi
 
+    # Candidate files too, not just the directory. A real journald.conf.d
+    # containing a symlinked retention.conf must be refused in preflight as
+    # well, or the refusal lands after the install has already written.
+    local candidate
+    for candidate in "$resolved/retention.conf" "$resolved/jmcp.conf"; do
+        [[ -L "$candidate" ]] \
+            && fail "refusing to touch journald drop-ins: $candidate is a symlink"
+    done
+
     printf '%s\n' "$resolved"
 }
 
