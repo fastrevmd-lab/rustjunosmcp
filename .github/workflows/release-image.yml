@@ -48,7 +48,7 @@ jobs:
             type=raw,value=latest
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Test container runtime and SCP transfers
         run: ./packaging/tests/container-scp-smoke.sh
