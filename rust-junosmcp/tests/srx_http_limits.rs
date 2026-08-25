@@ -151,7 +151,7 @@ fn per_token_rate_limit_returns_stable_429() {
 
     let limited = limited.expect(
         "rate limiting never engaged after 10 attempts; \
-         the per-token rate limiter may be broken"
+         the per-token rate limiter may be broken",
     );
 
     // Now assert the full shape of the 429 response
