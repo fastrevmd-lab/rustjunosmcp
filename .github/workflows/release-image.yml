@@ -36,7 +36,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           # v0.7.0 -> tags 0.7.0, 0.7, latest. The `value=` override makes the
