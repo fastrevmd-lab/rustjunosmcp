@@ -71,16 +71,16 @@ rustez       = "0.14"
 # capture (mecmcp#288), which populates model_id/session_id/client_name for
 # clients that declare MCP 2026-07-28 and are routed without a session header.
 # mecmcp 0.17.0: adds resolve_token_path and find_stale_secrets to mecmcp-auth.
-mecmcp-audit = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-auth  = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-transport = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-runtime = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-policy = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-inventory = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-device = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-changeset = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-scp = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
-mecmcp-secret = { version = "0.18.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.18.0" }
+mecmcp-audit = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-auth  = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-transport = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-runtime = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-policy = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-inventory = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-device = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-changeset = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-scp = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
+mecmcp-secret = { version = "0.19.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.19.0" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
