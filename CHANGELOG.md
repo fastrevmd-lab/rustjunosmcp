@@ -4,6 +4,45 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-08-25
+
+### Fixed
+
+- **`commit_check_config` reaches a verdict on a standalone SRX again**
+  (#358). A single-RE physical SRX345 answers commit-check with a closed
+  `<commit-results>` element followed by a sibling `<ok/>`, which RFC 6241
+  does not allow together. The reply failed to parse with `<ok/> conflicts
+  with an existing payload`, so the verdict was lost even though the check
+  had succeeded — and because `apply_junos_change_set` runs commit-check
+  internally, it refused too.
+
+  The effect was backwards: the **governed** write path was unusable on the
+  device while `load_and_commit_config`, the ungoverned one, committed the
+  same text happily. An operator reaching for plan/approve/apply got a hard
+  stop and was nudged toward the blunter tool.
+
+  Root cause and fix are in `rustnetconf` 0.14.4. The chassis-cluster form of
+  this reply already parsed, because there Junos leaves `<routing-engine>`
+  unclosed and the parser's tolerance was keyed on the payload still being
+  open — so a device that closed the element correctly fared worse than one
+  that did not. The tolerance is now scoped to exactly one `<ok/>` after a
+  lone, closed `<commit-results>`; every other payload shape keeps the
+  conflict, and a hard `<rpc-error>` still wins, so a failed check is never
+  reported as passing.
+
+  Distinct from #180, which was the multi-RE reply envelope
+  (`rustnetconf`#43) and a different parse error.
+
+### Changed
+
+- `rustnetconf` 0.14.3 -> 0.14.4.
+- `mecmcp` 0.19.0, fixing the intermittently-empty audit captures.
+- `rmcp` and the toolchain move to 1.98.0 alongside the builder image.
+- Tier-2 packaging hardening: `tokens.json` migration, audit HMAC, systemd
+  sandbox, and a legacy token store that is no longer shadowed by an empty
+  primary.
+- Dependabot added — this repo had none at all.
+
 ## [Unreleased]
 
 ### Changed — breaking
