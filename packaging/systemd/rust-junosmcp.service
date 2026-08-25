@@ -53,6 +53,13 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
 SystemCallErrorNumber=EPERM
+# NOTE: IPAddressAllow/IPAddressDeny are accepted by systemd and reported by
+# `systemctl show`, but are NOT enforced in an unprivileged LXC — systemd cannot
+# attach the cgroup BPF program there. Every guest in this fleet is one. The
+# directives stay because they do enforce on a normal host or privileged
+# container, but do not read them as active protection here. The installer
+# probes real enforcement and prints ENFORCED / NOT ENFORCED / NO POLICY /
+# UNKNOWN. See the operations doc, "Enforcing it where systemd cannot" (mecmcp#322).
 IPAddressDeny=169.254.169.254/32
 IPAddressAllow=localhost
 IPAddressAllow=192.168.0.0/16
