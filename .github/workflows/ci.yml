@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout RustJunosMCP
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           path: RustJunosMCP
 
@@ -55,7 +55,7 @@ jobs:
   audit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           path: RustJunosMCP
       - uses: dtolnay/rust-toolchain@stable
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout RustJunosMCP
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           path: RustJunosMCP
 
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout RustJunosMCP
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           path: RustJunosMCP
 
