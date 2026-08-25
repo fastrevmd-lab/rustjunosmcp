@@ -1052,7 +1052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2670,7 +2670,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-auth"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "arc-swap",
  "axum",
@@ -3148,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-core"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "rust-junosmcp-srx-core"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "base64ct",
  "flate2",
@@ -3275,7 +3275,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3316,9 +3316,9 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.14.4"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "265e9bbf0f01cc7284a2f514641402913ca5b90a1363f227934638ffe198c695"
+checksum = "8cf885b617b0c746da5487eba3812e21689b35962edcd7194b464e6187ea932e"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -3831,7 +3831,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

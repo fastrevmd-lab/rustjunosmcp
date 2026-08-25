@@ -4,6 +4,32 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-08-25
+
+### Fixed
+
+- **Deleting an absent statement no longer fails the whole load.** Found by
+  deploying 0.22.0 and retesting #358 against the physical SRX345: the
+  `<ok/>`-sibling parse was fixed, and immediately exposed a second, distinct
+  gap on the same device.
+
+  Junos answers a delete of a statement that is not present with a *warning*
+  `<rpc-error>` carrying only `error-severity` and `error-message` — no
+  `error-type`, no `error-tag`, both of which RFC 6241 makes mandatory. The
+  parser rejected the reply with `rpc-error is missing error-type`, so a benign
+  warning sank the entire load and re-blocked `commit_check_config` and
+  `apply_junos_change_set` on the very device 0.22.0 had just unblocked.
+
+  Not SRX345-specific: any delete of an absent statement, on any Junos device,
+  produces this shape.
+
+  Fixed in `rustnetconf` 0.14.5, which tolerates a missing type and tag **only**
+  for warning severity. A hard error still has to say what it is.
+
+### Changed
+
+- `rustnetconf` 0.14.4 -> 0.14.5.
+
 ## [0.22.0] - 2026-08-25
 
 ### Fixed
