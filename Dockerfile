@@ -4,7 +4,7 @@
 #
 # Builder version is taken from rust-toolchain.toml (currently 1.97.0). The two
 # must stay in sync.
-FROM rust:1.97-slim-bookworm@sha256:37cb5d16e04dcf484fdf071dfb132ce95d9b449d75ac12df3b7031b6f7023675 AS builder
+FROM rust:1.98-slim-bookworm@sha256:94e9efa4033213dbb70d4f665527e7ece3944ddb7ba1dd2e43f6fd6e2490af58 AS builder
 WORKDIR /src
 
 # rustez / rustnetconf are crates.io dependencies now (no sibling checkout),
