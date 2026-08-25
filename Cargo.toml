@@ -96,7 +96,7 @@ base64ct         = { version = "1", features = ["alloc"] }
 chrono           = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 axum             = "0.8"
 tower            = "0.5"
-tower-http       = "0.6"
+tower-http       = "0.7"
 http             = "1"
 http-body-util   = "0.1"
 rustls           = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
