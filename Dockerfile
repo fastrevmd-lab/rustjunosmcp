@@ -2,9 +2,9 @@
 # linux/amd64 manifests pinned on 2026-08-07. The published image is currently
 # amd64-only; update both digests deliberately when refreshing either base.
 #
-# Builder version is taken from rust-toolchain.toml (currently 1.97.0). The two
+# Builder version is taken from rust-toolchain.toml (currently 1.98.0). The two
 # must stay in sync.
-FROM rust:1.98-slim-bookworm@sha256:94e9efa4033213dbb70d4f665527e7ece3944ddb7ba1dd2e43f6fd6e2490af58 AS builder
+FROM rust:1.98-slim-bookworm@sha256:af0579d28b9a7ec5251aaafcb0c0a23dcde5c97065112aae0cc3abeda42d5394 AS builder
 WORKDIR /src
 
 # rustez / rustnetconf are crates.io dependencies now (no sibling checkout),
