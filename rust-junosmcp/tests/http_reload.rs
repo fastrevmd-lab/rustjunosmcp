@@ -82,7 +82,7 @@ fn sighup_reloads_token_store() {
     // SIGHUP the server to trigger reload.
     let pid = s.child.id() as i32;
     let pid = rustix::process::Pid::from_raw(pid).expect("valid PID");
-    rustix::process::kill_process(pid, rustix::process::Signal::Hup).expect("kill(SIGHUP)");
+    rustix::process::kill_process(pid, rustix::process::Signal::HUP).expect("kill(SIGHUP)");
 
     // Phase 2: same token, but now revoked + reloaded. Poll until we observe
     // 401 or hit the deadline. This is faster on the happy path than a fixed
@@ -172,7 +172,7 @@ fn sighup_reloads_readonly_inventory_for_junos_and_srx_tools() {
     );
     let pid = server.child.id() as i32;
     let pid = rustix::process::Pid::from_raw(pid).expect("valid PID");
-    rustix::process::kill_process(pid, rustix::process::Signal::Hup).expect("kill(SIGHUP)");
+    rustix::process::kill_process(pid, rustix::process::Signal::HUP).expect("kill(SIGHUP)");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let after = loop {
