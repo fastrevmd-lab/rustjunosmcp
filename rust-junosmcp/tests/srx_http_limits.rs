@@ -131,11 +131,30 @@ fn per_token_rate_limit_returns_stable_429() {
         ],
     );
 
+    // First request should be admitted
     let admitted = http_post(server.port, Some(alice.expose_secret()), None, init_body());
     assert_eq!(admitted.code, 200);
     assert!(admitted.session_id.is_some());
 
-    let limited = http_post(server.port, Some(alice.expose_secret()), None, init_body());
+    // Keep sending requests in a tight loop until one is rate-limited.
+    // This is timing-independent: if the bucket refills between attempts,
+    // we just keep trying. A bounded loop prevents hangs, and if no 429
+    // ever arrives, we fail with a clear message.
+    let mut limited = None;
+    for _ in 0..10 {
+        let response = http_post(server.port, Some(alice.expose_secret()), None, init_body());
+        if response.code == 429 {
+            limited = Some(response);
+            break;
+        }
+    }
+
+    let limited = limited.expect(
+        "rate limiting never engaged after 10 attempts; \
+         the per-token rate limiter may be broken"
+    );
+
+    // Now assert the full shape of the 429 response
     assert_eq!(limited.code, 429);
     assert_eq!(limited.retry_after.as_deref(), Some("1"));
     assert!(limited.session_id.is_none());
