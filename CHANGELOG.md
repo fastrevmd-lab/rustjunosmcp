@@ -62,7 +62,20 @@ All notable user-facing changes are recorded here. Format loosely follows
 ### Changed
 
 - `rustnetconf` 0.14.3 -> 0.14.4.
-- `mecmcp` 0.19.0, fixing the intermittently-empty audit captures.
+- **`mecmcp` 0.12.0 -> 0.19.0.** That is the jump from the v0.21.2 baseline;
+  0.17.0 and 0.18.0 were intermediate untagged steps. Includes the fix for the
+  intermittently-empty audit captures.
+
+#### Upgrade note — rolling back needs the state file, not just the binary
+
+`mecmcp-changeset` state carries a schema version. v0.21.2 links 0.12.0, whose
+reader accepts **v1-v3 only**. 0.22.0 links 0.19.0, which accepts v1-v4 and
+**stamps v4 on any write to a store holding a real approval**.
+
+Once this release has written such a store, reinstalling the 0.21.2 binary
+alone will not start — it rejects the file with `unsupported changeset state
+version 4`. **Roll back with the Proxmox snapshot**, which restores `/var/lib`
+along with the binary. A binary-only downgrade is not a rollback path.
 - `rmcp` and the toolchain move to 1.98.0 alongside the builder image.
 - Tier-2 packaging hardening: `tokens.json` migration, audit HMAC, systemd
   sandbox, and a legacy token store that is no longer shadowed by an empty
