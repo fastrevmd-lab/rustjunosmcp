@@ -144,7 +144,7 @@ fn build_known_names() -> KnownNames<'static> {
 fn sighup_if_requested(pid: Option<i32>) {
     if let Some(raw) = pid {
         if let Some(pid) = rustix::process::Pid::from_raw(raw) {
-            if let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::Hup) {
+            if let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::HUP) {
                 tracing::warn!(pid = raw, errno = e.raw_os_error(), "kill(SIGHUP) failed");
             }
         } else {
