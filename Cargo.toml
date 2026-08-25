@@ -109,7 +109,7 @@ minijinja        = { version = "2", default-features = false, features = ["built
 dashmap          = "6"
 http-body        = "1"
 rustnetconf      = "0.14"
-rustix           = "0.38"
+rustix           = "1.1"
 
 # Release build profile: LTO + strip for smaller binaries.
 #
