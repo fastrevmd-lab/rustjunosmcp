@@ -1562,6 +1562,11 @@ mod tests {
             policy_signature: String::new(),
             targets: Vec::new(),
             preview: None,
+            // No in-flight vendor task: these fixtures stand in for change sets
+            // whose apply is already resolved. mecmcp 0.20.0's `task_id` is for
+            // recovering an apply that died mid-flight, which this server does
+            // not yet record — see the follow-up issue.
+            task_id: None,
         }
     }
 
@@ -2181,6 +2186,11 @@ mod tests {
             policy_signature: String::new(),
             targets: Vec::new(),
             preview: None,
+            // No in-flight vendor task: these fixtures stand in for change sets
+            // whose apply is already resolved. mecmcp 0.20.0's `task_id` is for
+            // recovering an apply that died mid-flight, which this server does
+            // not yet record — see the follow-up issue.
+            task_id: None,
         }
     }
 
