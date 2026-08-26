@@ -1,7 +1,8 @@
 //! Server-issued confirmation artifacts for destructive signature workflows.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
-use rand::{RngCore, rngs::OsRng};
+use rand::TryRng as _;
+use rand::rngs::SysRng;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -165,7 +166,13 @@ impl ConfirmationStore {
 
         let (token, token_digest) = loop {
             let mut token_bytes = [0u8; 32];
-            OsRng.fill_bytes(&mut token_bytes);
+            // rand 0.10 removed `OsRng`; `SysRng` is the same OS entropy source,
+            // now exposed fallibly. A failure here means the OS CSPRNG is
+            // unavailable, which is unrecoverable and must never fall back to a
+            // weaker source for a confirmation token — panic, as `OsRng` did.
+            SysRng
+                .try_fill_bytes(&mut token_bytes)
+                .expect("OS entropy source unavailable");
             let token = Base64UrlUnpadded::encode_string(&token_bytes);
             let digest = digest_bytes(token.as_bytes());
             if !entries.contains_key(&digest) {

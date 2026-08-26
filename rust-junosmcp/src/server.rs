@@ -689,7 +689,8 @@ impl JmcpHandler {
         audit.meta("config_bytes", args.config_text.len() as u64);
         let mut hasher = Sha256::new();
         hasher.update(args.config_text.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
+        let digest: [u8; 32] = hasher.finalize().into();
+        let hash = rust_junosmcp_core::tools::transfer_file::hex32(&digest);
         audit.meta("config_sha256", hash);
         if let Some(confirm_mins) = args.confirm_timeout_mins {
             audit.meta("commit_confirmed", confirm_mins as u64);
@@ -741,7 +742,8 @@ impl JmcpHandler {
         audit.meta("config_bytes", args.config_text.len() as u64);
         let mut hasher = Sha256::new();
         hasher.update(args.config_text.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
+        let digest: [u8; 32] = hasher.finalize().into();
+        let hash = rust_junosmcp_core::tools::transfer_file::hex32(&digest);
         audit.meta("config_sha256", hash);
 
         let result =
