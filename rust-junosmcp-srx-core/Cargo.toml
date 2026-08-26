@@ -23,7 +23,7 @@ roxmltree          = "0.21"
 time               = { version = "0.3", features = ["serde", "parsing", "formatting", "macros"] }
 tokio              = { workspace = true, features = ["macros", "rt", "time"] }
 uuid               = { version = "1", features = ["v4"] }
-sha2               = "0.10"
+sha2               = "0.11"
 # Archive the support bundle in-process. Shelling out to `tar` made every
 # container image carry a shell and utilities purely so one tool would work —
 # exactly the pivot an attacker wants after an RCE on a process holding bearer
