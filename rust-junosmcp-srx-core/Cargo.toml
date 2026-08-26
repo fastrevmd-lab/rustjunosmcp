@@ -18,7 +18,7 @@ serde_json         = { workspace = true }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
 schemars           = { workspace = true }
-quick-xml          = "0.41"
+quick-xml          = "0.42"
 roxmltree          = "0.21"
 time               = { version = "0.3", features = ["serde", "parsing", "formatting", "macros"] }
 tokio              = { workspace = true, features = ["macros", "rt", "time"] }

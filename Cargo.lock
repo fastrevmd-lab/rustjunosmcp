@@ -1052,7 +1052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2618,6 +2618,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2670,7 +2679,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3196,7 +3205,7 @@ dependencies = [
  "base64ct",
  "flate2",
  "pretty_assertions",
- "quick-xml",
+ "quick-xml 0.42.0",
  "rand 0.8.7",
  "roxmltree",
  "rust-junosmcp-core",
@@ -3235,7 +3244,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4ee44903824cad383588eb2b77c97925493d42f6f9306338e8671021270135c"
 dependencies = [
- "quick-xml",
+ "quick-xml 0.41.0",
  "rustnetconf",
  "serde",
  "thiserror",
@@ -3275,7 +3284,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3323,7 +3332,7 @@ dependencies = [
  "async-trait",
  "aws-lc-rs",
  "base64ct",
- "quick-xml",
+ "quick-xml 0.41.0",
  "russh",
  "thiserror",
  "tokio",
@@ -3828,10 +3837,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
