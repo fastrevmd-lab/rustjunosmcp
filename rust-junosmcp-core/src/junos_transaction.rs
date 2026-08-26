@@ -353,10 +353,16 @@ impl DeviceTransaction for JunosTransaction {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(normalised.as_bytes());
-        let hash = hasher.finalize();
+        // sha2 0.11 returns `hybrid_array::Array`, which no longer implements
+        // `LowerHex`. Encode through the crate's existing hex helper so the
+        // digest text is byte-for-byte what mecmcp-changeset already stores.
+        let hash: [u8; 32] = hasher.finalize().into();
 
         // Return in the mecmcp_changeset digest format: "sha256:{lowercase-hex}".
-        Ok(format!("sha256:{:x}", hash))
+        Ok(format!(
+            "sha256:{}",
+            crate::tools::transfer_file::hex32(&hash)
+        ))
     }
 
     async fn stage(&self, actions: &[Self::Action]) -> Result<Self::Staged, Self::Error> {
@@ -1610,8 +1616,8 @@ mod tests {
         let normalised = normalise_candidate_for_fingerprint(xml);
         let mut hasher = Sha256::new();
         hasher.update(normalised.as_bytes());
-        let hash = hasher.finalize();
-        let fingerprint = format!("sha256:{:x}", hash);
+        let hash: [u8; 32] = hasher.finalize().into();
+        let fingerprint = format!("sha256:{}", crate::tools::transfer_file::hex32(&hash));
 
         // Verify the format.
         assert!(fingerprint.starts_with("sha256:"));

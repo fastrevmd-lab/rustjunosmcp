@@ -19,7 +19,11 @@ use tokio_util::sync::CancellationToken;
 pub(crate) const MIN_FREE_HEADROOM_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Format a 32-byte sha256 digest as 64 lowercase hex characters.
-pub(crate) fn hex32(bytes: &[u8; 32]) -> String {
+///
+/// Shared across the workspace so every audited digest string is produced by
+/// one implementation. `sha2` 0.11 returns `hybrid_array::Array`, which does
+/// not implement `LowerHex`, so `format!("{:x}", ..)` is no longer available.
+pub fn hex32(bytes: &[u8; 32]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(64);
     for b in bytes {
@@ -472,6 +476,41 @@ pub(crate) async fn sha256_file_cancellable(
 mod sha_tests {
     use super::*;
     use std::io::Write;
+
+    /// Known-answer test for [`hex32`].
+    ///
+    /// The digest string reaches audit records and `mecmcp-changeset`
+    /// fingerprints, so its encoding is a wire format, not a detail. The
+    /// existing fingerprint tests assert only length and alphabet, which a
+    /// byte-reversed or zero-truncated encoder would still satisfy. The `"39"`
+    /// vector digests to `0b91...`: its first byte is `0x0b`, so an encoder
+    /// using `{:x}` instead of `{:02x}` drops the pad and yields 63 chars.
+    #[test]
+    fn hex32_matches_known_sha256_vectors() {
+        use sha2::{Digest, Sha256};
+
+        for (input, expected) in [
+            (
+                "",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                "abc",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                "39",
+                "0b918943df0962bc7a1824c0555a389347b4febdc7cf9d1254406d80ce44e3f9",
+            ),
+        ] {
+            let mut hasher = Sha256::new();
+            hasher.update(input.as_bytes());
+            let digest: [u8; 32] = hasher.finalize().into();
+            let got = hex32(&digest);
+            assert_eq!(got, expected, "hex32 mismatch for input {input:?}");
+            assert_eq!(got.len(), 64, "hex32 must always be 64 chars");
+        }
+    }
 
     fn hex_lower(bytes: &[u8]) -> String {
         let mut s = String::with_capacity(bytes.len() * 2);
