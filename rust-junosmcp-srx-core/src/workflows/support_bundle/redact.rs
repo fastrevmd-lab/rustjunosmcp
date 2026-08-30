@@ -84,7 +84,7 @@ pub fn redact_xml(input: &str) -> String {
             Ok(Event::Start(e)) => {
                 let matched = REDACT_ELEMENT_NAMES
                     .iter()
-                    .any(|name| e.local_name().as_ref() == name.as_bytes());
+                    .any(|name| e.local_name().as_ref() == *name);
                 if writer.write_event(Event::Start(e)).is_err() {
                     return input.to_string();
                 }

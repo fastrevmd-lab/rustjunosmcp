@@ -1010,7 +1010,7 @@ fn find_attr_end(s: &str) -> usize {
 /// provide the following enum structure:
 ///
 /// - `RustEzError::Netconf(NetconfError)` wraps all NETCONF-layer errors.
-/// - `NetconfError::Rpc(RpcError::ServerError { .. })` is an explicit `<rpc-error>`
+/// - `NetconfError::Rpc(RpcError::ServerError(_))` is an explicit `<rpc-error>`
 ///   from the device — a known verdict, even if the message text contains "timeout".
 /// - `NetconfError::Transport(_)` and `NetconfError::Framing(_)` are transport/framing
 ///   failures — the RPC outcome is unknown.
@@ -1028,7 +1028,7 @@ fn is_transport_uncertainty(error: &rustez::RustEzError) -> bool {
     match error {
         // ServerError is an explicit <rpc-error> from the device. The device
         // rendered a verdict. This is a known rejection, NOT uncertainty.
-        RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError { .. })) => false,
+        RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError(_))) => false,
 
         // The connection dropped after `<commit>` was sent and before its reply.
         // rustnetconf 0.14.3 raises this instead of a generic transport error
@@ -1906,15 +1906,17 @@ mod tests {
     fn is_transport_uncertainty_does_not_match_rpc_errors() {
         use rustez::RustEzError;
         use rustnetconf::error::{NetconfError, RpcError};
-        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError {
-            error_type: None,
-            tag: rustnetconf::types::ErrorTag::OperationFailed,
-            severity: None,
-            app_tag: None,
-            path: None,
-            message: "syntax error".into(),
-            info: None,
-        }));
+        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError(Box::new(
+            rustnetconf::error::RpcServerError {
+                error_type: None,
+                tag: rustnetconf::types::ErrorTag::OperationFailed,
+                severity: None,
+                app_tag: None,
+                path: None,
+                message: "syntax error".into(),
+                info: None,
+            },
+        ))));
         assert!(
             !is_transport_uncertainty(&error),
             "RPC server error must NOT be classified as transport uncertainty"
@@ -1930,15 +1932,17 @@ mod tests {
         use rustez::RustEzError;
         use rustnetconf::error::{NetconfError, RpcError};
 
-        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError {
-            error_type: None,
-            tag: rustnetconf::types::ErrorTag::InvalidValue,
-            severity: None,
-            app_tag: None,
-            path: None,
-            message: "invalid value for 'timeout' parameter: must be 1..3600".into(),
-            info: None,
-        }));
+        let error = RustEzError::Netconf(NetconfError::Rpc(RpcError::ServerError(Box::new(
+            rustnetconf::error::RpcServerError {
+                error_type: None,
+                tag: rustnetconf::types::ErrorTag::InvalidValue,
+                severity: None,
+                app_tag: None,
+                path: None,
+                message: "invalid value for 'timeout' parameter: must be 1..3600".into(),
+                info: None,
+            },
+        ))));
 
         assert!(
             !is_transport_uncertainty(&error),
