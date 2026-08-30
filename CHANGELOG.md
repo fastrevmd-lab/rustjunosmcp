@@ -4,6 +4,57 @@ All notable user-facing changes are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`add_device` corrupted a canonical-envelope inventory.** `insert_device`
+  always wrote the new device as a top-level key, so against an inventory
+  shaped `{"version": 1, "devices": {...}}` the device landed beside `version`
+  and `devices`. mecmcp-inventory 0.23 refuses unknown top-level keys once it
+  has identified the shape, so the tool wrote the file, failed its reload, and
+  left an inventory that would not load at the next start -- reporting a failure
+  having already broken the file on disk. The insert is now shape-aware: an
+  envelope takes the device under `devices`, a bare map keeps taking a top-level
+  key. An inventory whose `devices` is present but not an object -- the legacy
+  array envelope the loader also accepts -- is refused outright rather than
+  written, since it has no key-shaped slot to add to. Verified by sabotage:
+  reverting the shape check fails the new tests, including a round-trip that
+  loads the written file back.
+
+### Added
+
+- `JunosTransaction` declares `Atomicity::candidate_configuration()` rather than
+  inheriting mecmcp 0.23.0's `nothing_guaranteed()` default. Junos stages into a
+  candidate, `commit check`s it and rolls back exactly, so all three guarantees
+  hold. Left inherited, an approval prompt keyed on this declaration would tell
+  an operator that a Junos change offers no atomic apply, no dry run and no
+  guaranteed rollback -- understating the change control this server provides.
+
+### Changed
+
+- Re-pinned the `mecmcp-*` crates from `v0.21.0` to `v0.23.0`, spanning two
+  minors. No production code changed: `apply_change_set` already performs the
+  `claim_change_set_for_apply` that 0.22.0 made the only legal
+  `Approved -> Applying` route, and already writes `Applied` after staging, so
+  `settle_change_set` still transitions from a legal `Applied`.
+- Change-set fixtures seed through `seed_change_set_for_test`, since
+  `insert_change_set` now creates `Planned` and nothing else.
+- `ApprovalRecord` fixtures carry `digest_version: 4` and `ChangeSetRecord`
+  fixtures carry `apply_without_handle: false`, both new required fields.
+
+### Upgrading
+
+- **A binary-only rollback to a build pinned at mecmcp v0.21.0 will refuse to
+  start if any change set has been approved under this one.** 0.23.0 signs a
+  genuine two-person approval with `digest_version: 5`, which binds the preview
+  digest into the approval, and a record carrying one forces the change-set
+  state file to schema 6. The v0.21.0 reader does not accept schema 6 and
+  refuses the file rather than silently ignoring what it cannot verify -- which
+  is the correct behaviour, but it means the state file is not backward
+  compatible. Roll back the state file alongside the binary, or take a Proxmox
+  snapshot of the guest before upgrading and restore that instead.
+
 ## [0.22.1] - 2026-08-25
 
 ### Fixed
