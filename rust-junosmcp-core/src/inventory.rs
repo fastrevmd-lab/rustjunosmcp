@@ -935,7 +935,15 @@ mod rule_type_tests {
 ///
 /// Used by `add_device` to build the updated inventory before writing it back
 /// to disk. Returns the modified `Value`. Fails with `DeviceExists` if `name`
-/// is already a top-level key.
+/// is already present.
+///
+/// Handles both accepted inventory shapes. A bare map takes the device as a
+/// top-level key; the canonical envelope -- `{"version": 1, "devices": {...}}`
+/// -- takes it inside `devices`. Writing a top-level key into an envelope would
+/// put it beside `version` and `devices`, and `mecmcp-inventory` refuses
+/// unknown top-level keys once it has identified the shape, so the file would
+/// be written and then be unreadable at the next start. The add would report a
+/// failure having already corrupted the inventory on disk.
 pub fn insert_device(
     inv: &serde_json::Value,
     name: &str,
@@ -952,7 +960,32 @@ pub fn insert_device(
         "auth": auth,
     });
 
-    let inserted = if let Some(obj) = out.as_object_mut() {
+    // An envelope is identified by a `devices` key. When it holds an object the
+    // devices live inside it. When it holds anything else -- notably the legacy
+    // array envelope `{"version": 1, "devices": [...]}`, which the loader also
+    // accepts -- there is no key-shaped slot to add to, and writing a top-level
+    // key would put it beside `version` and `devices` and make the file
+    // unreadable. Refuse instead of corrupting it: an inventory this tool
+    // cannot extend safely is one a human should edit.
+    let target = match out.as_object_mut() {
+        Some(obj) => match obj.get("devices") {
+            Some(serde_json::Value::Object(_)) => obj
+                .get_mut("devices")
+                .and_then(serde_json::Value::as_object_mut),
+            Some(_) => {
+                return Err(JmcpError::InventoryParse(
+                    "this inventory keeps its devices in a form add_device cannot extend \
+                     (`devices` is present but is not an object); add the device by editing \
+                     the file directly"
+                        .into(),
+                ));
+            }
+            None => Some(obj),
+        },
+        None => None,
+    };
+
+    let inserted = if let Some(obj) = target {
         if obj.contains_key(name) {
             return Err(JmcpError::DeviceExists(name.to_string()));
         }
@@ -1097,5 +1130,104 @@ mod write_tests {
         let bytes = std::fs::read(f.path()).unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(s.find("\"first\"").unwrap() < s.find("\"second\"").unwrap());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod envelope_insert_tests {
+    use super::*;
+
+    fn auth() -> AuthConfig {
+        AuthConfig::Password {
+            password: "x".to_owned(),
+        }
+    }
+
+    /// The canonical envelope must take the device inside `devices`.
+    ///
+    /// Written as a top-level key it lands beside `version` and `devices`, and
+    /// `mecmcp-inventory` refuses unknown top-level keys once it has identified
+    /// the shape -- so `add_device` would write the file and then find it
+    /// unreadable, reporting a failure having already corrupted the inventory.
+    #[test]
+    fn an_envelope_inventory_takes_the_device_under_devices() {
+        let inv: serde_json::Value = serde_json::from_str(
+            r#"{"version":1,"devices":{"core-1":{"ip":"10.0.0.1","port":22,"username":"u","auth":{"type":"password","password":"x"}}}}"#,
+        )
+        .unwrap();
+
+        let out = insert_device(&inv, "core-2", "10.0.0.2", 22, "u", &auth()).unwrap();
+
+        let top = out.as_object().unwrap();
+        assert_eq!(
+            top.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["version", "devices"],
+            "the envelope must gain no new top-level key: {out}"
+        );
+        assert!(
+            out["devices"].get("core-2").is_some(),
+            "the device belongs under `devices`: {out}"
+        );
+        assert!(
+            out["devices"].get("core-1").is_some(),
+            "the existing device must survive: {out}"
+        );
+
+        // The written file has to still load. This is the assertion the bug
+        // would have failed, and it is why the shape check exists at all:
+        // `add_device` writes, then reloads, so a file it corrupts is a file it
+        // has already put on disk.
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), serde_json::to_string(&out).unwrap()).unwrap();
+        Inventory::load(file.path()).expect("an inventory this tool wrote must still be readable");
+    }
+
+    /// A bare map keeps taking the device as a top-level key.
+    #[test]
+    fn a_bare_map_inventory_still_takes_a_top_level_key() {
+        let inv: serde_json::Value = serde_json::from_str(
+            r#"{"core-1":{"ip":"10.0.0.1","port":22,"username":"u","auth":{"type":"password","password":"x"}}}"#,
+        )
+        .unwrap();
+
+        let out = insert_device(&inv, "core-2", "10.0.0.2", 22, "u", &auth()).unwrap();
+        assert!(out.get("core-2").is_some(), "bare map insert: {out}");
+        assert!(out.get("core-1").is_some(), "existing device kept: {out}");
+    }
+
+    /// The legacy array envelope is refused rather than corrupted.
+    ///
+    /// `{"version": 1, "devices": [...]}` is a shape the loader accepts, and it
+    /// has no key-shaped slot to add to. Writing a top-level key would put the
+    /// device beside `version` and `devices`, and the file would not load
+    /// again -- so this refuses before writing anything.
+    #[test]
+    fn a_legacy_array_envelope_is_refused_not_corrupted() {
+        let inv: serde_json::Value =
+            serde_json::from_str(r#"{"version":1,"devices":[{"name":"core-1"}]}"#).unwrap();
+
+        let error = insert_device(&inv, "core-2", "10.0.0.2", 22, "u", &auth())
+            .expect_err("an array envelope cannot be extended by key");
+        assert!(
+            matches!(&error, JmcpError::InventoryParse(message) if message.contains("devices")),
+            "the refusal must explain the shape: {error}"
+        );
+    }
+
+    /// A duplicate inside the envelope is still a duplicate.
+    #[test]
+    fn an_envelope_duplicate_is_refused() {
+        let inv: serde_json::Value = serde_json::from_str(
+            r#"{"version":1,"devices":{"core-1":{"ip":"10.0.0.1","port":22,"username":"u","auth":{"type":"password","password":"x"}}}}"#,
+        )
+        .unwrap();
+
+        let error = insert_device(&inv, "core-1", "10.0.0.9", 22, "u", &auth())
+            .expect_err("a device already in the envelope must not be added twice");
+        assert!(
+            matches!(error, JmcpError::DeviceExists(name) if name == "core-1"),
+            "the refusal must name the device"
+        );
     }
 }

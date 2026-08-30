@@ -55,6 +55,12 @@ futures      = "0.3"
 rustnetconf  = { workspace = true }
 
 [dev-dependencies]
+# `seed_change_set_for_test` is behind this feature. Since mecmcp 0.22.0
+# `insert_change_set` creates `Planned` and nothing else, so fixtures that need
+# a record already sitting in `Applied` go through the explicit test door
+# rather than the production one being widened for them. Dev-only: a release
+# build of the server never enables it.
+mecmcp-changeset = { workspace = true, features = ["test-util"] }
 tower        = { workspace = true }
 mecmcp-audit = { workspace = true }
 uuid         = "1"

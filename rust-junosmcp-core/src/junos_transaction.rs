@@ -246,6 +246,17 @@ impl JunosTransaction {
     }
 }
 
+impl JunosTransaction {
+    /// The atomicity Junos provides, as reported to
+    /// [`DeviceTransaction::atomicity`].
+    ///
+    /// A named constant so it can be asserted without a device session:
+    /// building a `JunosTransaction` needs a live NETCONF connection, and this
+    /// declaration does not depend on one.
+    pub const DECLARED_ATOMICITY: mecmcp_changeset::Atomicity =
+        mecmcp_changeset::Atomicity::candidate_configuration();
+}
+
 #[async_trait]
 impl DeviceTransaction for JunosTransaction {
     type Action = JunosAction;
@@ -253,6 +264,19 @@ impl DeviceTransaction for JunosTransaction {
     type Diff = JunosDiff;
     type Validation = JunosValidation;
     type Error = JmcpError;
+
+    /// Junos stages into a candidate, `commit check`s it, and rolls back
+    /// exactly, so all three guarantees hold.
+    ///
+    /// Declared rather than inherited. mecmcp 0.23.0's trait defaults to
+    /// [`mecmcp_changeset::Atomicity::nothing_guaranteed`], the safe answer for an implementation
+    /// that has not said -- but left inherited it would have an approval prompt
+    /// tell an operator that a Junos change offers no atomic apply, no dry run
+    /// and no guaranteed rollback, which understates the change control this
+    /// server actually provides.
+    fn atomicity(&self) -> mecmcp_changeset::Atomicity {
+        Self::DECLARED_ATOMICITY
+    }
 
     fn requires_config_lock(&self) -> bool {
         true
@@ -1997,4 +2021,29 @@ mod tests {
     //
     // Recording it here so the absence is visible in the file rather than only in
     // a review comment.
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod atomicity_tests {
+    use super::*;
+
+    /// The declaration an approval prompt is keyed on.
+    ///
+    /// Inherited from the trait this would be `nothing_guaranteed()`, telling
+    /// an operator that a Junos change offers no atomicity, no dry run and no
+    /// rollback -- none of which is true of candidate staging with
+    /// `commit check` and rollback.
+    #[test]
+    fn junos_declares_the_candidate_configuration_guarantees() {
+        let atomicity = JunosTransaction::DECLARED_ATOMICITY;
+        assert_eq!(
+            atomicity,
+            mecmcp_changeset::Atomicity::candidate_configuration(),
+            "Junos commits a candidate configuration and must say so"
+        );
+        assert!(atomicity.atomic_apply, "a commit lands all staged changes");
+        assert!(atomicity.dry_run_validation, "commit check validates first");
+        assert!(atomicity.guaranteed_rollback, "rollback is exact");
+    }
 }

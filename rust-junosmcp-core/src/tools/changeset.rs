@@ -1567,6 +1567,11 @@ mod tests {
             // recovering an apply that died mid-flight, which this server does
             // not yet record — see the follow-up issue.
             task_id: None,
+            // Not an apply that lost its handle. mecmcp 0.22.0 uses this to
+            // hold a record in `Applying` across a restart when the apply ran
+            // without a recoverable handle; these fixtures are already
+            // resolved, so the honest value is false.
+            apply_without_handle: false,
         }
     }
 
@@ -1610,7 +1615,7 @@ mod tests {
     async fn a_failed_apply_marks_the_change_set_failed_not_applied() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c1")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c1")))
             .await
             .unwrap();
         coordinator
@@ -1653,7 +1658,7 @@ mod tests {
     async fn a_failed_apply_settles_the_operation_terminally() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c2")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c2")))
             .await
             .unwrap();
         coordinator
@@ -1704,7 +1709,7 @@ mod tests {
     async fn the_cleanup_makes_no_device_write() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c3")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c3")))
             .await
             .unwrap();
         coordinator
@@ -1746,7 +1751,7 @@ mod tests {
     async fn settling_refreshes_the_recorded_fingerprint() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c4")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c4")))
             .await
             .unwrap();
         coordinator
@@ -1791,7 +1796,7 @@ mod tests {
     async fn a_failed_commit_is_left_indeterminate() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c5")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c5")))
             .await
             .unwrap();
         coordinator
@@ -1835,7 +1840,7 @@ mod tests {
     async fn an_unconfirmed_release_does_not_terminalise() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c6")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c6")))
             .await
             .unwrap();
         coordinator
@@ -1887,7 +1892,7 @@ mod tests {
     async fn a_candidate_that_did_not_revert_is_not_recorded_as_discarded() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c7")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c7")))
             .await
             .unwrap();
         coordinator
@@ -1942,7 +1947,7 @@ mod tests {
     async fn a_commit_that_never_reached_the_device_settles_cleanly() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c8")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c8")))
             .await
             .unwrap();
         // Still `Validated`: it never advanced to `Committing`.
@@ -1989,7 +1994,7 @@ mod tests {
     async fn a_lock_still_held_after_release_is_not_terminalised() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("c9")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("c9")))
             .await
             .unwrap();
         coordinator
@@ -2036,7 +2041,7 @@ mod tests {
     async fn a_probe_that_cannot_return_the_lock_does_not_terminalise() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("ca")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("ca")))
             .await
             .unwrap();
         coordinator
@@ -2084,7 +2089,7 @@ mod tests {
     async fn an_unknown_commit_outcome_does_not_probe_the_device() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("cb")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("cb")))
             .await
             .unwrap();
         coordinator
@@ -2122,7 +2127,7 @@ mod tests {
     async fn a_revert_that_can_be_terminalised_is_proved_on_the_device() {
         let (_dir, coordinator) = coordinator();
         coordinator
-            .insert_change_set(applied_change_set(&hex_id("cc")))
+            .seed_change_set_for_test(applied_change_set(&hex_id("cc")))
             .await
             .unwrap();
         coordinator
@@ -2174,6 +2179,11 @@ mod tests {
                 approver: approver.map(str::to_owned),
                 approved_at_unix: 1_000,
                 digest: format!("sha256:{}", "d".repeat(64)),
+                // These fixtures carry no preview, so the v4 tuple is the
+                // right shape for them. mecmcp 0.23.0 adds v5, which binds a
+                // preview digest into the approval; a fixture that claimed v5
+                // while setting `preview: None` would misrepresent itself.
+                digest_version: 4,
                 waived: waived.then(|| WaiverRecord {
                     kind: WaiverKind::LabMode,
                     reason: "lab-mode".to_owned(),
@@ -2191,6 +2201,11 @@ mod tests {
             // recovering an apply that died mid-flight, which this server does
             // not yet record — see the follow-up issue.
             task_id: None,
+            // Not an apply that lost its handle. mecmcp 0.22.0 uses this to
+            // hold a record in `Applying` across a restart when the apply ran
+            // without a recoverable handle; these fixtures are already
+            // resolved, so the honest value is false.
+            apply_without_handle: false,
         }
     }
 
