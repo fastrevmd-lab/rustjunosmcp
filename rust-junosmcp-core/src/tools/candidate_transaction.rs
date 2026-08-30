@@ -482,7 +482,9 @@ pub(crate) fn classify_check_error(error: JmcpError) -> CheckOutcome {
         return CheckOutcome::CheckFailed(error.to_string());
     };
     match rpc {
-        RpcError::ServerError { tag, .. } if is_config_rejection(tag) => {
+        // rustnetconf 0.16 boxed this payload into `RpcServerError` to keep the
+        // error enums small; `tag` is unchanged, just one level in.
+        RpcError::ServerError(server) if is_config_rejection(&server.tag) => {
             CheckOutcome::Invalid(error.to_string())
         }
         // Environmental rpc-errors, parse failures (incl. the multi-RE cluster
@@ -967,15 +969,17 @@ mod tests {
     }
 
     fn server_error(tag: ErrorTag, message: &str) -> JmcpError {
-        rustez_rpc_error(RpcError::ServerError {
-            error_type: None,
-            tag,
-            severity: None,
-            app_tag: None,
-            path: None,
-            message: message.into(),
-            info: None,
-        })
+        rustez_rpc_error(RpcError::ServerError(Box::new(
+            rustnetconf::error::RpcServerError {
+                error_type: None,
+                tag,
+                severity: None,
+                app_tag: None,
+                path: None,
+                message: message.into(),
+                info: None,
+            },
+        )))
     }
 
     #[test]
