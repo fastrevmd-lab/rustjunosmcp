@@ -36,7 +36,7 @@ RUN install -d -m 0750 -o 65532 -g 65532 \
 # glibc rule: builder generation must be <= runtime generation. The builder is
 # bookworm (glibc 2.36) and this is debian13 (glibc 2.41), so the direction is
 # safe. Moving the builder forward would require moving this first.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:c31ff9abcb1910f3ab25c7957bdaf0bfe12a01eb546e8df2282f1c8f682b606c
 LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/rustjunosmcp"
 LABEL org.opencontainers.image.licenses="MIT"
 
