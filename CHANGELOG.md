@@ -6,21 +6,27 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-01
+
 ### Fixed
 
-- **`add_device` corrupted a canonical-envelope inventory.** `insert_device`
-  always wrote the new device as a top-level key, so against an inventory
-  shaped `{"version": 1, "devices": {...}}` the device landed beside `version`
-  and `devices`. mecmcp-inventory 0.23 refuses unknown top-level keys once it
-  has identified the shape, so the tool wrote the file, failed its reload, and
-  left an inventory that would not load at the next start -- reporting a failure
-  having already broken the file on disk. The insert is now shape-aware: an
-  envelope takes the device under `devices`, a bare map keeps taking a top-level
-  key. An inventory whose `devices` is present but not an object -- the legacy
-  array envelope the loader also accepts -- is refused outright rather than
-  written, since it has no key-shaped slot to add to. Verified by sabotage:
-  reverting the shape check fails the new tests, including a round-trip that
-  loads the written file back.
+- **`add_device` corrupted a canonical-envelope inventory** (#374).
+  `insert_device` always wrote the new device as a top-level key, so against an
+  inventory shaped `{"version": 1, "devices": {...}}` the device landed beside
+  `version` and `devices`. mecmcp-inventory 0.23 refuses unknown top-level keys
+  once it has identified the shape, so the tool wrote the file, failed its
+  reload, and left an inventory that would not load at the next start --
+  reporting a failure having already broken the file on disk. The insert is now
+  shape-aware: an envelope takes the device under `devices`, a bare map keeps
+  taking a top-level key. An inventory whose `devices` is present but not an
+  object -- the legacy array envelope the loader also accepts -- is refused
+  outright rather than written, since it has no key-shaped slot to add to.
+  Verified by sabotage: reverting the shape check fails the new tests, including
+  a round-trip that loads the written file back.
+- **Moved off the yanked `chacha20` 0.10.1.** The crate arrived through
+  `rand -> rmcp -> mecmcp-server` and was yanked upstream; cargo-deny fails the
+  advisories check on a yanked crate. 0.10.2 satisfies the same requirement, so
+  this is a lockfile-only move.
 
 ### Added
 
@@ -42,6 +48,38 @@ All notable user-facing changes are recorded here. Format loosely follows
   `insert_change_set` now creates `Planned` and nothing else.
 - `ApprovalRecord` fixtures carry `digest_version: 4` and `ChangeSetRecord`
   fixtures carry `apply_without_handle: false`, both new required fields.
+- **`quick-xml` 0.41 -> 0.42, with `rustez` 0.16 and `rustnetconf` 0.16** (#373).
+  Resolves to one `quick-xml` version instead of two. `rustnetconf` 0.16 boxed
+  `RpcError::ServerError`'s seven RFC 6241 fields into `RpcServerError` to
+  reduce large-`Err` returns; six call sites moved (two pattern matches, one doc
+  comment, three test constructions). The quick-xml change itself: the
+  support-bundle redactor compares `local_name().as_ref()` against the name
+  directly instead of `name.as_bytes()`, since 0.42 yields `&str`.
+- **`sha2` -> 0.11 and `rand` -> 0.10.** sha2 0.11 returns
+  `hybrid_array::Array`, which does not implement `LowerHex`, so
+  `format!("{:x}", digest)` no longer compiles. All digest formatting now routes
+  through the `hex32` helper rather than re-deriving an encoding, ensuring
+  consistent wire format in audit records and change-set fingerprints. A
+  known-answer test now pins `hex32` to published SHA-256 vectors. rand 0.10
+  removes `OsRng` and `RngCore`; `SysRng` is the same OS entropy source, now
+  exposed fallibly — the confirmation-token path keeps the old panic-on-failure
+  semantics, since a dead CSPRNG must never silently downgrade to a weaker
+  source for a destructive-workflow token.
+- `uuid` 1.24.0 -> 1.25.0.
+- `thiserror` 2.0.19 -> 2.0.20.
+- **CI: Dependabot now ignores git-pinned `mecmcp` crates** (#375). The weekly
+  cargo run was failing because Dependabot advanced the git ref from the pinned
+  tag to the newest commit on mecmcp main, but the manifest also carries an
+  exact version requirement, so cargo refused. The mecmcp version is deliberately
+  moved by hand in dedicated PRs, so there is nothing for dependabot to do.
+
+### Security
+
+- **Fixed RUST_LOG turning off the audit trail** (via mecmcp 0.21.0). An
+  operator who set `RUST_LOG` to debug one crate turned off this server's audit
+  trail for the duration, while the operations it would have recorded still
+  happened. The audit subscriber is now isolated from global `RUST_LOG`
+  directives.
 
 ### Upgrading
 
