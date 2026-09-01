@@ -89,7 +89,7 @@ metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 # auth + remote transport (sub-project #2)
 arc-swap         = "1"
 sha2             = "0.11"
-hmac             = "0.12"
+hmac             = "0.13"
 rand             = "0.10"
 subtle           = "2"
 base64ct         = { version = "1", features = ["alloc"] }
