@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # The mecmcp crates are pinned by git tag and moved by hand in a
+    # chore/mecmcp-<version> PR. Dependabot advances the git ref past the tag,
+    # which cargo then refuses ("failed to select a version for the requirement
+    # mecmcp-server = ^0.23.0"), failing the whole cargo run and taking
+    # unrelated crate updates down with it.
+    ignore:
+      - dependency-name: "mecmcp-*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
