@@ -1379,7 +1379,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "apply_junos_change_set",
-        description = "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state."
+        description = "Apply an approved change set to the device. The change set must have been approved by a second principal, and the device fingerprint must match the expected state. When confirm_timeout_mins is set, the change set stays 'applied' regardless of whether the confirming commit arrives; use get_junos_change_set_status to see the actual outcome."
     )]
     async fn apply_junos_change_set(
         &self,
@@ -1519,7 +1519,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "get_junos_change_set_status",
-        description = "Get the status of a change set: Planned, Approved, Applied, Expired, or Failed. Returns the full change-set record including owner, approver, and lifecycle state."
+        description = "Get the status of a change set. 'Applied' means the apply was executed and staged - NOT that the configuration is still live on the device. commit_confirmation, when present, reports awaiting_confirmation (a confirm window is open; rollback_deadline_unix carries the deadline), presumed_auto_reverted (it closed with no confirmation recorded here - only the device settles this), discarded (an operator reconciled it with state resolve), indeterminate (reconciled AS COMMITTED but the window has since closed, which stored state cannot resolve - check the device), or committed. committed means the configuration is live and is also what an ordinary commit reports, so it is not evidence that a confirm window was used."
     )]
     async fn get_junos_change_set_status(
         &self,
@@ -1907,7 +1907,7 @@ mod scope_tests {
     /// Regenerate after an intentional change:
     ///
     /// ```text
-    /// UPDATE_JUNOS_TOOL_BASELINE=1 cargo test --bins junos_schemas_match
+    /// UPDATE_JUNOS_TOOL_BASELINE=1 cargo test -p rust-junosmcp --lib junos_schemas_match
     /// ```
     ///
     /// Then read the diff. Adding a tool should add exactly one key; anything
@@ -1941,7 +1941,7 @@ mod scope_tests {
     /// fixture:
     ///
     /// ```text
-    /// UPDATE_SRX_TOOL_BASELINE=1 cargo test --bins srx_schemas_match
+    /// UPDATE_SRX_TOOL_BASELINE=1 cargo test -p rust-junosmcp --lib srx_schemas_match
     /// ```
     #[cfg(feature = "srx")]
     #[test]
