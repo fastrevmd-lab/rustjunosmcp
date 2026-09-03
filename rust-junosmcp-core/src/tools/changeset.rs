@@ -1226,18 +1226,179 @@ pub async fn confirm_change_set(
     }
 }
 
+/// Derive commit confirmation state from the operation record.
+///
+/// `apply_junos_change_set` with `confirm_timeout_mins` issues a Junos confirmed
+/// commit: the device commits and arms a rollback that fires unless
+/// `confirm_junos_change_set` arrives first. The change set's own `state` cannot
+/// report the result, because `Applied` is written when *staging* succeeds —
+/// before the commit is issued — and nothing rewrites it afterwards. The
+/// evidence lives on the operation record instead.
+///
+/// Values:
+///
+/// - `awaiting_confirmation` — a rollback deadline is set and still in the
+///   future. `rollback_deadline_unix` carries it.
+/// - `presumed_auto_reverted` — the deadline passed with no confirmation
+///   recorded here.
+/// - `committed` — the operation reached `Committed`.
+/// - `discarded` — a record that *did* carry a deadline was reconciled as
+///   `Discarded` by `state resolve`, an operator saying the change is not on
+///   the device.
+/// - `indeterminate` — the record was reconciled `AS COMMITTED` but its window
+///   has since closed. `state resolve` neither stops the device nor records
+///   when it ran, so this is either a confirm made out of band and then
+///   reconciled, or a reconciliation made early on a timer that then fired.
+///   Nothing stored here separates them; only the device does.
+///
+/// A deadline still on the record is the only evidence here that a confirm
+/// window was used, and it outlives a manual resolve, which settles the state
+/// without stopping the device — so while the window is still open it decides
+/// the verdict even on a settled record.
+/// With no deadline the record cannot say whether a confirm window was ever
+/// asked for, because confirming clears it: `Committed` reports `committed`,
+/// which an ordinary commit reports too and is therefore not evidence of
+/// rollback protection. Any other state with no deadline gets no verdict — an
+/// ordinary failed apply terminalizes as `Discarded`, which is not a
+/// confirmed-commit outcome.
+///
+/// Three limits, none of which this server can close by reading its own state:
+///
+/// - `committed` cannot separate a confirmed commit from a plain one, because
+///   confirming clears the deadline. Both mean the configuration is live, which
+///   is the distinction that matters.
+/// - `presumed_auto_reverted` is a **presumption**, not an observation. It is
+///   the absence of a recorded confirmation, and it is wrong if a confirming
+///   commit was issued out of band on the device, if the server and device
+///   clocks disagree, or if `confirm_junos_change_set` reached the device but
+///   its durable write failed — that last case returns an error to the caller
+///   and leaves the record looking unconfirmed. Only the device settles it.
+/// - A deadline in the future does not prove the commit is still pending; it
+///   proves nothing here has confirmed it.
+///
+/// `operation_id` and `operation_state` are returned whenever an operation is
+/// found, so a reader can see the basis for the verdict — in particular an
+/// `indeterminate` operation state means a restart intervened.
+///
+/// When no operation is linked (a change set never applied, or whose operation
+/// record was purged), no fields are added.
+async fn derive_commit_confirmation(
+    coordinator: &ChangesetCoordinator,
+    change_set_id: &str,
+    device: &str,
+    now: u64,
+) -> serde_json::Map<String, Value> {
+    let mut fields = serde_json::Map::new();
+
+    let Ok(change_set) = coordinator.change_set(change_set_id, device).await else {
+        return fields;
+    };
+    let Some(operation_id) = change_set.operation_id.as_deref() else {
+        return fields;
+    };
+
+    // A single keyed read. `record` is scoped to (operation, owner, device), and
+    // the owner is always the change set's: `apply_change_set` refuses with
+    // "only the principal that created the change set may apply it" when they
+    // differ, so there is no divergent case to fall back for.
+    //
+    // A miss is genuine absence, and it is a normal state rather than an error:
+    // an apply that fails after linking removes the operation while the change
+    // set keeps its `operation_id`. Enumerating the store to confirm that would
+    // clone every record and its action payloads, under the coordinator lock,
+    // on each status read of a failed change set.
+    let Ok(operation) = coordinator
+        .record(operation_id, &change_set.owner, device)
+        .await
+    else {
+        return fields;
+    };
+
+    fields.insert("operation_id".to_owned(), json!(operation.id));
+    fields.insert("operation_state".to_owned(), json!(operation.state));
+
+    // The presence of a deadline is the only evidence here that a confirmed
+    // commit was ever issued, so it decides whether a verdict is owed at all.
+    if let Some(deadline) = operation.rollback_deadline_unix {
+        // `resolve_persisted_operation` writes a terminal state and leaves the
+        // deadline behind, so a settled record can still have a live device
+        // timer. `AS DISCARDED` is an operator saying the change is not on the
+        // device; the timer only reverts it further, so the assertion stands.
+        if operation.state == mecmcp_changeset::LifecycleState::Discarded {
+            fields.insert("commit_confirmation".to_owned(), json!("discarded"));
+            return fields;
+        }
+
+        // A `Committed` record whose window has since closed is genuinely
+        // ambiguous, and neither answer can be justified from what is stored.
+        // `state resolve ... AS COMMITTED` does not stop the device and does not
+        // record when it ran, so this shape is either an operator who confirmed
+        // out of band and then reconciled — the remedy for a confirming commit
+        // whose durable write failed — or one who reconciled early on a timer
+        // that then fired. Saying `committed` hides a revert; saying
+        // `presumed_auto_reverted` contradicts a human who looked at the device.
+        // Report the uncertainty instead: it is the one thing that is true, and
+        // it routes the reader to the device rather than to a wrong answer.
+        if operation.state == mecmcp_changeset::LifecycleState::Committed && now >= deadline {
+            fields.insert("commit_confirmation".to_owned(), json!("indeterminate"));
+            return fields;
+        }
+
+        // `AS COMMITTED` does not stop the device. It asserts the commit landed,
+        // which for a confirmed commit is only ever provisional — reporting
+        // `committed` here would hide a rollback that is still counting down.
+        fields.insert("rollback_deadline_unix".to_owned(), json!(deadline));
+        fields.insert(
+            "commit_confirmation".to_owned(),
+            json!(if now < deadline {
+                "awaiting_confirmation"
+            } else {
+                "presumed_auto_reverted"
+            }),
+        );
+        return fields;
+    }
+
+    // No deadline was ever recorded, so nothing here was a confirmed commit.
+    // `Committed` is a commit that is live; every other state belongs to a plain
+    // apply — notably the `Discarded` an ordinary failed apply terminalizes as,
+    // which is not a confirmed-commit outcome and must not be labelled one.
+    if operation.state == mecmcp_changeset::LifecycleState::Committed {
+        fields.insert("commit_confirmation".to_owned(), json!("committed"));
+    }
+
+    fields
+}
+
 /// Get the status of a change set.
 pub async fn get_change_set_status(
     args: GetChangeSetStatusArgs,
     coordinator: Arc<ChangesetCoordinator>,
 ) -> Result<Value, JmcpError> {
     let status = coordinator
-        .change_set_status(args.change_set_id, args.device)
+        .change_set_status(args.change_set_id.clone(), args.device.clone())
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
-    // Serialize the full status structure.
-    serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
+    // Get current time for deadline comparison.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Derive commit confirmation state.
+    let confirmation_fields =
+        derive_commit_confirmation(&coordinator, &args.change_set_id, &args.device, now).await;
+
+    // Serialize the status and merge in the confirmation fields.
+    let mut result = serde_json::to_value(status)
+        .map_err(|e| JmcpError::Validation(e.to_string()))?
+        .as_object_mut()
+        .ok_or_else(|| JmcpError::Validation("status is not an object".to_owned()))?
+        .clone();
+
+    result.extend(confirmation_fields);
+    Ok(Value::Object(result))
 }
 
 /// Get the status of a change set with staged actions included.
@@ -1247,12 +1408,29 @@ pub async fn get_change_set_status_with_actions(
     coordinator: Arc<ChangesetCoordinator>,
 ) -> Result<Value, JmcpError> {
     let status = coordinator
-        .change_set_status_with_actions(args.change_set_id, args.device)
+        .change_set_status_with_actions(args.change_set_id.clone(), args.device.clone())
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
 
-    // Serialize the full status structure including actions.
-    serde_json::to_value(status).map_err(|e| JmcpError::Validation(e.to_string()))
+    // Get current time for deadline comparison.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Derive commit confirmation state.
+    let confirmation_fields =
+        derive_commit_confirmation(&coordinator, &args.change_set_id, &args.device, now).await;
+
+    // Serialize the status and merge in the confirmation fields.
+    let mut result = serde_json::to_value(status)
+        .map_err(|e| JmcpError::Validation(e.to_string()))?
+        .as_object_mut()
+        .ok_or_else(|| JmcpError::Validation("status is not an object".to_owned()))?
+        .clone();
+
+    result.extend(confirmation_fields);
+    Ok(Value::Object(result))
 }
 
 /// List change sets, optionally filtered by device.
@@ -2929,5 +3107,493 @@ mod tests {
             cancel2
         );
         assert_eq!(cancel2.unwrap()["state"].as_str().unwrap(), "Cancelled");
+    }
+
+    // ---- #384: commit confirmation state inference ----
+
+    /// An applied change set already linked to its operation, which is what
+    /// `apply_change_set` leaves on disk — the status join walks
+    /// `ChangeSetRecord::operation_id`, so an unlinked fixture tests nothing.
+    fn applied_change_set_linked(change_set_id: &str, operation_id: &str) -> ChangeSetRecord {
+        ChangeSetRecord {
+            operation_id: Some(operation_id.to_owned()),
+            ..applied_change_set(change_set_id)
+        }
+    }
+
+    /// Helper to create an operation with a change_set_id link.
+    fn operation_with_change_set(
+        operation_id: &str,
+        change_set_id: &str,
+        state: LifecycleState,
+        rollback_deadline_unix: Option<u64>,
+    ) -> OperationRecord {
+        OperationRecord {
+            state,
+            rollback_deadline_unix,
+            change_set_id: Some(change_set_id.to_owned()),
+            ..validated_operation(operation_id)
+        }
+    }
+
+    /// When the deadline is in the past and operation is Committing, infer auto-reverted.
+    #[tokio::test]
+    async fn commit_confirmation_presumes_revert_when_deadline_passed() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("cd");
+        let operation_id = hex_id("0d");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        let deadline_past = 1000u64; // Far in the past
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committing,
+                Some(deadline_past),
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "presumed_auto_reverted",
+            "when deadline is past and operation is Committing, should presume auto-revert"
+        );
+        assert_eq!(
+            result["rollback_deadline_unix"].as_u64().unwrap(),
+            deadline_past
+        );
+        assert_eq!(result["operation_id"].as_str().unwrap(), operation_id);
+        assert_eq!(result["operation_state"].as_str().unwrap(), "committing");
+    }
+
+    /// `state resolve ... AS COMMITTED` asserts the commit landed, but does not
+    /// stop the device. While the timer runs the change is still provisional,
+    /// so the deadline must stay visible rather than being hidden behind a
+    /// terminal `committed`.
+    #[tokio::test]
+    async fn commit_confirmation_keeps_a_live_timer_visible_after_a_manual_commit_resolve() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d4");
+        let operation_id = hex_id("13");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committed,
+                Some(u64::MAX),
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "awaiting_confirmation",
+            "a resolve does not cancel the device's rollback"
+        );
+        assert_eq!(result["rollback_deadline_unix"].as_u64().unwrap(), u64::MAX);
+    }
+
+    /// An ordinary failed apply terminalizes the operation as `Discarded` with
+    /// no deadline. Nothing was ever confirm-committed, so no confirmation
+    /// verdict is owed — labelling it would misreport a plain failure.
+    #[tokio::test]
+    async fn commit_confirmation_absent_for_a_failed_apply_that_never_confirm_committed() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d5");
+        let operation_id = hex_id("14");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Discarded,
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.get("commit_confirmation").is_none(),
+            "a failed apply with no confirm window is not a confirmed-commit outcome"
+        );
+        assert_eq!(
+            result["operation_state"].as_str().unwrap(),
+            "discarded",
+            "the operation state still has to be visible"
+        );
+    }
+
+    /// `AS COMMITTED` on a window that has since closed is unresolvable from
+    /// stored state: the resolve neither stops the device nor records its own
+    /// time. Asserting either outcome would be a guess, so the tool says so.
+    #[tokio::test]
+    async fn commit_confirmation_is_indeterminate_for_a_committed_resolve_past_its_window() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d6");
+        let operation_id = hex_id("15");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committed,
+                Some(1000), // window long closed, deadline left behind by resolve
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "indeterminate",
+            "neither committed nor reverted can be justified from what is stored"
+        );
+        assert!(
+            result.get("rollback_deadline_unix").is_none(),
+            "a closed window must not be advertised as pending"
+        );
+    }
+
+    /// `state resolve ... AS DISCARDED` settles a record but leaves its
+    /// deadline behind. The operator looked at the device and said the change
+    /// is not there; a stale timer must not talk over that.
+    #[tokio::test]
+    async fn commit_confirmation_honours_a_manual_discard_over_a_stale_deadline() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d3");
+        let operation_id = hex_id("12");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Discarded,
+                Some(u64::MAX),
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "discarded",
+            "a reconciled discard outranks a deadline the resolve left behind"
+        );
+        assert!(
+            result.get("rollback_deadline_unix").is_none(),
+            "a settled record must not advertise a confirmable window"
+        );
+    }
+
+    /// A restart rewrites the operation to `Indeterminate` but leaves the
+    /// deadline, and the Junos timer belongs to the device — so the window is
+    /// still open and must still be reported. Keying on `Committing` alone
+    /// dropped it, which is what the review caught.
+    #[tokio::test]
+    async fn commit_confirmation_survives_a_restart_rewriting_the_operation() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d2");
+        let operation_id = hex_id("11");
+
+        let mut record = applied_change_set(&change_set_id);
+        record.operation_id = Some(operation_id.clone());
+        coordinator.seed_change_set_for_test(record).await.unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Indeterminate,
+                Some(u64::MAX),
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "awaiting_confirmation",
+            "an Indeterminate operation still holding a future deadline is still confirmable"
+        );
+        assert_eq!(result["rollback_deadline_unix"].as_u64().unwrap(), u64::MAX);
+        assert_eq!(
+            result["operation_state"].as_str().unwrap(),
+            "indeterminate",
+            "the reader must be able to see a restart intervened"
+        );
+    }
+
+    /// When the deadline is in the future and operation is Committing, report awaiting_confirmation.
+    #[tokio::test]
+    async fn commit_confirmation_awaiting_when_deadline_future() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("ce");
+        let operation_id = hex_id("0e");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        let deadline_future = u64::MAX; // Far in the future
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committing,
+                Some(deadline_future),
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "awaiting_confirmation",
+            "when deadline is future and operation is Committing, should report awaiting_confirmation"
+        );
+        assert_eq!(
+            result["rollback_deadline_unix"].as_u64().unwrap(),
+            deadline_future
+        );
+        assert_eq!(result["operation_id"].as_str().unwrap(), operation_id);
+        assert_eq!(result["operation_state"].as_str().unwrap(), "committing");
+    }
+
+    /// When operation is Committed, report committed (regardless of deadline).
+    #[tokio::test]
+    async fn commit_confirmation_committed_when_operation_committed() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("cf");
+        let operation_id = hex_id("0f");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committed,
+                None, // Confirming clears the deadline
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["commit_confirmation"].as_str().unwrap(),
+            "committed",
+            "when operation is Committed, should report committed"
+        );
+        assert!(
+            result.get("rollback_deadline_unix").is_none(),
+            "Committed operations have no deadline"
+        );
+        assert_eq!(result["operation_id"].as_str().unwrap(), operation_id);
+        assert_eq!(result["operation_state"].as_str().unwrap(), "committed");
+    }
+
+    /// When no operation is linked to the change set, no confirmation fields are added.
+    #[tokio::test]
+    async fn commit_confirmation_absent_when_no_operation() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d0");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set(&change_set_id))
+            .await
+            .unwrap();
+
+        // No operation inserted — the change set stands alone.
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.get("commit_confirmation").is_none(),
+            "no operation means no commit_confirmation"
+        );
+        assert!(
+            result.get("operation_id").is_none(),
+            "no operation means no operation_id"
+        );
+        assert!(
+            result.get("operation_state").is_none(),
+            "no operation means no operation_state"
+        );
+    }
+
+    /// Regression test: ensure pre-existing ChangeSetOutput fields are still present.
+    #[tokio::test]
+    async fn commit_confirmation_preserves_existing_fields() {
+        let (_dir, coordinator) = coordinator();
+        let change_set_id = hex_id("d1");
+        let operation_id = hex_id("10");
+
+        coordinator
+            .seed_change_set_for_test(applied_change_set_linked(&change_set_id, &operation_id))
+            .await
+            .unwrap();
+
+        coordinator
+            .insert(operation_with_change_set(
+                &operation_id,
+                &change_set_id,
+                LifecycleState::Committed,
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let result = get_change_set_status(
+            GetChangeSetStatusArgs {
+                change_set_id: change_set_id.clone(),
+                device: DEVICE.to_owned(),
+            },
+            coordinator,
+        )
+        .await
+        .unwrap();
+
+        // Pre-existing ChangeSetOutput fields must all be present.
+        assert!(
+            result.get("change_set_id").is_some(),
+            "change_set_id must be present"
+        );
+        assert_eq!(result["change_set_id"].as_str().unwrap(), change_set_id);
+
+        assert!(result.get("owner").is_some(), "owner must be present");
+        assert_eq!(result["owner"].as_str().unwrap(), OWNER);
+
+        assert!(result.get("device").is_some(), "device must be present");
+        assert_eq!(result["device"].as_str().unwrap(), DEVICE);
+
+        assert!(result.get("state").is_some(), "state must be present");
+        // `ChangeSetOutput::state` serialises snake_case, unlike the hand-built
+        // PascalCase literals the create/approve/cancel handlers return.
+        assert_eq!(result["state"].as_str().unwrap(), "applied");
+
+        assert!(
+            result.get("action_count").is_some(),
+            "action_count must be present"
+        );
+
+        // The enrichment must sit *alongside* the original fields, not replace
+        // them: this is a merge into the serialised `ChangeSetOutput`, and a
+        // merge that dropped either half would still satisfy the asserts above.
+        assert_eq!(result["commit_confirmation"].as_str().unwrap(), "committed");
+        assert_eq!(result["operation_id"].as_str().unwrap(), operation_id);
     }
 }

@@ -6,6 +6,49 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`get_junos_change_set_status` now distinguishes a live commit from one the device reverted** (#384).
+  `apply_junos_change_set` with `confirm_timeout_mins` issues a Junos confirmed commit, which the
+  device rolls back unless `confirm_junos_change_set` arrives before the deadline. Status reported
+  `applied` either way. The cause is where `Applied` is written: `apply_change_set` sets it as soon as
+  *staging* succeeds, before the commit is issued, and nothing rewrites it afterwards -- so the
+  change-set state is settled before the device has been asked to do anything.
+
+  The verdict now comes from the linked operation record, reached through `ChangeSetRecord::operation_id`:
+  `awaiting_confirmation` while a rollback deadline is still in the future, `presumed_auto_reverted`
+  once it passes with no confirmation recorded, `committed` once the operation reaches `Committed`, and
+  `discarded` when one was reconciled by `state resolve`.
+
+  A recorded deadline is the only evidence this server holds that a confirmed commit was issued, so it
+  decides whether a verdict is owed at all, and it outlives a manual resolve. `resolve_persisted_operation`
+  settles the state but leaves `rollback_deadline_unix` in place, and `state resolve ... AS COMMITTED`
+  does not stop the device: reporting `committed` there would hide a rollback still counting down.
+  `AS DISCARDED` is an operator saying the change is not on the device, which a timer only reinforces.
+  An `AS COMMITTED` record whose window has since closed reports `indeterminate` rather than guessing:
+  `state resolve` neither stops the device nor records when it ran, so that shape is either a confirm
+  made out of band and then reconciled -- the remedy for a confirming commit whose durable write failed
+  -- or a reconciliation made early on a timer that then fired. `committed` would hide a revert and
+  `presumed_auto_reverted` would contradict a human who looked at the device, so the tool reports the
+  uncertainty and sends the reader to the device.
+  An operation with no deadline that is not `Committed` gets no verdict at all -- an ordinary failed
+  apply terminalizes as `Discarded`, and that is not a confirmed-commit outcome.
+  The response also carries `operation_id`, `operation_state` and `rollback_deadline_unix` so a reader
+  can see the basis. All additions are additive -- no existing field or argument name changed.
+
+  **`presumed_auto_reverted` is a presumption, not an observation.** It is the absence of a recorded
+  confirmation, and it is wrong if a confirming commit was issued out of band on the device, if the
+  server and device clocks disagree, or if `confirm_junos_change_set` reached the device but its
+  durable write failed. Only the device settles it. Likewise `committed` cannot separate a confirmed
+  commit from a plain one, because confirming clears the deadline -- both mean the configuration is
+  live, which is the distinction that matters.
+
+  The derivation keys on the deadline rather than on `LifecycleState::Committing`, because a restart
+  rewrites every non-terminal operation to `Indeterminate` while leaving the deadline intact. Since the
+  Junos rollback belongs to the device rather than the session, that window is still open and still
+  confirmable; keying on `Committing` dropped the deadline from the response at exactly the moment an
+  operator needed it.
+
 ## [0.23.0] - 2026-09-01
 
 ### Fixed
