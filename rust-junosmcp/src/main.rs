@@ -346,6 +346,43 @@ async fn main() -> Result<()> {
         changeset_coordinator = changeset_coordinator.with_evidence(service.recorder());
     }
     let coordinator = std::sync::Arc::new(changeset_coordinator);
+
+    // #370: settle commits this process's predecessor died in the middle of.
+    // `ChangesetCoordinator::load` has just rewritten every non-terminal
+    // operation to `Indeterminate`; the ones carrying an attribution had
+    // reached the commit, and the device can be asked whether it landed.
+    //
+    // Detached deliberately. This does device I/O, and a candidate on an
+    // unreachable device costs 20s — longer than the readiness budget the test
+    // harness and package smoke allow — so blocking startup on it would turn a
+    // recoverable record into a server that is killed and retried on every
+    // boot. Nothing is lost by serving first: an unresolved record is
+    // non-terminal, and a non-terminal operation already blocks a new one on
+    // its device, so the records this settles keep gating writes until it does.
+    {
+        let dm = dev_manager.clone();
+        let coordinator = coordinator.clone();
+        tokio::spawn(async move {
+            let summary =
+                rust_junosmcp_core::changeset_recovery::sweep_crashed_commits(dm, coordinator)
+                    .await;
+            if summary.candidates > 0 {
+                tracing::info!(
+                    settled = summary.settled,
+                    // Everything not settled is still indeterminate — provisional
+                    // commits, failed writes and candidates the timeout never
+                    // reached included. Summing only the probe outcomes would
+                    // undercount exactly the cases an operator needs to chase.
+                    left_unknown = summary.candidates - summary.settled,
+                    timed_out = summary.timed_out,
+                    "startup re-probe settled {} of {} interrupted commits",
+                    summary.settled,
+                    summary.candidates
+                );
+            }
+        });
+    }
+
     let handler = JmcpHandler::new(
         dev_manager.clone(),
         policy,
