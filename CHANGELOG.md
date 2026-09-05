@@ -6,6 +6,9 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+
+## [0.24.0] - 2026-09-05
+
 ### Added
 
 - **A crashed commit is now re-probed against the device at startup** (#370).
