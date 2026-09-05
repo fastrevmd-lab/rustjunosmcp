@@ -487,10 +487,17 @@ pub async fn sweep_crashed_commits(
                 };
                 // Probe lock freedom. The commit log proves the commit landed,
                 // but not that the lock was released — the process may have died
-                // between the commit and the unlock. The probe is bounded by the
-                // sweep's remaining time so it cannot run unbounded.
+                // between the commit and the unlock.
+                //
+                // Bounded by what is left of the sweep *now*, not by the
+                // `remaining` computed at the top of this iteration: that value
+                // was read before `join_next` awaited, so a candidate that spent
+                // most of the budget there would otherwise hand the whole of it
+                // to the lock probe as well and overrun the deadline.
+                let remaining_for_probe =
+                    deadline.saturating_duration_since(tokio::time::Instant::now());
                 let lock_probe = match tokio::time::timeout(
-                    remaining,
+                    remaining_for_probe,
                     probe_lock_freedom(dm.clone(), &record.device),
                 )
                 .await
