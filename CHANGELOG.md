@@ -25,6 +25,14 @@ All notable user-facing changes are recorded here. Format loosely follows
   device can simply be unreachable at boot. Neither is evidence the commit did not happen, so both leave
   the record `Indeterminate` for `state resolve`. The sweep never writes `Failed`.
 
+  **The commit-log hit settles the commit; the lock flag is cleared only when lock freedom was proven.**
+  Finding the id in the log proves the commit landed, but not that the candidate lock was released — the
+  process may have died between the commit and the unlock. So after finding a hit, the sweep probes lock
+  freedom by taking and releasing the lock, matching the abandon path. `config_lock_held` is cleared only
+  when that probe succeeds; if the lock cannot be taken, cannot be confirmed returned, or the probe times
+  out or errors, the record is still settled `Committed` (the commit is proven) but the flag remains set
+  and the `details` note that the lock state could not be verified.
+
   **A confirmed commit is not settled either.** Finding the id proves the provisional commit entered the
   log, not that its rollback was ever cancelled; settling it `Committed` would make the record terminal,
   freeing the device for an apply whose commit would cancel a rollback still armed, and would report as

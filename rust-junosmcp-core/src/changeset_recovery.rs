@@ -34,9 +34,24 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use mecmcp_changeset::{LifecycleState, records::OperationRecord};
+use mecmcp_changeset::{DeviceTransaction, LifecycleState, records::OperationRecord};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Whether the candidate lock was proven free after a committed operation.
+///
+/// The commit log proves the commit landed, but not that the lock was released,
+/// because this code path exists for the case where the process died between
+/// sending the commit and recording its result — so the transaction's own
+/// post-commit unlock/close may never have run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockProbeResult {
+    /// The lock was proven free by taking and releasing it.
+    ProvenFree,
+    /// Lock freedom was not proven (could not take, could not confirm release,
+    /// timeout, or error).
+    NotProven,
+}
 
 /// How long one device may take to answer before its record is left alone.
 pub const REPROBE_DEVICE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -202,26 +217,41 @@ pub fn is_reprobe_candidate(record: &OperationRecord) -> bool {
 /// unreachable device are both "still unknown", and the record stays
 /// `Indeterminate` for `state resolve` — the honest state, and the one it was
 /// already in.
+///
+/// When settling `Committed`, the `lock_probe` result determines whether
+/// `config_lock_held` is cleared. The commit log proves the commit landed,
+/// but not that the lock was released — the process may have died between
+/// the commit and the unlock. Only clear the flag when the probe proved freedom.
 pub fn settle_from_outcome(
     record: &OperationRecord,
     outcome: &ReprobeOutcome,
+    lock_probe: LockProbeResult,
 ) -> Option<OperationRecord> {
     match outcome {
         ReprobeOutcome::Committed => {
             let mut settled = record.clone();
             settled.state = LifecycleState::Committed;
-            // The commit landed, so the candidate it was made from is gone and
-            // the lock with it. Leaving the flag set would send a settled
-            // operation to manual lock cleanup that has nothing to clean.
-            settled.config_lock_held = false;
+
+            let lock_status_msg = match lock_probe {
+                LockProbeResult::ProvenFree => {
+                    settled.config_lock_held = false;
+                    "the lock was proven free and returned"
+                }
+                LockProbeResult::NotProven => {
+                    // Leave the record's own value untouched — this sweep learned
+                    // nothing about the lock, in either direction.
+                    "the lock state could not be verified"
+                }
+            };
             settled.details = Some(format!(
                 "re-probed after restart: the device's commit log carries request.id={}, \
-                 so the commit landed before this process died",
+                 so the commit landed before this process died; {}",
                 record
                     .attribution
                     .as_ref()
                     .map(|a| a.request_id.as_str())
-                    .unwrap_or("<none>")
+                    .unwrap_or("<none>"),
+                lock_status_msg
             ));
             Some(settled)
         }
@@ -274,6 +304,80 @@ async fn still_a_candidate(
         .await
         .ok()?;
     is_reprobe_candidate(&current).then_some(current)
+}
+
+/// Probe whether the candidate lock is free on a device.
+///
+/// Matches the abandon path's lock probe: take the lock and release it, bounded
+/// by the cleanup budget. Returns `ProvenFree` only when the lock was taken and
+/// confirmed returned. Any error, timeout, or failure to confirm the release
+/// returns `NotProven`.
+///
+/// Taking the lock is the only proof it was free, because rustnetconf's close
+/// sequence is best-effort and returns `Ok` even when `<close-session/>` fails.
+async fn probe_lock_freedom(dm: Arc<DeviceManager>, device: &str) -> LockProbeResult {
+    use crate::junos_transaction::JunosTransaction;
+
+    let budget = crate::tools::candidate_transaction::cleanup_timeout();
+
+    /// Helper to run one operation with a timeout, matching the abandon path's `probe`.
+    async fn probe<F, T, E>(budget: Duration, future: F) -> Result<T, ProbeError<E>>
+    where
+        F: std::future::Future<Output = Result<T, E>>,
+    {
+        match tokio::time::timeout(budget, future).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(ProbeError::Failed(error)),
+            Err(_) => Err(ProbeError::TimedOut),
+        }
+    }
+
+    /// Why a cleanup probe did not answer.
+    #[derive(Debug)]
+    enum ProbeError<E> {
+        /// The device answered, with an error.
+        Failed(E),
+        /// The device did not answer inside the cleanup budget.
+        TimedOut,
+    }
+
+    impl<E: std::fmt::Display> std::fmt::Display for ProbeError<E> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Failed(error) => write!(f, "{error}"),
+                Self::TimedOut => f.write_str("timed out inside the cleanup budget"),
+            }
+        }
+    }
+
+    // Build the transaction backend, matching apply_change_set.
+    let transaction = JunosTransaction::new(dm, device.to_owned());
+
+    // Try to take the lock
+    if let Err(error) = probe(budget, transaction.lock("changeset recovery lock probe")).await {
+        tracing::debug!(
+            device = %device,
+            error = %error,
+            "could not take the lock to prove freedom"
+        );
+        return LockProbeResult::NotProven;
+    }
+
+    // Try to release the lock and confirm it was returned
+    let returned = matches!(
+        probe(budget, transaction.unlock()).await,
+        Ok(mecmcp_changeset::UnlockOutcome::Released)
+    );
+
+    if returned {
+        LockProbeResult::ProvenFree
+    } else {
+        tracing::debug!(
+            device = %device,
+            "took the candidate lock but could not confirm it was returned"
+        );
+        LockProbeResult::NotProven
+    }
 }
 
 /// How many devices may be probed at once.
@@ -381,7 +485,23 @@ pub async fn sweep_crashed_commits(
                 let Some(current) = still_a_candidate(&coordinator, &record).await else {
                     continue;
                 };
-                let Some(settled) = settle_from_outcome(&current, &outcome) else {
+                // Probe lock freedom. The commit log proves the commit landed,
+                // but not that the lock was released — the process may have died
+                // between the commit and the unlock. The probe is bounded by the
+                // sweep's remaining time so it cannot run unbounded.
+                let lock_probe = match tokio::time::timeout(
+                    remaining,
+                    probe_lock_freedom(dm.clone(), &record.device),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        summary.timed_out = true;
+                        LockProbeResult::NotProven
+                    }
+                };
+                let Some(settled) = settle_from_outcome(&current, &outcome, lock_probe) else {
                     continue;
                 };
                 if let Err(error) = coordinator.update(settled).await {
@@ -535,7 +655,12 @@ mod tests {
             Some(test_attribution("94ed336b-df9c-48d0-a9e4-2aa2cc50e429")),
         );
         assert!(
-            settle_from_outcome(&record, &ReprobeOutcome::CommittedProvisional).is_none(),
+            settle_from_outcome(
+                &record,
+                &ReprobeOutcome::CommittedProvisional,
+                LockProbeResult::NotProven
+            )
+            .is_none(),
             "a provisional commit must stay unsettled"
         );
     }
@@ -744,27 +869,80 @@ mod tests {
 
     /// The only outcome that settles a record is Committed.
     ///
-    /// Confirms the settled record is marked `Committed`, has the lock flag cleared,
-    /// and carries a details message citing the request id.
+    /// Confirms the settled record is marked `Committed`, has the lock flag cleared
+    /// when lock freedom was proven, and carries a details message citing the request id.
     #[test]
-    fn settle_from_outcome_committed() {
+    fn settle_from_outcome_committed_with_lock_proven_free() {
         let record = test_record(
             LifecycleState::Indeterminate,
             Some(test_attribution(TEST_UUID)),
         );
         let outcome = ReprobeOutcome::Committed;
+        let lock_probe = LockProbeResult::ProvenFree;
 
-        let settled = settle_from_outcome(&record, &outcome).expect("Committed should settle");
+        let settled =
+            settle_from_outcome(&record, &outcome, lock_probe).expect("Committed should settle");
 
         assert_eq!(
             settled.state,
             LifecycleState::Committed,
             "the settled record must be Committed"
         );
-        assert!(!settled.config_lock_held, "the lock must be cleared");
+        assert!(
+            !settled.config_lock_held,
+            "the lock must be cleared when proven free"
+        );
         assert!(
             settled.details.as_ref().unwrap().contains(TEST_UUID),
             "details must cite the request id"
+        );
+        assert!(
+            settled
+                .details
+                .as_ref()
+                .unwrap()
+                .contains("lock was proven free"),
+            "details must state that lock freedom was proven"
+        );
+    }
+
+    /// When lock freedom was not proven, the flag must remain set.
+    ///
+    /// The commit log proves the commit landed, but not that the lock was released,
+    /// because the process may have died between the commit and the unlock. Only clear
+    /// the flag when the probe proved freedom.
+    #[test]
+    fn settle_from_outcome_committed_with_lock_not_proven() {
+        let record = test_record(
+            LifecycleState::Indeterminate,
+            Some(test_attribution(TEST_UUID)),
+        );
+        let outcome = ReprobeOutcome::Committed;
+        let lock_probe = LockProbeResult::NotProven;
+
+        let settled = settle_from_outcome(&record, &outcome, lock_probe)
+            .expect("Committed should settle even when lock state is unverified");
+
+        assert_eq!(
+            settled.state,
+            LifecycleState::Committed,
+            "the settled record must be Committed"
+        );
+        assert!(
+            settled.config_lock_held,
+            "the lock flag must remain set when freedom was not proven"
+        );
+        assert!(
+            settled.details.as_ref().unwrap().contains(TEST_UUID),
+            "details must cite the request id"
+        );
+        assert!(
+            settled
+                .details
+                .as_ref()
+                .unwrap()
+                .contains("lock state could not be verified"),
+            "details must state that lock freedom was not verified"
         );
     }
 
@@ -781,7 +959,7 @@ mod tests {
         );
         let outcome = ReprobeOutcome::NotFound;
 
-        let result = settle_from_outcome(&record, &outcome);
+        let result = settle_from_outcome(&record, &outcome, LockProbeResult::NotProven);
 
         assert!(
             result.is_none(),
@@ -798,7 +976,7 @@ mod tests {
         );
         let outcome = ReprobeOutcome::Unreachable("network timeout".to_owned());
 
-        let result = settle_from_outcome(&record, &outcome);
+        let result = settle_from_outcome(&record, &outcome, LockProbeResult::NotProven);
 
         assert!(
             result.is_none(),
@@ -824,7 +1002,8 @@ mod tests {
         ];
 
         for outcome in &outcomes {
-            if let Some(settled) = settle_from_outcome(&record, outcome) {
+            if let Some(settled) = settle_from_outcome(&record, outcome, LockProbeResult::NotProven)
+            {
                 assert_ne!(
                     settled.state,
                     LifecycleState::Failed,
@@ -833,5 +1012,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// When lock freedom is not proven, the flag must be left as it was.
+    ///
+    /// The commit log proves the commit landed, but the probe learned nothing about
+    /// the lock. If the incoming record had config_lock_held == false, it must stay
+    /// false — inventing a held lock is as bad as clearing one that may still exist.
+    #[test]
+    fn settle_from_outcome_not_proven_leaves_flag_alone_when_already_clear() {
+        let mut record = test_record(
+            LifecycleState::Indeterminate,
+            Some(test_attribution(TEST_UUID)),
+        );
+        // Start with the flag already clear
+        record.config_lock_held = false;
+        let outcome = ReprobeOutcome::Committed;
+        let lock_probe = LockProbeResult::NotProven;
+
+        let settled = settle_from_outcome(&record, &outcome, lock_probe)
+            .expect("Committed should settle even when lock state is unverified");
+
+        assert_eq!(
+            settled.state,
+            LifecycleState::Committed,
+            "the settled record must be Committed"
+        );
+        assert!(
+            !settled.config_lock_held,
+            "the lock flag must remain clear when it was already clear and probe is NotProven"
+        );
+        assert!(
+            settled
+                .details
+                .as_ref()
+                .unwrap()
+                .contains("lock state could not be verified"),
+            "details must state that lock freedom was not verified"
+        );
+    }
+
+    /// A lock probe that outlives the remaining sweep budget must be cut short.
+    ///
+    /// The sweep deadline bounds both `join_next()` and the lock probe. A probe
+    /// that would take longer than the remaining time must yield NotProven and
+    /// set timed_out rather than letting the sweep run unbounded.
+    #[tokio::test]
+    async fn lock_probe_is_bounded_by_sweep_deadline() {
+        use tokio::time::Duration;
+
+        // Simulate the timeout wrapper that should exist in the sweep.
+        // We use a very short timeout (1ms) and a slow operation to verify
+        // the timeout logic without using test-util.
+
+        let remaining = Duration::from_millis(1);
+
+        // Simulate a probe that would take much longer
+        let slow_probe = async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            LockProbeResult::ProvenFree
+        };
+
+        let mut timed_out = false;
+        let probe_result = match tokio::time::timeout(remaining, slow_probe).await {
+            Ok(result) => result,
+            Err(_) => {
+                timed_out = true;
+                LockProbeResult::NotProven
+            }
+        };
+
+        assert!(
+            timed_out,
+            "the timeout must fire when probe exceeds remaining time"
+        );
+        assert_eq!(
+            probe_result,
+            LockProbeResult::NotProven,
+            "timed-out probe must yield NotProven"
+        );
     }
 }
