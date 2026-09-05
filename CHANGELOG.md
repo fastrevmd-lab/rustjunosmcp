@@ -6,6 +6,68 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **A crashed commit is now re-probed against the device at startup** (#370).
+  `commit_operation` persists the caller's attribution -- including `request_id` -- immediately before
+  the commit RPC is sent, and `format_attribution` puts that same id into the Junos commit comment as
+  `request.id=<uuid>`. A process that dies between sending the commit and recording its result therefore
+  leaves behind a record naming something the device can be asked about. On startup the server now asks:
+  for every operation `ChangesetCoordinator::load` left `Indeterminate` that carries an attribution, it
+  reads the device's commit log and settles the record `Committed` if the id is there.
+
+  The selection is `Indeterminate` **plus an attribution**, not `Committing`. `load` rewrites every
+  non-terminal operation to `Indeterminate` before any sweep could observe it, and attribution is written
+  nowhere but `commit_operation` -- so its presence is what separates a crash during the commit from a
+  crash during staging, which reaches the same state with no attribution.
+
+  **Only a hit settles anything.** Junos keeps a bounded commit history, so an entry can age out, and a
+  device can simply be unreachable at boot. Neither is evidence the commit did not happen, so both leave
+  the record `Indeterminate` for `state resolve`. The sweep never writes `Failed`.
+
+  **The commit-log hit settles the commit; the lock flag is cleared only when lock freedom was proven.**
+  Finding the id in the log proves the commit landed, but not that the candidate lock was released — the
+  process may have died between the commit and the unlock. So after finding a hit, the sweep probes lock
+  freedom by taking and releasing the lock, matching the abandon path. `config_lock_held` is cleared only
+  when that probe succeeds; if the lock cannot be taken, cannot be confirmed returned, or the probe times
+  out or errors, the record is still settled `Committed` (the commit is proven) but the flag remains set
+  and the `details` note that the lock state could not be verified.
+
+  **A confirmed commit is not settled either.** Finding the id proves the provisional commit entered the
+  log, not that its rollback was ever cancelled; settling it `Committed` would make the record terminal,
+  freeing the device for an apply whose commit would cancel a rollback still armed, and would report as
+  permanently live a change the device may yet revert. Junos marks these on the entry's *header*
+  (`commit confirmed, rollback in Nmins`), so the match groups the log into entries rather than searching
+  it flat, and a deadline already on the record is honoured even when the log is ambiguous.
+
+  Known gap: a settle writes the record directly and emits no SSDF `result_receipt`, so a crash after the
+  apply intent was spooled leaves that evidence chain unterminated even once the device has confirmed the
+  outcome. Tracked separately.
+
+  The sweep is detached rather than awaited: a candidate on an unreachable device costs 20s, longer than
+  the readiness budget the test harness and package smoke allow, so blocking startup on it would turn a
+  recoverable record into a server killed and retried on every boot. Nothing is lost by serving first --
+  a non-terminal operation already blocks a new one on its device, so these records keep gating writes
+  until the sweep settles them. Probing is bounded-concurrent (4 at a time) and the candidate order is
+  rotated each run, so a prefix of unreachable devices in the coordinator's stable map order cannot
+  starve a reachable candidate behind them -- either within one sweep or across every restart. 20s per
+  device, 120s for the sweep. A provisional finding is reported but deliberately not written back: doing so
+  would mean writing `Indeterminate` and the old deadline over a record a `confirm_junos_change_set` may
+  have settled in between, un-confirming a commit the operator did confirm, and mecmcp has no
+  compare-and-update for operations to make that check atomic. No rollback deadline is invented either: reconstructing one from the device's clock would be
+  the same kind of unobserved claim the rest of this refuses to make. Because the sweep now runs alongside live traffic, the settle
+  path re-reads the record and skips it if anything settled it while the probe was in flight; that path
+  is safe from the remaining window by construction, since `committed` is only reached for a record that
+  carried no deadline and so writes exactly what a concurrent confirm would have written. The candidate
+  rotation is seeded per process rather than from the clock, because a wall-clock modulo is periodic --
+  60 records restarted daily lands on `86400 % 60 == 0` and would reselect the same slow prefix forever.
+
+  Verified on hardware (vSRX 24.4R1.9), not just offline: a real change-set commit was confirmed to stamp
+  the full untruncated `request.id=` into the device's commit log; a record flipped to `Indeterminate` was
+  settled `Committed` from that log after a restart; an id the device had never seen was left untouched;
+  and an unreachable device timed out at 20s with the record untouched and the server still starting.
+
+
 ### Fixed
 
 - **`get_junos_change_set_status` now distinguishes a live commit from one the device reverted** (#384).
