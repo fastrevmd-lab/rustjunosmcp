@@ -2554,7 +2554,13 @@ mod timeout_budget_tests {
     use rust_junosmcp_core::tools::{
         DEFAULT_CLEANUP_TIMEOUT_SECS, set_cleanup_timeout_secs, worst_case_duration,
     };
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    // Both tests mutate the same process-global CLEANUP_TIMEOUT_SECS, and cargo
+    // runs them in parallel. This mutex serializes them to prevent a race where
+    // one test reads the value the other just reset.
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     /// The arithmetic behind #257: a stalled device burns the operation budget,
     /// then every cleanup phase in series. With the shipped defaults that is 480s,
@@ -2564,6 +2570,7 @@ mod timeout_budget_tests {
     /// help text both quote.
     #[test]
     fn the_default_worst_case_exceeds_a_typical_client_timeout() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
         let worst_case = worst_case_duration(Duration::from_secs(360));
 
@@ -2579,6 +2586,7 @@ mod timeout_budget_tests {
     /// honour progress notifications.
     #[test]
     fn lowering_the_cleanup_budget_lowers_the_worst_case() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         set_cleanup_timeout_secs(5);
         // Four cleanup phases: the staged-session close, then the lock,
         // fingerprint and unlock probes a failed apply uses to establish
