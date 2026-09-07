@@ -476,6 +476,11 @@ default `srx` feature, or 18 in a Junos-only build):
 
 ## Docker
 
+> Running the two-person and lab-mode pair as containers, including the
+> published-vs-internal port trap that makes the allow-lists reject everything
+> with 421, is written up in
+> [`docs/HOW-TO-SETUP-DOCKER.md`](docs/HOW-TO-SETUP-DOCKER.md).
+
 Prebuilt images are published to GHCR on every version tag. The package is
 public — no `docker login` required. The runtime includes OpenSSH `scp` with
 legacy `-O` protocol support and runs as numeric UID/GID `65532:65532`.
