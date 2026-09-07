@@ -48,7 +48,7 @@ is the first thing that will stop you (see Troubleshooting):
 ```json
 {
     "vsrx-demo": {
-        "ip": "192.168.1.227",
+        "ip": "192.0.2.20",
         "port": 830,
         "username": "netconf",
         "auth": {

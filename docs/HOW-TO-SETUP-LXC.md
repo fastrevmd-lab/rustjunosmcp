@@ -89,7 +89,7 @@ pct create 611 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst \
     --cores 1 --memory 512 --swap 512 \
     --rootfs local-lvm:4 \
     --unprivileged 1 --features nesting=1 \
-    --net0 name=eth0,bridge=vmbr0,firewall=1,gw=192.168.1.1,ip=192.168.1.231/24,type=veth \
+    --net0 name=eth0,bridge=vmbr0,firewall=1,gw=192.0.2.1,ip=192.0.2.11/24,type=veth \
     --onboot 0 --ostype debian \
     --tags "disposable;test;labmode"
 
@@ -169,7 +169,7 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --device-lease-dir /var/lib/jmcp/device-leases \
     --inventory-readonly \
     --allow-insecure-bind \
-    --allowed-host 192.168.1.231 \
+    --allowed-host 192.0.2.11 \
     --allowed-host test-labmode-junos:30030 \
     --lab-mode \
     --audit-format json \
@@ -226,7 +226,7 @@ pid=$(pct exec 611 -- systemctl show -p MainPID --value rust-junosmcp.service)
 pct exec 611 -- grep -E '^Seccomp' /proc/$pid/status                                    # Seccomp: 2
 
 # 4. it is serving, and refusing unauthenticated callers
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://192.168.1.231:30030/mcp \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://192.0.2.11:30030/mcp \
      -H 'content-type: application/json' -d '{}'                                        # 401
 ```
 
