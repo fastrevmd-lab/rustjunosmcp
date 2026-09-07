@@ -7,6 +7,27 @@ All notable user-facing changes are recorded here. Format loosely follows
 ## [Unreleased]
 
 
+## [0.24.1] - 2026-09-06
+
+### Changed
+
+- **Shipped systemd unit now carries the fleet seccomp posture** (mecmcp#354).
+  Added a comment documenting why `SystemCallErrorNumber=EPERM` is load-bearing:
+  without it, systemd's default applies and a denied syscall raises SIGSYS, killing
+  the process mid-request (mecmcp#351). The comment also clarifies that EPERM denials
+  are silent at the systemd layer — seccomp return actions have a precedence order
+  and ERRNO outranks LOG, so such denials can only become visible if the application
+  stops discarding the errno.
+
+### Fixed
+
+- **Flaky test race in `timeout_budget_tests`**. Both tests mutated the same
+  process-global `CLEANUP_TIMEOUT_SECS` and cargo ran them in parallel, so whichever
+  test lost the race would read the value the other had just reset, causing spurious
+  failures. Added a static mutex that both tests hold for their entire duration to
+  serialize them.
+
+
 ## [0.24.0] - 2026-09-05
 
 ### Added

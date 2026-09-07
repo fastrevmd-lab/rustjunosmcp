@@ -50,6 +50,12 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
+# Syscall filtering: SystemCallErrorNumber=EPERM is load-bearing. Without it,
+# systemd's default applies and a denied syscall raises SIGSYS, killing the
+# process mid-request (mecmcp#351). An EPERM denial is silent at the systemd
+# layer — seccomp return actions have a precedence order and ERRNO outranks LOG,
+# so a denied call never reaches the audit action. Such denials can only become
+# visible if the application stops discarding the errno.
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @obsolete @mount @swap @reboot @module
 SystemCallErrorNumber=EPERM
