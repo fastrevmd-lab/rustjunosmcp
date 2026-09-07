@@ -542,6 +542,11 @@ docker run --rm -i \
 
 ## LXC (Proxmox)
 
+> Building a container from nothing — including the two-person and lab-mode
+> pair, the credential modes that must be right before first start, and how to
+> verify the seccomp posture came from the shipped unit — is written up in
+> [`docs/HOW-TO-SETUP-LXC.md`](docs/HOW-TO-SETUP-LXC.md).
+
 ```bash
 # Build the tarball and checksum.
 ./scripts/package-lxc.sh
