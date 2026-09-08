@@ -171,8 +171,7 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --allow-insecure-bind \
     --allowed-host 192.0.2.11 \
     --allowed-host test-labmode-junos:30030 \
-    --allowed-origin http://192.0.2.11:30030 \
-    --allowed-origin http://test-labmode-junos:30030 \
+    --allowed-origin https://console.example.org \
     --lab-mode \
     --audit-format json \
     --audit-log-file /var/lib/jmcp/audit.jsonl \
@@ -183,10 +182,16 @@ The empty `ExecStart=` is required: it clears the shipped one before setting a
 new one.
 
 **Two-person mode is the same file with `--lab-mode` removed.** That single flag
-is the whole difference. Point `--allowed-host` at that rig's own address, and
-update `--allowed-origin` to match — both must track whatever clients actually
-dial (an off-loopback listener requires both or the server refuses to start),
-or requests are refused with 421.
+is the whole difference.
+
+`--allowed-host` lists the server authorities clients dial (the address and port
+of this server). `--allowed-origin` lists the trusted browser application origins
+that call this server — typically a web console hosted elsewhere. These are
+configured independently and are usually different values. An off-loopback
+listener requires at least one `--allowed-origin` or the server refuses to start,
+but the value shown (`https://console.example.org`) is an example: replace it
+with the actual origin of your browser client. Clients that send no Origin header
+— curl and non-browser MCP clients — are unaffected by the origin allowlist.
 
 Then:
 
@@ -282,11 +287,18 @@ Step 5, item 2. This is a local omission, not a device fault.
 **`authentication failed for user 'netconf'`**
 Step 5, item 3: the device does not hold the public half of `id_ed25519`.
 
-**Service active but every call returns 421** — `--allowed-host` does not match
-the address clients dial. Add the exact host and port they use.
+**Service active but every call returns 421 `"Host '<host>' is not allowed"`** —
+`--allowed-host` does not match the server authority clients dial. Add the exact
+host and port they use.
+
+**Browser calls return 403 `"Origin '<origin>' is not allowed"`** —
+The browser application's origin is not in the `--allowed-origin` allowlist. Add
+the origin of the calling browser page (e.g., `https://console.example.org`).
+Non-browser clients (curl, CLI MCP clients) send no Origin header and are
+unaffected.
 
 **`non-loopback bind '0.0.0.0' requires at least one --allowed-origin`**
-The service fails to start immediately. The drop-in is missing the origin
-allowlist — an off-loopback listener must supply both `--allowed-host` and
-`--allowed-origin`. Add an `--allowed-origin` line for each `--allowed-host`,
-matching the scheme (http:// or https://), address, and port that clients use.
+The service fails to start immediately. An off-loopback listener must supply at
+least one `--allowed-origin` (the trusted browser application origins). Add the
+origin of your browser client (e.g., `https://console.example.org`), or if no
+browser client exists, a placeholder value to satisfy the requirement.
