@@ -106,10 +106,10 @@ files stay owned by you and nothing needs `sudo`:
 
 Both are shown below. The second is what the examples here were verified with.
 
-## 3. Run it — two-person mode
+## 3. Pin the image version
 
-First, obtain the immutable digest for the version you want to run. If the image has
-not been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1` first.
+Obtain the immutable digest for the version you want to run. If the image has not
+been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1` first.
 
 ```bash
 image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
@@ -118,7 +118,9 @@ image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
 ```
 
 The digest should be recorded wherever the deployment is tracked, since it identifies
-the exact bytes. Then run:
+the exact bytes.
+
+## 4. Run it — two-person mode
 
 ```bash
 docker run -d --name junos-twoperson \
@@ -136,16 +138,18 @@ docker run -d --name junos-twoperson \
   --allowed-origin http://127.0.0.1:30030 --allowed-origin http://localhost:30030
 ```
 
-The `--allowed-origin` values shown work for local testing. A browser-based MCP
-client served from a different port needs its own origin added (e.g., if the
-client serves from port 6274, add `--allowed-origin http://localhost:6274`), not
-the server's address.
+The `--allowed-origin` values shown work for same-origin browser clients (a page
+served from the same scheme, host, and port as the server). A browser client on a
+different origin needs to reach the server through a CORS-capable proxy — the
+transport emits no CORS headers, so cross-origin requests are blocked by the
+browser before authentication runs. The origin allowlist is a restriction on top
+of same-origin or proxied access, not a way to enable cross-origin calls directly.
 
 Configuration and keys are mounted read-only; only the state directory is
 writable. It holds staged transfers, the destructive-operation leases and
 `known_hosts` — do not delete lease files while a server is running.
 
-## 4. Run it — lab mode
+## 5. Run it — lab mode
 
 Identical but for `--lab-mode`, and a different published port so both can run
 side by side:
@@ -183,7 +187,7 @@ Give each mode its own state directory if you run them against the same devices;
 the destructive-operation leases are shared state, and two servers pointed at one
 lease directory are two servers that can disagree about who holds a device.
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 docker ps --filter name=junos- --format '{{.Names}} {{.Status}}'
@@ -204,7 +208,7 @@ Confirm the mode is what you intended:
 docker logs junos-labmode 2>&1 | grep -i 'lab mode'
 ```
 
-## 6. Stop
+## 7. Stop
 
 ```bash
 docker stop junos-twoperson junos-labmode

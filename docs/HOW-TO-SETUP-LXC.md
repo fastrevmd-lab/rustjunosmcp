@@ -171,7 +171,7 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --allow-insecure-bind \
     --allowed-host 192.0.2.11 \
     --allowed-host test-labmode-junos:30030 \
-    --allowed-origin https://console.example.org \
+    --allowed-origin http://console.example.org \
     --lab-mode \
     --audit-format json \
     --audit-log-file /var/lib/jmcp/audit.jsonl \
@@ -189,9 +189,11 @@ of this server). `--allowed-origin` lists the trusted browser application origin
 that call this server — typically a web console hosted elsewhere. These are
 configured independently and are usually different values. An off-loopback
 listener requires at least one `--allowed-origin` or the server refuses to start,
-but the value shown (`https://console.example.org`) is an example: replace it
-with the actual origin of your browser client. Clients that send no Origin header
-— curl and non-browser MCP clients — are unaffected by the origin allowlist.
+but the value shown (`http://console.example.org`) is an example: replace it
+with the actual origin of your browser client. The scheme must match the server's
+TLS configuration — this plaintext drop-in uses `http://`; an HTTPS console origin
+requires `--tls-cert` and `--tls-key`. Clients that send no Origin header — curl
+and non-browser MCP clients — are unaffected by the origin allowlist.
 
 Then:
 
