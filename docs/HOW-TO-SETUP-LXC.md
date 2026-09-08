@@ -171,6 +171,8 @@ ExecStart=/usr/local/bin/rust-junosmcp \
     --allow-insecure-bind \
     --allowed-host 192.0.2.11 \
     --allowed-host test-labmode-junos:30030 \
+    --allowed-origin http://192.0.2.11:30030 \
+    --allowed-origin http://test-labmode-junos:30030 \
     --lab-mode \
     --audit-format json \
     --audit-log-file /var/lib/jmcp/audit.jsonl \
@@ -181,8 +183,10 @@ The empty `ExecStart=` is required: it clears the shipped one before setting a
 new one.
 
 **Two-person mode is the same file with `--lab-mode` removed.** That single flag
-is the whole difference. Point `--allowed-host` at that rig's own address —
-it must track whatever clients actually dial, or requests are refused with 421.
+is the whole difference. Point `--allowed-host` at that rig's own address, and
+update `--allowed-origin` to match — both must track whatever clients actually
+dial (an off-loopback listener requires both or the server refuses to start),
+or requests are refused with 421.
 
 Then:
 
@@ -280,3 +284,9 @@ Step 5, item 3: the device does not hold the public half of `id_ed25519`.
 
 **Service active but every call returns 421** — `--allowed-host` does not match
 the address clients dial. Add the exact host and port they use.
+
+**`non-loopback bind '0.0.0.0' requires at least one --allowed-origin`**
+The service fails to start immediately. The drop-in is missing the origin
+allowlist — an off-loopback listener must supply both `--allowed-host` and
+`--allowed-origin`. Add an `--allowed-origin` line for each `--allowed-host`,
+matching the scheme (http:// or https://), address, and port that clients use.
