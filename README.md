@@ -476,6 +476,11 @@ default `srx` feature, or 18 in a Junos-only build):
 
 ## Docker
 
+> Running the two-person and lab-mode pair as containers, including the
+> published-vs-internal port trap that makes the allow-lists reject everything
+> with 421, is written up in
+> [`docs/HOW-TO-SETUP-DOCKER.md`](docs/HOW-TO-SETUP-DOCKER.md).
+
 Prebuilt images are published to GHCR on every version tag. The package is
 public — no `docker login` required. The runtime includes OpenSSH `scp` with
 legacy `-O` protocol support and runs as numeric UID/GID `65532:65532`.
@@ -541,6 +546,11 @@ docker run --rm -i \
 ```
 
 ## LXC (Proxmox)
+
+> Building a container from nothing — including the two-person and lab-mode
+> pair, the credential modes that must be right before first start, and how to
+> verify the seccomp posture came from the shipped unit — is written up in
+> [`docs/HOW-TO-SETUP-LXC.md`](docs/HOW-TO-SETUP-LXC.md).
 
 ```bash
 # Build the tarball and checksum.
