@@ -106,17 +106,31 @@ files stay owned by you and nothing needs `sudo`:
 
 Both are shown below. The second is what the examples here were verified with.
 
-## 3. Run it — two-person mode
+## 3. Pin the image version
+
+Obtain the immutable digest for the version you want to run. If the image has not
+been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1` first.
+
+```bash
+image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+    --format '{{index .RepoDigests 0}}')
+# $image is now ghcr.io/...@sha256:... — pinned, and printable if you want it recorded
+```
+
+The digest should be recorded wherever the deployment is tracked, since it identifies
+the exact bytes.
+
+## 4. Run it — two-person mode
 
 ```bash
 docker run -d --name junos-twoperson \
   --user "$(id -u):$(id -g)" \
-  -p 30030:30030 \
+  -p 127.0.0.1:30030:30030 \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+  "$image" \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
@@ -124,11 +138,18 @@ docker run -d --name junos-twoperson \
   --allowed-origin http://127.0.0.1:30030 --allowed-origin http://localhost:30030
 ```
 
+The `--allowed-origin` values shown work for same-origin browser clients (a page
+served from the same scheme, host, and port as the server). A browser client on a
+different origin needs to reach the server through a CORS-capable proxy — the
+transport emits no CORS headers, so cross-origin requests are blocked by the
+browser before authentication runs. The origin allowlist is a restriction on top
+of same-origin or proxied access, not a way to enable cross-origin calls directly.
+
 Configuration and keys are mounted read-only; only the state directory is
 writable. It holds staged transfers, the destructive-operation leases and
 `known_hosts` — do not delete lease files while a server is running.
 
-## 4. Run it — lab mode
+## 5. Run it — lab mode
 
 Identical but for `--lab-mode`, and a different published port so both can run
 side by side:
@@ -136,12 +157,12 @@ side by side:
 ```bash
 docker run -d --name junos-labmode \
   --user "$(id -u):$(id -g)" \
-  -p 30040:30030 \
+  -p 127.0.0.1:30040:30030 \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+  "$image" \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
@@ -149,6 +170,10 @@ docker run -d --name junos-labmode \
   --allowed-origin http://127.0.0.1:30040 --allowed-origin http://localhost:30040 \
   --lab-mode
 ```
+
+The port publish (`-p 127.0.0.1:...`) binds to loopback only, so the server is
+reachable from this host but not from another. Reaching the server from another
+host requires TLS rather than a wider publish.
 
 **Note the port asymmetry, because it catches people.** The server always
 listens on `30030` *inside* the container; `-p 30040:30030` publishes it as
@@ -162,7 +187,7 @@ Give each mode its own state directory if you run them against the same devices;
 the destructive-operation leases are shared state, and two servers pointed at one
 lease directory are two servers that can disagree about who holds a device.
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 docker ps --filter name=junos- --format '{{.Names}} {{.Status}}'
@@ -183,7 +208,7 @@ Confirm the mode is what you intended:
 docker logs junos-labmode 2>&1 | grep -i 'lab mode'
 ```
 
-## 6. Stop
+## 7. Stop
 
 ```bash
 docker stop junos-twoperson junos-labmode
@@ -203,8 +228,9 @@ Both of these were hit while writing this document.
 Binding anything other than loopback demands an explicit origin allow-list. This
 is a guard, not an inconvenience: a container published to a host port is
 reachable by any browser page that can resolve it, and the origin list is what
-stops one driving your firewalls. Add `--allowed-origin` for each address a
-client will use.
+stops one driving your firewalls. `--allowed-origin` lists the origins of browser
+applications that call this server. Clients sending no Origin header (curl,
+non-browser MCP clients) are never matched against it.
 
 **`Error: loading /etc/jmcp/devices.json` / `invalid devices.json: inventory parse failed: canonical envelope: missing field 'type'`**
 The `auth` object needs a `type`, either `ssh_key` or `password`. Copy the shape
