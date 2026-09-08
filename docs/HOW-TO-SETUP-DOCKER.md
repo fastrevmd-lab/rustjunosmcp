@@ -108,15 +108,24 @@ Both are shown below. The second is what the examples here were verified with.
 
 ## 3. Run it — two-person mode
 
+First, obtain the immutable digest for the version you want to run:
+
+```bash
+docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 --format '{{index .RepoDigests 0}}'
+```
+
+Then run with the digest (the `@sha256:...` pins the exact bytes; the version tag is
+shown in a comment for readability):
+
 ```bash
 docker run -d --name junos-twoperson \
   --user "$(id -u):$(id -g)" \
-  -p 30030:30030 \
+  -p 127.0.0.1:30030:30030 \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+  ghcr.io/fastrevmd-lab/rust-junosmcp@sha256:DIGEST_HERE `# version 0.24.1` \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
@@ -136,12 +145,12 @@ side by side:
 ```bash
 docker run -d --name junos-labmode \
   --user "$(id -u):$(id -g)" \
-  -p 30040:30030 \
+  -p 127.0.0.1:30040:30030 \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+  ghcr.io/fastrevmd-lab/rust-junosmcp@sha256:DIGEST_HERE `# version 0.24.1` \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
@@ -149,6 +158,10 @@ docker run -d --name junos-labmode \
   --allowed-origin http://127.0.0.1:30040 --allowed-origin http://localhost:30040 \
   --lab-mode
 ```
+
+The port publish (`-p 127.0.0.1:...`) binds to loopback only, so the server is
+reachable from this host but not from another. Reaching the server from another
+host requires TLS rather than a wider publish.
 
 **Note the port asymmetry, because it catches people.** The server always
 listens on `30030` *inside* the container; `-p 30040:30030` publishes it as
