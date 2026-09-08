@@ -299,6 +299,8 @@ unaffected.
 
 **`non-loopback bind '0.0.0.0' requires at least one --allowed-origin`**
 The service fails to start immediately. An off-loopback listener must supply at
-least one `--allowed-origin` (the trusted browser application origins). Add the
-origin of your browser client (e.g., `https://console.example.org`), or if no
-browser client exists, a placeholder value to satisfy the requirement.
+least one `--allowed-origin` — set it to the origin of the browser client that
+will call this server. If there is no browser client today, any single well-formed
+origin will satisfy the startup requirement (it has no effect on non-browser
+clients, which send no Origin header), but it must be replaced with the real
+client origin before any browser client is pointed at the server.
