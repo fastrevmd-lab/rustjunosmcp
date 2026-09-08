@@ -136,6 +136,11 @@ docker run -d --name junos-twoperson \
   --allowed-origin http://127.0.0.1:30030 --allowed-origin http://localhost:30030
 ```
 
+The `--allowed-origin` values shown work for local testing. A browser-based MCP
+client served from a different port needs its own origin added (e.g., if the
+client serves from port 6274, add `--allowed-origin http://localhost:6274`), not
+the server's address.
+
 Configuration and keys are mounted read-only; only the state directory is
 writable. It holds staged transfers, the destructive-operation leases and
 `known_hosts` — do not delete lease files while a server is running.
@@ -219,8 +224,9 @@ Both of these were hit while writing this document.
 Binding anything other than loopback demands an explicit origin allow-list. This
 is a guard, not an inconvenience: a container published to a host port is
 reachable by any browser page that can resolve it, and the origin list is what
-stops one driving your firewalls. Add `--allowed-origin` for each address a
-client will use.
+stops one driving your firewalls. `--allowed-origin` lists the origins of browser
+applications that call this server. Clients sending no Origin header (curl,
+non-browser MCP clients) are never matched against it.
 
 **`Error: loading /etc/jmcp/devices.json` / `invalid devices.json: inventory parse failed: canonical envelope: missing field 'type'`**
 The `auth` object needs a `type`, either `ssh_key` or `password`. Copy the shape
