@@ -108,14 +108,17 @@ Both are shown below. The second is what the examples here were verified with.
 
 ## 3. Run it — two-person mode
 
-First, obtain the immutable digest for the version you want to run:
+First, obtain the immutable digest for the version you want to run. If the image has
+not been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1` first.
 
 ```bash
-docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 --format '{{index .RepoDigests 0}}'
+image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+    --format '{{index .RepoDigests 0}}')
+# $image is now ghcr.io/...@sha256:... — pinned, and printable if you want it recorded
 ```
 
-Then run with the digest (the `@sha256:...` pins the exact bytes; the version tag is
-shown in a comment for readability):
+The digest should be recorded wherever the deployment is tracked, since it identifies
+the exact bytes. Then run:
 
 ```bash
 docker run -d --name junos-twoperson \
@@ -125,7 +128,7 @@ docker run -d --name junos-twoperson \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp@sha256:DIGEST_HERE `# version 0.24.1` \
+  "$image" \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
@@ -150,7 +153,7 @@ docker run -d --name junos-labmode \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/tokens.json:/etc/jmcp/tokens.json:ro" \
   -v "$PWD/state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp@sha256:DIGEST_HERE `# version 0.24.1` \
+  "$image" \
   --transport streamable-http --host 0.0.0.0 --port 30030 \
   --tokens-file /etc/jmcp/tokens.json \
   --allow-insecure-bind \
