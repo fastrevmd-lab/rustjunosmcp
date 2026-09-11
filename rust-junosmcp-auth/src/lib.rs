@@ -65,9 +65,12 @@ pub const SRX_TOOLS: &[&str] = &[
     "vpn_lifecycle_report",
 ];
 
+/// Facade tool names, separate from the concrete endpoint registries.
+pub const FACADE_TOOLS: &[&str] = &["execute"];
+
 /// All tool names accepted in token scopes, kept globally alphabetized for
-/// stable diagnostics. This must remain the exact union of [`JUNOS_TOOLS`] and
-/// [`SRX_TOOLS`]; the registry tests below enforce that invariant.
+/// stable diagnostics. This must remain the exact union of [`JUNOS_TOOLS`],
+/// [`SRX_TOOLS`], and [`FACADE_TOOLS`]; registry tests enforce that invariant.
 pub const KNOWN_TOOLS: &[&str] = &[
     "add_device",
     "apply_junos_change_set",
@@ -79,6 +82,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
+    "execute",
     "execute_junos_command",
     "execute_junos_command_batch",
     "execute_junos_pfe_command",
@@ -116,6 +120,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
+    "execute",
     "load_and_commit_config",
     "manage_appid_signature_package",
     "manage_idp_security_package",
@@ -147,22 +152,33 @@ mod tests {
     }
 
     #[test]
-    fn known_tools_is_exact_endpoint_union() {
+    fn known_tools_is_exact_endpoint_and_facade_union() {
         let known: HashSet<&str> = KNOWN_TOOLS.iter().copied().collect();
         let endpoint_tools: HashSet<&str> = JUNOS_TOOLS
             .iter()
             .chain(SRX_TOOLS.iter())
+            .chain(FACADE_TOOLS.iter())
             .copied()
             .collect();
 
         assert_eq!(
             known, endpoint_tools,
-            "KNOWN_TOOLS must be the exact union of JUNOS_TOOLS and SRX_TOOLS"
+            "KNOWN_TOOLS must be the exact union of endpoint and facade registries"
         );
         assert_eq!(
             KNOWN_TOOLS.len(),
-            JUNOS_TOOLS.len() + SRX_TOOLS.len(),
+            JUNOS_TOOLS.len() + SRX_TOOLS.len() + FACADE_TOOLS.len(),
             "endpoint registries must not contain duplicate tool names"
+        );
+        assert_eq!(KNOWN_TOOLS.len(), 37);
+    }
+
+    #[test]
+    fn execute_requires_an_explicit_tool_grant() {
+        assert!(WRITE_TOOLS.contains(&"execute"));
+        assert!(!ScopeSet::Wildcard.allows_tool("execute", WRITE_TOOLS));
+        assert!(
+            ScopeSet::Allowlist(vec!["execute".to_string()]).allows_tool("execute", WRITE_TOOLS)
         );
     }
 
