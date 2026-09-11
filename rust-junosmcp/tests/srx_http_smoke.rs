@@ -212,12 +212,12 @@ fn lists_all_known_tools() {
         .collect();
     let expected: HashSet<&str> = rust_junosmcp_auth::KNOWN_TOOLS.iter().copied().collect();
     assert_eq!(names, expected);
-    assert_eq!(tools.len(), 36);
+    assert_eq!(tools.len(), 37);
     // 28 before Phase 5; the change-set tools took it to 33,
     // `confirm_junos_change_set` makes 34 (#239),
     // `list_junos_change_sets` makes 35 (#255), and
-    // `cancel_junos_change_set` makes 36 (#293).
-    assert_eq!(names.len(), 36);
+    // `cancel_junos_change_set` makes 36 (#293), and execute makes 37.
+    assert_eq!(names.len(), 37);
 }
 
 #[test]
