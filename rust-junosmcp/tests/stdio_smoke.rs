@@ -143,21 +143,28 @@ fn lists_expected_tools() {
         .iter()
         .map(|t| t.get("name").and_then(Value::as_str).unwrap())
         .collect();
-    let expected: HashSet<&str> = JUNOS_TOOLS.iter().copied().collect();
+    let expected: HashSet<&str> = JUNOS_TOOLS.iter().copied().chain(["execute"]).collect();
     #[cfg(feature = "srx")]
     let expected = expected
         .into_iter()
         .chain(SRX_TOOLS.iter().copied())
         .collect();
     assert_eq!(names, expected);
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|tool| tool["name"] == "execute")
+            .count(),
+        1
+    );
     // 28 / 19 before Phase 5; the change-set tools added four,
     // `confirm_junos_change_set` adds one more (#239),
     // `list_junos_change_sets` adds one more (#255), and
-    // `cancel_junos_change_set` adds one more (#293).
+    // `cancel_junos_change_set` adds one more (#293), then execute adds one.
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 36);
+    assert_eq!(names.len(), 37);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 27);
+    assert_eq!(names.len(), 28);
 }
 
 #[cfg(feature = "srx")]

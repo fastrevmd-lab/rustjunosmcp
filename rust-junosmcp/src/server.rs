@@ -30,6 +30,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod execute;
 #[cfg(feature = "srx")]
 mod srx;
 
@@ -206,9 +207,11 @@ impl JmcpHandler {
         allow_plane_owned_writes: bool,
         web_enabled_approver: bool,
     ) -> Self {
-        let tool_router = Self::junos_tool_router();
+        let concrete_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
-        let tool_router = tool_router + Self::srx_tool_router();
+        let concrete_router = concrete_router + Self::srx_tool_router();
+        let execute_route = execute::route(concrete_router.clone());
+        let tool_router = concrete_router.with_route(execute_route);
         #[cfg(feature = "srx")]
         let device_leases = upgrade_cfg.device_leases.clone();
 
@@ -1982,8 +1985,8 @@ mod scope_tests {
         // 28 before Phase 5; the change-set tools took it to 33,
         // `confirm_junos_change_set` makes 34 (#239),
         // `list_junos_change_sets` makes 35 (#255), and
-        // `cancel_junos_change_set` makes 36.
-        assert_eq!(names.len(), 36);
+        // `cancel_junos_change_set` makes 36, and execute makes 37.
+        assert_eq!(names.len(), 37);
     }
 
     #[test]
