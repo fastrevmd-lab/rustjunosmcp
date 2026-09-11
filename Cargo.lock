@@ -3026,6 +3026,7 @@ dependencies = [
  "polyval",
  "rand 0.10.2",
  "rand_core 0.10.1",
+ "ring",
  "russh-cryptovec",
  "russh-util",
  "salsa20",
@@ -3211,9 +3212,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b41b4bc5fceec28e923c7a11890a1ba2bbc62815f0bfb3bec48faf218f024548"
+checksum = "7150505aff35546a0c8bfada665fdb40d280e0f825c6b38d86094ec022cfbb39"
 dependencies = [
  "quick-xml",
  "rustnetconf",
@@ -3296,14 +3297,14 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.16.2"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6ac3a95b3058c4f6e25e6123ab0c700653015adc0bc175544d78ace10be30e9"
+checksum = "bc2a0a08a9551fceb15ee599fa393999d98ae5dd838ed0aff77acca570de9094"
 dependencies = [
  "async-trait",
- "aws-lc-rs",
  "base64ct",
  "quick-xml",
+ "ring",
  "russh",
  "thiserror",
  "tokio",
