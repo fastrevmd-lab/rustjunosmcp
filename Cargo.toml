@@ -108,7 +108,7 @@ ureq             = "2"
 minijinja        = { version = "2", default-features = false, features = ["builtins", "loader", "serde"] }
 dashmap          = "6"
 http-body        = "1"
-rustnetconf      = "0.16"
+rustnetconf      = "0.17"
 rustix           = "1.1"
 
 # Release build profile: LTO + strip for smaller binaries.
