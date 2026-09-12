@@ -143,13 +143,22 @@ fn lists_expected_tools() {
         .iter()
         .map(|t| t.get("name").and_then(Value::as_str).unwrap())
         .collect();
-    let expected: HashSet<&str> = JUNOS_TOOLS.iter().copied().chain(["execute"]).collect();
+    let concrete_operations: HashSet<&str> = JUNOS_TOOLS.iter().copied().collect();
     #[cfg(feature = "srx")]
-    let expected = expected
+    let concrete_operations: HashSet<&str> = concrete_operations
         .into_iter()
         .chain(SRX_TOOLS.iter().copied())
         .collect();
+    let expected: HashSet<&str> = concrete_operations
+        .iter()
+        .copied()
+        .chain(["execute"])
+        .collect();
     assert_eq!(names, expected);
+    let execute = tools
+        .iter()
+        .find(|tool| tool["name"] == "execute")
+        .expect("exactly one execute facade");
     assert_eq!(
         tools
             .iter()
@@ -157,6 +166,14 @@ fn lists_expected_tools() {
             .count(),
         1
     );
+    let facade_operations: HashSet<&str> = execute
+        .pointer("/inputSchema/properties/operation/enum")
+        .and_then(Value::as_array)
+        .expect("execute operation enum")
+        .iter()
+        .map(|operation| operation.as_str().expect("operation name"))
+        .collect();
+    assert_eq!(facade_operations, concrete_operations);
     // 28 / 19 before Phase 5; the change-set tools added four,
     // `confirm_junos_change_set` adds one more (#239),
     // `list_junos_change_sets` adds one more (#255), and
