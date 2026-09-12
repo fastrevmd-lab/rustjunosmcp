@@ -89,8 +89,8 @@ fn unknown_operation_result(
     ))])
 }
 
-// Consumed by the audit/heartbeat attribution increment that follows dispatch.
-#[allow(dead_code)]
+/// Resolve a raw facade operation only when it exactly matches a compiled
+/// concrete tool, without echoing caller-controlled strings into audit fields.
 pub(super) fn concrete_operation(arguments: Option<&Map<String, Value>>) -> Option<&'static str> {
     let operation = arguments?.get("operation")?.as_str()?;
     let names = rust_junosmcp_auth::JUNOS_TOOLS.iter();
