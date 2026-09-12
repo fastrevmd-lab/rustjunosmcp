@@ -6,7 +6,394 @@
 mod common;
 use common::*;
 use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
-use serde_json::json;
+use serde_json::{Value, json};
+
+fn tool_allowlist(names: &[&str]) -> ScopeSet {
+    ScopeSet::Allowlist(names.iter().map(|name| (*name).to_owned()).collect())
+}
+
+fn scoped_requests(tools: ScopeSet, requests: Vec<Value>) -> Vec<PostResult> {
+    ensure_built();
+    // An empty inventory guarantees these scope/validation tests cannot contact devices.
+    let inv = write_inv("{}");
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let secret = TokenStoreFile::add(
+        &tokens,
+        "execute-preflight",
+        ScopeSet::Allowlist(vec!["r1".into()]),
+        tools,
+        &KnownNames {
+            devices: None,
+            tools: rust_junosmcp_auth::KNOWN_TOOLS,
+        },
+    )
+    .unwrap();
+    let server = spawn(inv.path(), &tokens);
+    let session = initialize(server.port, secret.expose_secret());
+    requests
+        .into_iter()
+        .map(|request| {
+            http_post(
+                server.port,
+                Some(secret.expose_secret()),
+                Some(&session),
+                request,
+            )
+        })
+        .collect()
+}
+
+fn execute_request(arguments: Value) -> Value {
+    json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"execute","arguments":arguments
+    }})
+}
+
+fn assert_scope_denied(response: &PostResult) {
+    assert_eq!(response.code, 403, "{}", response.body);
+    assert_eq!(response.body["error"], "insufficient_scope");
+}
+
+fn assert_tool_success(response: &PostResult) {
+    assert_eq!(response.code, 200, "{}", response.body);
+    assert!(response.body.get("error").is_none(), "{}", response.body);
+    assert!(
+        response.body["result"]["content"].is_array(),
+        "{}",
+        response.body
+    );
+    assert_ne!(
+        response.body["result"]["isError"], true,
+        "{}",
+        response.body
+    );
+}
+
+#[test]
+fn execute_requires_both_outer_and_concrete_tool_scope() {
+    for tools in [
+        tool_allowlist(&["execute"]),
+        tool_allowlist(&["get_device_list"]),
+        ScopeSet::Wildcard,
+    ] {
+        let responses = scoped_requests(
+            tools,
+            vec![execute_request(
+                json!({"operation":"get_device_list","arguments":{}}),
+            )],
+        );
+        assert_scope_denied(&responses[0]);
+    }
+}
+
+#[test]
+fn execute_with_both_tool_scopes_succeeds() {
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        vec![execute_request(
+            json!({"operation":"get_device_list","arguments":{}}),
+        )],
+    );
+    assert_tool_success(&responses[0]);
+}
+
+#[test]
+fn execute_read_scope_cannot_invoke_a_write() {
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        vec![execute_request(
+            json!({"operation":"load_and_commit_config","arguments":{
+                "router":"r1","config_text":"set system login message test","commit_comment":"test"
+            }}),
+        )],
+    );
+    assert_scope_denied(&responses[0]);
+}
+
+#[test]
+fn execute_nested_gather_device_facts_scope_is_denied() {
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "gather_device_facts"]),
+        vec![execute_request(
+            json!({"operation":"gather_device_facts","arguments":{"device":"r2"}}),
+        )],
+    );
+    assert_scope_denied(&responses[0]);
+}
+
+#[test]
+fn execute_checks_all_nested_selector_spellings_and_shapes() {
+    let mut cases = Vec::new();
+    for key in [
+        "device",
+        "device_name",
+        "devices",
+        "device_names",
+        "router",
+        "router_name",
+        "routers",
+        "router_names",
+    ] {
+        for value in [
+            json!("r2"),
+            json!(["r1", "r2"]),
+            json!([]),
+            json!(["r1", 1]),
+            json!(null),
+            json!(1),
+            json!(true),
+            json!({"name":"r1"}),
+        ] {
+            cases.push(json!({"operation":"get_device_list","arguments":{key:value}}));
+        }
+    }
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        cases.iter().cloned().map(execute_request).collect(),
+    );
+    let failures: Vec<_> = cases
+        .iter()
+        .zip(&responses)
+        .filter(|(_, response)| {
+            response.code != 403 || response.body["error"] != "insufficient_scope"
+        })
+        .map(|(case, response)| format!("{case}: HTTP {} {}", response.code, response.body))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn execute_checks_every_nested_selector_even_after_an_allowed_one() {
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        vec![execute_request(
+            json!({"operation":"get_device_list","arguments":{
+                "device":"r1","router_names":["r2"]
+            }}),
+        )],
+    );
+    assert_scope_denied(&responses[0]);
+}
+
+#[test]
+fn execute_in_scope_nested_selectors_reach_concrete_validation() {
+    let requests = [json!("r1"), json!(["r1"])]
+        .into_iter()
+        .map(|value| {
+            execute_request(json!({"operation":"get_device_list","arguments":{
+                "device":value,"device_name":value,"devices":value,"device_names":value,
+                "router":value,"router_name":value,"routers":value,"router_names":value
+            }}))
+        })
+        .collect();
+    for response in scoped_requests(tool_allowlist(&["execute", "get_device_list"]), requests) {
+        // get_device_list has no selectors: reaching its strict argument parser
+        // proves preflight passed without requiring device I/O.
+        assert_eq!(response.code, 200, "{}", response.body);
+        assert_eq!(
+            response.body["result"]["isError"], true,
+            "{}",
+            response.body
+        );
+        assert!(
+            response.body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("failed to deserialize parameters:")
+        );
+    }
+}
+
+#[test]
+fn execute_unknown_or_recursive_operation_reaches_repair() {
+    let requests = ["friendly_facts", "execute", " get_device_list"]
+        .into_iter()
+        .map(|operation| {
+            // Unknown operations never dispatch, so nested selectors must not suppress repair.
+            execute_request(json!({"operation":operation,"arguments":{"device":"r2"}}))
+        })
+        .collect();
+    for response in scoped_requests(tool_allowlist(&["execute"]), requests) {
+        assert_eq!(response.code, 200, "{}", response.body);
+        assert_eq!(
+            response.body["result"]["isError"], true,
+            "{}",
+            response.body
+        );
+        assert!(
+            response.body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("RJMCP_EXECUTE_UNKNOWN_OPERATION")
+        );
+    }
+}
+
+#[test]
+fn execute_malformed_inner_shape_reaches_strict_validation() {
+    let mut arguments = vec![
+        json!({}),
+        json!({"arguments":{}}),
+        json!({"operation":null,"arguments":{}}),
+        json!({"operation":12,"arguments":{}}),
+        json!({"operation":"get_device_list"}),
+    ];
+    for value in [json!(null), json!([]), json!("r1"), json!(1), json!(true)] {
+        arguments.push(json!({"operation":"get_device_list","arguments":value}));
+    }
+    for response in scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        arguments.into_iter().map(execute_request).collect(),
+    ) {
+        assert_eq!(response.code, 200, "{}", response.body);
+        assert_eq!(
+            response.body["result"]["isError"], true,
+            "{}",
+            response.body
+        );
+        assert!(
+            response.body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("failed to deserialize parameters:")
+        );
+    }
+}
+
+#[test]
+fn execute_outer_scope_precedes_malformed_or_unknown_repair() {
+    let mut requests: Vec<_> = [
+        json!({}),
+        json!(null),
+        json!([]),
+        json!({"operation":"friendly_facts","arguments":{}}),
+        json!({"operation":"get_device_list","arguments":[]}),
+    ]
+    .into_iter()
+    .map(execute_request)
+    .collect();
+    requests
+        .push(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute"}}));
+    for response in scoped_requests(ScopeSet::Wildcard, requests) {
+        assert_scope_denied(&response);
+    }
+}
+
+#[test]
+fn execute_known_concrete_scope_precedes_malformed_inner_arguments() {
+    let requests = [
+        json!({"operation":"get_device_list"}),
+        json!({"operation":"get_device_list","arguments":[]}),
+    ]
+    .into_iter()
+    .map(execute_request)
+    .collect();
+    for response in scoped_requests(tool_allowlist(&["execute"]), requests) {
+        assert_scope_denied(&response);
+    }
+}
+
+#[test]
+fn execute_malformed_outer_arguments_reach_protocol_or_handler_validation() {
+    let mut requests: Vec<_> = [json!(null), json!([]), json!(true), json!(1), json!("bad")]
+        .into_iter()
+        .map(execute_request)
+        .collect();
+    requests
+        .push(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute"}}));
+    for response in scoped_requests(tool_allowlist(&["execute"]), requests) {
+        assert!(
+            matches!(response.code, 200 | 415),
+            "HTTP {} {}",
+            response.code,
+            response.body
+        );
+        if response.code == 200 {
+            // A missing outer `arguments` field is rejected by rmcp before it
+            // reaches the tool, while the other malformed shapes reach the
+            // strict facade. Both prove that HTTP preflight deliberately left
+            // outer-shape validation to the protocol/handler layer.
+            assert!(
+                response.body["result"]["isError"] == true || response.body["error"].is_object(),
+                "{}",
+                response.body
+            );
+        }
+    }
+}
+
+#[test]
+fn execute_srx_recognition_matches_compiled_features() {
+    let responses = scoped_requests(
+        tool_allowlist(&["execute"]),
+        vec![execute_request(
+            json!({"operation":"srxmcp_status","arguments":{}}),
+        )],
+    );
+    #[cfg(feature = "srx")]
+    assert_scope_denied(&responses[0]);
+    #[cfg(not(feature = "srx"))]
+    {
+        assert_eq!(responses[0].code, 200, "{}", responses[0].body);
+        assert_eq!(responses[0].body["result"]["isError"], true);
+        assert!(
+            responses[0]
+                .body
+                .to_string()
+                .contains("RJMCP_EXECUTE_UNKNOWN_OPERATION")
+        );
+    }
+}
+
+#[test]
+fn execute_batch_with_denied_concrete_scope_is_refused() {
+    let direct = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"get_router_list","arguments":{}
+    }});
+    let facade = execute_request(json!({"operation":"get_device_list","arguments":{}}));
+    for response in scoped_requests(
+        tool_allowlist(&["execute", "get_router_list"]),
+        vec![json!([direct, facade]), json!([facade, direct])],
+    ) {
+        assert_scope_denied(&response);
+    }
+}
+
+#[test]
+fn execute_batch_with_denied_nested_device_is_refused() {
+    let response = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        vec![json!([
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_device_list","arguments":{}}},
+            execute_request(json!({"operation":"get_device_list","arguments":{"device":"r2"}}))
+        ])],
+    );
+    assert_scope_denied(&response[0]);
+}
+
+#[test]
+fn execute_authorized_batch_reaches_existing_transport_validation() {
+    let facade = execute_request(json!({"operation":"get_device_list","arguments":{}}));
+    let direct = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"get_device_list","arguments":{}
+    }});
+    let responses = scoped_requests(
+        tool_allowlist(&["execute", "get_device_list"]),
+        vec![json!([facade, direct]), facade, direct],
+    );
+    // rmcp accepts single JSON-RPC messages only. The batch passes preflight
+    // (also covered directly in unit tests), then fails protocol deserialization.
+    assert_eq!(responses[0].code, 415, "{}", responses[0].body);
+    assert!(
+        responses[0].body["raw"]
+            .as_str()
+            .unwrap()
+            .contains("fail to deserialize request body")
+    );
+    assert_tool_success(&responses[1]);
+    assert_tool_success(&responses[2]);
+}
 
 #[test]
 fn tool_out_of_scope_rejected_before_dispatch() {
