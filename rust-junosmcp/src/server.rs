@@ -1950,6 +1950,10 @@ mod scope_tests {
             .collect()
     }
 
+    fn execute_schema_update_enabled(value: Result<String, std::env::VarError>) -> bool {
+        value.as_deref() == Ok("1")
+    }
+
     /// The tool surface is a public API, so schema changes must be deliberate.
     ///
     /// Regenerate after an intentional change:
@@ -2010,6 +2014,67 @@ mod scope_tests {
         let expected: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(include_str!("../tests/fixtures/srx-tools-v0.3.6.json")).unwrap();
         assert_eq!(actual, expected);
+    }
+
+    /// The facade is additive: its one public schema is pinned separately so
+    /// the direct Junos and SRX schemas remain compatible with their existing
+    /// baselines.
+    ///
+    /// Regenerate after an intentional facade schema change:
+    ///
+    /// ```text
+    /// UPDATE_EXECUTE_SCHEMA=1 cargo test -p rust-junosmcp execute_schema_matches_v1_baseline --all-features
+    /// ```
+    #[test]
+    fn execute_schema_matches_v1_baseline() {
+        let junos = normalized_tools(JmcpHandler::junos_tool_router().list_all());
+        let expected_junos: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/junos-tools-v0.7.json")).unwrap();
+        assert_eq!(junos, expected_junos, "facade must not alter Junos schemas");
+
+        #[cfg(feature = "srx")]
+        {
+            let srx = normalized_tools(JmcpHandler::srx_tool_router().list_all());
+            let expected_srx: std::collections::BTreeMap<String, serde_json::Value> =
+                serde_json::from_str(include_str!("../tests/fixtures/srx-tools-v0.3.6.json"))
+                    .unwrap();
+            assert_eq!(srx, expected_srx, "facade must not alter SRX schemas");
+        }
+
+        let handler = make_handler();
+        let actual = normalized_tools(handler.tool_router.list_all())
+            .into_iter()
+            .filter(|(name, _)| name == execute::NAME)
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/execute-tool-v1.json"
+        );
+
+        if execute_schema_update_enabled(std::env::var("UPDATE_EXECUTE_SCHEMA")) {
+            let mut json = serde_json::to_string_pretty(&actual).unwrap();
+            json.push('\n');
+            std::fs::write(path, json).unwrap();
+            return;
+        }
+
+        let expected: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn execute_schema_update_gate_requires_literal_one() {
+        assert!(execute_schema_update_enabled(Ok("1".to_owned())));
+        for value in ["", "0", "true", "yes", "01"] {
+            assert!(
+                !execute_schema_update_enabled(Ok(value.to_owned())),
+                "unexpected update value: {value:?}"
+            );
+        }
+        assert!(!execute_schema_update_enabled(Err(
+            std::env::VarError::NotPresent
+        )));
     }
 
     #[test]
