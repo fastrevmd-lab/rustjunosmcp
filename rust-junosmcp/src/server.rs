@@ -1638,6 +1638,49 @@ fn static_tool_name(name: &str) -> &'static str {
         .unwrap_or("unknown_tool")
 }
 
+/// Resolve the concrete operation a facade request will dispatch to for
+/// progress and dispatch-rejection attribution.
+///
+/// The outer request must still go to the facade router so it can enforce its
+/// closed schema and scope checks. Only a known nested operation is safe to
+/// attribute here; malformed or unknown facade requests remain `execute`.
+fn effective_tool_name(
+    outer: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> &'static str {
+    if outer == execute::NAME {
+        let well_formed_facade = arguments.is_some_and(|arguments| {
+            arguments.len() == 2
+                && arguments.contains_key("operation")
+                && arguments
+                    .get("arguments")
+                    .is_some_and(serde_json::Value::is_object)
+        });
+        if well_formed_facade {
+            execute::concrete_operation(arguments).unwrap_or(execute::NAME)
+        } else {
+            execute::NAME
+        }
+    } else {
+        static_tool_name(outer)
+    }
+}
+
+/// Return the arguments the effective tool will receive, if they can be read
+/// without deserializing the facade request.
+fn effective_arguments<'a>(
+    outer: &str,
+    arguments: Option<&'a serde_json::Map<String, serde_json::Value>>,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    if outer == execute::NAME {
+        arguments
+            .and_then(|outer_arguments| outer_arguments.get("arguments"))
+            .and_then(serde_json::Value::as_object)
+    } else {
+        arguments
+    }
+}
+
 /// rmcp's own prefix for an argument-deserialization failure.
 ///
 /// Mirrored rather than imported because rmcp keeps it private
@@ -1749,12 +1792,14 @@ impl ServerHandler for JmcpHandler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
-        let tool = request.name.to_string();
-        let device = device_hint(request.arguments.as_ref());
+        let outer_tool = request.name.to_string();
+        let effective_tool = effective_tool_name(&outer_tool, request.arguments.as_ref());
+        let effective_args = effective_arguments(&outer_tool, request.arguments.as_ref());
+        let device = device_hint(effective_args);
         let _heartbeat = ProgressHeartbeat::start(
             context.peer.clone(),
             &context.meta,
-            tool.clone(),
+            effective_tool.to_owned(),
             device.clone(),
         );
         // Cloned before `context` is moved into the call context below. Only
@@ -1768,7 +1813,7 @@ impl ServerHandler for JmcpHandler {
         // recorded itself. See `record_rejected_call`.
         match &result {
             Err(error) => {
-                record_rejected_call(caller.as_ref(), &tool, device, &error.message);
+                record_rejected_call(caller.as_ref(), effective_tool, device, &error.message);
             }
             // rmcp 3 widened this to `CallToolResponse`, whose other variants
             // are the SEP-2322 input-required round-trip and the SEP-2663 task
@@ -1779,7 +1824,7 @@ impl ServerHandler for JmcpHandler {
             // elicitation moves to the round-trip model (#168).
             Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
                 if let Some(message) = argument_rejection_message(call_result) {
-                    record_rejected_call(caller.as_ref(), &tool, device, message);
+                    record_rejected_call(caller.as_ref(), effective_tool, device, message);
                 }
             }
             Ok(_) => {}
