@@ -18,7 +18,7 @@ By contrast, Juniper's repository is a smaller Python project centered around `j
 |---|---|---|
 | Implementation language | Rust, async, based on `rustEZ` and `rustnetconf`. | Python, based on PyEZ. |
 | Core compatibility | Drop-in compatible with the basic `devices.json` format and core Junos tools. | Native reference implementation for its own inventory and core tools. |
-| Tool count | 27 tools by default, 18 in Junos-only builds. | Core Junos tools plus `add_device`; the README's handler registry examples show a much smaller surface. |
+| Tool count | 37 tools by default, 28 in Junos-only builds. | Core Junos tools plus `add_device`; the README's handler registry examples show a much smaller surface. |
 | SRX-specific workflows | Included by default via the `srx` feature, including security-package workflows and chassis/security status tooling. | Not described in the README as part of the standard tool surface. |
 | Session reuse | NETCONF session pooling with idle timeout and reaper. | No session pool is described in the README. |
 | Batch execution | Parallel multi-router command batching is built in. | No comparable batch command facility is documented. |
