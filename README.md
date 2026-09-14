@@ -49,7 +49,7 @@ parallel with a configurable concurrency cap.
 > ## v0.10.0 released — read before upgrading
 >
 > Two **breaking** authorization changes, both requiring operator action:
-> a wildcard tool scope (`"tools": ["*"]`) no longer confers the ten **write**
+> a wildcard tool scope (`"tools": ["*"]`) no longer confers the 15 **write-capable**
 > tools, and `tokens.json` must be mode `0600` or the server refuses to start.
 > The new **`token set-scope`** command changes a token's scopes without
 > reissuing its secret, so you can narrow scopes on the running 0.9.x server
@@ -178,7 +178,7 @@ parallel with a configurable concurrency cap.
 ### v0.10 (released)
 
 - **Wildcard tool scopes exclude write tools (breaking)** — `"tools": ["*"]`
-  reaches every read-only tool but none of the ten write tools; granting write
+  reaches every read-only tool but none of the 15 write-capable tools; granting write
   authority is now always an explicit, named decision. See
   [Tool scopes and write tools](#tool-scopes-and-write-tools).
 - **`tokens.json` must be mode `0600` (breaking)** — the server refuses to
@@ -677,23 +677,38 @@ A tool scope is either the literal `*` or an explicit list of tool names. The
 two cannot be mixed — `--tools '*',transfer_file` is rejected.
 
 **A wildcard tool scope does not confer write tools** (v0.10.0+). `"tools":
-["*"]` reaches every read-only tool but none of these ten:
+["*"]` reaches every read-only tool but none of these 15 write-capable tools:
 
 | Write tool | |
 |---|---|
-| `add_device` | `manage_idp_security_package` |
-| `discard_candidate` | `reload_devices` |
-| `load_and_commit_config` | `render_and_apply_j2_template` |
-| `manage_appid_signature_package` | `rollback_config` |
-| `transfer_file` | `upgrade_junos` |
+| `add_device` | `apply_junos_change_set` |
+| `approve_junos_change_set` | `confirm_junos_change_set` |
+| `create_junos_change_set` | `discard_candidate` |
+| `execute` | `load_and_commit_config` |
+| `manage_appid_signature_package` | `manage_idp_security_package` |
+| `reload_devices` | `render_and_apply_j2_template` |
+| `rollback_config` | `transfer_file` |
+| `upgrade_junos` | |
 
 Granting write authority is always an explicit, named decision: a token that
 needs `load_and_commit_config` must list it, alongside every other tool it
 calls. An explicit allowlist behaves exactly as before.
 
+`execute` is a strict facade over the original 36 concrete operations. A token
+using it must explicitly name **both** `execute` and the selected concrete
+operation; wildcard scope does not grant `execute`. The facade passes the
+selected operation's arguments unchanged, so use the concrete operation's
+exact argument names:
+
+```json
+{"operation":"gather_device_facts","arguments":{"device":"vsrx-ci"}}
+```
+
+Direct calls to all original 36 concrete tools remain supported.
+
 `tools/list` advertises only what the caller's token can invoke, so the list an
 agent sees matches what it can actually call. A wildcard token is shown the
-read-only tools and not the ten write tools; a token scoped to nothing is shown
+read-only tools and not the 15 write-capable tools; a token scoped to nothing is shown
 an empty list.
 
 > **Cached lists go stale.** A client that fetched `tools/list` before you
@@ -908,8 +923,8 @@ the calling process's uid, and the exact `chmod` — it is not a silent failure.
 
 ### 2. Re-scope wildcard tokens that need write tools
 
-A wildcard tool scope no longer confers the ten
-[write tools](#tool-scopes-and-write-tools). Any token with `"tools": ["*"]`
+A wildcard tool scope no longer confers the 15
+[write-capable tools](#tool-scopes-and-write-tools). Any token with `"tools": ["*"]`
 that calls one of them will start getting `ToolNotInScope` refusals after the
 upgrade.
 
