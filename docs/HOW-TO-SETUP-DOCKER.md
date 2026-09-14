@@ -109,10 +109,10 @@ Both are shown below. The second is what the examples here were verified with.
 ## 3. Pin the image version
 
 Obtain the immutable digest for the version you want to run. If the image has not
-been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1` first.
+been pulled yet, run `docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:0.25.0` first.
 
 ```bash
-image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.24.1 \
+image=$(docker inspect ghcr.io/fastrevmd-lab/rust-junosmcp:0.25.0 \
     --format '{{index .RepoDigests 0}}')
 # $image is now ghcr.io/...@sha256:... — pinned, and printable if you want it recorded
 ```
