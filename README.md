@@ -441,10 +441,10 @@ command uses `sudo`.
 git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
-# Build the default 27-tool Junos/SRX server with TLS.
+# Build the default 37-tool Junos/SRX server with TLS.
 cargo build --release
 
-# Optional: build the 18-tool Junos-only server without TLS.
+# Optional: build the 28-tool Junos-only server without TLS.
 cargo build --release --no-default-features
 
 # Optional: build Junos-only with TLS.
@@ -460,8 +460,8 @@ $EDITOR devices.json   # set ip / username / auth
 
 ## Claude Desktop config
 
-One registration exposes every tool enabled in the built binary (27 with the
-default `srx` feature, or 18 in a Junos-only build):
+One registration exposes every tool enabled in the built binary (37 with the
+default `srx` feature, or 28 in a Junos-only build):
 
 ```json
 {
