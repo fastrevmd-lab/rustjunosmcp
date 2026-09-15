@@ -2020,10 +2020,12 @@ mod scope_tests {
     /// the direct Junos and SRX schemas remain compatible with their existing
     /// baselines.
     ///
-    /// Regenerate after an intentional facade schema change:
+    /// Regenerate after an intentional facade schema change. BOTH baselines
+    /// must be regenerated, because the operation enum is feature-dependent:
     ///
     /// ```text
     /// UPDATE_EXECUTE_SCHEMA=1 cargo test -p rust-junosmcp execute_schema_matches_v1_baseline --all-features
+    /// UPDATE_EXECUTE_SCHEMA=1 cargo test -p rust-junosmcp execute_schema_matches_v1_baseline --no-default-features
     /// ```
     #[test]
     fn execute_schema_matches_v1_baseline() {
@@ -2046,9 +2048,27 @@ mod scope_tests {
             .into_iter()
             .filter(|(name, _)| name == execute::NAME)
             .collect::<std::collections::BTreeMap<_, _>>();
+        // The baseline is per-feature-set, not global.
+        //
+        // Eight of the facade's operations are `#[cfg(feature = "srx")]`, and
+        // `srx` is a default feature, so a `--no-default-features` build
+        // publishes 27 operations where the full build publishes 36. Pinning
+        // both against one fixture made this test fail on every
+        // `--no-default-features` run -- which CI performs -- for a schema that
+        // was correct for the features it was built with.
+        //
+        // Two fixtures rather than one relaxed assertion: the point of pinning
+        // a schema is that it is exact, and the junos-only build ships a real
+        // tool surface that deserves the same guarantee as the full one.
+        #[cfg(feature = "srx")]
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/execute-tool-v1.json"
+        );
+        #[cfg(not(feature = "srx"))]
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/execute-tool-v1-junos-only.json"
         );
 
         if execute_schema_update_enabled(std::env::var("UPDATE_EXECUTE_SCHEMA")) {

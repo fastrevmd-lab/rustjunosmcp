@@ -110,17 +110,34 @@ fn required_groups(schema: &Value) -> String {
         .collect::<Vec<_>>();
     for (keyword, separator) in [("allOf", " and "), ("anyOf", " or "), ("oneOf", " or ")] {
         if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
-            let branches = branches
-                .iter()
-                .map(required_groups)
-                .map(|group| {
-                    if group.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        group
-                    }
-                })
-                .collect::<Vec<_>>();
+            let rendered = branches.iter().map(required_groups).collect::<Vec<_>>();
+            // An empty branch means different things under conjunction and
+            // disjunction, so it cannot be rendered the same way for both.
+            //
+            // Under `allOf` a branch that requires nothing adds nothing to the
+            // requirement, and naming it produced `required: none and none and
+            // none` for tools whose only `allOf` members are `not` constraints.
+            // A model reading the catalog sees three requirements where there
+            // are zero. Under `anyOf`/`oneOf` the same branch is real
+            // information -- it is what makes the whole group optional -- so it
+            // is still named there.
+            let branches = if keyword == "allOf" {
+                rendered
+                    .into_iter()
+                    .filter(|group| !group.is_empty())
+                    .collect::<Vec<_>>()
+            } else {
+                rendered
+                    .into_iter()
+                    .map(|group| {
+                        if group.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            group
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
             if !branches.is_empty() {
                 let joined = branches.join(separator);
                 groups.push(if keyword == "allOf" {
