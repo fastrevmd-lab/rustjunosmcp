@@ -465,12 +465,13 @@ along with the binary. A binary-only downgrade is not a rollback path.
   The shipped systemd unit binds `127.0.0.1:30030` and remains exempt from the
   new Origin allowlist requirement — loopback binds are always exempt.
 
-- **Removed `rust-junosmcp/tests/http_host_validation.rs`**. This test called
-  `router.oneshot()` directly to exercise Host header validation, but
-  `ServePlan` deliberately does not expose the Router (mecmcp migration brief:
-  "There is deliberately NO way to extract the Router"). Host validation is now
-  comprehensively tested within mecmcp-transport itself, so local duplication is
-  unnecessary.
+- **`rust-junosmcp/tests/http_host_validation.rs` migrated off
+  `router.oneshot()`.** These tests drove the Router directly to exercise Host
+  header validation, but `ServePlan` deliberately does not expose it (mecmcp
+  migration brief: "There is deliberately NO way to extract the Router"). The
+  suite was rewritten against the served surface instead: seven `oneshot()`
+  call sites became one, and the file grew from seven tests to eight. It was
+  not deleted — it is still present and still runs.
 
 ## [0.19.0] — 2026-08-11
 
