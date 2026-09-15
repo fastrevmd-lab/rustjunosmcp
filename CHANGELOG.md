@@ -300,107 +300,6 @@ along with the binary. A binary-only downgrade is not a rollback path.
   primary.
 - Dependabot added — this repo had none at all.
 
-## [Unreleased]
-
-### Changed — breaking
-
-- **`mecmcp` moves to 0.7.3**, which owns the HTTP transport assembly. The
-  hand-rolled router construction here is replaced by
-  `HttpTransportConfig` / `build_streamable_http_router` / `serve_router`.
-  `--allowed-host` and `--allowed-origin` behaviour is unchanged, including the
-  deliberate asymmetry that a portless `--allowed-host` entry matches any port
-  (which is what LXC 609 relies on) while a portless `--allowed-origin` matches
-  only a portless browser Origin.
-
-- **`/metrics` is now behind the Host allowlist.** It was previously reachable
-  with any `Host` header. Anything scraping it with a non-allowlisted Host now
-  gets **421** and must be given a Host the server accepts, or added via
-  `--allowed-host`. This is deliberate: `/metrics` is the only unauthenticated
-  route, which makes it the most attractive DNS-rebinding target
-  (RUSTSEC-2026-0189) — an attacker-controlled page could otherwise point a
-  victim's browser at a loopback-bound server and read the scrape. It needs no
-  bearer token, exactly as before.
-
-- **A disallowed `Host` now returns 421, not 403.** Host is validated in
-  mecmcp's own middleware rather than by rmcp's built-in allowlist. 421
-  Misdirected Request is the accurate code for "this authority is not served
-  here"; 403 asserts the caller is unauthorized, which is a different claim.
-  The request is refused either way — only the code moved.
-
-- **An oversized request without a valid bearer now returns 401, not 413.**
-  Authentication runs before the body limit, so an unauthenticated caller is
-  turned away before its body is measured. An authenticated oversized request
-  still gets 413.
-
-### Fixed
-
-- **An attributed commit no longer costs a reconnect (#322).** #316 had to close
-  a session under its own lock after `commit_with_comment`, because rustez could
-  not clear rustnetconf's candidate-dirty flag through the raw `rpc()` path — so
-  every apply ended by tearing down its SSH session. rustez 0.14.2 commits
-  through the typed `commit_configuration_with_log`, which clears the flag on
-  success, so such a session pools normally again.
-
-  No manifest change: the pin already said `0.14`. Every `touched_candidate`
-  guard stays — a failed apply, a staged session that never committed, and a
-  rollback load all still leave the candidate dirty and must close under the
-  lock. The flag simply reports `false` in the case that used to dominate.
-
-- **A commit whose reply never arrives is no longer recorded as a rejection
-  (#322).** rustnetconf 0.14.3 raises `RpcError::CommitUnknown` when the
-  connection drops after `<commit>` is sent, instead of a generic transport
-  error. The classifier had no arm for it and its text backstop did not match
-  "connection lost", so it fell through to *known rejection*: the apply was
-  recorded as failed and cleanup ran against a device that may already hold the
-  change. It is now classified as uncertainty, which is what leaves the
-  operation indeterminate for an operator to reconcile.
-
-  Measured on `vsrx-ci` via 611: an apply now records `commit succeeded` rather
-  than `session closed to release the candidate lock, release not acknowledged
-  by the device`, which is the acknowledged-unlock path, and no
-  candidate-dirty-at-Drop warning fires.
-
-- **Client-asserted provenance is no longer permanently empty (#267).**
-  `client_name`, `model_id` and `session_id` were structurally present in every
-  audit record and never populated, so a consumer could not tell "no client
-  asserted one" from "this server never asks". Taking mecmcp 0.13.0 supplies the
-  capture: a client that sends `_meta.mecmcp/provenance` now has those fields
-  recorded, and `clientInfo.name` populates `client_name` on its own.
-
-  Verified on `vsrx-ci` via 611. A call carrying provenance records
-  `model_id=claude-opus-5 session_id=probe-session-267
-  client_name=provenance-probe client_version=9.9 client_call_id=toolu_probe267`.
-  These remain **client-asserted and unverifiable** — `token_verified_fields`
-  is what separates them from the token-bound subset, and it is unchanged.
-
-- **A refused lock no longer destroys an operator's uncommitted work
-  (#316).** Junos's candidate datastore is shared, and rustnetconf closed every
-  session with an unconditional `<discard-changes/>` — so a session that only
-  read, or whose `<lock>` was refused *because* someone had uncommitted work,
-  threw away exactly that work. Silently: no error, no log. Fixed upstream in
-  rustnetconf 0.14.0 / rustez 0.14.0, which discard only when the session itself
-  dirtied the candidate; this release takes those pins. Verified on `vsrx-ci`
-  standalone: `commit_check_config`, `rollback_config` preview and
-  `apply_junos_change_set` all previously destroyed out-of-band edits and now
-  preserve them, while still being correctly refused.
-
-- **Sessions that touched the candidate are no longer pooled (#316).**
-  `commit_with_comment` commits through rustez's raw `rpc()` path, which cannot
-  clear the new candidate-dirty flag, so such a session carries an armed
-  `<discard-changes/>` into its eventual close. Harmless for its own changes —
-  but the pool may hold it long past the unlock, and the discard then fires
-  against whatever the shared candidate holds by that point. Any session with a
-  dirty candidate is now closed rather than returned to the pool, at the cost of
-  one reconnect after each attributed commit.
-
-- **`systemctl restart` drains in-flight calls instead of dropping them.** This
-  needed three mecmcp releases: 0.7.0's shutdown signal could never fire, and
-  0.7.1 terminated rmcp's sessions at the instant shutdown began — and an MCP
-  response travels back over its session's SSE stream, so a call in flight lost
-  the reply it was about to send. Fixed in 0.7.2. Note the trade: while any SSE
-  stream is open, shutdown takes the full drain timeout (10s here, against the
-  unit's `TimeoutStopSec`).
-
 ## [0.21.2] — 2026-08-19
 
 ### Fixed
@@ -534,6 +433,186 @@ along with the binary. A binary-only downgrade is not a rollback path.
   change set in `Applying`. With a waiver anywhere in the file, that startup
   write is already the v3 stamp. **Snapshot before installing**, and treat the
   state file as migrated the moment 0.21.0 starts.
+
+## [0.20.0] — 2026-08-13
+
+### Fixed
+
+- **Commit comments now include `request.id=<uuid>` for provenance join** (#300).
+  The audit trail previously could not join audit events to device commits
+  because the production apply path was generating commit comments without
+  `request.id`. `mecmcp_audit::device_log::parse_device_log` relies on that id
+  to correlate server-side audit records with device-native commit log entries,
+  so its absence broke provenance chain reconstruction — an audit trail showed
+  that *someone* committed, but not what the server claimed to do. Fixed by
+  threading the request id from the attribution through to `format_attribution`,
+  which now appends `request.id=<uuid>` to every commit comment. Verified on
+  hardware: the full untruncated id now stamps into the device's commit log and
+  the join succeeds.
+
+### Changed
+
+- **`mecmcp` moves from 0.8.7 to 0.9.1**, which brings breaking transport-layer
+  changes. Five API changes: `HttpTransportConfig::new().with_bearer()` becomes
+  `authenticated()` for token-store paths, and `unauthenticated()` takes
+  `NoAuthAcknowledgement`; `build_http_router` returns `ServePlan` instead of
+  `(Router, HttpShutdown)`; `serve_router` no longer takes a separate shutdown
+  handle (it travels inside the plan); `CallerCtx` now carries `request_id` as
+  a UUID; and mecmcp 0.9.0 enforces `--allowed-origin` for off-loopback binds
+  where it was previously decorative, so the Docker Compose example now passes
+  `--allowed-origin http://127.0.0.1:30030`.
+
+  The shipped systemd unit binds `127.0.0.1:30030` and remains exempt from the
+  new Origin allowlist requirement — loopback binds are always exempt.
+
+- **Removed `rust-junosmcp/tests/http_host_validation.rs`**. This test called
+  `router.oneshot()` directly to exercise Host header validation, but
+  `ServePlan` deliberately does not expose the Router (mecmcp migration brief:
+  "There is deliberately NO way to extract the Router"). Host validation is now
+  comprehensively tested within mecmcp-transport itself, so local duplication is
+  unnecessary.
+
+## [0.19.0] — 2026-08-11
+
+### Added
+
+- **`--web-enabled-approver` exposes staged actions in status responses** (#297).
+  When this CLI flag is set (default false), `get_junos_change_set_status`
+  includes the `actions` array — the stored configuration changes — in its
+  response. This is for the mechub approval webapp, which needs to show a
+  reviewer what they are approving. Off by default because it exposes staged
+  config content to any caller with status scope, where previously the status
+  endpoint revealed only the change set's lifecycle state and metadata. The
+  scope checks (`check_tool_scope` / `check_router_scope`) are unchanged and
+  still enforced before the coordinator call. Uses `changeset::
+  get_change_set_status_with_actions` from mecmcp 0.8.6. Verified: with the flag
+  off, the response has no `actions` key; with it on, the response includes
+  `actions` matching what was staged.
+
+- **Configuration authority tracking for Junos devices** (#296). The inventory
+  now accepts an optional `config_authority` field on each device, with values
+  `local`, `mist`, `security-director-cloud`, `security-director-onprem`, or
+  `unknown` (the default). This fixes the audit trail defect where writes to
+  plane-owned devices claim durability they cannot support: an apply to a Mist-
+  or SDC-owned device writes successfully, the audit says `applied`, and the
+  owning plane silently overwrites it at its next push, with nothing marking the
+  reversion. The authority is now recorded in the audit event, and the tool
+  result includes a `config_authority_warning` when applying changes to a
+  plane-owned device, alerting the caller that the change may be overwritten.
+  Read tools do not warn — the concern is durability, not visibility. Existing
+  `devices.json` files load unchanged; the field is optional and defaults to
+  `unknown`, so the LXC 950 production inventory upgrades without changes.
+
+- **Documentation for the `rust-junosmcp-srx-core` public API** (#295). The
+  library crate now has crate-level docs explaining what it exports and how to
+  use it.
+
+### Changed
+
+- **`mecmcp` pins to released tag v0.8.7.** All ten `mecmcp-*` crates are
+  de-pinned from the temporary branch ref used during #297 and now point to the
+  published tag.
+
+## [0.18.0] — 2026-08-10
+
+### Changed — breaking
+
+- **`mecmcp` moves to 0.7.3**, which owns the HTTP transport assembly. The
+  hand-rolled router construction here is replaced by
+  `HttpTransportConfig` / `build_streamable_http_router` / `serve_router`.
+  `--allowed-host` and `--allowed-origin` behaviour is unchanged, including the
+  deliberate asymmetry that a portless `--allowed-host` entry matches any port
+  (which is what LXC 609 relies on) while a portless `--allowed-origin` matches
+  only a portless browser Origin.
+
+- **`/metrics` is now behind the Host allowlist.** It was previously reachable
+  with any `Host` header. Anything scraping it with a non-allowlisted Host now
+  gets **421** and must be given a Host the server accepts, or added via
+  `--allowed-host`. This is deliberate: `/metrics` is the only unauthenticated
+  route, which makes it the most attractive DNS-rebinding target
+  (RUSTSEC-2026-0189) — an attacker-controlled page could otherwise point a
+  victim's browser at a loopback-bound server and read the scrape. It needs no
+  bearer token, exactly as before.
+
+- **A disallowed `Host` now returns 421, not 403.** Host is validated in
+  mecmcp's own middleware rather than by rmcp's built-in allowlist. 421
+  Misdirected Request is the accurate code for "this authority is not served
+  here"; 403 asserts the caller is unauthorized, which is a different claim.
+  The request is refused either way — only the code moved.
+
+- **An oversized request without a valid bearer now returns 401, not 413.**
+  Authentication runs before the body limit, so an unauthenticated caller is
+  turned away before its body is measured. An authenticated oversized request
+  still gets 413.
+
+### Fixed
+
+- **An attributed commit no longer costs a reconnect (#322).** #316 had to close
+  a session under its own lock after `commit_with_comment`, because rustez could
+  not clear rustnetconf's candidate-dirty flag through the raw `rpc()` path — so
+  every apply ended by tearing down its SSH session. rustez 0.14.2 commits
+  through the typed `commit_configuration_with_log`, which clears the flag on
+  success, so such a session pools normally again.
+
+  No manifest change: the pin already said `0.14`. Every `touched_candidate`
+  guard stays — a failed apply, a staged session that never committed, and a
+  rollback load all still leave the candidate dirty and must close under the
+  lock. The flag simply reports `false` in the case that used to dominate.
+
+- **A commit whose reply never arrives is no longer recorded as a rejection
+  (#322).** rustnetconf 0.14.3 raises `RpcError::CommitUnknown` when the
+  connection drops after `<commit>` is sent, instead of a generic transport
+  error. The classifier had no arm for it and its text backstop did not match
+  "connection lost", so it fell through to *known rejection*: the apply was
+  recorded as failed and cleanup ran against a device that may already hold the
+  change. It is now classified as uncertainty, which is what leaves the
+  operation indeterminate for an operator to reconcile.
+
+  Measured on `vsrx-ci` via 611: an apply now records `commit succeeded` rather
+  than `session closed to release the candidate lock, release not acknowledged
+  by the device`, which is the acknowledged-unlock path, and no
+  candidate-dirty-at-Drop warning fires.
+
+- **Client-asserted provenance is no longer permanently empty (#267).**
+  `client_name`, `model_id` and `session_id` were structurally present in every
+  audit record and never populated, so a consumer could not tell "no client
+  asserted one" from "this server never asks". Taking mecmcp 0.13.0 supplies the
+  capture: a client that sends `_meta.mecmcp/provenance` now has those fields
+  recorded, and `clientInfo.name` populates `client_name` on its own.
+
+  Verified on `vsrx-ci` via 611. A call carrying provenance records
+  `model_id=claude-opus-5 session_id=probe-session-267
+  client_name=provenance-probe client_version=9.9 client_call_id=toolu_probe267`.
+  These remain **client-asserted and unverifiable** — `token_verified_fields`
+  is what separates them from the token-bound subset, and it is unchanged.
+
+- **A refused lock no longer destroys an operator's uncommitted work
+  (#316).** Junos's candidate datastore is shared, and rustnetconf closed every
+  session with an unconditional `<discard-changes/>` — so a session that only
+  read, or whose `<lock>` was refused *because* someone had uncommitted work,
+  threw away exactly that work. Silently: no error, no log. Fixed upstream in
+  rustnetconf 0.14.0 / rustez 0.14.0, which discard only when the session itself
+  dirtied the candidate; this release takes those pins. Verified on `vsrx-ci`
+  standalone: `commit_check_config`, `rollback_config` preview and
+  `apply_junos_change_set` all previously destroyed out-of-band edits and now
+  preserve them, while still being correctly refused.
+
+- **Sessions that touched the candidate are no longer pooled (#316).**
+  `commit_with_comment` commits through rustez's raw `rpc()` path, which cannot
+  clear the new candidate-dirty flag, so such a session carries an armed
+  `<discard-changes/>` into its eventual close. Harmless for its own changes —
+  but the pool may hold it long past the unlock, and the discard then fires
+  against whatever the shared candidate holds by that point. Any session with a
+  dirty candidate is now closed rather than returned to the pool, at the cost of
+  one reconnect after each attributed commit.
+
+- **`systemctl restart` drains in-flight calls instead of dropping them.** This
+  needed three mecmcp releases: 0.7.0's shutdown signal could never fire, and
+  0.7.1 terminated rmcp's sessions at the instant shutdown began — and an MCP
+  response travels back over its session's SSE stream, so a call in flight lost
+  the reply it was about to send. Fixed in 0.7.2. Note the trade: while any SSE
+  stream is open, shutdown takes the full drain timeout (10s here, against the
+  unit's `TimeoutStopSec`).
 
 ## [0.17.0] — 2026-08-07
 
