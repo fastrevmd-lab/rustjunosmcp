@@ -64,9 +64,49 @@ fn stderr_for_request(request: &str) -> Vec<String> {
     let lines: Vec<String> = BufReader::new(stderr)
         .lines()
         .map_while(Result::ok)
+        .map(|line| strip_ansi(&line))
         .collect();
     let _ = child.wait();
     lines
+}
+
+/// Removes ANSI CSI sequences from a captured line.
+///
+/// These assertions are about audit *content* -- which tool a refusal is
+/// attributed to -- not about how a terminal would colour it. Without this,
+/// they compare against bytes the human-readable formatter interleaves between
+/// each field name and its value, so a record that reads `tool=execute` on a
+/// screen is `tool\x1b[0m\x1b[2m=\x1b[0mexecute` on the wire and
+/// `contains("tool=execute")` is false.
+///
+/// That interleaving was itself a defect, fixed upstream in mecmcp by
+/// disabling ANSI when stderr is not a terminal. Normalising here as well is
+/// not redundant: it keeps these tests measuring the thing they are named for,
+/// so a future formatter change cannot turn an attribution regression into a
+/// passing run or vice versa.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        // CSI: ESC '[' parameter/intermediate bytes, terminated by @..~.
+        match chars.next() {
+            Some('[') => {
+                for tail in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&tail) {
+                        break;
+                    }
+                }
+            }
+            // A non-CSI escape: drop the ESC, keep what followed.
+            Some(other) => out.push(other),
+            None => break,
+        }
+    }
+    out
 }
 
 fn audit_lines(lines: &[String]) -> Vec<&String> {

@@ -14,12 +14,25 @@ use tracing_subscriber::EnvFilter;
 /// Idempotent: calling twice silently no-ops the second call (uses
 /// `try_init` instead of `init` so the second call's "global default has
 /// already been set" error is discarded).
+///
+/// Colour is enabled only when stderr is a terminal. `tracing_subscriber::fmt`
+/// defaults ANSI on whenever the feature is compiled in, without asking whether
+/// anything can render it, so piping stderr to a file, to journald, or to a
+/// parent process previously embedded escape sequences in every line. That
+/// makes a field like `tool=execute` unmatchable by a plain substring search --
+/// the emitted bytes are `tool\x1b[0m\x1b[2m=\x1b[0mexecute` -- which breaks
+/// log greps and any caller parsing this stream.
+///
+/// This does not affect the JSON audit sink, which never carried ANSI.
 pub fn init_tracing() {
+    use std::io::IsTerminal as _;
+
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .try_init();
 }
 
