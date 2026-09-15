@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-15
+
 ### Added
 
 - **`execute(operation, arguments)` is an additive 37th MCP tool** over the
