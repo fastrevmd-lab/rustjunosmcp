@@ -9,7 +9,7 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Extensions, Implementation,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -1711,7 +1711,7 @@ fn listed_tools(tools: Vec<rmcp::model::Tool>, cache_hints: bool) -> ListToolsRe
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for JmcpHandler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         #[cfg(feature = "srx")]
         let instructions = "Junos and SRX MCP server. Use get_router_list to enumerate \
              visible routers, then select generic Junos primitives or \
@@ -1720,7 +1720,7 @@ impl ServerHandler for JmcpHandler {
         let instructions = "Junos MCP server. Use get_router_list to enumerate visible \
              routers, then select a Junos operational primitive.";
 
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
                 "jmcp-server",
                 env!("CARGO_PKG_VERSION"),
