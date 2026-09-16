@@ -30,6 +30,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod execute;
 #[cfg(feature = "srx")]
 mod srx;
 
@@ -206,9 +207,11 @@ impl JmcpHandler {
         allow_plane_owned_writes: bool,
         web_enabled_approver: bool,
     ) -> Self {
-        let tool_router = Self::junos_tool_router();
+        let concrete_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
-        let tool_router = tool_router + Self::srx_tool_router();
+        let concrete_router = concrete_router + Self::srx_tool_router();
+        let execute_route = execute::route(concrete_router.clone());
+        let tool_router = concrete_router.with_route(execute_route);
         #[cfg(feature = "srx")]
         let device_leases = upgrade_cfg.device_leases.clone();
 
@@ -1635,6 +1638,49 @@ fn static_tool_name(name: &str) -> &'static str {
         .unwrap_or("unknown_tool")
 }
 
+/// Resolve the concrete operation a facade request will dispatch to for
+/// progress and dispatch-rejection attribution.
+///
+/// The outer request must still go to the facade router so it can enforce its
+/// closed schema and scope checks. Only a known nested operation is safe to
+/// attribute here; malformed or unknown facade requests remain `execute`.
+fn effective_tool_name(
+    outer: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> &'static str {
+    if outer == execute::NAME {
+        let well_formed_facade = arguments.is_some_and(|arguments| {
+            arguments.len() == 2
+                && arguments.contains_key("operation")
+                && arguments
+                    .get("arguments")
+                    .is_some_and(serde_json::Value::is_object)
+        });
+        if well_formed_facade {
+            execute::concrete_operation(arguments).unwrap_or(execute::NAME)
+        } else {
+            execute::NAME
+        }
+    } else {
+        static_tool_name(outer)
+    }
+}
+
+/// Return the arguments the effective tool will receive, if they can be read
+/// without deserializing the facade request.
+fn effective_arguments<'a>(
+    outer: &str,
+    arguments: Option<&'a serde_json::Map<String, serde_json::Value>>,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    if outer == execute::NAME {
+        arguments
+            .and_then(|outer_arguments| outer_arguments.get("arguments"))
+            .and_then(serde_json::Value::as_object)
+    } else {
+        arguments
+    }
+}
+
 /// rmcp's own prefix for an argument-deserialization failure.
 ///
 /// Mirrored rather than imported because rmcp keeps it private
@@ -1746,12 +1792,14 @@ impl ServerHandler for JmcpHandler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
-        let tool = request.name.to_string();
-        let device = device_hint(request.arguments.as_ref());
+        let outer_tool = request.name.to_string();
+        let effective_tool = effective_tool_name(&outer_tool, request.arguments.as_ref());
+        let effective_args = effective_arguments(&outer_tool, request.arguments.as_ref());
+        let device = device_hint(effective_args);
         let _heartbeat = ProgressHeartbeat::start(
             context.peer.clone(),
             &context.meta,
-            tool.clone(),
+            effective_tool.to_owned(),
             device.clone(),
         );
         // Cloned before `context` is moved into the call context below. Only
@@ -1765,7 +1813,7 @@ impl ServerHandler for JmcpHandler {
         // recorded itself. See `record_rejected_call`.
         match &result {
             Err(error) => {
-                record_rejected_call(caller.as_ref(), &tool, device, &error.message);
+                record_rejected_call(caller.as_ref(), effective_tool, device, &error.message);
             }
             // rmcp 3 widened this to `CallToolResponse`, whose other variants
             // are the SEP-2322 input-required round-trip and the SEP-2663 task
@@ -1776,7 +1824,7 @@ impl ServerHandler for JmcpHandler {
             // elicitation moves to the round-trip model (#168).
             Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
                 if let Some(message) = argument_rejection_message(call_result) {
-                    record_rejected_call(caller.as_ref(), &tool, device, message);
+                    record_rejected_call(caller.as_ref(), effective_tool, device, message);
                 }
             }
             Ok(_) => {}
@@ -1902,6 +1950,10 @@ mod scope_tests {
             .collect()
     }
 
+    fn execute_schema_update_enabled(value: Result<String, std::env::VarError>) -> bool {
+        value.as_deref() == Ok("1")
+    }
+
     /// The tool surface is a public API, so schema changes must be deliberate.
     ///
     /// Regenerate after an intentional change:
@@ -1964,6 +2016,87 @@ mod scope_tests {
         assert_eq!(actual, expected);
     }
 
+    /// The facade is additive: its one public schema is pinned separately so
+    /// the direct Junos and SRX schemas remain compatible with their existing
+    /// baselines.
+    ///
+    /// Regenerate after an intentional facade schema change. BOTH baselines
+    /// must be regenerated, because the operation enum is feature-dependent:
+    ///
+    /// ```text
+    /// UPDATE_EXECUTE_SCHEMA=1 cargo test -p rust-junosmcp execute_schema_matches_v1_baseline --all-features
+    /// UPDATE_EXECUTE_SCHEMA=1 cargo test -p rust-junosmcp execute_schema_matches_v1_baseline --no-default-features
+    /// ```
+    #[test]
+    fn execute_schema_matches_v1_baseline() {
+        let junos = normalized_tools(JmcpHandler::junos_tool_router().list_all());
+        let expected_junos: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/junos-tools-v0.7.json")).unwrap();
+        assert_eq!(junos, expected_junos, "facade must not alter Junos schemas");
+
+        #[cfg(feature = "srx")]
+        {
+            let srx = normalized_tools(JmcpHandler::srx_tool_router().list_all());
+            let expected_srx: std::collections::BTreeMap<String, serde_json::Value> =
+                serde_json::from_str(include_str!("../tests/fixtures/srx-tools-v0.3.6.json"))
+                    .unwrap();
+            assert_eq!(srx, expected_srx, "facade must not alter SRX schemas");
+        }
+
+        let handler = make_handler();
+        let actual = normalized_tools(handler.tool_router.list_all())
+            .into_iter()
+            .filter(|(name, _)| name == execute::NAME)
+            .collect::<std::collections::BTreeMap<_, _>>();
+        // The baseline is per-feature-set, not global.
+        //
+        // Eight of the facade's operations are `#[cfg(feature = "srx")]`, and
+        // `srx` is a default feature, so a `--no-default-features` build
+        // publishes 27 operations where the full build publishes 36. Pinning
+        // both against one fixture made this test fail on every
+        // `--no-default-features` run -- which CI performs -- for a schema that
+        // was correct for the features it was built with.
+        //
+        // Two fixtures rather than one relaxed assertion: the point of pinning
+        // a schema is that it is exact, and the junos-only build ships a real
+        // tool surface that deserves the same guarantee as the full one.
+        #[cfg(feature = "srx")]
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/execute-tool-v1.json"
+        );
+        #[cfg(not(feature = "srx"))]
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/execute-tool-v1-junos-only.json"
+        );
+
+        if execute_schema_update_enabled(std::env::var("UPDATE_EXECUTE_SCHEMA")) {
+            let mut json = serde_json::to_string_pretty(&actual).unwrap();
+            json.push('\n');
+            std::fs::write(path, json).unwrap();
+            return;
+        }
+
+        let expected: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn execute_schema_update_gate_requires_literal_one() {
+        assert!(execute_schema_update_enabled(Ok("1".to_owned())));
+        for value in ["", "0", "true", "yes", "01"] {
+            assert!(
+                !execute_schema_update_enabled(Ok(value.to_owned())),
+                "unexpected update value: {value:?}"
+            );
+        }
+        assert!(!execute_schema_update_enabled(Err(
+            std::env::VarError::NotPresent
+        )));
+    }
+
     #[test]
     #[cfg(feature = "srx")]
     fn combined_router_has_exact_endpoint_union() {
@@ -1982,8 +2115,8 @@ mod scope_tests {
         // 28 before Phase 5; the change-set tools took it to 33,
         // `confirm_junos_change_set` makes 34 (#239),
         // `list_junos_change_sets` makes 35 (#255), and
-        // `cancel_junos_change_set` makes 36.
-        assert_eq!(names.len(), 36);
+        // `cancel_junos_change_set` makes 36, and execute makes 37.
+        assert_eq!(names.len(), 37);
     }
 
     #[test]

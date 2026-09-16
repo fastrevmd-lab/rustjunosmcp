@@ -49,7 +49,7 @@ parallel with a configurable concurrency cap.
 > ## v0.10.0 released — read before upgrading
 >
 > Two **breaking** authorization changes, both requiring operator action:
-> a wildcard tool scope (`"tools": ["*"]`) no longer confers the ten **write**
+> a wildcard tool scope (`"tools": ["*"]`) no longer confers the 15 **write-capable**
 > tools, and `tokens.json` must be mode `0600` or the server refuses to start.
 > The new **`token set-scope`** command changes a token's scopes without
 > reissuing its secret, so you can narrow scopes on the running 0.9.x server
@@ -178,7 +178,7 @@ parallel with a configurable concurrency cap.
 ### v0.10 (released)
 
 - **Wildcard tool scopes exclude write tools (breaking)** — `"tools": ["*"]`
-  reaches every read-only tool but none of the ten write tools; granting write
+  reaches every read-only tool but none of the 15 write-capable tools; granting write
   authority is now always an explicit, named decision. See
   [Tool scopes and write tools](#tool-scopes-and-write-tools).
 - **`tokens.json` must be mode `0600` (breaking)** — the server refuses to
@@ -441,10 +441,10 @@ command uses `sudo`.
 git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
-# Build the default 27-tool Junos/SRX server with TLS.
+# Build the default 37-tool Junos/SRX server with TLS.
 cargo build --release
 
-# Optional: build the 18-tool Junos-only server without TLS.
+# Optional: build the 28-tool Junos-only server without TLS.
 cargo build --release --no-default-features
 
 # Optional: build Junos-only with TLS.
@@ -460,8 +460,8 @@ $EDITOR devices.json   # set ip / username / auth
 
 ## Claude Desktop config
 
-One registration exposes every tool enabled in the built binary (27 with the
-default `srx` feature, or 18 in a Junos-only build):
+One registration exposes every tool enabled in the built binary (37 with the
+default `srx` feature, or 28 in a Junos-only build):
 
 ```json
 {
@@ -490,7 +490,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.11, 0.11.0).
+# Pull the prebuilt image (tags: latest, 0.25, 0.25.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -536,13 +536,13 @@ accepts requests, so a broken custom image is not advertised as transfer-ready.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.11 .
+docker build -t rust-junosmcp:0.25 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.11
+  rust-junosmcp:0.25
 ```
 
 ## LXC (Proxmox)
@@ -557,14 +557,14 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Verify the checksum.
-sha256sum -c dist/rust-junosmcp_0.11.0_amd64.tar.gz.sha256
+sha256sum -c dist/rust-junosmcp_0.25.0_amd64.tar.gz.sha256
 
 # Push and install on VM 115. The installer copies the unified binary and unit
 # from its extracted package root.
 #
 # The container MUST be Debian 13 (trixie). This is not a style preference:
 # `package-lxc.sh` builds against the glibc of whatever host runs it, and the
-# published 0.11.0 binary requires GLIBC_2.39. Debian 12 ships 2.36, so the
+# current published binary requires GLIBC_2.39. Debian 12 ships 2.36, so the
 # service dies at start with a "GLIBC_2.39 not found" symbol error — after a
 # clean build and a clean install, which is the worst place to discover it.
 # Debian 13 ships 2.41. Check your own tarball with:
@@ -573,8 +573,8 @@ sha256sum -c dist/rust-junosmcp_0.11.0_amd64.tar.gz.sha256
 #
 # Debian 13 also matches docs/PACKAGING.md §2, the container runtime base, and
 # rustpanosmcp — one distro generation to track CVEs against, not three.
-pct push 115 dist/rust-junosmcp_0.11.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.11.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.25.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.25.0_amd64/install.sh"
 ```
 
 **Edit the inventory:**
@@ -677,23 +677,38 @@ A tool scope is either the literal `*` or an explicit list of tool names. The
 two cannot be mixed — `--tools '*',transfer_file` is rejected.
 
 **A wildcard tool scope does not confer write tools** (v0.10.0+). `"tools":
-["*"]` reaches every read-only tool but none of these ten:
+["*"]` reaches every read-only tool but none of these 15 write-capable tools:
 
 | Write tool | |
 |---|---|
-| `add_device` | `manage_idp_security_package` |
-| `discard_candidate` | `reload_devices` |
-| `load_and_commit_config` | `render_and_apply_j2_template` |
-| `manage_appid_signature_package` | `rollback_config` |
-| `transfer_file` | `upgrade_junos` |
+| `add_device` | `apply_junos_change_set` |
+| `approve_junos_change_set` | `confirm_junos_change_set` |
+| `create_junos_change_set` | `discard_candidate` |
+| `execute` | `load_and_commit_config` |
+| `manage_appid_signature_package` | `manage_idp_security_package` |
+| `reload_devices` | `render_and_apply_j2_template` |
+| `rollback_config` | `transfer_file` |
+| `upgrade_junos` | |
 
 Granting write authority is always an explicit, named decision: a token that
 needs `load_and_commit_config` must list it, alongside every other tool it
 calls. An explicit allowlist behaves exactly as before.
 
+`execute` is a strict facade over the original 36 concrete operations. A token
+using it must explicitly name **both** `execute` and the selected concrete
+operation; wildcard scope does not grant `execute`. The facade passes the
+selected operation's arguments unchanged, so use the concrete operation's
+exact argument names:
+
+```json
+{"operation":"gather_device_facts","arguments":{"device":"vsrx-ci"}}
+```
+
+Direct calls to all original 36 concrete tools remain supported.
+
 `tools/list` advertises only what the caller's token can invoke, so the list an
 agent sees matches what it can actually call. A wildcard token is shown the
-read-only tools and not the ten write tools; a token scoped to nothing is shown
+read-only tools and not the 15 write-capable tools; a token scoped to nothing is shown
 an empty list.
 
 > **Cached lists go stale.** A client that fetched `tools/list` before you
@@ -908,8 +923,8 @@ the calling process's uid, and the exact `chmod` — it is not a silent failure.
 
 ### 2. Re-scope wildcard tokens that need write tools
 
-A wildcard tool scope no longer confers the ten
-[write tools](#tool-scopes-and-write-tools). Any token with `"tools": ["*"]`
+A wildcard tool scope no longer confers the 15
+[write-capable tools](#tool-scopes-and-write-tools). Any token with `"tools": ["*"]`
 that calls one of them will start getting `ToolNotInScope` refusals after the
 upgrade.
 
