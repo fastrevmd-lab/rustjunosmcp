@@ -54,7 +54,7 @@ for expected in \
 done
 
 # Distroless has no HEALTHCHECK (no shell to run CMD-SHELL)
-if echo "$image_config" | grep -q '"Healthcheck"'; then
+if grep -q '"Healthcheck"' <<<"$image_config"; then
     echo "distroless image should not contain a HEALTHCHECK" >&2
     exit 1
 fi
@@ -97,26 +97,26 @@ response=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protoc
     -f /vol/devices.json -t stdio 2>&1)
 
 # Check for successful initialize response
-if ! echo "$response" | grep -q '"id":1.*"result".*"protocolVersion"'; then
+if ! grep -q '"id":1.*"result".*"protocolVersion"' <<<"$response"; then
     echo "initialize did not return expected response" >&2
     echo "$response" >&2
     exit 1
 fi
 
 # Check for tools/list response
-if ! echo "$response" | grep -q '"id":2.*"result".*"tools"'; then
+if ! grep -q '"id":2.*"result".*"tools"' <<<"$response"; then
     echo "tools/list did not return expected response" >&2
     echo "$response" >&2
     exit 1
 fi
 
 # Verify the tool surface includes transfer_file and fetch_file
-if ! echo "$response" | grep -q '"name":"transfer_file"'; then
+if ! grep -q '"name":"transfer_file"' <<<"$response"; then
     echo "tools/list did not include transfer_file" >&2
     exit 1
 fi
 
-if ! echo "$response" | grep -q '"name":"fetch_file"'; then
+if ! grep -q '"name":"fetch_file"' <<<"$response"; then
     echo "tools/list did not include fetch_file" >&2
     exit 1
 fi
