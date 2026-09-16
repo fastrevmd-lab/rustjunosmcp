@@ -6,6 +6,32 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-15
+
+### Added
+
+- **`execute(operation, arguments)` is an additive 37th MCP tool** over the
+  existing 36 concrete Junos and SRX operations. It accepts only an exact
+  concrete operation name; it never repairs names, translates argument keys,
+  or supplies defaults. The selected concrete handler receives the original
+  argument object, so its existing typed validation remains authoritative.
+  Direct calls to all original 36 tools remain supported.
+
+### Changed
+
+- **Facade authorization is deliberately dual-scoped.** An authenticated HTTP
+  token must explicitly grant both `execute` and the selected concrete tool;
+  wildcard scope does not grant `execute`. The same preflight also applies the
+  caller's device scope to every nested device selector before dispatch.
+
+- **`execute` is conservatively write-capable.** It is excluded from wildcard
+  tool scope, because it can dispatch a write-capable concrete operation.
+
+- **Facade audit records retain both layers of attribution.** HTTP transport
+  records the outer `execute` request, while the concrete handler emits the
+  correlated operation record with the same request id; malformed and rejected
+  facade calls remain bounded and do not log raw nested arguments.
+
 
 ## [0.24.1] - 2026-09-06
 

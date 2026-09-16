@@ -10,7 +10,7 @@
 
 services:
   rust-junosmcp:
-    image: ghcr.io/fastrevmd-lab/rustjunosmcp:0.11.0
+    image: ghcr.io/fastrevmd-lab/rustjunosmcp:0.25.0
     # Pin by digest in production. A tag is mutable; a digest is the thing you
     # actually reviewed.
     # image: ghcr.io/fastrevmd-lab/rustjunosmcp@sha256:...

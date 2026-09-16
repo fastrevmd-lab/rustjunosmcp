@@ -64,9 +64,49 @@ fn stderr_for_request(request: &str) -> Vec<String> {
     let lines: Vec<String> = BufReader::new(stderr)
         .lines()
         .map_while(Result::ok)
+        .map(|line| strip_ansi(&line))
         .collect();
     let _ = child.wait();
     lines
+}
+
+/// Removes ANSI CSI sequences from a captured line.
+///
+/// These assertions are about audit *content* -- which tool a refusal is
+/// attributed to -- not about how a terminal would colour it. Without this,
+/// they compare against bytes the human-readable formatter interleaves between
+/// each field name and its value, so a record that reads `tool=execute` on a
+/// screen is `tool\x1b[0m\x1b[2m=\x1b[0mexecute` on the wire and
+/// `contains("tool=execute")` is false.
+///
+/// That interleaving was itself a defect, fixed upstream in mecmcp by
+/// disabling ANSI when stderr is not a terminal. Normalising here as well is
+/// not redundant: it keeps these tests measuring the thing they are named for,
+/// so a future formatter change cannot turn an attribution regression into a
+/// passing run or vice versa.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        // CSI: ESC '[' parameter/intermediate bytes, terminated by @..~.
+        match chars.next() {
+            Some('[') => {
+                for tail in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&tail) {
+                        break;
+                    }
+                }
+            }
+            // A non-CSI escape: drop the ESC, keep what followed.
+            Some(other) => out.push(other),
+            None => break,
+        }
+    }
+    out
 }
 
 fn audit_lines(lines: &[String]) -> Vec<&String> {
@@ -141,5 +181,116 @@ fn an_accepted_call_is_audited_exactly_once() {
         !audits[0].contains("dispatch_rejected"),
         "an accepted call must not be recorded as rejected: {}",
         audits[0]
+    );
+}
+
+#[test]
+fn invalid_inner_arguments_are_audited_once_under_the_concrete_operation() {
+    let lines = stderr_for_request(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute","arguments":{"operation":"gather_device_facts","arguments":{"routre":"r1"}}}}"#,
+    );
+    let audits = audit_lines(&lines);
+    let rejected = audits
+        .iter()
+        .filter(|line| line.contains("dispatch_rejected"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        rejected.len(),
+        1,
+        "the inner dispatch rejection must be audited exactly once: {audits:#?}"
+    );
+    assert!(
+        rejected[0].contains("gather_device_facts"),
+        "the rejection must name the concrete operation: {}",
+        rejected[0]
+    );
+    assert!(
+        !audits
+            .iter()
+            .any(|line| line.contains("tool=execute") && !line.contains("dispatch_rejected")),
+        "the facade must not add a successful execute record: {audits:#?}"
+    );
+}
+
+#[test]
+fn unknown_facade_operation_is_audited_once_and_bounded() {
+    let operation = "x".repeat(2048);
+    let request = format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"execute","arguments":{{"operation":"{operation}","arguments":{{}}}}}}}}"#
+    );
+    let lines = stderr_for_request(&request);
+    let audits = audit_lines(&lines);
+    let rejected = audits
+        .iter()
+        .filter(|line| line.contains("unknown_operation"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        rejected.len(),
+        1,
+        "the unknown facade operation must be audited exactly once: {audits:#?}"
+    );
+    assert!(
+        rejected[0].contains("tool=execute"),
+        "unknown facade operations remain attributed to execute: {}",
+        rejected[0]
+    );
+    assert!(
+        !rejected[0].contains(&operation),
+        "the audit record must not include the full raw operation: {}",
+        rejected[0]
+    );
+}
+
+#[test]
+fn accepted_facade_read_has_one_concrete_handler_record() {
+    let lines = stderr_for_request(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute","arguments":{"operation":"get_device_list","arguments":{}}}}"#,
+    );
+    let audits = audit_lines(&lines);
+
+    assert_eq!(
+        audits.len(),
+        1,
+        "an accepted facade read must have exactly one audit record: {audits:#?}"
+    );
+    assert!(
+        audits[0].contains("tool=get_device_list"),
+        "the concrete handler must own the audit record: {}",
+        audits[0]
+    );
+    assert!(
+        !audits[0].contains("dispatch_rejected"),
+        "an accepted facade read must not be rejected: {}",
+        audits[0]
+    );
+    assert!(
+        !audits[0].contains("tool=execute"),
+        "the facade must not add a successful execute record: {}",
+        audits[0]
+    );
+}
+
+#[test]
+fn malformed_facade_arguments_remain_audited_under_execute() {
+    let lines = stderr_for_request(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute","arguments":{"operation":"get_device_list","arguments":[]}}}"#,
+    );
+    let audits = audit_lines(&lines);
+    let rejected = audits
+        .iter()
+        .filter(|line| line.contains("dispatch_rejected"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        rejected.len(),
+        1,
+        "a malformed facade request must be rejected exactly once: {audits:#?}"
+    );
+    assert!(
+        rejected[0].contains("tool=execute"),
+        "a malformed facade request must remain attributed to execute: {}",
+        rejected[0]
     );
 }

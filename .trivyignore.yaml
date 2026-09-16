@@ -1,4 +1,11 @@
 misconfigurations:
+  - id: AVD-DS-0026
+    paths:
+      - "Dockerfile"
+    statement: >-
+      The production runtime is distroless and intentionally contains no shell
+      or probe utility. Runtime health is supervised externally; the container
+      smoke test enforces that no Docker HEALTHCHECK is present.
   - id: AVD-DS-0002
     paths:
       - "packaging/tests/fixtures/scp-server/Dockerfile"
