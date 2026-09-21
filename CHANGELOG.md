@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+- Raised MSRV to 1.89 (family-wide decision; enables mecmcp to drop aes pin)
+
 ## [0.25.0] - 2026-09-15
 
 ### Added
