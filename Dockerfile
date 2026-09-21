@@ -58,4 +58,16 @@ USER 65532:65532
 # orchestrators (Compose healthcheck, Kubernetes liveness probes) supervise the
 # process directly via the container runtime rather than shelling out.
 
-ENTRYPOINT ["/usr/local/bin/rust-junosmcp", "-f", "/etc/jmcp/devices.json", "--staging-dir", "/var/lib/jmcp/staging", "--known-hosts-file", "/var/lib/jmcp/known_hosts", "--device-lease-dir", "/var/lib/jmcp/device-leases"]
+# ENTRYPOINT carries what must always hold: config paths and anything security-
+# relevant. CMD carries only what an operator is expected to replace: bind
+# address, port, and mode flags. Docker replaces CMD when the caller supplies
+# arguments, so security-relevant defaults must stay in ENTRYPOINT.
+ENTRYPOINT ["/usr/local/bin/rust-junosmcp", \
+    "-f", "/etc/jmcp/devices.json", \
+    "--staging-dir", "/var/lib/jmcp/staging", \
+    "--known-hosts-file", "/var/lib/jmcp/known_hosts", \
+    "--device-lease-dir", "/var/lib/jmcp/device-leases", \
+    "--tokens-file", "/var/lib/jmcp/tokens.json"]
+CMD ["--transport", "streamable-http", \
+    "--host", "127.0.0.1", \
+    "--port", "30030"]
