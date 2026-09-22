@@ -71,6 +71,21 @@ if docker run --rm --entrypoint /usr/bin/scp "$APP_IMAGE" --version 2>/dev/null;
     exit 1
 fi
 
+echo ">> Verifying config-path argv survival under operator overrides"
+# Regression guard for mecmcp#357: config paths must survive operator overrides.
+# Docker replaces CMD entirely when the caller supplies args, but appends to
+# ENTRYPOINT, so config paths must live in ENTRYPOINT or they vanish the
+# moment anyone passes --host.
+container_id=$(docker create "$APP_IMAGE" --host 0.0.0.0)
+argv=$(docker inspect "$container_id" --format '{{join .Args "\n"}}')
+docker rm "$container_id" > /dev/null
+
+# Assert the five config path VALUES (not the -f flag, which is too weak to grep).
+for p in /etc/jmcp/devices.json /var/lib/jmcp/staging /var/lib/jmcp/known_hosts /var/lib/jmcp/device-leases /var/lib/jmcp/tokens.json; do
+  echo "$argv" | grep -q -- "$p" || { echo "FAIL: $p missing from argv with --host override"; exit 1; }
+done
+echo "PASS: config paths survive --host override"
+
 echo ">> Testing MCP server operation"
 cat > "$WORK/devices.json" <<'DEVICES'
 {
