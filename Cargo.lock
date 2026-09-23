@@ -1052,7 +1052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1906,7 +1906,7 @@ dependencies = [
  "mecmcp-auth",
  "metrics",
  "rand_core 0.6.4",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1950,7 +1950,7 @@ dependencies = [
  "hex",
  "mecmcp-audit",
  "mecmcp-secret",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1967,7 +1967,7 @@ version = "0.23.0"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.23.0#d61867d7ae37cc9c5fcf760d57ca07d3a7560325"
 dependencies = [
  "async-trait",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2012,7 +2012,7 @@ dependencies = [
  "mecmcp-audit",
  "mecmcp-auth",
  "mecmcp-secret",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2029,7 +2029,7 @@ dependencies = [
  "hmac 0.12.1",
  "mecmcp-secret",
  "russh",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "sha1 0.10.7",
  "tempfile",
  "thiserror",
@@ -2043,7 +2043,7 @@ name = "mecmcp-secret"
 version = "0.23.0"
 source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.23.0#d61867d7ae37cc9c5fcf760d57ca07d3a7560325"
 dependencies = [
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "thiserror",
  "zeroize",
 ]
@@ -2671,7 +2671,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3094,7 +3094,7 @@ dependencies = [
  "rust-junosmcp-auth",
  "rust-junosmcp-core",
  "rust-junosmcp-srx-core",
- "rustix 1.1.4",
+ "rustix 1.1.5",
  "rustls",
  "rustls-pki-types",
  "schemars",
@@ -3248,15 +3248,15 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
 dependencies = [
  "bitflags",
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3811,8 +3811,8 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.3",
  "once_cell",
- "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "rustix 1.1.5",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4638,7 +4638,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.4",
+ "rustix 1.1.5",
 ]
 
 [[package]]
