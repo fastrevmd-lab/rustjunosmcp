@@ -47,7 +47,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: Sanitized audit/tracing output or error text, if any
+      description: Sanitized audit/tracing output or error text, if any. Debug/trace logs can contain full config payloads, including password hashes and keys — redact before pasting.
       render: shell
     validations:
       required: false
