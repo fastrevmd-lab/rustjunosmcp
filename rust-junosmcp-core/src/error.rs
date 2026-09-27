@@ -402,6 +402,16 @@ pub enum JmcpError {
         authority: String,
     },
 
+    /// A direct-commit tool was refused because the server was not started
+    /// with `--allow-direct-commit`.
+    ///
+    /// This tool stages, validates, and commits a device change in one call,
+    /// with no independent second-principal approval — there is no change set
+    /// to route it through. Refused by default; pass `--allow-direct-commit`
+    /// to permit it, which is audited on every use.
+    #[error(transparent)]
+    DirectCommitDisabled(#[from] mecmcp_audit::DirectCommitRefused),
+
     /// Device has active config blocklist rules, which only apply to
     /// `config_format=set`. Caller requested `text` or `xml` instead.
     #[error("config blocklist rules require config_format=set; got '{format}'")]
@@ -606,6 +616,7 @@ impl JmcpError {
             Self::Json(_) => "parse",
             Self::Denied { .. } => "blocked",
             Self::PlaneOwnedDevice { .. } => "blocked",
+            Self::DirectCommitDisabled(_) => "blocked",
             Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
             Self::BlocklistRuleInvalid { .. } => "invalid_input",
             Self::TemplateSyntax(_) => "parse",

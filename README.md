@@ -425,6 +425,52 @@ Silence means it is off. An unprivileged `journalctl` can also print nothing
 here for lack of access rather than because the flag is unset, which is why the
 command uses `sudo`.
 
+## `--allow-direct-commit`
+
+Four tools never create a change set at all: `load_and_commit_config`
+unconditionally, and `render_and_apply_j2_template` (when it would actually
+apply), `rollback_config` (with `commit=true`), and `upgrade_junos` (with
+`confirm=true`) once past their read-only preview/pre-flight step. Each stages,
+validates, and commits a device change in one call, so there is no
+second-principal review by construction — there is no change set for a second
+principal to approve. **Off by default**: without this flag, all four are
+refused before the device is ever touched, over stdio exactly as over HTTP
+(stdio carries no caller context at all, so it cannot be treated any more
+leniently than an authenticated session).
+
+**Residual risk.** `--allow-direct-commit` is an escape hatch, not a fix. An
+operator who sets it has decided that, for these specific tools, running with
+no independent review is an acceptable risk for this deployment. That decision
+is:
+
+- **Logged loudly at startup.** A `SECURITY:` warning names the risk every time
+  the process starts with the flag on.
+- **Audited on every call.** Each direct-commit call carries
+  `direct_commit_allowed=true` in its audit record — a refusal is audited too,
+  as `authorization=denied reason=direct_commit_disabled`.
+
+It does not add a second-principal review; it only makes running without one
+visible. Prefer the change-set flow (`create_junos_change_set` →
+`approve_junos_change_set` → `apply_junos_change_set`) wherever your workflow
+can use it, and reserve this flag for the specific tools that cannot.
+
+### Enabling it
+
+Same pattern as `--lab-mode` above: add `--allow-direct-commit` to the service
+unit via a systemd drop-in, copying the shipped `ExecStart` in full rather than
+writing a shorter one.
+
+Confirm it took effect. Unlike the `--lab-mode` banner, this one is
+deliberately **not** tagged `target: "audit"` — that stream has a fixed
+per-call schema, and a startup banner has none of those fields — so grep the
+plain message text instead:
+
+```console
+sudo journalctl -u rust-junosmcp -b | grep -i "allow-direct-commit is enabled"
+```
+
+Silence means it is off.
+
 ## Audit logging
 
 `rust-junosmcp` emits structured audit events for every Junos and SRX tool invocation. Each event records the caller, tool, target routers, authorization decision, outcome, and duration. See [`docs/AUDIT.md`](docs/AUDIT.md) for the full schema and forwarding guidance.
