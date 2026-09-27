@@ -111,10 +111,10 @@ async fn start_test_server(
 
 #[tokio::test]
 async fn portless_allowed_host_matches_any_port() {
-    // Production shape: LXC 950 binds 0.0.0.0:30031 with `--allowed-host 192.168.1.194`
-    // (no port). This MUST accept Host: 192.168.1.194:30031 (with port).
+    // Production shape: LXC 950 binds 0.0.0.0:30031 with `--allowed-host 192.0.2.10`
+    // (no port). This MUST accept Host: 192.0.2.10:30031 (with port).
     let (base_url, shutdown) = start_test_server(
-        vec!["192.168.1.194".to_string()],
+        vec!["192.0.2.10".to_string()],
         Vec::new(), // No origins
     )
     .await;
@@ -123,7 +123,7 @@ async fn portless_allowed_host_matches_any_port() {
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{base_url}/mcp"))
-        .header("Host", "192.168.1.194:30031")
+        .header("Host", "192.0.2.10:30031")
         .body("{}")
         .send()
         .await
@@ -147,12 +147,12 @@ async fn portless_allowed_host_matches_any_port() {
 async fn portless_allowed_host_also_matches_portless_host() {
     // A portless allowlist entry should also accept a portless Host header.
     let (base_url, shutdown) =
-        start_test_server(vec!["192.168.1.194".to_string()], Vec::new()).await;
+        start_test_server(vec!["192.0.2.10".to_string()], Vec::new()).await;
 
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{base_url}/mcp"))
-        .header("Host", "192.168.1.194")
+        .header("Host", "192.0.2.10")
         .body("{}")
         .send()
         .await
@@ -172,7 +172,7 @@ async fn loopback_still_allowed_after_adding_host() {
     // The default loopback allowlist (localhost/127.0.0.1/[::1]) must remain
     // accessible after adding a custom host with --allowed-host.
     let (base_url, shutdown) =
-        start_test_server(vec!["192.168.1.194".to_string()], Vec::new()).await;
+        start_test_server(vec!["192.0.2.10".to_string()], Vec::new()).await;
 
     let client = reqwest::Client::new();
     let response = client
@@ -196,7 +196,7 @@ async fn loopback_still_allowed_after_adding_host() {
 async fn unlisted_host_rejected_with_421() {
     // An unlisted Host header must be rejected with 421 MISDIRECTED_REQUEST.
     let (base_url, shutdown) =
-        start_test_server(vec!["192.168.1.194".to_string()], Vec::new()).await;
+        start_test_server(vec!["192.0.2.10".to_string()], Vec::new()).await;
 
     let client = reqwest::Client::new();
     let response = client
@@ -312,7 +312,7 @@ async fn insecure_bind_acknowledgement_reaches_the_transport() {
     let plan = rust_junosmcp::http_transport::build_http_router(
         test_handler(),
         Some(store),
-        vec!["192.168.1.194".to_owned()],
+        vec!["192.0.2.10".to_owned()],
         vec!["http://192.168.1.127".to_owned()],
         LimitsConfig::default(),
         false,

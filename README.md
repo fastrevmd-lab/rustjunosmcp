@@ -797,7 +797,7 @@ cargo run -- \
   --tokens-file tokens.json \
   --tls-cert cert.pem \
   --tls-key key.pem \
-  --allowed-host jmcp.lab.internal
+  --allowed-host jmcp.example.net
 ```
 
 There is no way to turn the allowlist off. `--disable-host-check` was removed in

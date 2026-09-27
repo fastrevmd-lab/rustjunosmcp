@@ -11,7 +11,7 @@
 //! ```xml
 //! <ike-security-associations-information>
 //!   <ike-security-associations-block>
-//!     <ike-sa-remote-address>192.168.1.161</ike-sa-remote-address>
+//!     <ike-sa-remote-address>192.0.2.161</ike-sa-remote-address>
 //!     <ike-sa-index>3128619</ike-sa-index>
 //!     <ike-gw-name>lab-ike-gw</ike-gw-name>
 //!     <ike-security-associations>
@@ -37,7 +37,7 @@
 //!       <sa-direction>&lt;</sa-direction>
 //!       <sa-tunnel-index>131073</sa-tunnel-index>
 //!       <sa-spi>4ef526a8</sa-spi>
-//!       <sa-remote-gateway>192.168.1.161</sa-remote-gateway>
+//!       <sa-remote-gateway>192.0.2.161</sa-remote-gateway>
 //!       <sa-hard-lifetime>2473</sa-hard-lifetime>
 //!       <sa-lifesize-remaining>unlim</sa-lifesize-remaining>
 //!       …
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(sas.len(), 1, "expected 1 IKE SA");
         let sa = &sas[0];
         assert_eq!(sa.index, Some(3128619));
-        assert_eq!(sa.remote_address, "192.168.1.161");
+        assert_eq!(sa.remote_address, "192.0.2.161");
         assert_eq!(sa.state, "UP");
         assert_eq!(sa.mode, "IKEv2");
         assert_eq!(sa.initiator_cookie, "f8e88716124475b0");
@@ -610,7 +610,7 @@ mod tests {
         let inbound = sas.iter().find(|s| s.direction == "<").expect("inbound SA");
         assert_eq!(inbound.tunnel_id, Some(131073));
         assert_eq!(inbound.spi, "4ef526a8");
-        assert_eq!(inbound.gateway, "192.168.1.161");
+        assert_eq!(inbound.gateway, "192.0.2.161");
         assert_eq!(inbound.block_state, "up");
         assert_eq!(inbound.lifetime_remaining_seconds, Some(2473));
         assert!(
@@ -708,7 +708,7 @@ mod tests {
     fn peer_filter_matches() {
         let ike_xml = fixture("ike_sa_up_test10.xml");
         let ipsec_xml = fixture("ipsec_sa_up_test10.xml");
-        let resp = parse_combined(&ike_xml, &ipsec_xml, Some("192.168.1.161"), None)
+        let resp = parse_combined(&ike_xml, &ipsec_xml, Some("192.0.2.161"), None)
             .expect("filtered parse");
         assert_eq!(resp.state, SrxState::Active);
         let data = resp.data.unwrap();
@@ -740,7 +740,7 @@ mod tests {
         let ike_xml = fixture("ike_sa_up_test10.xml");
         let ipsec_xml = fixture("ipsec_sa_up_test10.xml");
         let resp =
-            parse_combined(&ike_xml, &ipsec_xml, Some("10.0.0.1"), None).expect("filtered parse");
+            parse_combined(&ike_xml, &ipsec_xml, Some("198.51.100.1"), None).expect("filtered parse");
         assert_eq!(resp.state, SrxState::Active, "still Active, just empty");
         let data = resp.data.unwrap();
         assert!(data.nodes[0].ike_sas.is_empty());
