@@ -1,0 +1,12 @@
+<!-- Synthetic, hand-written per srx-policy-read-spec §11 (not live-confirmed). -->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>block-telnet</policy-name>
+    <action-type>deny</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>7</policy-index>
+    <from-zone-name>trust</from-zone-name>
+    <to-zone-name>untrust</to-zone-name>
+    <policy-sequence-number>2</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>

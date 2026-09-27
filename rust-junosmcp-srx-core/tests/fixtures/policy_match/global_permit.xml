@@ -1,0 +1,18 @@
+<!--
+  "vsrx-ci-1" is the REAL global policy name observed live on vsrx-ci
+  (srx-policy-read-spec §11: "Global policies: Policy: vsrx-ci-1, ...
+  From zones: any, To zones: any, Action: permit, log, count"). The
+  surrounding match-firewall-policies XML shape is synthetic (not
+  live-confirmed) — see policy_match.rs module docs.
+-->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>vsrx-ci-1</policy-name>
+    <action-type>permit</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>4</policy-index>
+    <from-zone-name>any</from-zone-name>
+    <to-zone-name>any</to-zone-name>
+    <policy-sequence-number>1</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>
