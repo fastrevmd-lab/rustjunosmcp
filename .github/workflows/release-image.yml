@@ -26,6 +26,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless cosign signing exchanges this job's OIDC token for a
+      # short-lived Fulcio certificate; no key material is stored anywhere.
+      # This workflow only ever runs from a version-tag push or an explicit
+      # workflow_dispatch backfill of an already-tagged release (see the
+      # `ref` input above) -- never from a PR or an untagged branch push --
+      # so a Rekor transparency-log entry is only ever created for a
+      # board-approved release.
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -61,6 +69,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -69,3 +78,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        # Sign by digest, not by the mutable tags above -- a tag can be
+        # repointed later, but the digest is what was actually just pushed.
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}

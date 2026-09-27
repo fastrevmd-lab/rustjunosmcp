@@ -7,6 +7,12 @@ All notable user-facing changes are recorded here. Format loosely follows
 ## [Unreleased]
 
 - Raised MSRV to 1.89 (family-wide decision; enables mecmcp to drop aes pin)
+- **Release image and tarball are now signed keylessly with cosign** via
+  GitHub Actions OIDC (no key pair, ever). The `Release image` workflow signs
+  the pushed image by digest; a new `Sign release tarball` workflow signs the
+  LXC tarball once it is attached to a published GitHub release. See the
+  README's "Verifying the image signature" and "Downloading a prebuilt release
+  tarball instead" sections for `cosign verify` / `verify-blob` recipes.
 
 ## [0.25.0] - 2026-09-15
 
