@@ -80,6 +80,13 @@ pub struct ConfigPayloadSpec {
     /// Format: "set", "text", or "xml". Defaults to "set" if omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// Load mode: "merge" (default), "replace", or "override". `override`
+    /// replaces the entire candidate configuration; it is permitted here
+    /// (and only here) because a change set requires approval by a second
+    /// principal — `create_junos_change_set` → `approve_junos_change_set` →
+    /// `apply_junos_change_set` — before anything commits (MEC-12).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// Opaque staged-transaction handle retaining the session and lock until commit or discard.
@@ -442,8 +449,11 @@ impl DeviceTransaction for JunosTransaction {
             let load_result = if let Some(rollback) = action.rollback_source {
                 cfg.rollback(rollback).await
             } else if let Some(ref spec) = action.payload {
-                let payload = build_config_payload(spec.text.clone(), spec.format.as_deref())?;
-                cfg.load(payload).await.map(|_| ())
+                let format = spec.format.as_deref().unwrap_or("set");
+                let payload = build_config_payload(spec.text.clone(), Some(format))?;
+                let requested_mode = crate::helpers::parse_load_mode(spec.mode.as_deref())?;
+                let load_action = crate::helpers::resolve_load_action(format, requested_mode)?;
+                cfg.load_with_action(payload, load_action).await.map(|_| ())
             } else {
                 unreachable!("exactly-one validation already checked this");
             };
@@ -1341,9 +1351,50 @@ mod tests {
             payload: payload.map(|text| ConfigPayloadSpec {
                 text: text.to_owned(),
                 format: Some("set".to_owned()),
+                mode: None,
             }),
             rollback_source,
         }
+    }
+
+    /// Like `action()`, but with an explicit `format` and `mode` for testing
+    /// how `stage()` resolves them into a wire `LoadAction`.
+    fn action_with_format_and_mode(text: &str, format: &str, mode: &str) -> JunosAction {
+        JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: text.to_owned(),
+                format: Some(format.to_owned()),
+                mode: Some(mode.to_owned()),
+            }),
+            rollback_source: None,
+        }
+    }
+
+    /// `mode` is orthogonal to the payload/rollback_source XOR invariant
+    /// `validate_shape` enforces — adding it must not change that check,
+    /// including for `override`, the one mode this path (unlike
+    /// `load_and_commit_config`) is allowed to carry.
+    #[test]
+    fn action_with_override_mode_still_passes_shape_validation() {
+        let a = action_with_format_and_mode("system { host-name x; }", "text", "override");
+        assert!(a.validate_shape(0).is_ok());
+    }
+
+    /// `ConfigPayloadSpec.mode` round-trips through JSON like `format` does —
+    /// the field an approver's `create_junos_change_set` call actually sends.
+    #[test]
+    fn config_payload_spec_deserializes_mode() {
+        let spec: ConfigPayloadSpec = serde_json::from_str(
+            r#"{"text":"system { host-name x; }","format":"text","mode":"override"}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.mode.as_deref(), Some("override"));
+    }
+
+    #[test]
+    fn config_payload_spec_mode_defaults_to_none() {
+        let spec: ConfigPayloadSpec = serde_json::from_str(r#"{"text":"set x"}"#).unwrap();
+        assert_eq!(spec.mode, None);
     }
 
     /// `payload` and `rollback_source` are mutually exclusive. Staging both

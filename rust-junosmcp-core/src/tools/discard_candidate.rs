@@ -41,6 +41,8 @@ pub async fn handle_with_cancel(
             payload: None,
             rollback_source: None,
             mode: CandidateMode::Discard,
+            // Unused: no payload is loaded on the discard path.
+            load_action: rustez::LoadAction::Merge,
         },
         timeout_dur,
         &ct,
