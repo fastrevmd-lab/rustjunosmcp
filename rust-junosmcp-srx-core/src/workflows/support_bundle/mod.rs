@@ -48,7 +48,7 @@ pub use artefacts::{ArtefactSource, CapturedArtefact};
 pub use problem_type::{BASELINE_LOGS, BASELINE_RPCS, ProblemType};
 pub use redact::{
     REDACT_ELEMENT_NAMES, REDACTED_MARKER, XmlRedaction, redact_log_artefact, redact_log_text,
-    redact_xml, try_redact_xml,
+    try_redact_xml,
 };
 pub use staging::{
     DEFAULT_STAGING_DIR, DEFAULT_STAGING_MAX_BYTES, PreparedBundlePaths,
@@ -391,19 +391,7 @@ async fn collect_generic(
         });
     }
 
-    // `request support information` returns plain tech-support text, never
-    // XML — `redact_xml`'s well-formedness gate always fails on it, which
-    // used to make `redact:true` (the default) a silent no-op that shipped
-    // the raw payload while still recording `redacted: false`. Route through
-    // `redact_log_artefact`, which applies the line-oriented secret scrubber
-    // to non-XML payloads (#89) instead of passing them through untouched.
-    let (payload, redacted) = if args.redact {
-        let red = redact_log_artefact(&payload);
-        let changed = red != payload;
-        (red, changed)
-    } else {
-        (payload, false)
-    };
+    let (payload, redacted) = redact_generic_payload(payload, args.redact);
 
     let fname = "request-support-information.txt";
     let abs_path = scratch.join(fname);
@@ -814,6 +802,25 @@ fn finalize_lxc_bundle(
     })
 }
 
+/// Redact the `request support information` payload for the generic
+/// support-bundle path. That RPC returns plain tech-support text, never XML,
+/// so this always goes through the best-effort [`redact_log_artefact`] dispatch
+/// (never the permissive XML-only redactor) — otherwise `redact:true` (the
+/// default) becomes a silent no-op that ships the raw payload while still
+/// recording `redacted: false`. Extracted from `collect_generic` so a test can
+/// call the exact function production code calls, rather than exercising
+/// `redact_log_artefact` directly and missing a regression in how
+/// `collect_generic` wires it up.
+fn redact_generic_payload(payload: String, redact: bool) -> (String, bool) {
+    if redact {
+        let red = redact_log_artefact(&payload);
+        let changed = red != payload;
+        (red, changed)
+    } else {
+        (payload, false)
+    }
+}
+
 /// Redact a captured RPC-reply payload for the per-RPC support-bundle path.
 /// Returns `Some((payload, changed))` when the reply was confirmed
 /// well-formed XML, `changed` indicating whether anything was actually
@@ -1015,6 +1022,27 @@ mod tests {
             !changed,
             "no sensitive elements present, so changed must be false"
         );
+    }
+
+    // F3: the M1 regression test for `collect_generic`'s redaction call must
+    // exercise the exact function production code calls, not just the
+    // library redactor directly — otherwise a regression that swapped
+    // `redact_generic_payload`'s body back to the permissive `redact_xml`
+    // would go uncaught while the library-level test kept passing.
+    #[test]
+    fn redact_generic_payload_scrubs_tech_support_text_when_redact_true() {
+        let tech_support = "set snmp community leakedGeneric;\n".to_string();
+        let (out, redacted) = redact_generic_payload(tech_support.clone(), true);
+        assert!(!out.contains("leakedGeneric"), "secret leaked: {out}");
+        assert!(redacted, "must report redacted=true");
+    }
+
+    #[test]
+    fn redact_generic_payload_passes_through_when_redact_false() {
+        let tech_support = "set snmp community leakedGeneric;\n".to_string();
+        let (out, redacted) = redact_generic_payload(tech_support.clone(), false);
+        assert_eq!(out, tech_support);
+        assert!(!redacted, "redact=false must report redacted=false");
     }
 
     #[test]

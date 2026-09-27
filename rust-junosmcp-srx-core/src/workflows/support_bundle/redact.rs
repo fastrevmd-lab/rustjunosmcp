@@ -198,12 +198,15 @@ pub fn try_redact_xml(input: &str) -> XmlRedaction {
 /// returns the input unchanged.
 ///
 /// This is the permissive convenience wrapper around [`try_redact_xml`] for
-/// callers that have no fail-closed obligation of their own (tests, and
-/// [`redact_log_artefact`]'s best-effort dispatch). Callers on a path that
-/// must never ship an unverified payload — like `collect_jtac_support_bundle`'s
-/// per-RPC XML capture — must call [`try_redact_xml`] directly and refuse the
-/// artefact on [`XmlRedaction::Unparseable`] instead of using this wrapper.
-pub fn redact_xml(input: &str) -> String {
+/// callers that have no fail-closed obligation of their own. Callers on a
+/// path that must never ship an unverified payload — like
+/// `collect_jtac_support_bundle`'s per-RPC XML capture — must call
+/// [`try_redact_xml`] directly and refuse the artefact on
+/// [`XmlRedaction::Unparseable`] instead of using this wrapper. There is no
+/// legitimate non-test caller for the permissive unchanged-on-failure
+/// behaviour, so this is test-only (F7).
+#[cfg(test)]
+fn redact_xml(input: &str) -> String {
     match try_redact_xml(input) {
         XmlRedaction::Redacted(s) => s,
         XmlRedaction::Unparseable => input.to_string(),
@@ -211,9 +214,10 @@ pub fn redact_xml(input: &str) -> String {
 }
 
 /// True when `text`, trimmed of surrounding whitespace, looks like a bare
-/// Junos crypt hash (`$1$`, `$5$`, `$6$`, `$8$`, `$9$`, ...): a `$` followed
-/// by a digit. Used by [`try_redact_xml`]'s catch-all so a secret is still
-/// caught when it lands under an element name not on the locked list.
+/// Junos crypt hash (`$1$`, `$5$`, `$6$`, `$8$`, `$9$`, ... or `$sha1$`): a
+/// `$`, one or more digits (or the literal `sha1`), then a closing `$`. Used
+/// by [`try_redact_xml`]'s catch-all so a secret is still caught when it
+/// lands under an element name not on the locked list.
 fn text_is_junos_hash(text: &str) -> bool {
     is_junos_hash(text.trim())
 }
@@ -224,20 +228,25 @@ fn text_is_junos_hash(text: &str) -> bool {
 const VALUE_QUALIFIERS: &[&str] = &["ascii-text", "hexadecimal", "plain-text", "encrypted"];
 
 /// Route a captured artefact through the appropriate redactor. Well-formed XML
-/// payloads use the element-name redactor ([`try_redact_xml`]); everything else
-/// — including text that merely looks like XML but that the redactor could
-/// not actually walk, and log files archived since #82 — is treated as plain
-/// text and routed through the line-oriented redactor ([`redact_log_text`]).
-/// Previously non-XML artefacts failed the XML well-formedness gate and were
-/// emitted verbatim, leaking secrets embedded in log lines (#89); the
-/// well-formedness gate can never fall through to shipping the artefact
-/// unredacted — the line-oriented pass is always the floor.
+/// payloads are first run through the element-name redactor ([`try_redact_xml`])
+/// and then *always* through the line-oriented redactor ([`redact_log_text`])
+/// as well: rustez's `parse_cli_output` returns the whole RPC reply verbatim
+/// when the expected `<output>` child element is absent, so a CLI-syntax
+/// secret can end up sitting in plain text under an element name that is not
+/// on the locked list (e.g. directly under `<rpc-reply>`) — the element-name
+/// pass has nothing to match there. Content that merely looks like XML but
+/// that the redactor could not actually walk, and log files archived since
+/// #82, are treated as plain text and routed through the line-oriented
+/// redactor only. Previously non-XML artefacts failed the XML well-formedness
+/// gate and were emitted verbatim, leaking secrets embedded in log lines
+/// (#89); the well-formedness gate can never fall through to shipping the
+/// artefact unredacted — the line-oriented pass is always the floor.
 pub fn redact_log_artefact(input: &str) -> String {
     let is_xml = roxmltree::Document::parse(input).is_ok()
         || roxmltree::Document::parse(&crate::xml::sanitize_rustez_xml(input)).is_ok();
     if is_xml {
         match try_redact_xml(input) {
-            XmlRedaction::Redacted(s) => s,
+            XmlRedaction::Redacted(s) => redact_log_text(&s),
             XmlRedaction::Unparseable => redact_log_text(input),
         }
     } else {
@@ -270,15 +279,29 @@ fn is_word_char(byte: u8) -> bool {
 }
 
 /// A bare value is treated as a secret with no further context when it is a
-/// Junos crypt hash (`$1$`, `$5$`, `$6$`, `$8$`, `$9$`, ...): a `$` followed by
-/// a digit. Such tokens never occur in ordinary prose.
+/// Junos crypt hash: a `$`, one or more digits (crypt id `$1$`, `$5$`, `$6$`,
+/// `$8$`, `$9$`, ...) or the literal `sha1`, then a closing `$`. Such tokens
+/// never occur in ordinary prose. Requiring the closing `$` (rather than just
+/// `$` + one digit) avoids false positives like `$5 off` and covers the
+/// `$sha1$...` form, which has no leading digit.
 fn is_junos_hash(token: &str) -> bool {
     let bytes = token.as_bytes();
-    // SOUND: bounds check prevents out-of-bounds.
-    #[allow(clippy::indexing_slicing)]
-    {
-        bytes.len() >= 2 && bytes[0] == b'$' && bytes[1].is_ascii_digit()
+    if bytes.first() != Some(&b'$') {
+        return false;
     }
+    if token.starts_with("$sha1$") {
+        return true;
+    }
+    let mut i = 1;
+    let mut digits = 0usize;
+    while let Some(&b) = bytes.get(i) {
+        if !b.is_ascii_digit() {
+            break;
+        }
+        digits += 1;
+        i += 1;
+    }
+    digits > 0 && bytes.get(i) == Some(&b'$')
 }
 
 /// Redact a single log line (which may include a trailing `\n`).
@@ -448,24 +471,56 @@ fn redactable_value(line: &str, after_key: usize, set_context: bool) -> Option<(
     let (value_start, value_end) = value_token(line, pos)?;
     // SOUND: bounds checks prevent out-of-bounds indexing.
     #[allow(clippy::indexing_slicing)]
-    let quoted = bytes[value_start] == b'"' || bytes[value_start] == b'\'';
+    let quoted = bytes[value_start] == b'"'
+        || bytes[value_start] == b'\''
+        || bytes_start_with(bytes, value_start, QUOT_ENTITY);
     #[allow(clippy::indexing_slicing)]
     let terminated = value_end < bytes.len() && bytes[value_end] == b';';
+    // A `{` (optionally preceded by whitespace) opens a config block — treat
+    // it as a terminator like `;` (F1: legacy curly-brace SNMP syntax, e.g.
+    // `community NAME {`).
+    let mut block_scan = value_end;
+    // SOUND: bounds-checked against bytes.len().
+    #[allow(clippy::indexing_slicing)]
+    while block_scan < bytes.len() && (bytes[block_scan] == b' ' || bytes[block_scan] == b'\t') {
+        block_scan += 1;
+    }
+    // SOUND: bounds-checked against bytes.len().
+    #[allow(clippy::indexing_slicing)]
+    let opens_block = block_scan < bytes.len() && bytes[block_scan] == b'{';
     // SOUND: `value_token` guarantees char boundaries (scans for ASCII
     // delimiters or line.len()).
     #[allow(clippy::string_slice)]
     let hash = is_junos_hash(&line[value_start..value_end]);
 
-    if quoted || qualifier_present || terminated || hash || set_context {
+    if quoted || qualifier_present || terminated || opens_block || hash || set_context {
         Some((value_start, value_end))
     } else {
         None
     }
 }
 
+/// XML entity form of a double quote (`&quot;`). CLI text redacted after
+/// [`try_redact_xml`]'s element pass (see [`redact_log_artefact`]) may still
+/// have its literal `"` characters XML-escaped; [`value_token`] and
+/// [`redactable_value`] must recognise this form too, or a quoted value with
+/// an internal space is only partially matched up to the first space —
+/// leaking the remainder (F5).
+const QUOT_ENTITY: &[u8] = b"&quot;";
+
+/// True when `bytes[pos..]` starts with `needle`, without slicing (this
+/// module denies `clippy::indexing_slicing`/`clippy::string_slice`).
+fn bytes_start_with(bytes: &[u8], pos: usize, needle: &[u8]) -> bool {
+    needle
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| bytes.get(pos + i) == Some(&b))
+}
+
 /// Locate the value token starting at `pos`, returning its `[start, end)` byte
-/// range. A quoted token spans to its matching closing quote; a bare token runs
-/// until whitespace or a `;` terminator. Returns `None` at end-of-line.
+/// range. A quoted token — delimited by `"`, `'`, or the XML entity `&quot;`
+/// (F5) — spans to its matching closing quote; a bare token runs until
+/// whitespace or a `;` terminator. Returns `None` at end-of-line.
 fn value_token(line: &str, pos: usize) -> Option<(usize, usize)> {
     let bytes = line.as_bytes();
     if pos >= bytes.len() {
@@ -488,6 +543,21 @@ fn value_token(line: &str, pos: usize) -> Option<(usize, usize)> {
         }
         // `end` is always a char boundary: either `bytes.len()` or one byte
         // past an ASCII quote (`"` or `'`), both of which are char boundaries.
+        return Some((pos, end));
+    }
+    if bytes_start_with(bytes, pos, QUOT_ENTITY) {
+        let mut end = pos + QUOT_ENTITY.len();
+        while end < bytes.len() && !bytes_start_with(bytes, end, QUOT_ENTITY) {
+            end += 1;
+        }
+        if end < bytes.len() {
+            end += QUOT_ENTITY.len(); // include the closing entity
+        }
+        // `end` only ever lands where the ASCII byte sequence `&quot;` starts
+        // or matches `bytes.len()`, both of which are char boundaries — the
+        // scan advances one byte at a time but a partial match can never
+        // stop mid-multi-byte-char, since `&` (0x26) never occurs as a UTF-8
+        // continuation byte (0x80-0xBF).
         return Some((pos, end));
     }
     let (start, end) = token_bounds(line, pos);
@@ -1094,5 +1164,103 @@ mod tests {
             1,
             "marker duplicated by both the element-name pass and the catch-all: {out}"
         );
+    }
+
+    // ── F1: legacy curly-brace SNMP config syntax ──────────────────────────
+
+    #[test]
+    fn log_redacts_community_in_curly_brace_block() {
+        // Legacy SNMP config style: `community NAME { ... }` instead of
+        // `community NAME;`. The old `redactable_value` only treated `;` as a
+        // terminator, so a bare value followed by `{` fell through with no
+        // config signal and was left unredacted.
+        let line = "    community s3cr3tCommunity {\n";
+        let out = redact_log_text(line);
+        assert!(!out.contains("s3cr3tCommunity"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.trim_end().ends_with('{'), "brace dropped: {out}");
+    }
+
+    // ── F2: element-redacted XML must still get the line-oriented pass ────
+
+    #[test]
+    fn artefact_dispatcher_scrubs_cli_text_embedded_in_xml_without_output_wrapper() {
+        // rustez's `parse_cli_output` returns the whole RPC reply text when
+        // there is no `<output>` child element. The element-name XML
+        // redactor has nothing to match here (no element in this reply is
+        // named after a locked key), so the embedded CLI-syntax secret must
+        // be caught by a second, line-oriented pass over the (already
+        // element-redacted) XML text — not left to the element pass alone.
+        let xml = "<rpc-reply>set snmp community leakedXML;\n</rpc-reply>";
+        let out = redact_log_artefact(xml);
+        assert!(!out.contains("leakedXML"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    #[test]
+    fn artefact_dispatcher_still_redacts_named_elements_after_line_pass() {
+        // The added line-oriented pass (F2) must not undo or interfere with
+        // the existing element-name redaction.
+        let xml = "<ike><pre-shared-key>xmlsecret</pre-shared-key></ike>";
+        let out = redact_log_artefact(xml);
+        assert!(!out.contains("xmlsecret"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    // ── F4: `is_junos_hash` must require a closing `$`, and must cover
+    // `$sha1$` ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_junos_hash_matches_sha1_prefix() {
+        assert!(is_junos_hash(
+            "$sha1$abcdef0123456789abcdef0123456789abcdef01"
+        ));
+    }
+
+    #[test]
+    fn is_junos_hash_rejects_dollar_digit_without_closing_dollar() {
+        assert!(!is_junos_hash("$5 off"));
+    }
+
+    #[test]
+    fn is_junos_hash_still_matches_crypt_hash() {
+        assert!(is_junos_hash("$6$saltsalt$hashhashhash"));
+    }
+
+    #[test]
+    fn catch_all_redacts_sha1_prefixed_hash() {
+        let xml = "<config><password-hash>$sha1$leakedSHA1hash</password-hash></config>";
+        let out = redact_xml(xml);
+        assert!(!out.contains("leakedSHA1hash"), "hash leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+    }
+
+    #[test]
+    fn catch_all_does_not_redact_dollar_digit_prose() {
+        let xml = "<config><promo>$5 off your order</promo></config>";
+        let out = redact_xml(xml);
+        assert!(
+            out.contains("$5 off your order"),
+            "false-positive redaction: {out}"
+        );
+    }
+
+    // ── F5: `&quot;`-quoted values (XML-escaped literal quotes) must not
+    // partially leak past the first internal space ────────────────────────
+
+    #[test]
+    fn log_redacts_value_quoted_with_xml_entity_quot_containing_internal_space() {
+        // A CLI-syntax secret embedded inside XML-escaped text (e.g. after
+        // the F2 dispatcher runs `redact_log_text` over the element-redacted
+        // XML string) may have its quotes as the `&quot;` entity rather than
+        // a literal `"`. The old bare-token scan stopped at the first
+        // internal space, leaking everything after it up to the closing
+        // entity.
+        let line =
+            "set security ike policy p1 pre-shared-key ascii-text &quot;correct horse&quot;;";
+        let out = redact_log_text(line);
+        assert!(!out.contains("correct horse"), "secret leaked: {out}");
+        assert!(out.contains("REDACTED"), "marker missing: {out}");
+        assert!(out.contains("pre-shared-key"), "key dropped: {out}");
     }
 }
