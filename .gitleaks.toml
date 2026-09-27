@@ -1,0 +1,12 @@
+title = "rustjunosmcp gitleaks config"
+
+[extend]
+path = ".gitleaks-vendor.toml"
+
+[[allowlists]]
+# redact.rs's own #[cfg(test)] module exercises the redactor against
+# synthetic Junos secret strings; it is not itself a leak.
+description = "redact.rs unit-test fixtures for the secret redactor"
+paths = [
+  '''rust-junosmcp-srx-core/src/workflows/support_bundle/redact\.rs$''',
+]
