@@ -54,6 +54,10 @@ const SRX_TOOLS: &[&str] = &[
     "get_srx_security_services_status",
     "check_srx_feature_license",
     "vpn_lifecycle_report",
+    "srx_list_policies",
+    "srx_resolve_address",
+    "srx_resolve_application",
+    "srx_list_nat_rules",
     "manage_idp_security_package",
     "manage_appid_signature_package",
     "validate_chassis_cluster_health",
@@ -178,8 +182,9 @@ fn lists_expected_tools() {
     // `confirm_junos_change_set` adds one more (#239),
     // `list_junos_change_sets` adds one more (#255), and
     // `cancel_junos_change_set` adds one more (#293), then execute adds one.
+    // MEC-54's four SRX policy-read tools add four more.
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 37);
+    assert_eq!(names.len(), 41);
     #[cfg(not(feature = "srx"))]
     assert_eq!(names.len(), 28);
 }

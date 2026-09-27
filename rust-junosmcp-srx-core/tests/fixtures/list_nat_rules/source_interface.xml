@@ -1,0 +1,24 @@
+<configuration>
+  <security>
+    <nat>
+      <source>
+        <rule-set>
+          <name>trust-to-untrust</name>
+          <from><zone>trust</zone></from>
+          <to><zone>untrust</zone></to>
+          <rule>
+            <name>rule-if</name>
+            <src-nat-rule-match>
+              <source-address>192.168.1.0/24</source-address>
+            </src-nat-rule-match>
+            <then>
+              <source-nat>
+                <interface/>
+              </source-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </source>
+    </nat>
+  </security>
+</configuration>

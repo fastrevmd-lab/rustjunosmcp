@@ -1735,6 +1735,9 @@ name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -3176,6 +3179,7 @@ version = "0.25.0"
 dependencies = [
  "base64ct",
  "flate2",
+ "ipnet",
  "pretty_assertions",
  "quick-xml",
  "rand 0.10.3",

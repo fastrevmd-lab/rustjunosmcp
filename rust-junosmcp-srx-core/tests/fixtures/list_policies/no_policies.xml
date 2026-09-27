@@ -1,0 +1,10 @@
+<security-policies-information>
+  <security-context>
+    <context-information>
+      <source-zone-name>trust</source-zone-name>
+      <destination-zone-name>untrust</destination-zone-name>
+    </context-information>
+    <policies>
+    </policies>
+  </security-context>
+</security-policies-information>

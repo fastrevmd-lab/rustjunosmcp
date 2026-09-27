@@ -7,6 +7,16 @@ All notable user-facing changes are recorded here. Format loosely follows
 ## [Unreleased]
 
 - Raised MSRV to 1.89 (family-wide decision; enables mecmcp to drop aes pin)
+- **Four new read-only SRX tools: `srx_list_policies`, `srx_resolve_address`,
+  `srx_resolve_application`, `srx_list_nat_rules`.** Security policies by
+  zone pair (incl. global policies and optional hit counts), address-book and
+  application/application-set resolution (including `junos-*` predefined
+  defaults, with recursive nested-set resolution and explicit cycle
+  rejection), and source/destination/static NAT rules. Address-book and
+  application resolution are configuration-sourced via a hand-built
+  subtree-filtered `get-configuration` RPC. Names on policies and NAT rules
+  are returned unresolved by design — use `srx_resolve_address` /
+  `srx_resolve_application` to expand them. Tool count: 37 → 41.
 
 ## [0.25.0] - 2026-09-15
 

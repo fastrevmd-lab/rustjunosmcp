@@ -29,7 +29,7 @@ Drop-in on `devices.json` and the core tools — plus a lot the Python/PyEZ serv
 - **Device lifecycle** — staged `upgrade_junos` (image → install → reboot → verify), SCP `transfer_file`/`fetch_file`, PFE commands.
 - **Scale & UX** — parallel session-pooled batch (~1.7× faster), `| last N`/`| count` + `max_lines`/`max_bytes` output caps, `router`/`router_name` aliases, Jinja2 templates.
 - **Transport & auth** — streamable-HTTP with per-token router/tool scopes, TLS, and a `Host` allowlist; upstream is stdio-only.
-- **SRX tools** (enabled by the default `srx` feature) — IDP & Application-ID **signature-package updates** (check/download/install/rollback), chassis-cluster health, license & security-services status, JTAC bundle with secret redaction.
+- **SRX tools** (enabled by the default `srx` feature) — IDP & Application-ID **signature-package updates** (check/download/install/rollback), chassis-cluster health, license & security-services status, JTAC bundle with secret redaction, and read-only security-policy / address-book / application / NAT-rule inspection.
 
 ## Performance
 
@@ -192,6 +192,25 @@ parallel with a configurable concurrency cap.
   [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp) crate and contains
   no `unsafe`; `zeroize` replaces hand-rolled secret zeroing and `rustix`
   replaces `libc::getuid`. Tool count unchanged (27 / 18).
+
+### v0.11 (unreleased)
+
+- **Four new read-only SRX tools** — `srx_list_policies` (security policies
+  by from-zone/to-zone context, including global policies and optional
+  per-policy hit counts), `srx_resolve_address` and `srx_resolve_application`
+  (address-book and application/application-set resolution, including
+  `junos-*` predefined defaults, with recursive nested-set resolution and
+  explicit reference-cycle rejection — never a loop or a silent partial
+  answer), and `srx_list_nat_rules` (source, destination, and static NAT
+  rules, each independently). Address-book and application resolution are
+  configuration-sourced via a hand-built subtree-filtered `get-configuration`
+  RPC, since `rustez`'s `call()` only supports flat key/value args. Names on
+  policies and NAT rules (addresses, applications) are returned
+  **unresolved** on purpose — `srx_resolve_address` /
+  `srx_resolve_application` are a separate, explicit step. All four are
+  paginated/capped with an explicit `truncated` flag rather than a silent
+  cutoff. Tool count: 37 → 41 (9 → 13 SRX tools; Junos-only build unchanged
+  at 27 / 18, since these are gated by the default `srx` feature).
 
 ## Blocklist guardrails (v0.2)
 
@@ -441,7 +460,7 @@ command uses `sudo`.
 git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
 cd RustJunosMCP
 
-# Build the default 37-tool Junos/SRX server with TLS.
+# Build the default 41-tool Junos/SRX server with TLS.
 cargo build --release
 
 # Optional: build the 28-tool Junos-only server without TLS.
@@ -460,7 +479,7 @@ $EDITOR devices.json   # set ip / username / auth
 
 ## Claude Desktop config
 
-One registration exposes every tool enabled in the built binary (37 with the
+One registration exposes every tool enabled in the built binary (41 with the
 default `srx` feature, or 28 in a Junos-only build):
 
 ```json
@@ -694,7 +713,7 @@ Granting write authority is always an explicit, named decision: a token that
 needs `load_and_commit_config` must list it, alongside every other tool it
 calls. An explicit allowlist behaves exactly as before.
 
-`execute` is a strict facade over the original 36 concrete operations. A token
+`execute` is a strict facade over the 40 concrete operations. A token
 using it must explicitly name **both** `execute` and the selected concrete
 operation; wildcard scope does not grant `execute`. The facade passes the
 selected operation's arguments unchanged, so use the concrete operation's
@@ -704,7 +723,7 @@ exact argument names:
 {"operation":"gather_device_facts","arguments":{"device":"vsrx-ci"}}
 ```
 
-Direct calls to all original 36 concrete tools remain supported.
+Direct calls to all 40 concrete tools remain supported.
 
 `tools/list` advertises only what the caller's token can invoke, so the list an
 agent sees matches what it can actually call. A wildcard token is shown the

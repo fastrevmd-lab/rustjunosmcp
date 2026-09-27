@@ -4,8 +4,14 @@
 pub mod appid_package;
 pub mod cluster_health;
 pub mod cluster_status;
+mod config_fetch;
 pub mod idp_package;
 pub mod license;
+pub mod list_nat_rules;
+pub mod list_policies;
+mod resolve;
+pub mod resolve_address;
+pub mod resolve_application;
 pub mod services_status;
 pub mod signature_package;
 pub mod support_bundle;
@@ -47,5 +53,13 @@ mod schema_tripwire {
         assert_closed_and_aliased::<super::appid_package::AppidPackageArgs>("AppidPackageArgs");
         assert_closed_and_aliased::<super::idp_package::IdpPackageArgs>("IdpPackageArgs");
         assert_closed_and_aliased::<super::support_bundle::SupportBundleArgs>("SupportBundleArgs");
+        assert_closed_and_aliased::<super::list_policies::PolicyListArgs>("PolicyListArgs");
+        assert_closed_and_aliased::<super::resolve_address::AddressResolveArgs>(
+            "AddressResolveArgs",
+        );
+        assert_closed_and_aliased::<super::resolve_application::ApplicationResolveArgs>(
+            "ApplicationResolveArgs",
+        );
+        assert_closed_and_aliased::<super::list_nat_rules::NatRulesArgs>("NatRulesArgs");
     }
 }

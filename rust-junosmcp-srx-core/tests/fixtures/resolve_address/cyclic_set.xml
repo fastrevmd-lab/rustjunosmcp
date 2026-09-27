@@ -1,0 +1,19 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address-set>
+        <name>set-a</name>
+        <address-set>
+          <name>set-b</name>
+        </address-set>
+      </address-set>
+      <address-set>
+        <name>set-b</name>
+        <address-set>
+          <name>set-a</name>
+        </address-set>
+      </address-set>
+    </address-book>
+  </security>
+</configuration>

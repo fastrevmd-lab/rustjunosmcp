@@ -60,6 +60,10 @@ pub const SRX_TOOLS: &[&str] = &[
     "get_srx_security_services_status",
     "manage_appid_signature_package",
     "manage_idp_security_package",
+    "srx_list_nat_rules",
+    "srx_list_policies",
+    "srx_resolve_address",
+    "srx_resolve_application",
     "srxmcp_status",
     "validate_chassis_cluster_health",
     "vpn_lifecycle_report",
@@ -104,6 +108,10 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "reload_devices",
     "render_and_apply_j2_template",
     "rollback_config",
+    "srx_list_nat_rules",
+    "srx_list_policies",
+    "srx_resolve_address",
+    "srx_resolve_application",
     "srxmcp_status",
     "transfer_file",
     "upgrade_junos",
@@ -170,7 +178,7 @@ mod tests {
             JUNOS_TOOLS.len() + SRX_TOOLS.len() + FACADE_TOOLS.len(),
             "endpoint registries must not contain duplicate tool names"
         );
-        assert_eq!(KNOWN_TOOLS.len(), 37);
+        assert_eq!(KNOWN_TOOLS.len(), 41);
     }
 
     #[test]

@@ -1,0 +1,30 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address>
+        <name>host1</name>
+        <ip-prefix>10.0.0.1/32</ip-prefix>
+      </address>
+      <address>
+        <name>net1</name>
+        <ip-prefix>10.0.0.0/24</ip-prefix>
+      </address>
+      <address-set>
+        <name>sub-set</name>
+        <address>
+          <name>net1</name>
+        </address>
+      </address-set>
+      <address-set>
+        <name>mixed-set</name>
+        <address>
+          <name>host1</name>
+        </address>
+        <address-set>
+          <name>sub-set</name>
+        </address-set>
+      </address-set>
+    </address-book>
+  </security>
+</configuration>

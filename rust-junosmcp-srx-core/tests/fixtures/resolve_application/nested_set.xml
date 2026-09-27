@@ -1,0 +1,21 @@
+<configuration>
+  <applications>
+    <application>
+      <name>app1</name>
+      <protocol>tcp</protocol>
+      <destination-port>9000</destination-port>
+    </application>
+    <application-set>
+      <name>inner-set</name>
+      <application>
+        <name>app1</name>
+      </application>
+    </application-set>
+    <application-set>
+      <name>outer-set</name>
+      <application-set>
+        <name>inner-set</name>
+      </application-set>
+    </application-set>
+  </applications>
+</configuration>

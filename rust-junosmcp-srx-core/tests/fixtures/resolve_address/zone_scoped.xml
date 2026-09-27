@@ -1,0 +1,21 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+    </address-book>
+    <zones>
+      <security-zone>
+        <name>trust</name>
+        <address-book>
+          <address>
+            <name>trustnet</name>
+            <ip-prefix>192.168.1.0/24</ip-prefix>
+          </address>
+        </address-book>
+      </security-zone>
+      <security-zone>
+        <name>untrust</name>
+      </security-zone>
+    </zones>
+  </security>
+</configuration>

@@ -1,0 +1,16 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address>
+        <name>range1</name>
+        <range-address>
+          <name>10.0.0.10</name>
+          <range-address-upper>
+            <name>10.0.0.20</name>
+          </range-address-upper>
+        </range-address>
+      </address>
+    </address-book>
+  </security>
+</configuration>
