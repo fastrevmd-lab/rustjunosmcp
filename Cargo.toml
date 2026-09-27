@@ -71,16 +71,22 @@ rustez       = "0.17"
 # capture (mecmcp#288), which populates model_id/session_id/client_name for
 # clients that declare MCP 2026-07-28 and are routed without a session header.
 # mecmcp 0.17.0: adds resolve_token_path and find_stale_secrets to mecmcp-auth.
-mecmcp-audit = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-auth  = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-transport = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-runtime = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-policy = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-inventory = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-device = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-changeset = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-scp = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-secret = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
+#
+# TEMPORARY: pinned to a rev on fastrevmd-lab/mecmcp's
+# mec-12-human-approver-direct-commit-gate branch, not a released tag. That
+# branch adds the ActorType::Human approver check and DirectCommitPolicy this
+# crate now depends on, and it has not shipped a tagged release yet. Replace
+# `rev` with the released `tag` once that PR merges and cuts a version.
+mecmcp-audit = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-auth  = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-transport = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-runtime = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-policy = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-inventory = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-device = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-changeset = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-scp = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
+mecmcp-secret = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "5c7e938479ac56562c22e2ae7b70a4f0fa9b2537" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
