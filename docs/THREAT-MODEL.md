@@ -3,7 +3,7 @@
 One page, for a SOC engineer deciding whether to point an LLM at their Junos
 fleet through this server. Shared controls (tokens, transport, audit chain,
 change sets, secret files) come from the mecmcp foundation. They are described once in
-[mecmcp `docs/THREAT-MODEL.md`](https://github.com/fastrevmd-lab/mecmcp/blob/main/docs/THREAT-MODEL.md).
+the mecmcp threat model, in review as [mecmcp#384](https://github.com/fastrevmd-lab/mecmcp/pull/384).
 This page covers what is Junos-specific. Verified against `main` at `48c0679` on 2026-09-27.
 
 **Status key:** ✅ mitigated in code · 🟡 partial, or opt-in only · ❌ not mitigated.
