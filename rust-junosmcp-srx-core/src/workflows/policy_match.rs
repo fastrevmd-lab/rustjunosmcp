@@ -45,6 +45,20 @@
 //! future live capture that disagrees should correct this module and the
 //! spec, not be silently patched around.
 //!
+//! # `default-policy permit-all` fix (Percy review, 2026-09-27)
+//!
+//! An earlier revision mapped only `action-type: deny-all` to `NoMatch`,
+//! treating every other unrecognised `action-type` (including `permit-all`,
+//! which `set security policies default-policy permit-all` produces) as a
+//! parse error. That meant a device configured to permit unmatched traffic
+//! answered this deterministic "would this traffic be allowed" tool with an
+//! error at exactly the moment the answer matters most — unmatched traffic on
+//! such a device is *allowed*, not blocked. `permit-all` is now recognised
+//! alongside `deny-all`, and [`PolicyMatchResult::default_action`] records
+//! which one applied so a caller can distinguish "no policy matched, and the
+//! device denies by default" from "no policy matched, and the device permits
+//! by default" — both are `NoMatch`, but they are not the same answer.
+//!
 //! # Customer-data note (spec §6)
 //!
 //! The 5-tuple is customer data in the *request* as well as the response.
@@ -120,9 +134,11 @@ pub struct FiveTuple {
 
 /// The device's own verdict for a 5-tuple match.
 ///
-/// `NoMatch` (default-deny fallthrough, no explicit policy) is kept distinct
-/// from `Deny` (an explicit deny/reject policy matched) — a SOC operator or
-/// `firewallintentconverter` needs to tell those apart.
+/// `NoMatch` (default-policy fallthrough, no explicit policy) is kept
+/// distinct from `Deny` (an explicit deny/reject policy matched) — a SOC
+/// operator or `firewallintentconverter` needs to tell those apart. `NoMatch`
+/// does not by itself say whether unmatched traffic is denied or permitted —
+/// see [`PolicyMatchResult::default_action`].
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchVerdict {
@@ -132,8 +148,21 @@ pub enum MatchVerdict {
     Deny,
     /// An explicit reject policy matched.
     Reject,
-    /// No explicit policy matched; the device's default-deny applied.
+    /// No explicit policy matched; the device's default-policy fallthrough
+    /// applied. Check `default_action` for whether that means deny or permit.
     NoMatch,
+}
+
+/// Which way a device's default-policy fallthrough resolves unmatched
+/// traffic. Only meaningful when [`PolicyMatchResult::verdict`] is
+/// `MatchVerdict::NoMatch`.
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultAction {
+    /// `set security policies default-policy deny-all` (the Junos default).
+    Deny,
+    /// `set security policies default-policy permit-all`.
+    Permit,
 }
 
 /// The policy that matched, when `verdict != NoMatch`.
@@ -158,9 +187,39 @@ pub struct PolicyMatchResult {
     pub matched_policy: Option<MatchedPolicy>,
     /// True when the matched policy is a global (zone-independent) policy.
     pub is_global: bool,
+    /// Set only when `verdict == NoMatch`: which default-policy action the
+    /// device applied to this unmatched traffic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_action: Option<DefaultAction>,
 }
 
 // ── Pre-RPC validation ───────────────────────────────────────────────────────
+
+/// Validate a zone-name token before it reaches the RPC. `rustez::build_rpc_xml`
+/// escapes the value on the wire, so this is not an injection guard — it's a
+/// type/length check (Junos zone names are short, `[A-Za-z0-9._-]+` tokens)
+/// so a caller can't hand the device an arbitrarily large or control-character
+/// string. Error messages never echo the raw value — zone names are customer
+/// data (spec §6).
+fn validate_zone_token(field: &'static str, s: &str) -> Result<String, SrxError> {
+    if s.is_empty() {
+        return Err(SrxError::InvalidInput(format!("{field} must not be empty")));
+    }
+    if s.len() > 63 {
+        return Err(SrxError::InvalidInput(format!(
+            "{field} must be 63 characters or fewer"
+        )));
+    }
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(SrxError::InvalidInput(format!(
+            "{field} must match [A-Za-z0-9._-]+"
+        )));
+    }
+    Ok(s.to_string())
+}
 
 /// Parse and validate a [`PolicyMatchArgs`] into a typed [`FiveTuple`].
 ///
@@ -171,12 +230,8 @@ pub fn parse_five_tuple(args: &PolicyMatchArgs) -> Result<FiveTuple, SrxError> {
     if args.router.trim().is_empty() {
         return Err(SrxError::InvalidInput("router must not be empty".into()));
     }
-    if args.from_zone.trim().is_empty() {
-        return Err(SrxError::InvalidInput("from_zone must not be empty".into()));
-    }
-    if args.to_zone.trim().is_empty() {
-        return Err(SrxError::InvalidInput("to_zone must not be empty".into()));
-    }
+    let from_zone = validate_zone_token("from_zone", args.from_zone.trim())?;
+    let to_zone = validate_zone_token("to_zone", args.to_zone.trim())?;
     let source_ip: IpAddr = args
         .source_ip
         .trim()
@@ -193,8 +248,8 @@ pub fn parse_five_tuple(args: &PolicyMatchArgs) -> Result<FiveTuple, SrxError> {
     let protocol = Protocol::parse(&args.protocol)?;
 
     Ok(FiveTuple {
-        from_zone: args.from_zone.clone(),
-        to_zone: args.to_zone.clone(),
+        from_zone,
+        to_zone,
         source_ip,
         destination_ip,
         source_port,
@@ -284,23 +339,29 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
         .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "policy-name"))?;
     let action_type = child_text(&policy_node, "action-type")
         .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "action-type"))?;
-    let from_zone = child_text(&policy_node, "from-zone-name").unwrap_or_default();
-    let to_zone = child_text(&policy_node, "to-zone-name").unwrap_or_default();
     let sequence: u32 = child_text(&policy_node, "policy-sequence-number")
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
     let action_lc = action_type.trim().to_ascii_lowercase();
 
-    // "deny-all" on the synthetic "Default-Policy" is Junos's literal signal
-    // for the default-deny fallthrough — confirmed live against vsrx-ci (see
-    // module docs). Keyed on action-type, not the policy name, since the
-    // name is a device-chosen label, not a stable contract.
-    if action_lc == "deny-all" {
+    // "deny-all" / "permit-all" on the synthetic "Default-Policy" are
+    // Junos's literal signal for the default-policy fallthrough — "deny-all"
+    // confirmed live against vsrx-ci (see module docs); "permit-all" is the
+    // documented counterpart for `default-policy permit-all` (fixed after
+    // Percy review — see module docs). Keyed on action-type, not the policy
+    // name, since the name is a device-chosen label, not a stable contract.
+    let default_action = match action_lc.as_str() {
+        "deny-all" => Some(DefaultAction::Deny),
+        "permit-all" => Some(DefaultAction::Permit),
+        _ => None,
+    };
+    if let Some(default_action) = default_action {
         return Ok(SrxToolResponse::active(PolicyMatchResult {
             verdict: MatchVerdict::NoMatch,
             matched_policy: None,
             is_global: false,
+            default_action: Some(default_action),
         }));
     }
 
@@ -315,6 +376,15 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
         }
     };
 
+    // Required (not defaulted to ""): an absent zone on an explicit policy
+    // match is a schema mismatch, not "unknown zone" — silently defaulting
+    // here previously meant a real schema drift could report is_global=false
+    // on what was actually a global policy hit, with no error at all.
+    let from_zone = child_text(&policy_node, "from-zone-name")
+        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "from-zone-name"))?;
+    let to_zone = child_text(&policy_node, "to-zone-name")
+        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "to-zone-name"))?;
+
     let is_global = from_zone.eq_ignore_ascii_case("any") && to_zone.eq_ignore_ascii_case("any");
 
     Ok(SrxToolResponse::active(PolicyMatchResult {
@@ -326,6 +396,7 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
             sequence,
         }),
         is_global,
+        default_action: None,
     }))
 }
 
@@ -457,6 +528,20 @@ mod tests {
             "NoMatch has no matched_policy"
         );
         assert!(!data.is_global);
+        assert_eq!(data.default_action, Some(DefaultAction::Deny));
+    }
+
+    #[test]
+    fn no_match_default_permit_all() {
+        // Regression for the bug this review closed: a device with
+        // `default-policy permit-all` must not error on unmatched traffic —
+        // that's exactly the case where the answer (permit) matters most.
+        let xml = fixture("no_match_default_permit.xml");
+        let resp = parse(&xml).expect("permit-all must not be treated as an unknown action-type");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.verdict, MatchVerdict::NoMatch);
+        assert!(data.matched_policy.is_none());
+        assert_eq!(data.default_action, Some(DefaultAction::Permit));
     }
 
     #[test]
@@ -525,5 +610,44 @@ mod tests {
         let xml = "<match-firewall-policies-results/>";
         let err = parse(xml).expect_err("missing policy-information must fail closed");
         assert!(matches!(err, SrxError::SchemaMismatch { .. }));
+    }
+
+    #[test]
+    fn missing_from_zone_on_an_explicit_match_is_schema_mismatch() {
+        // F4 fix: a schema drift that drops from-zone-name must surface as an
+        // error, not silently default to "" (which would misreport is_global).
+        let xml = r#"<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>allow-web</policy-name>
+    <action-type>permit</action-type>
+    <to-zone-name>untrust</to-zone-name>
+  </policy-information>
+</match-firewall-policies-results>"#;
+        let err = parse(xml).expect_err("missing from-zone-name must fail closed");
+        assert!(matches!(err, SrxError::SchemaMismatch { .. }));
+    }
+
+    // ── from_zone / to_zone: pre-RPC validation (F6 fix) ─────────────────────
+
+    #[test]
+    fn from_zone_with_disallowed_characters_rejected_pre_rpc() {
+        let mut args = valid_args();
+        args.from_zone = "trust; rm -rf /".into();
+        let err = parse_five_tuple(&args).unwrap_err();
+        assert!(matches!(err, SrxError::InvalidInput(_)));
+        assert!(
+            !err.to_string().contains("rm -rf"),
+            "error must not echo raw input: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_to_zone_rejected_pre_rpc() {
+        let mut args = valid_args();
+        args.to_zone = "  ".into();
+        assert!(matches!(
+            parse_five_tuple(&args),
+            Err(SrxError::InvalidInput(_))
+        ));
     }
 }

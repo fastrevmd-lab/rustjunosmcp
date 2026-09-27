@@ -42,6 +42,31 @@
 //! fixtures hand-write the wrapping element names following this crate's
 //! Junos XML conventions; flag any live mismatch as a spec update, not a
 //! silent parser patch.
+//!
+//! # Cap-refusal fix (Percy review, 2026-09-27)
+//!
+//! An earlier revision only refused the full walk when the summary count
+//! exceeded the cap *and* the caller had supplied no filter — a `protocol=tcp`
+//! or `destination_prefix=0.0.0.0/0` filter (accepted as "narrowing" even
+//! though it matches everything) disabled the refusal outright, and an
+//! unrecognised summary schema (`sessions-in-use` absent, `Ok(None)`) also
+//! skipped it. Fixed by:
+//! - sending the query's own filter args on the summary RPC too, so the
+//!   reported count is for the *filtered* query, not the whole table;
+//! - summing `sessions-in-use` across every `multi-routing-engine-item`
+//!   (the previous single-node `.find()` undercounted clusters);
+//! - deciding whether to walk from the summary count alone
+//!   ([`plan_walk`]), dropping the filter-presence carve-out entirely —
+//!   `count > cap` refuses regardless of whether a filter was given, and an
+//!   unparseable/missing count now refuses rather than proceeding blind
+//!   (fail closed: never walk unless the pre-walk count says it's safe);
+//! - dropping the walk body from `include_raw` whenever the result is
+//!   truncated, so a customer's full session table can no longer reach the
+//!   model by way of the one field the cap doesn't otherwise touch.
+//!
+//! `/0` prefixes (match every address) are rejected pre-RPC in
+//! [`validate_prefix`] for the same reason: they read as a filter but narrow
+//! nothing.
 
 use crate::protocol::Protocol;
 use crate::{SrxError, SrxToolResponse};
@@ -143,6 +168,12 @@ pub struct NodeSessions {
     pub re_name: String,
     /// Sessions owned by this node, already cap-truncated.
     pub sessions: Vec<FlowSession>,
+    /// Set when this node's reply was an `<rpc-error>` rather than a session
+    /// list — distinguishes "this node genuinely has no sessions" from "this
+    /// node failed to answer" (a secondary node holding no sessions for the
+    /// query is the expected case and looks identical to `sessions: []`
+    /// unless this field is checked).
+    pub error: Option<String>,
 }
 
 /// Result of a `srx_flow_sessions` query.
@@ -171,7 +202,7 @@ struct FlowSessionFilter {
     destination_port: Option<u16>,
     protocol: Option<Protocol>,
     application: Option<String>,
-    session_identifier: Option<String>,
+    session_identifier: Option<u64>,
 }
 
 impl FlowSessionFilter {
@@ -205,14 +236,22 @@ impl FlowSessionFilter {
         if let Some(v) = &self.application {
             args.push(("application".to_string(), v.clone()));
         }
-        if let Some(v) = &self.session_identifier {
-            args.push(("session-identifier".to_string(), v.clone()));
+        if let Some(v) = self.session_identifier {
+            args.push(("session-identifier".to_string(), v.to_string()));
         }
         args
     }
 }
 
 /// Validate a prefix filter: a bare IP address or `addr/len` CIDR notation.
+///
+/// Rejects `/0` (matches every address of that family): it reads as a filter
+/// but narrows nothing, which would otherwise let a caller dodge the
+/// filterless-query rejection below without actually bounding the query.
+///
+/// Error messages never echo the caller-supplied value — it's customer data
+/// (spec §6) and would otherwise land unredacted in logs/audit via the
+/// error's `Display` impl.
 fn validate_prefix(s: &str) -> Result<String, SrxError> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -222,24 +261,50 @@ fn validate_prefix(s: &str) -> Result<String, SrxError> {
         Some((addr, len)) => {
             let ip: IpAddr = addr
                 .parse()
-                .map_err(|_| SrxError::InvalidInput(format!("invalid prefix: {trimmed:?}")))?;
-            let len: u8 = len.parse().map_err(|_| {
-                SrxError::InvalidInput(format!("invalid prefix length: {trimmed:?}"))
-            })?;
+                .map_err(|_| SrxError::InvalidInput("invalid prefix address".into()))?;
+            let len: u8 = len
+                .parse()
+                .map_err(|_| SrxError::InvalidInput("invalid prefix length".into()))?;
             let max = if ip.is_ipv4() { 32 } else { 128 };
+            if len == 0 {
+                return Err(SrxError::InvalidInput(
+                    "prefix length must be at least 1 (/0 matches every address, which is not a \
+                     valid filter)"
+                        .into(),
+                ));
+            }
             if len > max {
-                return Err(SrxError::InvalidInput(format!(
-                    "prefix length out of range: {trimmed:?}"
-                )));
+                return Err(SrxError::InvalidInput("prefix length out of range".into()));
             }
         }
         None => {
             let _: IpAddr = trimmed
                 .parse()
-                .map_err(|_| SrxError::InvalidInput(format!("invalid prefix: {trimmed:?}")))?;
+                .map_err(|_| SrxError::InvalidInput("invalid prefix".into()))?;
         }
     }
     Ok(trimmed.to_string())
+}
+
+/// Validate a free-text identifier token (an `application` name) before it
+/// reaches the RPC. `rustez::build_rpc_xml` escapes the value, so this is not
+/// an injection guard — it's a type/length check so a caller can't hand the
+/// device an arbitrarily large or control-character-laden string.
+fn validate_identifier_token(field: &'static str, s: &str) -> Result<String, SrxError> {
+    if s.len() > 63 {
+        return Err(SrxError::InvalidInput(format!(
+            "{field} must be 63 characters or fewer"
+        )));
+    }
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(SrxError::InvalidInput(format!(
+            "{field} must match [A-Za-z0-9._-]+"
+        )));
+    }
+    Ok(s.to_string())
 }
 
 /// Validate a [`FlowSessionsArgs`] into a [`FlowSessionFilter`], before any
@@ -290,14 +355,22 @@ fn validate_filter(args: &FlowSessionsArgs) -> Result<FlowSessionFilter, SrxErro
     let protocol = args.protocol.as_deref().map(Protocol::parse).transpose()?;
     let application = args
         .application
-        .clone()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| validate_identifier_token("application", s))
+        .transpose()?;
     let session_identifier = args
         .session_identifier
-        .clone()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<u64>().map_err(|_| {
+                SrxError::InvalidInput("session_identifier must be a non-negative integer".into())
+            })
+        })
+        .transpose()?;
 
     let filter = FlowSessionFilter {
         source_prefix,
@@ -350,66 +423,129 @@ pub async fn run(
         .rpc()
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
+    // The summary RPC gets the query's own filter args too, so the reported
+    // count is for what the walk would actually return, not the whole table.
+    let owned_rpc_args = filter.to_rpc_args();
+    let filter_rpc_args: Vec<(&str, &str)> = owned_rpc_args
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let mut summary_call_args: Vec<(&str, &str)> = Vec::with_capacity(filter_rpc_args.len() + 1);
+    summary_call_args.push(("summary", ""));
+    summary_call_args.extend(filter_rpc_args.iter().copied());
+
     let summary_xml = exec
-        .call("get-flow-session-information", &[("summary", "")])
+        .call("get-flow-session-information", &summary_call_args)
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
     let total_count_reported = parse_summary_total(&summary_xml)?;
 
-    // Blast-radius refusal: an unfiltered query whose summary count exceeds
-    // the cap never attempts the full walk RPC at all.
-    if let Some(total) = total_count_reported
-        && total > u64::from(cap)
-        && !filter.has_filter()
-    {
-        let mut resp = SrxToolResponse::active(FlowSessionQuery {
+    // Blast-radius refusal: decided from the summary count alone (see
+    // `plan_walk`) — never from whether a filter happened to be present.
+    if plan_walk(total_count_reported, cap) == WalkDecision::Refuse {
+        let resp = SrxToolResponse::active(FlowSessionQuery {
             nodes: Vec::new(),
-            total_count_reported: Some(total),
+            total_count_reported,
             truncated: true,
             cap,
         });
-        if args.include_raw {
-            resp = resp.with_raw(format!("<!-- summary -->\n{summary_xml}"));
-        }
-        return Ok(resp);
+        return Ok(if args.include_raw {
+            resp.with_raw(compose_refuse_raw(&summary_xml))
+        } else {
+            resp
+        });
     }
 
-    let owned_rpc_args = filter.to_rpc_args();
-    let rpc_args: Vec<(&str, &str)> = owned_rpc_args
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
     let walk_xml = exec
-        .call("get-flow-session-information", &rpc_args)
+        .call("get-flow-session-information", &filter_rpc_args)
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
     let mut parsed = parse_walk(&walk_xml, total_count_reported, cap)?;
     if args.include_raw {
-        parsed = parsed.with_raw(format!(
-            "<!-- summary -->\n{summary_xml}\n<!-- walk -->\n{walk_xml}"
-        ));
+        let truncated = parsed.data.as_ref().is_some_and(|d| d.truncated);
+        parsed = parsed.with_raw(compose_walk_raw(&summary_xml, &walk_xml, truncated));
     }
     Ok(parsed)
 }
 
+/// Whether `run()` should attempt the full walk RPC, decided purely from the
+/// summary count and the cap — never from whether the caller supplied a
+/// filter (a filter that doesn't actually narrow anything, e.g. `protocol=
+/// tcp` or a `/0` prefix — the latter rejected earlier by `validate_prefix`
+/// regardless — must not be able to disable this check).
+///
+/// `None` (summary schema didn't parse, or the RPC returned no count) is
+/// refused, not proceeded: the fail-closed lens says a full-table walk must
+/// never run on the strength of an absent safety number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkDecision {
+    Proceed,
+    Refuse,
+}
+
+fn plan_walk(summary_total: Option<u64>, cap: u32) -> WalkDecision {
+    match summary_total {
+        Some(total) if total <= u64::from(cap) => WalkDecision::Proceed,
+        _ => WalkDecision::Refuse,
+    }
+}
+
+/// Raw XML to attach when the walk was refused: the summary only, since no
+/// walk was ever issued.
+fn compose_refuse_raw(summary_xml: &str) -> String {
+    format!("<!-- summary -->\n{summary_xml}")
+}
+
+/// Raw XML to attach when the walk did run. The walk body is included only
+/// when the structured result was *not* truncated — a truncated result means
+/// the parsed `sessions` list is already capped, but the raw walk XML is not,
+/// so attaching it here would hand the model the full untruncated table
+/// through the one field the cap doesn't otherwise touch.
+fn compose_walk_raw(summary_xml: &str, walk_xml: &str, truncated: bool) -> String {
+    if truncated {
+        format!(
+            "<!-- summary -->\n{summary_xml}\n<!-- walk raw XML omitted: result was truncated \
+             to the cap, and the raw walk body is not cap-bounded -->"
+        )
+    } else {
+        format!("<!-- summary -->\n{summary_xml}\n<!-- walk -->\n{walk_xml}")
+    }
+}
+
 // ── Parsers ───────────────────────────────────────────────────────────────────
 
-/// Parse the `<summary/>`-flagged reply for the total session count.
+/// Parse the `<summary/>`-flagged reply for the total session count, summed
+/// across every routing engine (a cluster's node0/node1 counts must both
+/// contribute — reading only the first node undercounts the table the walk
+/// would enumerate).
 ///
 /// `sessions-in-use` is used as the total-count signal (see module docs).
-/// Absence of the element (e.g. an unrecognised schema) is not an error —
-/// callers fall back to "unknown total" and rely on the walk's own
-/// truncation instead of the pre-walk refusal.
+/// Absence of the element on every node (e.g. an unrecognised schema) is not
+/// a hard error — `run()` treats `None` as "refuse the walk", per
+/// `plan_walk`'s fail-closed contract.
 pub fn parse_summary_total(xml: &str) -> Result<Option<u64>, SrxError> {
-    let cleaned = crate::xml::sanitize_rustez_xml(xml);
-    let doc = roxmltree::Document::parse(&cleaned)
-        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
-    Ok(doc
-        .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "sessions-in-use")
-        .and_then(|n| n.text())
-        .and_then(|t| t.trim().parse().ok()))
+    let re_nodes = crate::xml::multi_re_split(xml)?;
+
+    let mut total: u64 = 0;
+    let mut any_found = false;
+    for re_node in &re_nodes {
+        if extract_rpc_error(&re_node.inner_xml).is_some() {
+            continue;
+        }
+        let doc = roxmltree::Document::parse(&re_node.inner_xml)
+            .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+        if let Some(count) = doc
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "sessions-in-use")
+            .and_then(|n| n.text())
+            .and_then(|t| t.trim().parse::<u64>().ok())
+        {
+            total = total.saturating_add(count);
+            any_found = true;
+        }
+    }
+    Ok(any_found.then_some(total))
 }
 
 /// Parse the full-walk reply into a typed `SrxToolResponse<FlowSessionQuery>`,
@@ -428,13 +564,15 @@ pub fn parse_walk(
     let mut truncated = total_count_reported.is_some_and(|t| t > u64::from(cap));
 
     for re_node in &re_nodes {
-        if contains_rpc_error(&re_node.inner_xml) {
+        if let Some(message) = extract_rpc_error(&re_node.inner_xml) {
             // A node holding no sessions for this query (e.g. secondary for
             // every relevant RG) is a normal per-node result, not a failure
-            // of the whole call.
+            // of the whole call — but the message is kept so a genuine
+            // per-node failure isn't silently reported as "zero sessions".
             nodes.push(NodeSessions {
                 re_name: re_node.re_name.clone(),
                 sessions: Vec::new(),
+                error: Some(message),
             });
             continue;
         }
@@ -449,6 +587,7 @@ pub fn parse_walk(
         nodes.push(NodeSessions {
             re_name: re_node.re_name.clone(),
             sessions,
+            error: None,
         });
     }
 
@@ -550,8 +689,22 @@ fn child_text(node: &roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-fn contains_rpc_error(xml: &str) -> bool {
-    xml.contains("<rpc-error>") || xml.contains("<nc:rpc-error>")
+/// Extract a human-readable message from a node's `<rpc-error>`, if the
+/// fragment contains one. `None` means the fragment is a normal (non-error)
+/// reply body.
+fn extract_rpc_error(xml: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let err = doc
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "rpc-error")?;
+    Some(
+        err.descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "error-message")
+            .and_then(|n| n.text())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "rpc-error (no error-message)".to_string()),
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -767,6 +920,12 @@ mod tests {
             node1.sessions.is_empty(),
             "node1 is secondary for this RG — empty, not merged with node0"
         );
+        assert!(node0.error.is_none());
+        assert_eq!(
+            node1.error.as_deref(),
+            Some("node is secondary for all relevant redundancy groups"),
+            "node1's rpc-error must be surfaced, not silently reported as zero sessions"
+        );
     }
 
     #[test]
@@ -782,6 +941,8 @@ mod tests {
             node0.sessions[0].session_id, node1.sessions[0].session_id,
             "sessions must stay attributed to their own node, never merged into one table"
         );
+        assert!(node0.error.is_none());
+        assert!(node1.error.is_none());
     }
 
     // ── cap enforcement (MEC-55 AC: "a test proves the cap is enforced and reported") ──
@@ -797,31 +958,181 @@ mod tests {
     }
 
     #[test]
-    fn unfiltered_query_exceeding_cap_refuses_the_walk() {
-        // total_count_reported (10) > cap (5), no filter — run() would refuse
-        // the full walk RPC entirely and return an empty, truncated result.
-        // Exercised here at the FlowSessionQuery-shape level (the RPC-skip
-        // branch itself lives in run(), which needs a live device).
-        let cap = 5u32;
-        let total = 10u64;
-        assert!(total > u64::from(cap));
-        let resp = SrxToolResponse::active(FlowSessionQuery {
-            nodes: Vec::new(),
-            total_count_reported: Some(total),
-            truncated: true,
-            cap,
-        });
-        let data = resp.data.unwrap();
-        assert!(data.nodes.is_empty(), "walk RPC must not have been issued");
-        assert!(data.truncated);
-        assert_eq!(data.total_count_reported, Some(10));
-    }
-
-    #[test]
     fn walk_not_truncated_when_summary_total_within_cap() {
         let xml = fixture("standalone_with_nat.xml");
         let resp = parse_walk(&xml, Some(2), DEFAULT_CAP).unwrap();
         let data = resp.data.expect("data present");
         assert!(!data.truncated);
+    }
+
+    // ── plan_walk: the actual refuse/proceed decision (F2 fix — this used to
+    // be exercised only by a test that constructed its own expected output
+    // and asserted on it, never calling the decision logic) ─────────────────
+
+    #[test]
+    fn plan_walk_refuses_when_count_exceeds_cap() {
+        // The bug this closes: plan_walk takes no filter argument at all —
+        // a caller-supplied filter (protocol=tcp, a wide prefix, etc.) can no
+        // longer disable the refusal, because the decision never looks at
+        // whether one was given, only at the reported count vs. the cap.
+        assert_eq!(plan_walk(Some(10), 5), WalkDecision::Refuse);
+    }
+
+    #[test]
+    fn plan_walk_refuses_when_summary_count_is_unknown() {
+        // Fail closed: an unparseable/missing summary count must never be
+        // treated as "safe to walk".
+        assert_eq!(plan_walk(None, 5), WalkDecision::Refuse);
+    }
+
+    #[test]
+    fn plan_walk_proceeds_when_count_is_within_cap() {
+        assert_eq!(plan_walk(Some(5), 5), WalkDecision::Proceed);
+        assert_eq!(plan_walk(Some(3), 5), WalkDecision::Proceed);
+    }
+
+    // ── compose_walk_raw: include_raw must never carry the walk body past
+    // the cap (F1 fix) ────────────────────────────────────────────────────────
+
+    #[test]
+    fn raw_walk_body_omitted_when_result_truncated() {
+        let raw = compose_walk_raw(
+            "<summary/>",
+            "<flow-session-information><flow-session><session-identifier>1</session-identifier>\
+             </flow-session></flow-session-information>",
+            true,
+        );
+        assert!(
+            !raw.contains("flow-session-information"),
+            "truncated result must not leak the raw walk body: {raw}"
+        );
+    }
+
+    #[test]
+    fn raw_walk_body_included_when_result_not_truncated() {
+        let raw = compose_walk_raw("<summary/>", "<flow-session-information/>", false);
+        assert!(raw.contains("flow-session-information"));
+    }
+
+    #[test]
+    fn raw_refuse_carries_only_the_summary() {
+        let raw = compose_refuse_raw("<flow-session-summary-information/>");
+        assert!(raw.contains("flow-session-summary-information"));
+        assert!(!raw.contains("<flow-session>"));
+    }
+
+    // ── summing sessions-in-use across cluster nodes ─────────────────────────
+
+    #[test]
+    fn summary_total_sums_across_both_cluster_nodes() {
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>4</sessions-in-use>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>6</sessions-in-use>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(parse_summary_total(xml).unwrap(), Some(10));
+    }
+
+    #[test]
+    fn summary_total_ignores_a_node_reporting_rpc_error() {
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>4</sessions-in-use>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-message>node is secondary for all relevant redundancy groups</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(parse_summary_total(xml).unwrap(), Some(4));
+    }
+
+    // ── /0 prefix rejection (F1 fix) ──────────────────────────────────────────
+
+    #[test]
+    fn slash_zero_ipv4_prefix_rejected_pre_rpc() {
+        let mut args = base_args();
+        args.destination_prefix = Some("0.0.0.0/0".into());
+        assert!(matches!(
+            validate_filter(&args),
+            Err(SrxError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn slash_zero_ipv6_prefix_rejected_pre_rpc() {
+        let mut args = base_args();
+        args.destination_prefix = Some("::/0".into());
+        assert!(matches!(
+            validate_filter(&args),
+            Err(SrxError::InvalidInput(_))
+        ));
+    }
+
+    // ── session_identifier / application: pre-RPC validation (F6 fix) ────────
+
+    #[test]
+    fn non_numeric_session_identifier_rejected_pre_rpc() {
+        let mut args = base_args();
+        args.session_identifier = Some("not-a-number".into());
+        assert!(matches!(
+            validate_filter(&args),
+            Err(SrxError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn numeric_session_identifier_accepted() {
+        let mut args = base_args();
+        args.session_identifier = Some("300001".into());
+        let filter = validate_filter(&args).expect("should validate");
+        assert_eq!(filter.session_identifier, Some(300_001));
+    }
+
+    #[test]
+    fn application_with_disallowed_characters_rejected_pre_rpc() {
+        let mut args = base_args();
+        args.application = Some("junos-https; rm -rf /".into());
+        assert!(matches!(
+            validate_filter(&args),
+            Err(SrxError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn application_error_message_does_not_echo_the_raw_value() {
+        let mut args = base_args();
+        args.application = Some("junos-https; rm -rf /".into());
+        let err = validate_filter(&args).unwrap_err().to_string();
+        assert!(
+            !err.contains("rm -rf"),
+            "error must not echo raw input: {err}"
+        );
+    }
+
+    #[test]
+    fn well_formed_application_accepted() {
+        let mut args = base_args();
+        args.application = Some("junos-https".into());
+        let filter = validate_filter(&args).expect("should validate");
+        assert_eq!(filter.application.as_deref(), Some("junos-https"));
     }
 }

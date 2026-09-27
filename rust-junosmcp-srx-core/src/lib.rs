@@ -35,7 +35,7 @@ pub use workflows::license::{
     LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
 };
 pub use workflows::policy_match::{
-    FiveTuple, MatchVerdict, MatchedPolicy, PolicyMatchArgs, PolicyMatchResult,
+    DefaultAction, FiveTuple, MatchVerdict, MatchedPolicy, PolicyMatchArgs, PolicyMatchResult,
 };
 pub use workflows::services_status::{
     AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,

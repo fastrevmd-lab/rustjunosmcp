@@ -813,9 +813,11 @@ impl JmcpHandler {
                        and reported as truncated rather than silently returning everything that \
                        fit. Chassis-cluster session ownership is not synced across nodes, so \
                        sessions are grouped per node (re_name) and never merged into one table. \
-                       When the device's own summary count exceeds the cap on a filterless \
-                       query, the full walk is refused outright (never issued) and the response \
-                       reports total_count_reported with truncated=true."
+                       Before any full walk, the device's own session-count summary is queried \
+                       (with the same filters applied); when that count exceeds the cap, or \
+                       can't be determined, the full walk is refused outright (never issued) — \
+                       regardless of whether a filter was supplied — and the response reports \
+                       total_count_reported with truncated=true."
     )]
     async fn srx_flow_sessions(
         &self,
@@ -863,9 +865,11 @@ impl JmcpHandler {
         description = "Deterministic \"would this traffic be allowed\" answer for a 5-tuple \
                        (`show security match-policies`) — the device's own verdict, never a \
                        model's inference from the policy list. verdict is one of permit / deny / \
-                       reject / no_match; no_match (device default-deny fallthrough) is distinct \
-                       from an explicit deny/reject policy match. is_global marks a matched \
-                       zone-independent (any/any) policy. The 5-tuple (source_ip, \
+                       reject / no_match; no_match (device default-policy fallthrough, no explicit \
+                       policy matched) is distinct from an explicit deny/reject policy match, and \
+                       carries default_action (deny or permit) for whichever default-policy the \
+                       device applies. is_global marks a matched zone-independent (any/any) \
+                       policy. The 5-tuple (source_ip, \
                        destination_ip, source_port, destination_port, protocol) is parsed into \
                        typed values and rejected with a typed error before any RPC is sent if \
                        malformed."

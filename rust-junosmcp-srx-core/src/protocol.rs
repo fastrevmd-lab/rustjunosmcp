@@ -41,10 +41,13 @@ impl Protocol {
             "tcp" => Ok(Self::Tcp),
             "udp" => Ok(Self::Udp),
             "icmp" => Ok(Self::Icmp),
-            _ => trimmed
-                .parse::<u8>()
-                .map(Self::Other)
-                .map_err(|_| SrxError::InvalidInput(format!("unrecognised protocol: {s:?}"))),
+            _ => trimmed.parse::<u8>().map(Self::Other).map_err(|_| {
+                SrxError::InvalidInput(
+                    "unrecognised protocol: expected tcp, udp, icmp, or a numeric IANA protocol \
+                     number 0-255"
+                        .into(),
+                )
+            }),
         }
     }
 
