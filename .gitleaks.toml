@@ -10,3 +10,14 @@ description = "redact.rs unit-test fixtures for the secret redactor"
 paths = [
   '''rust-junosmcp-srx-core/src/workflows/support_bundle/redact\.rs$''',
 ]
+
+[[allowlists]]
+# Sanitized lab-capture fixtures use placeholder credential material carrying
+# an explicit FAKE marker right after the crypt prefix. Allowlist the marker,
+# not the file path, so a real value re-captured into any file still fails.
+# See docs/superpowers/captures/README.md for the policy.
+description = "FAKE-marked placeholder credential material in fixtures"
+regexTarget = "match"
+regexes = [
+  '''\$[1569]\$FAKE[A-Za-z0-9./]*''',
+]
