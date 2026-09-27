@@ -67,6 +67,43 @@
 //! `/0` prefixes (match every address) are rejected pre-RPC in
 //! [`validate_prefix`] for the same reason: they read as a filter but narrow
 //! nothing.
+//!
+//! # Filtered-summary schema fix (Percy re-review, 2026-09-27)
+//!
+//! The cap-refusal fix above sent every query's filter args on the summary
+//! RPC, but the parser only ever looked for `sessions-in-use` — the
+//! *unfiltered* total. A live vsrx-ci capture during re-review
+//! (`show security flow session summary protocol tcp`) showed a filtered
+//! summary reports "Valid sessions" / "Pending sessions" / "Invalidated
+//! sessions" / "Sessions in other states" / "Total sessions" and *no*
+//! "Sessions-in-use" line at all. Every filtered query therefore parsed
+//! `None` and was refused by [`plan_walk`]'s fail-closed rule — safe, but the
+//! tool never actually returned sessions for the one case (a narrowed,
+//! bounded query) it exists to serve.
+//!
+//! Fixed by also matching `displayed-session-count` (the filtered "Total
+//! sessions" signal, by analogy with the unfiltered `valid-sessions` /
+//! `pending-sessions` / ... family already in this module) alongside
+//! `sessions-in-use`. As with the rest of this module's reply-body element
+//! names, the *value* was captured live; the wrapping tag name is not
+//! confirmed at the XML level, because vsrx-ci's `execute-junos-command`
+//! strips `| display xml` to CLI text for this RPC. Flag any live mismatch
+//! as a spec update, not a silent parser patch — until then this can only
+//! ever refuse (fail closed), never guess a table is small when it isn't.
+//!
+//! The refuse/proceed decision also now carries *why* it refused
+//! ([`RefusalReason`]) — `CountExceedsCap` and `CountUnavailable` looked
+//! identical to a caller before (both `nodes: []`, `truncated: true`), and
+//! "narrow your filter" and "the tool couldn't read the device's count" call
+//! for different next actions.
+//!
+//! Finally, a node's `<rpc-error>` is now only treated as fatal for that node
+//! when `error-severity` is absent or `error`. A `warning`-severity
+//! `rpc-error` alongside real data (a node emitting a deprecation or
+//! advisory notice next to its actual reply) no longer causes that node's
+//! count to be dropped from the summary sum or its sessions dropped from the
+//! walk — both used to fail *open* on the cap (an undercounted summary looks
+//! like a smaller, safer table than it is) rather than closed.
 
 use crate::protocol::Protocol;
 use crate::{SrxError, SrxToolResponse};
@@ -176,6 +213,22 @@ pub struct NodeSessions {
     pub error: Option<String>,
 }
 
+/// Why a `srx_flow_sessions` call refused the full walk, when it did.
+///
+/// Distinguishes "the table is too big for this cap" (narrow the query or
+/// raise the cap) from "the tool couldn't read the device's count at all"
+/// (a schema mismatch — narrowing the query won't help, since the tool
+/// never learned the pre-narrowing count). Before this existed both cases
+/// looked identical to a caller: `nodes: []`, `truncated: true`.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalReason {
+    /// The (filtered, cluster-summed) summary count exceeded `cap`.
+    CountExceedsCap,
+    /// The summary RPC returned no count this parser recognises.
+    CountUnavailable,
+}
+
 /// Result of a `srx_flow_sessions` query.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct FlowSessionQuery {
@@ -185,8 +238,11 @@ pub struct FlowSessionQuery {
     pub total_count_reported: Option<u64>,
     /// True when the returned sessions are fewer than the actual table
     /// (either the full walk was refused because the summary count exceeded
-    /// `cap` on a filterless query, or a walk's results were cut at `cap`).
+    /// `cap`, or a walk's results were cut at `cap`).
     pub truncated: bool,
+    /// Set when the full walk was refused outright (see [`RefusalReason`]).
+    /// `None` when the walk ran, whether or not its results were truncated.
+    pub refused: Option<RefusalReason>,
     /// The cap that was enforced for this call.
     pub cap: u32,
 }
@@ -442,11 +498,12 @@ pub async fn run(
 
     // Blast-radius refusal: decided from the summary count alone (see
     // `plan_walk`) — never from whether a filter happened to be present.
-    if plan_walk(total_count_reported, cap) == WalkDecision::Refuse {
+    if let WalkDecision::Refuse(reason) = plan_walk(total_count_reported, cap) {
         let resp = SrxToolResponse::active(FlowSessionQuery {
             nodes: Vec::new(),
             total_count_reported,
             truncated: true,
+            refused: Some(reason),
             cap,
         });
         return Ok(if args.include_raw {
@@ -481,13 +538,14 @@ pub async fn run(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WalkDecision {
     Proceed,
-    Refuse,
+    Refuse(RefusalReason),
 }
 
 fn plan_walk(summary_total: Option<u64>, cap: u32) -> WalkDecision {
     match summary_total {
         Some(total) if total <= u64::from(cap) => WalkDecision::Proceed,
-        _ => WalkDecision::Refuse,
+        Some(_) => WalkDecision::Refuse(RefusalReason::CountExceedsCap),
+        None => WalkDecision::Refuse(RefusalReason::CountUnavailable),
     }
 }
 
@@ -520,27 +578,41 @@ fn compose_walk_raw(summary_xml: &str, walk_xml: &str, truncated: bool) -> Strin
 /// contribute — reading only the first node undercounts the table the walk
 /// would enumerate).
 ///
-/// `sessions-in-use` is used as the total-count signal (see module docs).
-/// Absence of the element on every node (e.g. an unrecognised schema) is not
-/// a hard error — `run()` treats `None` as "refuse the walk", per
-/// `plan_walk`'s fail-closed contract.
+/// Two element names are recognised, depending on whether the summary RPC
+/// carried filter args: `sessions-in-use` (unfiltered — the whole table) or
+/// `displayed-session-count` (filtered — the count matching the filter; see
+/// module docs for why a filtered query never reports `sessions-in-use`).
+/// Absence of both on a given node is not a hard error — `run()` treats an
+/// overall `None` as "refuse the walk", per `plan_walk`'s fail-closed
+/// contract.
+///
+/// A node whose only reply content is a `warning`-severity `rpc-error`
+/// still has its count read: only an absent/`error`-severity `rpc-error`
+/// skips a node, since that means the node produced no usable reply at all.
 pub fn parse_summary_total(xml: &str) -> Result<Option<u64>, SrxError> {
     let re_nodes = crate::xml::multi_re_split(xml)?;
 
     let mut total: u64 = 0;
     let mut any_found = false;
     for re_node in &re_nodes {
-        if extract_rpc_error(&re_node.inner_xml).is_some() {
+        if extract_rpc_error(&re_node.inner_xml).is_some_and(|e| !e.is_warning) {
             continue;
         }
-        let doc = roxmltree::Document::parse(&re_node.inner_xml)
+        let wrapped = ensure_single_root(&re_node.inner_xml);
+        let doc = roxmltree::Document::parse(&wrapped)
             .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
-        if let Some(count) = doc
+        let count = doc
             .descendants()
-            .find(|n| n.is_element() && n.tag_name().name() == "sessions-in-use")
+            .find(|n| n.is_element() && n.tag_name().name() == "displayed-session-count")
             .and_then(|n| n.text())
             .and_then(|t| t.trim().parse::<u64>().ok())
-        {
+            .or_else(|| {
+                doc.descendants()
+                    .find(|n| n.is_element() && n.tag_name().name() == "sessions-in-use")
+                    .and_then(|n| n.text())
+                    .and_then(|t| t.trim().parse::<u64>().ok())
+            });
+        if let Some(count) = count {
             total = total.saturating_add(count);
             any_found = true;
         }
@@ -564,7 +636,10 @@ pub fn parse_walk(
     let mut truncated = total_count_reported.is_some_and(|t| t > u64::from(cap));
 
     for re_node in &re_nodes {
-        if let Some(message) = extract_rpc_error(&re_node.inner_xml) {
+        let rpc_error = extract_rpc_error(&re_node.inner_xml);
+        if let Some(err) = &rpc_error
+            && !err.is_warning
+        {
             // A node holding no sessions for this query (e.g. secondary for
             // every relevant RG) is a normal per-node result, not a failure
             // of the whole call — but the message is kept so a genuine
@@ -572,7 +647,7 @@ pub fn parse_walk(
             nodes.push(NodeSessions {
                 re_name: re_node.re_name.clone(),
                 sessions: Vec::new(),
-                error: Some(message),
+                error: Some(err.message.clone()),
             });
             continue;
         }
@@ -587,7 +662,10 @@ pub fn parse_walk(
         nodes.push(NodeSessions {
             re_name: re_node.re_name.clone(),
             sessions,
-            error: None,
+            // A warning-severity rpc-error is not a per-node failure, but
+            // the message is still surfaced alongside the sessions it came
+            // with — it isn't discarded just because parsing continued.
+            error: rpc_error.map(|e| e.message),
         });
     }
 
@@ -595,14 +673,16 @@ pub fn parse_walk(
         nodes,
         total_count_reported,
         truncated,
+        refused: None,
         cap,
     }))
 }
 
 /// Parse every `<flow-session>` block in one node's fragment.
 fn parse_sessions(xml: &str) -> Result<Vec<FlowSession>, SrxError> {
-    let doc =
-        roxmltree::Document::parse(xml).map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+    let wrapped = ensure_single_root(xml);
+    let doc = roxmltree::Document::parse(&wrapped)
+        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
 
     let mut sessions = Vec::new();
     for block in doc
@@ -681,6 +761,24 @@ fn parse_sessions(xml: &str) -> Result<Vec<FlowSession>, SrxError> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Wrap `xml` in a synthetic root if it doesn't already parse as one
+/// well-formed document.
+///
+/// `multi_re_split` hands back the concatenation of every child of a
+/// `<multi-routing-engine-item>` except `<re-name>` — a single node can
+/// carry more than one top-level sibling (e.g. a `flow-session-information`
+/// block *and* a `warning`-severity `rpc-error`, the case R3 needs to parse
+/// through rather than bail out of), which `roxmltree::Document::parse`
+/// rejects outright as multiple document roots. Mirrors `xml::text_of`'s
+/// same fallback for the same reason.
+fn ensure_single_root(xml: &str) -> std::borrow::Cow<'_, str> {
+    if roxmltree::Document::parse(xml).is_ok() {
+        std::borrow::Cow::Borrowed(xml)
+    } else {
+        std::borrow::Cow::Owned(format!("<_>{xml}</_>"))
+    }
+}
+
 fn child_text(node: &roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
     node.children()
         .find(|n| n.is_element() && n.tag_name().name() == name)
@@ -689,22 +787,40 @@ fn child_text(node: &roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-/// Extract a human-readable message from a node's `<rpc-error>`, if the
-/// fragment contains one. `None` means the fragment is a normal (non-error)
-/// reply body.
-fn extract_rpc_error(xml: &str) -> Option<String> {
-    let doc = roxmltree::Document::parse(xml).ok()?;
+/// A node's `<rpc-error>`, if its fragment contains one.
+struct RpcErrorInfo {
+    message: String,
+    /// True when `<error-severity>warning</error-severity>` — a warning is
+    /// informational and does not mean the node's reply lacks usable data,
+    /// unlike an absent severity or `error` (Junos's default when the
+    /// element is omitted).
+    is_warning: bool,
+}
+
+/// Extract a node's `<rpc-error>`, if the fragment contains one. `None`
+/// means the fragment is a normal (non-error) reply body.
+fn extract_rpc_error(xml: &str) -> Option<RpcErrorInfo> {
+    let wrapped = ensure_single_root(xml);
+    let doc = roxmltree::Document::parse(&wrapped).ok()?;
     let err = doc
         .descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "rpc-error")?;
-    Some(
-        err.descendants()
-            .find(|n| n.is_element() && n.tag_name().name() == "error-message")
-            .and_then(|n| n.text())
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "rpc-error (no error-message)".to_string()),
-    )
+    let message = err
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-message")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "rpc-error (no error-message)".to_string());
+    let is_warning = err
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
+        .and_then(|n| n.text())
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case("warning"));
+    Some(RpcErrorInfo {
+        message,
+        is_warning,
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -864,6 +980,33 @@ mod tests {
         assert_eq!(total, Some(4));
     }
 
+    // ── R1 (Percy re-review): a filtered summary has no `sessions-in-use`
+    // at all — the earlier fix only ever looked for that element, so every
+    // filtered query parsed `None` and was refused unconditionally, which
+    // is the opposite of what the mandatory-filter design is for. ─────────
+
+    #[test]
+    fn filtered_summary_total_parses_displayed_session_count() {
+        // displayed-session-count=1 is the REAL count captured live against
+        // vsrx-ci for a *filtered* query (module docs); the wrapping XML is
+        // a hypothesis, same as the unfiltered fixture.
+        let xml = fixture("summary_filtered_vsrx_ci.xml");
+        let total = parse_summary_total(&xml).unwrap();
+        assert_eq!(total, Some(1));
+    }
+
+    #[test]
+    fn filtered_summary_under_cap_lets_plan_walk_proceed() {
+        let xml = fixture("summary_filtered_vsrx_ci.xml");
+        let total = parse_summary_total(&xml).unwrap();
+        assert_eq!(
+            plan_walk(total, DEFAULT_CAP),
+            WalkDecision::Proceed,
+            "a filtered, in-cap query must not be refused just because it \
+             carries no sessions-in-use element"
+        );
+    }
+
     // ── parse_walk: standalone ────────────────────────────────────────────────
 
     #[test]
@@ -975,20 +1118,39 @@ mod tests {
         // a caller-supplied filter (protocol=tcp, a wide prefix, etc.) can no
         // longer disable the refusal, because the decision never looks at
         // whether one was given, only at the reported count vs. the cap.
-        assert_eq!(plan_walk(Some(10), 5), WalkDecision::Refuse);
+        assert_eq!(
+            plan_walk(Some(10), 5),
+            WalkDecision::Refuse(RefusalReason::CountExceedsCap)
+        );
     }
 
     #[test]
     fn plan_walk_refuses_when_summary_count_is_unknown() {
         // Fail closed: an unparseable/missing summary count must never be
         // treated as "safe to walk".
-        assert_eq!(plan_walk(None, 5), WalkDecision::Refuse);
+        assert_eq!(
+            plan_walk(None, 5),
+            WalkDecision::Refuse(RefusalReason::CountUnavailable)
+        );
     }
 
     #[test]
     fn plan_walk_proceeds_when_count_is_within_cap() {
         assert_eq!(plan_walk(Some(5), 5), WalkDecision::Proceed);
         assert_eq!(plan_walk(Some(3), 5), WalkDecision::Proceed);
+    }
+
+    // ── R2 (Percy re-review): refusal reason distinguishes "narrow the
+    // query" from "the tool couldn't read the device's count" ───────────────
+
+    #[test]
+    fn refusal_reason_distinguishes_over_cap_from_unavailable_count() {
+        assert_ne!(
+            plan_walk(Some(10), 5),
+            plan_walk(None, 5),
+            "count-exceeds-cap and count-unavailable must be distinguishable, \
+             not both collapse to the same refusal"
+        );
     }
 
     // ── compose_walk_raw: include_raw must never carry the walk body past
@@ -1063,6 +1225,77 @@ mod tests {
   </multi-routing-engine-results>
 </rpc-reply>"#;
         assert_eq!(parse_summary_total(xml).unwrap(), Some(4));
+    }
+
+    // ── R3 (Percy re-review): a `warning`-severity rpc-error alongside real
+    // data must not drop that node's count — only an absent/`error`-severity
+    // rpc-error means the node produced no usable reply. ─────────────────────
+
+    #[test]
+    fn summary_total_counts_a_node_reporting_only_a_warning() {
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>4</sessions-in-use>
+      </flow-session-summary-information>
+      <rpc-error>
+        <error-severity>warning</error-severity>
+        <error-message>deprecated command syntax</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-message>node is secondary for all relevant redundancy groups</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(
+            parse_summary_total(xml).unwrap(),
+            Some(4),
+            "a warning alongside real data must not undercount the summary \
+             (fails open on the cap if it does)"
+        );
+    }
+
+    #[test]
+    fn walk_keeps_sessions_from_a_node_reporting_only_a_warning() {
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-information>
+        <flow-session>
+          <session-identifier>1001</session-identifier>
+          <session-protocol-name>tcp</session-protocol-name>
+          <source-address>198.51.100.5</source-address>
+          <source-port>443</source-port>
+          <destination-address>203.0.113.9</destination-address>
+          <destination-port>51000</destination-port>
+        </flow-session>
+      </flow-session-information>
+      <rpc-error>
+        <error-severity>warning</error-severity>
+        <error-message>deprecated command syntax</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        let resp = parse_walk(xml, Some(1), DEFAULT_CAP).unwrap();
+        let data = resp.data.expect("data present");
+        assert_eq!(
+            data.nodes[0].sessions.len(),
+            1,
+            "a warning-severity rpc-error must not drop this node's sessions"
+        );
+        assert_eq!(
+            data.nodes[0].error.as_deref(),
+            Some("deprecated command syntax"),
+            "the warning is still surfaced, just not treated as fatal"
+        );
     }
 
     // ── /0 prefix rejection (F1 fix) ──────────────────────────────────────────

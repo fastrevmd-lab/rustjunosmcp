@@ -1,0 +1,30 @@
+<!--
+  Field VALUES are real, captured live against vsrx-ci (2026-09-27, Percy's
+  MEC-55 re-review) via `show security flow session summary protocol tcp`
+  (a filtered query):
+
+    Valid sessions: 1
+    Pending sessions: 0
+    Invalidated sessions: 0
+    Sessions in other states: 0
+    Total sessions: 1
+
+  Notably there is NO "Sessions-in-use" line at all for a filtered summary —
+  that is the bug this fixture exists to cover (R1, Percy re-review): the
+  parser used to look only for `sessions-in-use` and treated every filtered
+  query as an unreadable count, refusing the walk unconditionally.
+
+  Wrapping element names below are NOT live-confirmed (vsrx-ci's
+  `execute-junos-command` strips `| display xml` to CLI text for this RPC —
+  see flow_sessions.rs module docs). `displayed-session-count` is used for
+  "Total sessions" by analogy with the unfiltered `valid-sessions` /
+  `pending-sessions` / ... family in summary_live_vsrx_ci.xml. Flag any live
+  mismatch as a spec update, not a silent parser patch.
+-->
+<flow-session-summary-information>
+  <displayed-session-valid>1</displayed-session-valid>
+  <displayed-session-pending>0</displayed-session-pending>
+  <displayed-session-invalidated>0</displayed-session-invalidated>
+  <displayed-session-other>0</displayed-session-other>
+  <displayed-session-count>1</displayed-session-count>
+</flow-session-summary-information>
