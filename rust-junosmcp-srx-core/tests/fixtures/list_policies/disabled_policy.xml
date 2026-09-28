@@ -6,9 +6,10 @@
     </context-information>
     <policies>
       <policy-information>
-        <policy-name>default</policy-name>
-        <policy-state>enabled</policy-state>
-              <policy-sequence-number>1</policy-sequence-number>
+        <policy-name>old-allow-rdp</policy-name>
+        <policy-state>disabled</policy-state>
+        <policy-identifier>9</policy-identifier>
+        <policy-sequence-number>1</policy-sequence-number>
         <source-addresses>
           <source-address><address-name>any</address-name></source-address>
         </source-addresses>
@@ -19,7 +20,7 @@
           <application><application-name>any</application-name></application>
         </applications>
         <policy-action>
-          <action-type>reject</action-type>
+          <action-type>permit</action-type>
         </policy-action>
       </policy-information>
     </policies>

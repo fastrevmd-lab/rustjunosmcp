@@ -1,0 +1,27 @@
+<configuration>
+  <security>
+    <nat>
+      <destination>
+        <rule-set>
+          <name>dst-rs</name>
+          <from><zone>untrust</zone></from>
+          <rule>
+            <name>rule1</name>
+            <dest-nat-rule-match>
+              <destination-address>
+                <dst-addr>203.0.113.10/32</dst-addr>
+              </destination-address>
+            </dest-nat-rule-match>
+            <then>
+              <destination-nat>
+                <pool>
+                  <pool-name>internal-pool</pool-name>
+                </pool>
+              </destination-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </destination>
+    </nat>
+  </security>
+</configuration>

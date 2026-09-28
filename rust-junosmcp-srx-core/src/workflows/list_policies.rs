@@ -151,6 +151,19 @@ pub enum PolicyAction {
     },
 }
 
+/// Administrative state of a policy. Read from the required `<policy-state>`
+/// element — a `deactivate`d (disabled) policy never matches traffic, so
+/// reporting it without this field makes a dead rule look live (Percy H2,
+/// MEC-83).
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyState {
+    /// Policy is active and evaluated for matching traffic.
+    Enabled,
+    /// Policy is configured but deactivated; never matches traffic.
+    Disabled,
+}
+
 /// Session logging configuration for a policy.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
@@ -175,6 +188,8 @@ pub struct SecurityPolicy {
     pub to_zone: String,
     /// Policy name.
     pub name: String,
+    /// Administrative state. `Disabled` policies never match traffic.
+    pub state: PolicyState,
     /// Evaluation order within its zone-pair context.
     pub sequence: u32,
     /// Unresolved source address/address-set names.
@@ -290,12 +305,23 @@ pub fn parse(
     let mut all_policies: Vec<SecurityPolicy> = Vec::new();
 
     for re_node in &re_nodes {
-        if contains_rpc_error(&re_node.inner_xml) {
-            tracing::debug!(node = %re_node.re_name, "skipping node with rpc-error");
-            continue;
-        }
         let doc = roxmltree::Document::parse(&re_node.inner_xml)
             .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+        if let Some((tag, message)) = crate::xml::rpc_error_parts(&doc) {
+            if tag == "not-configured" {
+                tracing::debug!(node = %re_node.re_name, "skipping node: not configured");
+                continue;
+            }
+            // A per-node rpc-error that is not genuine absence (e.g.
+            // permission denied) must not be silently read as "no policies
+            // configured" — that under-reports what the firewall actually
+            // permits (Percy M5, MEC-83).
+            return Err(SrxError::Rpc {
+                tag,
+                severity: "error".into(),
+                message,
+            });
+        }
 
         for ctx in doc
             .descendants()
@@ -363,11 +389,19 @@ fn parse_hit_counts(reply_xml: &str) -> Result<HashMap<(String, String, String),
     let re_nodes = crate::xml::multi_re_split(reply_xml)?;
     let mut map = HashMap::new();
     for re_node in &re_nodes {
-        if contains_rpc_error(&re_node.inner_xml) {
-            continue;
-        }
         let doc = roxmltree::Document::parse(&re_node.inner_xml)
             .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+        if let Some((tag, _)) = crate::xml::rpc_error_parts(&doc) {
+            // Hit counts are enrichment (see module docs): any per-node
+            // error, including a real one, degrades that node's counts
+            // rather than failing the whole join — the caller already
+            // treats a hit-count RPC/parse failure as "no hit counts", never
+            // as "no policies".
+            if tag != "not-configured" {
+                tracing::debug!(node = %re_node.re_name, error_tag = %tag, "hit-count node error");
+            }
+            continue;
+        }
         for ctx in doc
             .descendants()
             .filter(|n| n.is_element() && n.tag_name().name() == "security-context")
@@ -383,7 +417,12 @@ fn parse_hit_counts(reply_xml: &str) -> Result<HashMap<(String, String, String),
                 .as_ref()
                 .and_then(|c| child_text(c, "destination-zone-name"))
                 .unwrap_or_else(|| "any".to_string());
-            for hc in doc
+            // Percy M8: this must walk `ctx` (the current security-context),
+            // not `doc` — iterating the whole document here attributes every
+            // policy-hit-count in the reply to the *last* zone-pair context,
+            // silently overwriting counts for identically-named policies in
+            // other zone pairs.
+            for hc in ctx
                 .descendants()
                 .filter(|n| n.is_element() && n.tag_name().name() == "policy-hit-count")
             {
@@ -402,10 +441,6 @@ fn parse_hit_counts(reply_xml: &str) -> Result<HashMap<(String, String, String),
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn contains_rpc_error(xml: &str) -> bool {
-    xml.contains("<rpc-error>") || xml.contains("<nc:rpc-error>")
-}
 
 fn child_text(node: &roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
     node.children()
@@ -427,13 +462,55 @@ fn parse_name_list(
         .collect()
 }
 
+/// Children of `<policy-information>` this parser understands. Anything else
+/// — including a source/destination-negate flag, which Junos schema
+/// documentation does not name consistently and this crate has not
+/// live-verified — must fail closed rather than be silently dropped, so a
+/// negated match cannot be misread as a positive one (Percy H2, MEC-83).
+const KNOWN_POLICY_INFORMATION_CHILDREN: &[&str] = &[
+    "policy-name",
+    "policy-state",
+    "policy-identifier",
+    "policy-sequence-number",
+    "source-addresses",
+    "destination-addresses",
+    "applications",
+    "policy-action",
+];
+
 fn parse_policy_information(
     pi: &roxmltree::Node<'_, '_>,
     from_zone: &str,
     to_zone: &str,
 ) -> Result<SecurityPolicy, SrxError> {
+    for child in pi.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        if !KNOWN_POLICY_INFORMATION_CHILDREN.contains(&tag) {
+            return Err(SrxError::Parse(format!(
+                "unrecognised <policy-information> child <{tag}>: refusing to report this \
+                 policy rather than silently drop a match criterion the parser doesn't \
+                 understand (e.g. a negated address/application match)"
+            )));
+        }
+    }
+
     let name = child_text(pi, "policy-name")
         .ok_or_else(|| SrxError::schema_mismatch("get-firewall-policies", "policy-name"))?;
+    let state = match child_text(pi, "policy-state").as_deref() {
+        Some("enabled") => PolicyState::Enabled,
+        Some("disabled") => PolicyState::Disabled,
+        Some(other) => {
+            return Err(SrxError::Parse(format!(
+                "unrecognised policy-state value: {other}"
+            )));
+        }
+        None => {
+            return Err(SrxError::schema_mismatch(
+                "get-firewall-policies",
+                "policy-state",
+            ));
+        }
+    };
     let sequence: u32 = child_text(pi, "policy-sequence-number")
         .and_then(|t| t.parse().ok())
         .unwrap_or(0);
@@ -507,6 +584,7 @@ fn parse_policy_information(
         from_zone: from_zone.to_string(),
         to_zone: to_zone.to_string(),
         name,
+        state,
         sequence,
         source_addresses,
         destination_addresses,
@@ -610,6 +688,47 @@ mod tests {
     }
 
     #[test]
+    fn disabled_policy_reports_disabled_state() {
+        // Percy H2 (MEC-83): a `deactivate`d policy must not read the same
+        // as a live one — `state` must be surfaced and set to `Disabled`.
+        let xml = fixture("disabled_policy.xml");
+        let resp = parse(&xml, None, 0, 500).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.policies[0].state, PolicyState::Disabled);
+    }
+
+    #[test]
+    fn enabled_policy_reports_enabled_state() {
+        let xml = fixture("zone_pair_multiple.xml");
+        let resp = parse(&xml, None, 0, 500).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.policies[0].state, PolicyState::Enabled);
+    }
+
+    #[test]
+    fn unrecognised_policy_information_child_fails_closed() {
+        // Percy H2 (MEC-83): an element this parser doesn't understand next
+        // to `<source-addresses>` (e.g. a negate/exclusion flag) must error,
+        // not be silently dropped — a denylist-style "ignore unknown
+        // children" reads a negated match as a positive one.
+        let xml = fixture("unrecognised_match_child.xml");
+        let err = parse(&xml, None, 0, 500).expect_err("must fail closed on unknown child");
+        assert!(err.to_string().contains("source-address-excluded"), "{err}");
+    }
+
+    #[test]
+    fn per_node_permission_denied_errors_instead_of_reporting_empty() {
+        // Percy M5 (MEC-83): both cluster nodes returning a real rpc-error
+        // (not "not-configured") must surface as an error, not silently
+        // report zero policies — that under-reports what the firewall
+        // actually permits.
+        let xml = fixture("clustered_permission_denied.xml");
+        let err = parse(&xml, None, 0, 500).expect_err("must not report empty on real rpc-error");
+        assert!(matches!(err, SrxError::Rpc { .. }), "{err}");
+        assert!(err.to_string().contains("access-denied"), "{err}");
+    }
+
+    #[test]
     fn hit_counts_join_when_present() {
         let xml = fixture("zone_pair_multiple.xml");
         let mut hc = HashMap::new();
@@ -625,5 +744,33 @@ mod tests {
         let data = resp.data.expect("data present");
         assert_eq!(data.policies[0].hit_count, Some(42));
         assert_eq!(data.policies[1].hit_count, None);
+    }
+
+    #[test]
+    fn hit_counts_attributed_per_context_not_across_contexts() {
+        // Percy M8 (MEC-83): two zone-pair contexts each have a policy
+        // literally named "allow-web" with a different hit count. Before the
+        // fix, `parse_hit_counts` walked `doc.descendants()` inside the
+        // per-context loop, so the second context's count silently
+        // overwrote the first's in the map (last one wins for every
+        // context, not just its own).
+        let xml = fixture("hit_counts_two_contexts.xml");
+        let hc = parse_hit_counts(&xml).expect("parse_hit_counts should not error");
+        assert_eq!(
+            hc.get(&(
+                "trust".to_string(),
+                "untrust".to_string(),
+                "allow-web".to_string()
+            )),
+            Some(&11)
+        );
+        assert_eq!(
+            hc.get(&(
+                "dmz".to_string(),
+                "untrust".to_string(),
+                "allow-web".to_string()
+            )),
+            Some(&99)
+        );
     }
 }

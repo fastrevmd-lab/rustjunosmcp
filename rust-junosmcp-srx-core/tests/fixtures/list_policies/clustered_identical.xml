@@ -11,6 +11,7 @@
           <policies>
             <policy-information>
               <policy-name>allow-web</policy-name>
+              <policy-state>enabled</policy-state>
               <policy-sequence-number>1</policy-sequence-number>
               <source-addresses>
                 <source-address><address-name>any</address-name></source-address>
@@ -40,6 +41,7 @@
           <policies>
             <policy-information>
               <policy-name>allow-web</policy-name>
+              <policy-state>enabled</policy-state>
               <policy-sequence-number>1</policy-sequence-number>
               <source-addresses>
                 <source-address><address-name>any</address-name></source-address>

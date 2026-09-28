@@ -1,0 +1,28 @@
+<rpc-reply>
+  <security-policies-information>
+    <security-context>
+      <context-information>
+        <source-zone-name>trust</source-zone-name>
+        <destination-zone-name>untrust</destination-zone-name>
+      </context-information>
+      <policies>
+        <policy-hit-count>
+          <policy-name>allow-web</policy-name>
+          <hit-count>11</hit-count>
+        </policy-hit-count>
+      </policies>
+    </security-context>
+    <security-context>
+      <context-information>
+        <source-zone-name>dmz</source-zone-name>
+        <destination-zone-name>untrust</destination-zone-name>
+      </context-information>
+      <policies>
+        <policy-hit-count>
+          <policy-name>allow-web</policy-name>
+          <hit-count>99</hit-count>
+        </policy-hit-count>
+      </policies>
+    </security-context>
+  </security-policies-information>
+</rpc-reply>

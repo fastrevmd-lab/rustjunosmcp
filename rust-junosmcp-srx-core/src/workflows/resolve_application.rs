@@ -108,19 +108,65 @@ pub struct PortRange {
     pub high: u16,
 }
 
+/// A port match: either a numeric single port/range, or a named service
+/// reference (Percy M7, MEC-83). Junos accepts a symbolic port name (e.g.
+/// referencing a service alias) in the same slot as a numeric port/range;
+/// the original parser only accepted digits and errored on anything else —
+/// and because that parse ran eagerly for *every* application in the
+/// config, one application anywhere using a named port broke every
+/// unrelated `srx_resolve_application` lookup.
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PortSpec {
+    /// A numeric single port or range.
+    Numeric(PortRange),
+    /// A named/symbolic port value that isn't a plain number.
+    Named {
+        /// The raw configured value.
+        name: String,
+    },
+}
+
+/// Where a resolved application entry came from (Percy M7, MEC-83).
+#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationSource {
+    /// Read from the device's own configuration.
+    Device,
+    /// Not present on the device; filled from this crate's compiled-in
+    /// `junos-*` defaults table (see module docs).
+    BuiltinTable,
+}
+
 /// One flattened, resolved application leaf.
 #[derive(Debug, Serialize, JsonSchema, PartialEq, Eq, Clone)]
 pub struct ResolvedApplication {
-    /// Leaf application name.
+    /// Leaf application name. For a multi-`term` application, this is
+    /// `"{application-name}#{term-name}"` — Percy M7 (MEC-83): each term is
+    /// its own independent match (protocol/ports/ICMP fields), so folding
+    /// them into one entry would silently union or overwrite criteria that
+    /// Junos evaluates as alternatives.
     pub name: String,
     /// Protocol, e.g. `"tcp"`, `"udp"`, `"icmp"`.
     pub protocol: String,
     /// Source port match, if configured.
-    pub source_port: Option<PortRange>,
+    pub source_port: Option<PortSpec>,
     /// Destination port match, if configured.
-    pub destination_port: Option<PortRange>,
+    pub destination_port: Option<PortSpec>,
     /// Session inactivity timeout in seconds, if configured.
     pub inactivity_timeout: Option<u32>,
+    /// ICMP type, if `protocol` is `"icmp"`/`"icmp6"` and configured.
+    pub icmp_type: Option<u8>,
+    /// ICMP code, if `protocol` is `"icmp"`/`"icmp6"` and configured.
+    pub icmp_code: Option<u8>,
+    /// `false` if this application (or its `term`, or an enclosing
+    /// application-set on the resolution path) is `inactive` in the
+    /// configuration.
+    pub active: bool,
+    /// Whether this entry came from the device or the compiled-in fallback
+    /// table (MEC-53 §10 Q4) — the static `junos-*` table is otherwise
+    /// indistinguishable from real device data.
+    pub source: ApplicationSource,
 }
 
 /// Result of resolving an application or application-set name.
@@ -170,7 +216,7 @@ pub async fn run(
 /// `(name, protocol, destination_port)` for one static `junos-*` default.
 type JunosDefaultEntry = (&'static str, &'static str, Option<(u16, u16)>);
 
-fn static_junos_defaults() -> HashMap<String, ConfigNode<ResolvedApplication>> {
+fn static_junos_defaults<'a>() -> HashMap<String, ConfigNode<ApplicationLeaf<'a>>> {
     let entries: &[JunosDefaultEntry] = &[
         ("junos-http", "tcp", Some((80, 80))),
         ("junos-https", "tcp", Some((443, 443))),
@@ -185,13 +231,18 @@ fn static_junos_defaults() -> HashMap<String, ConfigNode<ResolvedApplication>> {
         .map(|(name, protocol, port)| {
             (
                 (*name).to_string(),
-                ConfigNode::Leaf(ResolvedApplication {
+                ConfigNode::Leaf(ApplicationLeaf::Static(ResolvedApplication {
                     name: (*name).to_string(),
                     protocol: (*protocol).to_string(),
                     source_port: None,
-                    destination_port: port.map(|(low, high)| PortRange { low, high }),
+                    destination_port: port
+                        .map(|(low, high)| PortSpec::Numeric(PortRange { low, high })),
                     inactivity_timeout: None,
-                }),
+                    icmp_type: None,
+                    icmp_code: None,
+                    active: true,
+                    source: ApplicationSource::BuiltinTable,
+                })),
             )
         })
         .collect()
@@ -207,13 +258,44 @@ pub fn parse(
     reply_xml: &str,
 ) -> Result<SrxToolResponse<ApplicationResolution>, SrxError> {
     let re_nodes = crate::xml::multi_re_split(reply_xml)?;
-    let Some(node) = re_nodes.iter().find(|n| !contains_rpc_error(&n.inner_xml)) else {
+    let mut node = None;
+    for re_node in &re_nodes {
+        let sanitized = crate::xml::sanitize_rustez_xml(&re_node.inner_xml);
+        let probe = roxmltree::Document::parse(&sanitized)
+            .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+        if let Some((tag, message)) = crate::xml::rpc_error_parts(&probe) {
+            if tag == "not-configured" {
+                continue;
+            }
+            // Percy M5 (MEC-83): a real per-node error must not be silently
+            // read as "no applications configured".
+            return Err(SrxError::Rpc {
+                tag,
+                severity: "error".into(),
+                message,
+            });
+        }
+        node = Some(re_node);
+        break;
+    }
+    let Some(node) = node else {
         return Ok(SrxToolResponse::not_configured(
             "no node returned applications configuration without an error",
         ));
     };
 
-    let mut map = parse_applications(&node.inner_xml)?;
+    let sanitized = crate::xml::sanitize_rustez_xml(&node.inner_xml);
+    let doc = roxmltree::Document::parse(&sanitized)
+        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
+
+    // Percy M7 (MEC-83): the map holds an unparsed reference to each
+    // device-sourced `<application>` element rather than eagerly parsing
+    // every one up front. Eager parsing meant one application anywhere in
+    // the config that this parser couldn't fully model (a `term`, a named
+    // port, …) made `parse_applications` return `Err`, which broke *every*
+    // unrelated lookup — "parse only the nodes the walk reaches".
+    let mut map: HashMap<String, ConfigNode<ApplicationLeaf<'_>>> = HashMap::new();
+    collect_applications(&doc, &mut map)?;
 
     // Layer the static junos-* fallback under (not over) whatever the device
     // actually returned — a live definition always wins.
@@ -240,7 +322,17 @@ pub fn parse(
         "applications",
         DEFAULT_APPLICATION_MEMBER_CAP,
     )?;
-    let members = leaves.into_iter().map(|(_, v)| v).collect();
+    let mut members = Vec::new();
+    for (_, leaf) in leaves {
+        match leaf {
+            ApplicationLeaf::Static(a) => members.push(a),
+            // Parsed here, lazily, only because the walk actually reached
+            // this application (Percy M7, MEC-83).
+            ApplicationLeaf::Device(app_node) => {
+                members.extend(parse_application_node(&app_node)?);
+            }
+        }
+    }
 
     Ok(SrxToolResponse::active(ApplicationResolution {
         requested: name.to_string(),
@@ -252,10 +344,6 @@ pub fn parse(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn contains_rpc_error(xml: &str) -> bool {
-    xml.contains("<rpc-error>") || xml.contains("<nc:rpc-error>")
-}
-
 fn child_text(node: &roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
     node.children()
         .find(|n| n.is_element() && n.tag_name().name() == tag_name)
@@ -264,57 +352,152 @@ fn child_text(node: &roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> 
         .filter(|t| !t.is_empty())
 }
 
-/// Parse a single port value: `"80"` or `"1024-65535"`.
-fn parse_port_range(text: &str) -> Result<PortRange, SrxError> {
-    if let Some((lo, hi)) = text.split_once('-') {
-        let low: u16 = lo
-            .trim()
-            .parse()
-            .map_err(|_| SrxError::Parse(format!("invalid port range: {text}")))?;
-        let high: u16 = hi
-            .trim()
-            .parse()
-            .map_err(|_| SrxError::Parse(format!("invalid port range: {text}")))?;
-        Ok(PortRange { low, high })
-    } else {
-        let p: u16 = text
-            .trim()
-            .parse()
-            .map_err(|_| SrxError::Parse(format!("invalid port: {text}")))?;
-        Ok(PortRange { low: p, high: p })
+/// `true` if `node` carries Junos's `inactive="inactive"` deactivation
+/// attribute.
+fn is_inactive(node: &roxmltree::Node<'_, '_>) -> bool {
+    node.attribute("inactive") == Some("inactive")
+}
+
+/// Parse a port value. A plain number or `"low-high"` becomes
+/// [`PortSpec::Numeric`]; anything else (a named/symbolic port) becomes
+/// [`PortSpec::Named`] rather than an error (Percy M7, MEC-83) — see the
+/// `PortSpec` doc comment for why this must never fail.
+fn parse_port_spec(text: &str) -> PortSpec {
+    if let Some((lo, hi)) = text.split_once('-')
+        && let (Ok(low), Ok(high)) = (lo.trim().parse::<u16>(), hi.trim().parse::<u16>())
+    {
+        return PortSpec::Numeric(PortRange { low, high });
+    }
+    if let Ok(p) = text.trim().parse::<u16>() {
+        return PortSpec::Numeric(PortRange { low: p, high: p });
+    }
+    PortSpec::Named {
+        name: text.trim().to_string(),
     }
 }
 
-fn parse_application_leaf(
-    app_node: &roxmltree::Node<'_, '_>,
-    name: String,
-) -> Result<ResolvedApplication, SrxError> {
-    let protocol = child_text(app_node, "protocol")
+/// Core match fields shared by the whole-application and per-`term` parse
+/// paths (protocol, ports, ICMP type/code, inactivity-timeout).
+struct ApplicationFields {
+    protocol: String,
+    source_port: Option<PortSpec>,
+    destination_port: Option<PortSpec>,
+    inactivity_timeout: Option<u32>,
+    icmp_type: Option<u8>,
+    icmp_code: Option<u8>,
+}
+
+/// Parse one application-shaped node's core match fields. Shared by the
+/// whole-application and per-`term` parse paths.
+fn parse_application_fields(node: &roxmltree::Node<'_, '_>) -> Result<ApplicationFields, SrxError> {
+    let protocol = child_text(node, "protocol")
         .ok_or_else(|| SrxError::schema_mismatch("get-configuration", "application/protocol"))?;
-    let source_port = child_text(app_node, "source-port")
-        .map(|t| parse_port_range(&t))
-        .transpose()?;
-    let destination_port = child_text(app_node, "destination-port")
-        .map(|t| parse_port_range(&t))
-        .transpose()?;
-    let inactivity_timeout = child_text(app_node, "inactivity-timeout")
+    let source_port = child_text(node, "source-port").map(|t| parse_port_spec(&t));
+    let destination_port = child_text(node, "destination-port").map(|t| parse_port_spec(&t));
+    let inactivity_timeout = child_text(node, "inactivity-timeout")
         .map(|t| {
             t.parse::<u32>()
                 .map_err(|_| SrxError::Parse(format!("invalid inactivity-timeout: {t}")))
         })
         .transpose()?;
-    Ok(ResolvedApplication {
-        name,
+    let icmp_type = child_text(node, "icmp-type")
+        .map(|t| {
+            t.parse::<u8>()
+                .map_err(|_| SrxError::Parse(format!("invalid icmp-type: {t}")))
+        })
+        .transpose()?;
+    let icmp_code = child_text(node, "icmp-code")
+        .map(|t| {
+            t.parse::<u8>()
+                .map_err(|_| SrxError::Parse(format!("invalid icmp-code: {t}")))
+        })
+        .transpose()?;
+    Ok(ApplicationFields {
         protocol,
         source_port,
         destination_port,
         inactivity_timeout,
+        icmp_type,
+        icmp_code,
     })
 }
 
-fn parse_applications_container(
-    container: &roxmltree::Node<'_, '_>,
-    map: &mut HashMap<String, ConfigNode<ResolvedApplication>>,
+/// Parse one device `<application>` element into one or more
+/// [`ResolvedApplication`] entries. Percy M7 (MEC-83): an application with
+/// one or more `<term>` children (each an independent protocol/port match,
+/// same shape as a firewall filter term) expands into one entry per term
+/// instead of the original parser's hard requirement for top-level
+/// `<protocol>`/ports, which made any `term`-based application fail to
+/// parse — and, before the lazy-parse fix above, fail *every* lookup.
+fn parse_application_node(
+    app_node: &roxmltree::Node<'_, '_>,
+) -> Result<Vec<ResolvedApplication>, SrxError> {
+    let name = child_text(app_node, "name")
+        .ok_or_else(|| SrxError::schema_mismatch("get-configuration", "application/name"))?;
+    let app_active = !is_inactive(app_node);
+
+    let terms: Vec<_> = app_node
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "term")
+        .collect();
+
+    if terms.is_empty() {
+        let fields = parse_application_fields(app_node)?;
+        return Ok(vec![ResolvedApplication {
+            name,
+            protocol: fields.protocol,
+            source_port: fields.source_port,
+            destination_port: fields.destination_port,
+            inactivity_timeout: fields.inactivity_timeout,
+            icmp_type: fields.icmp_type,
+            icmp_code: fields.icmp_code,
+            active: app_active,
+            source: ApplicationSource::Device,
+        }]);
+    }
+
+    let mut out = Vec::with_capacity(terms.len());
+    for term in terms {
+        let term_name = child_text(&term, "name").ok_or_else(|| {
+            SrxError::schema_mismatch("get-configuration", "application/term/name")
+        })?;
+        let fields = parse_application_fields(&term)?;
+        out.push(ResolvedApplication {
+            name: format!("{name}#{term_name}"),
+            protocol: fields.protocol,
+            source_port: fields.source_port,
+            destination_port: fields.destination_port,
+            inactivity_timeout: fields.inactivity_timeout,
+            icmp_type: fields.icmp_type,
+            icmp_code: fields.icmp_code,
+            active: app_active && !is_inactive(&term),
+            source: ApplicationSource::Device,
+        });
+    }
+    Ok(out)
+}
+
+/// One entry in the name→node map built from device configuration, before
+/// the per-application fields are parsed (see `ApplicationLeaf` docs).
+enum ApplicationLeaf<'a> {
+    /// A device `<application>` element, parsed lazily.
+    Device(roxmltree::Node<'a, 'a>),
+    /// A pre-parsed static `junos-*` fallback entry.
+    Static(ResolvedApplication),
+}
+
+impl Clone for ApplicationLeaf<'_> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Device(n) => Self::Device(*n),
+            Self::Static(a) => Self::Static(a.clone()),
+        }
+    }
+}
+
+fn collect_applications_container<'a>(
+    container: &roxmltree::Node<'a, 'a>,
+    map: &mut HashMap<String, ConfigNode<ApplicationLeaf<'a>>>,
 ) -> Result<(), SrxError> {
     for child in container.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
@@ -322,8 +505,7 @@ fn parse_applications_container(
                 let name = child_text(&child, "name").ok_or_else(|| {
                     SrxError::schema_mismatch("get-configuration", "application/name")
                 })?;
-                let leaf = parse_application_leaf(&child, name.clone())?;
-                map.insert(name, ConfigNode::Leaf(leaf));
+                map.insert(name, ConfigNode::Leaf(ApplicationLeaf::Device(child)));
             }
             "application-set" => {
                 let name = child_text(&child, "name").ok_or_else(|| {
@@ -351,20 +533,15 @@ fn parse_applications_container(
 /// Walk the `<configuration>` document for `<applications>` (user-defined)
 /// and `<groups name="junos-defaults"><applications>` (predefined, if the
 /// device exposes it).
-fn parse_applications(
-    config_xml: &str,
-) -> Result<HashMap<String, ConfigNode<ResolvedApplication>>, SrxError> {
-    let sanitized = crate::xml::sanitize_rustez_xml(config_xml);
-    let doc = roxmltree::Document::parse(&sanitized)
-        .map_err(|e| SrxError::Parse(format!("roxmltree: {e}")))?;
-
-    let mut map = HashMap::new();
-
+fn collect_applications<'a>(
+    doc: &'a roxmltree::Document<'a>,
+    map: &mut HashMap<String, ConfigNode<ApplicationLeaf<'a>>>,
+) -> Result<(), SrxError> {
     for apps in doc
         .descendants()
         .filter(|n| n.is_element() && n.tag_name().name() == "applications")
     {
-        parse_applications_container(&apps, &mut map)?;
+        collect_applications_container(&apps, map)?;
     }
 
     for group in doc
@@ -379,11 +556,11 @@ fn parse_applications(
             .children()
             .filter(|n| n.is_element() && n.tag_name().name() == "applications")
         {
-            parse_applications_container(&apps, &mut map)?;
+            collect_applications_container(&apps, map)?;
         }
     }
 
-    Ok(map)
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -410,10 +587,10 @@ mod tests {
         assert_eq!(data.kind, ApplicationKind::Application);
         assert_eq!(
             data.members[0].destination_port,
-            Some(PortRange {
+            Some(PortSpec::Numeric(PortRange {
                 low: 443,
                 high: 443
-            })
+            }))
         );
     }
 
@@ -427,7 +604,7 @@ mod tests {
         assert_eq!(data.members[0].protocol, "tcp");
         assert_eq!(
             data.members[0].destination_port,
-            Some(PortRange { low: 80, high: 80 })
+            Some(PortSpec::Numeric(PortRange { low: 80, high: 80 }))
         );
     }
 
@@ -439,10 +616,10 @@ mod tests {
         assert_eq!(data.members[0].protocol, "tcp");
         assert_eq!(
             data.members[0].destination_port,
-            Some(PortRange {
+            Some(PortSpec::Numeric(PortRange {
                 low: 8443,
                 high: 8443
-            })
+            }))
         );
     }
 
@@ -498,5 +675,80 @@ mod tests {
         let xml = "<configuration><applications/></configuration>";
         let resp = parse("r1", "junos-ssh", xml).expect("parse should not error");
         assert_eq!(resp.state, SrxState::Active);
+    }
+
+    #[test]
+    fn unrelated_lookup_unaffected_by_term_and_named_port_applications_elsewhere() {
+        // Percy M7 (MEC-83): before the fix, `parse_applications` eagerly
+        // parsed *every* `<application>` in the config up front — a
+        // `term`-based application or a named (non-numeric) port anywhere
+        // in the reply made the whole call return `Err`, so an unrelated
+        // simple TCP application couldn't be resolved either. The walk must
+        // only parse the node(s) it actually reaches.
+        let xml = fixture("unrelated_lookup_with_term_application_elsewhere.xml");
+        let resp = parse("r1", "simple-tcp", &xml).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.members.len(), 1);
+        assert_eq!(
+            data.members[0].destination_port,
+            Some(PortSpec::Numeric(PortRange {
+                low: 8080,
+                high: 8080
+            }))
+        );
+    }
+
+    #[test]
+    fn term_application_expands_to_one_entry_per_term() {
+        let xml = fixture("unrelated_lookup_with_term_application_elsewhere.xml");
+        let resp = parse("r1", "multi-term-app", &xml).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.members.len(), 2);
+        assert_eq!(data.members[0].name, "multi-term-app#t1");
+        assert_eq!(data.members[0].protocol, "tcp");
+        assert_eq!(
+            data.members[0].destination_port,
+            Some(PortSpec::Numeric(PortRange {
+                low: 8000,
+                high: 8000
+            }))
+        );
+        assert_eq!(data.members[1].name, "multi-term-app#t2");
+        assert_eq!(data.members[1].protocol, "udp");
+    }
+
+    #[test]
+    fn named_port_resolves_instead_of_erroring() {
+        // Percy M7 (MEC-83): a symbolic destination-port value must become
+        // `PortSpec::Named`, not a parse error.
+        let xml = fixture("unrelated_lookup_with_term_application_elsewhere.xml");
+        let resp = parse("r1", "named-port-app", &xml).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(
+            data.members[0].destination_port,
+            Some(PortSpec::Named {
+                name: "ssh".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn icmp_type_and_code_are_parsed() {
+        let xml = fixture("icmp_application.xml");
+        let resp = parse("r1", "custom-icmp", &xml).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.members[0].icmp_type, Some(8));
+        assert_eq!(data.members[0].icmp_code, Some(0));
+    }
+
+    #[test]
+    fn per_node_permission_denied_errors_instead_of_reporting_not_configured() {
+        // Percy M5 (MEC-83): both cluster nodes returning a real rpc-error
+        // must surface as an error, not silently report applications as
+        // absent.
+        let xml = fixture("clustered_permission_denied.xml");
+        let err = parse("r1", "junos-https", &xml).expect_err("must not report not_configured");
+        assert!(matches!(err, SrxError::Rpc { .. }), "{err}");
+        assert!(err.to_string().contains("access-denied"), "{err}");
     }
 }
