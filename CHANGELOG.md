@@ -104,6 +104,11 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Fixed
 
+- **cSRX devices now work**. rustez 0.18 tolerates cSRX rejecting
+  `<get-route-engine-information/>` during fact gathering
+  (fastrevmd-lab/rustez#54). Previously every tool call on a cSRX device failed
+  with `[OperationFailed] syntax error`.
+
 - **Flaky test race in `timeout_budget_tests`**. Both tests mutated the same
   process-global `CLEANUP_TIMEOUT_SECS` and cargo ran them in parallel, so whichever
   test lost the race would read the value the other had just reset, causing spurious
