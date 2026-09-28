@@ -189,6 +189,8 @@ const SRX_SERVER_TOOLS: &[&str] = &[
     "manage_appid_signature_package",
     "validate_chassis_cluster_health",
     "collect_jtac_support_bundle",
+    "srx_flow_sessions",
+    "srx_policy_match",
 ];
 
 #[cfg(test)]
@@ -198,8 +200,8 @@ mod server_tools_const_tests {
     use std::collections::HashSet;
 
     #[test]
-    fn server_tools_len_is_nine() {
-        assert_eq!(SRX_SERVER_TOOLS.len(), 9);
+    fn server_tools_len_is_eleven() {
+        assert_eq!(SRX_SERVER_TOOLS.len(), 11);
     }
 
     #[test]
@@ -799,6 +801,118 @@ impl JmcpHandler {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;
         Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_flow_sessions",
+        description = "Filtered, hard-capped flow-session query (`show security flow session`). \
+                       At least one filter (source_prefix, destination_prefix, source_port + \
+                       protocol, destination_port + protocol, protocol, application, or \
+                       session_identifier) is required unless acknowledge_unfiltered=true, in \
+                       which case the query is still capped (default 200, hard ceiling 2000) \
+                       and reported as truncated rather than silently returning everything that \
+                       fit. Chassis-cluster session ownership is not synced across nodes, so \
+                       sessions are grouped per node (re_name) and never merged into one table. \
+                       Before any full walk, the device's own session-count summary is queried \
+                       (with the same filters applied); when that count exceeds the cap, or \
+                       can't be determined, the full walk is refused outright (never issued) — \
+                       regardless of whether a filter was supplied — and the response reports \
+                       total_count_reported with truncated=true."
+    )]
+    async fn srx_flow_sessions(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::FlowSessionsArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "srx_flow_sessions", "read", vec![args.router.clone()]);
+
+        if let Err(e) = self.authorize_call(&extensions, "srx_flow_sessions", Some(&args.router)) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::flow_sessions::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing FlowSessionQuery: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_policy_match",
+        description = "Deterministic \"would this traffic be allowed\" answer for a 5-tuple \
+                       (`show security match-policies`) — the device's own verdict, never a \
+                       model's inference from the policy list. verdict is one of permit / deny / \
+                       reject / no_match; no_match (device default-policy fallthrough, no explicit \
+                       policy matched) is distinct from an explicit deny/reject policy match, and \
+                       carries default_action (deny or permit) for whichever default-policy the \
+                       device applies. is_global marks a matched zone-independent (any/any) \
+                       policy. The 5-tuple (source_ip, \
+                       destination_ip, source_port, destination_port, protocol) is parsed into \
+                       typed values and rejected with a typed error before any RPC is sent if \
+                       malformed."
+    )]
+    async fn srx_policy_match(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::PolicyMatchArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "srx_policy_match", "read", vec![args.router.clone()]);
+
+        if let Err(e) = self.authorize_call(&extensions, "srx_policy_match", Some(&args.router)) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::policy_match::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing PolicyMatchResult: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 }
 

@@ -258,7 +258,7 @@ mod tests {
             *names,
             expected.iter().map(|name| json!(name)).collect::<Vec<_>>()
         );
-        assert_eq!(names.len(), if cfg!(feature = "srx") { 36 } else { 27 });
+        assert_eq!(names.len(), if cfg!(feature = "srx") { 38 } else { 27 });
         assert!(!names.contains(&json!("execute")));
         assert!(
             tool.description.as_ref().unwrap().len()

@@ -9,11 +9,13 @@
 
 pub mod absence;
 pub mod error;
+pub mod protocol;
 pub mod workflows;
 pub mod xml;
 
 pub use absence::{SrxState, SrxToolResponse};
 pub use error::SrxError;
+pub use protocol::Protocol;
 pub use workflows::appid_package::{
     AppidAction, AppidCheckServerData, AppidCheckServerNode, AppidPackageArgs, AppidPackageResponse,
 };
@@ -23,6 +25,7 @@ pub use workflows::cluster_health::{
 pub use workflows::cluster_status::{
     ClusterNode, ClusterStatusArgs, ClusterStatusData, RedundancyGroup, RgMember,
 };
+pub use workflows::flow_sessions::{FlowSession, FlowSessionQuery, FlowSessionsArgs, NodeSessions};
 pub use workflows::idp_package::{
     DownloadAndInstallCompletedData, DownloadAndInstallResponse, IdpAction, IdpCheckServerData,
     IdpCheckServerNode, IdpPackageArgs, IdpPackageResponse, RollbackCompletedData,
@@ -30,6 +33,9 @@ pub use workflows::idp_package::{
 };
 pub use workflows::license::{
     LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
+};
+pub use workflows::policy_match::{
+    DefaultAction, FiveTuple, MatchVerdict, MatchedPolicy, PolicyMatchArgs, PolicyMatchResult,
 };
 pub use workflows::services_status::{
     AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,

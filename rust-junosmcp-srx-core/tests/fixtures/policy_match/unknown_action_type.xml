@@ -1,0 +1,12 @@
+<!-- Regression fixture: an action-type this parser doesn't recognise must fail closed, never guess a verdict. -->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>weird-policy</policy-name>
+    <action-type>permit-with-services</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>11</policy-index>
+    <from-zone-name>trust</from-zone-name>
+    <to-zone-name>untrust</to-zone-name>
+    <policy-sequence-number>4</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>

@@ -1,0 +1,19 @@
+<!--
+  "vsrx-ci-1" is the REAL global policy name observed live on vsrx-ci
+  (srx-policy-read-spec §11: "Global policies: Policy: vsrx-ci-1, ...
+  From zones: any, To zones: any, Action: permit, log, count", and
+  show security match-policies global for a trust to untrust 5-tuple:
+  "Policy: vsrx-ci-1, action-type: permit ... Policy Type: Configured,
+  global"). This is a match-global-policies reply (the RPC used for the
+  global tier, Percy F1 / MEC-302); the element names are synthetic (not
+  live-confirmed) — see policy_match.rs module docs.
+-->
+<match-global-policies-results>
+  <policy-information>
+    <policy-name>vsrx-ci-1</policy-name>
+    <action-type>permit</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>4</policy-index>
+    <policy-sequence-number>1</policy-sequence-number>
+  </policy-information>
+</match-global-policies-results>

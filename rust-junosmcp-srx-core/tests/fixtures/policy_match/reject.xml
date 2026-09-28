@@ -1,0 +1,12 @@
+<!-- Synthetic, hand-written per srx-policy-read-spec §11 (not live-confirmed). -->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>reject-ftp</policy-name>
+    <action-type>reject</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>9</policy-index>
+    <from-zone-name>trust</from-zone-name>
+    <to-zone-name>untrust</to-zone-name>
+    <policy-sequence-number>3</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>

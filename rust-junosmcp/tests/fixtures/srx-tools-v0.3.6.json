@@ -507,6 +507,194 @@
       ]
     }
   },
+  "srx_flow_sessions": {
+    "name": "srx_flow_sessions",
+    "description": "Filtered, hard-capped flow-session query (`show security flow session`). At least one filter (source_prefix, destination_prefix, source_port + protocol, destination_port + protocol, protocol, application, or session_identifier) is required unless acknowledge_unfiltered=true, in which case the query is still capped (default 200, hard ceiling 2000) and reported as truncated rather than silently returning everything that fit. Chassis-cluster session ownership is not synced across nodes, so sessions are grouped per node (re_name) and never merged into one table. Before any full walk, the device's own session-count summary is queried (with the same filters applied); when that count exceeds the cap, or can't be determined, the full walk is refused outright (never issued) — regardless of whether a filter was supplied — and the response reports total_count_reported with truncated=true.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "source_prefix": {
+          "description": "Filter to sessions whose source address falls in this prefix\n(a bare IP is treated as a /32 or /128).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "destination_prefix": {
+          "description": "Filter to sessions whose destination address falls in this prefix.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_port": {
+          "description": "Filter to sessions with this source port. Requires `protocol`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "destination_port": {
+          "description": "Filter to sessions with this destination port. Requires `protocol`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "protocol": {
+          "description": "Filter to sessions using this protocol (\"tcp\", \"udp\", \"icmp\", or a\nnumeric IANA protocol number).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "application": {
+          "description": "Filter to sessions matching this application name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_identifier": {
+          "description": "Filter to a specific session identifier.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cap": {
+          "description": "Maximum sessions to return, 1-2000. Defaults to 200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "acknowledge_unfiltered": {
+          "description": "Explicit acknowledgement required to run a filterless query. Without\nthis, a filterless call is rejected pre-RPC rather than silently\nwalking the whole session table.",
+          "type": "boolean",
+          "default": false
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      }
+    }
+  },
+  "srx_policy_match": {
+    "name": "srx_policy_match",
+    "description": "Deterministic \"would this traffic be allowed\" answer for a 5-tuple (`show security match-policies`) — the device's own verdict, never a model's inference from the policy list. verdict is one of permit / deny / reject / no_match; no_match (device default-policy fallthrough, no explicit policy matched) is distinct from an explicit deny/reject policy match, and carries default_action (deny or permit) for whichever default-policy the device applies. is_global marks a matched zone-independent (any/any) policy. The 5-tuple (source_ip, destination_ip, source_port, destination_port, protocol) is parsed into typed values and rejected with a typed error before any RPC is sent if malformed.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "required": [
+        "from_zone",
+        "to_zone",
+        "source_ip",
+        "destination_ip",
+        "source_port",
+        "destination_port",
+        "protocol"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "from_zone": {
+          "description": "Source zone name.",
+          "type": "string"
+        },
+        "to_zone": {
+          "description": "Destination zone name.",
+          "type": "string"
+        },
+        "source_ip": {
+          "description": "Source IP address (no CIDR — a single host address).",
+          "type": "string"
+        },
+        "destination_ip": {
+          "description": "Destination IP address (no CIDR — a single host address).",
+          "type": "string"
+        },
+        "source_port": {
+          "description": "Source port, 0-65535.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "destination_port": {
+          "description": "Destination port, 0-65535.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "protocol": {
+          "description": "Protocol: \"tcp\", \"udp\", \"icmp\" (case-insensitive), or a numeric IANA\nprotocol number.",
+          "type": "string"
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "srxmcp_status": {
     "name": "srxmcp_status",
     "description": "Diagnostic — returns this server's version, endpoint name, and uptime in seconds.",
