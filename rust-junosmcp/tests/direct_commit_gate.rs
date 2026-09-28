@@ -24,7 +24,11 @@ fn stderr_for_request(extra_args: &[&str], request: &str) -> Vec<String> {
     common::ensure_built();
 
     let lease_dir = tempfile::tempdir().expect("device lease dir");
-    let inventory = common::write_inventory_temp(&[("r1", "127.0.0.1", 22, "u", "/dev/null")]);
+    // Port 1 is a closed, unroutable port: the "with the flag" variant of
+    // these tests passes the gate and goes on to actually dial the device.
+    // Port 22 would hit any sshd running on the test host and attempt a
+    // real (failing) login instead of failing fast on connection refused.
+    let inventory = common::write_inventory_temp(&[("r1", "127.0.0.1", 1, "u", "/dev/null")]);
 
     let mut cmd = Command::new(common::binary_path());
     cmd.args(["-t", "stdio"])
@@ -145,8 +149,12 @@ fn http_gate_matches_stdio_with_and_without_the_flag() {
     use rust_junosmcp_auth::{KnownNames, ScopeSet, TokenStoreFile};
 
     common::ensure_built();
+    // Port 1 is closed/unroutable: the "with the flag" call below passes the
+    // gate and dials the device for real. Port 22 would hit any sshd running
+    // on the test host and attempt a real (failing) login instead of failing
+    // fast on connection refused.
     let inv = common::write_inv(
-        r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        r#"{"r1":{"ip":"127.0.0.1","port":1,"username":"u","auth":{"type":"password","password":"x"}}}"#,
     );
     let dir = tempfile::tempdir().unwrap();
     let tokens = dir.path().join("tokens.json");
@@ -211,5 +219,139 @@ fn http_gate_matches_stdio_with_and_without_the_flag() {
             !body.contains("allow-direct-commit"),
             "the flag must lift the refusal over HTTP too: {body}"
         );
+        // Assert on the specific downstream failure (connection refused on
+        // the closed port), not just the absence of the gate's refusal text.
+        // `!body.contains("allow-direct-commit")` alone would also pass if
+        // the call failed for an unrelated reason upstream of the gate.
+        assert!(
+            body.to_lowercase().contains("connect")
+                || body.to_lowercase().contains("refused")
+                || body.to_lowercase().contains("connection"),
+            "must fail with a transport/connect error once past the gate, not something else: {body}"
+        );
     }
+}
+
+// `rollback_config`, `render_and_apply_j2_template`, and `upgrade_junos` only
+// gate the specific argument combination that commits or otherwise mutates
+// the device; every other combination is a no-op preview/dry-run/pre-flight
+// path that must keep working without the flag. Each boolean is a place a
+// regression (for example inverting `!args.dry_run`) would hide undetected by
+// the `load_and_commit_config`-only coverage above.
+
+const ROLLBACK_COMMIT_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rollback_config","arguments":{"device":"r1","version":1,"commit":true}}}"#;
+const ROLLBACK_PREVIEW_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rollback_config","arguments":{"device":"r1","version":1,"commit":false}}}"#;
+
+/// `rollback_config` with `commit=true` mutates the running config exactly
+/// like `load_and_commit_config`, so it must be refused without the flag.
+#[test]
+fn stdio_refuses_rollback_config_commit_without_the_flag() {
+    let lines = stderr_for_request(&[], ROLLBACK_COMMIT_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("rollback_config"))
+        .unwrap_or_else(|| panic!("no rollback_config audit record among: {audits:#?}"));
+    assert!(
+        record.contains("authorization=denied") && record.contains("direct_commit_disabled"),
+        "commit=true refusal must be audited as a denial naming the reason: {record}"
+    );
+}
+
+/// `rollback_config` with `commit=false` (the default) only loads, diffs, and
+/// discards — it never touches the running config, so it must not be gated.
+#[test]
+fn stdio_allows_rollback_config_preview_without_the_flag() {
+    let lines = stderr_for_request(&[], ROLLBACK_PREVIEW_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("rollback_config"))
+        .unwrap_or_else(|| panic!("no rollback_config audit record among: {audits:#?}"));
+    assert!(
+        !record.contains("direct_commit_disabled"),
+        "commit=false preview must not be gated: {record}"
+    );
+}
+
+const TEMPLATE_APPLY_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_and_apply_j2_template","arguments":{"template_content":"set system host-name {{ name }}","vars_content":"{\"name\":\"test\"}","device_name":"r1","apply_config":true,"dry_run":false}}}"#;
+const TEMPLATE_DRY_RUN_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_and_apply_j2_template","arguments":{"template_content":"set system host-name {{ name }}","vars_content":"{\"name\":\"test\"}","device_name":"r1","apply_config":true,"dry_run":true}}}"#;
+
+/// `render_and_apply_j2_template` with `apply_config=true, dry_run=false`
+/// commits the rendered config, so it must be refused without the flag.
+#[test]
+fn stdio_refuses_template_apply_without_the_flag() {
+    let lines = stderr_for_request(&[], TEMPLATE_APPLY_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("render_and_apply_j2_template"))
+        .unwrap_or_else(|| {
+            panic!("no render_and_apply_j2_template audit record among: {audits:#?}")
+        });
+    assert!(
+        record.contains("authorization=denied") && record.contains("direct_commit_disabled"),
+        "apply_config=true, dry_run=false refusal must be audited as a denial naming the reason: {record}"
+    );
+}
+
+/// `render_and_apply_j2_template` with `dry_run=true` runs lock, load, diff,
+/// and rollback with no commit, so it must not be gated even with
+/// `apply_config=true`.
+#[test]
+fn stdio_allows_template_dry_run_without_the_flag() {
+    let lines = stderr_for_request(&[], TEMPLATE_DRY_RUN_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("render_and_apply_j2_template"))
+        .unwrap_or_else(|| {
+            panic!("no render_and_apply_j2_template audit record among: {audits:#?}")
+        });
+    assert!(
+        !record.contains("direct_commit_disabled"),
+        "dry_run=true must not be gated: {record}"
+    );
+}
+
+const UPGRADE_CONFIRM_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"upgrade_junos","arguments":{"device":"r1","source_path":"junos-image.tgz","target_version":"25.4R1.12","confirm":true}}}"#;
+const UPGRADE_PREFLIGHT_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"upgrade_junos","arguments":{"device":"r1","source_path":"junos-image.tgz","target_version":"25.4R1.12","confirm":false}}}"#;
+
+/// `upgrade_junos` with `confirm=true` installs an image and reboots the
+/// device, so it must be refused without the flag.
+#[test]
+fn stdio_refuses_upgrade_junos_confirm_without_the_flag() {
+    let lines = stderr_for_request(&[], UPGRADE_CONFIRM_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("upgrade_junos"))
+        .unwrap_or_else(|| panic!("no upgrade_junos audit record among: {audits:#?}"));
+    assert!(
+        record.contains("authorization=denied") && record.contains("direct_commit_disabled"),
+        "confirm=true refusal must be audited as a denial naming the reason: {record}"
+    );
+}
+
+/// `upgrade_junos` with `confirm=false` (the default) is the read-only
+/// pre-flight that returns the upgrade plan; it never touches the device, so
+/// it must not be gated.
+#[test]
+fn stdio_allows_upgrade_junos_preflight_without_the_flag() {
+    let lines = stderr_for_request(&[], UPGRADE_PREFLIGHT_REQUEST);
+
+    let audits = audit_lines(&lines);
+    let record = audits
+        .iter()
+        .find(|line| line.contains("upgrade_junos"))
+        .unwrap_or_else(|| panic!("no upgrade_junos audit record among: {audits:#?}"));
+    assert!(
+        !record.contains("direct_commit_disabled"),
+        "confirm=false pre-flight must not be gated: {record}"
+    );
 }
