@@ -70,7 +70,7 @@
                 <authentication>
                     <encrypted-password>$6$FAKESALT2$FAKEHASHVALUEDONOTUSE11111111111111111111111111111111111111111111111111111</encrypted-password>
                     <ssh-ed25519>
-                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@gmail.com</name>
+                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
                     <ssh-ed25519>
                         <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAuNGjQm7xEPte1IxcH0uN3wQptpJM0HUTd0aTmFgu7z srxoutpost@outpost</name>

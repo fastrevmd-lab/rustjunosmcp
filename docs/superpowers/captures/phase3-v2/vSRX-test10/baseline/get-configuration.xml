@@ -27,7 +27,7 @@
                 <authentication>
                     <encrypted-password>$6$FAKESALT2$FAKEHASHVALUEDONOTUSE11111111111111111111111111111111111111111111111111111</encrypted-password>
                     <ssh-ed25519>
-                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@gmail.com</name>
+                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
                 </authentication>
             </user>
@@ -37,7 +37,7 @@
                 <class>super-user</class>
                 <authentication>
                     <ssh-ed25519>
-                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@gmail.com</name>
+                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
                 </authentication>
             </user>
