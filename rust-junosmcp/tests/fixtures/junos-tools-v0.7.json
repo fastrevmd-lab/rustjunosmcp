@@ -437,6 +437,13 @@
                 "string",
                 "null"
               ]
+            },
+            "mode": {
+              "description": "Load mode: \"merge\" (default), \"replace\", or \"override\". `override`\nreplaces the entire candidate configuration; it is permitted here\n(and only here) because a change set requires approval by a second\nprincipal — `create_junos_change_set` → `approve_junos_change_set` →\n`apply_junos_change_set` — before anything commits (MEC-12).",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "additionalProperties": false,
@@ -1175,6 +1182,11 @@
           ],
           "default": null
         },
+        "format": {
+          "description": "Output format: `text` (default, unmodified `show configuration`),\n`set`, `xml`, or `json`. Rendered device-side via the equivalent\n`| display <format>` CLI modifier — the same mechanism\n`execute_junos_command` already passes through for arbitrary commands.",
+          "type": "string",
+          "default": "text"
+        },
         "max_lines": {
           "description": "Cap output to at most N lines (head; use `tail` for the last N).\nIncludes the truncation marker, so the response never exceeds N lines.",
           "type": [
@@ -1455,6 +1467,11 @@
           "type": "string",
           "default": "set"
         },
+        "mode": {
+          "description": "Load mode: `merge` (default, as today), `replace`, or `override`.\n`override` replaces the entire candidate configuration and is always\nrefused here — this tool commits directly with no second-principal\nreview. Use `create_junos_change_set` → `approve_junos_change_set` →\n`apply_junos_change_set` for an override that requires human approval.",
+          "type": "string",
+          "default": "merge"
+        },
         "commit_comment": {
           "description": "Commit comment recorded in the device commit log.",
           "type": "string",
@@ -1603,6 +1620,11 @@
             "null"
           ],
           "default": null
+        },
+        "mode": {
+          "description": "Load mode: `merge` (default, as today), `replace`, or `override`.\n`override` replaces the entire candidate configuration and is always\nrefused here — this tool commits directly with no second-principal\nreview. Use `create_junos_change_set` → `approve_junos_change_set` →\n`apply_junos_change_set` for an override that requires human approval.",
+          "type": "string",
+          "default": "merge"
         },
         "timeout": {
           "description": "Connection timeout in seconds (per-device).",
