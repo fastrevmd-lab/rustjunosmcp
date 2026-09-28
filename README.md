@@ -594,6 +594,35 @@ docker run --rm -i \
   ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 ```
 
+**Verifying the image signature:** every image pushed by the `Release image`
+workflow is signed keylessly with [cosign](https://github.com/sigstore/cosign)
+via GitHub Actions OIDC — there is no key pair anywhere. Verification pins the
+signing identity to that exact workflow, so a signature from anywhere else
+(a fork, a different repo, a local build) fails:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/fastrevmd-lab/rustjunosmcp/\.github/workflows/release-image\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+|heads/main)$' \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+```
+
+This is a regexp, not an exact `--certificate-identity`, because GitHub embeds
+the ref that triggered the run into the certificate, and this workflow has two
+legitimate triggers with two different refs: a normal tag push carries
+`@refs/tags/vX.Y.Z` for that release's own tag — different for every version,
+including for the `:latest` tag, since it is repushed and re-signed on every
+release — and a `workflow_dispatch` backfill (see the `ref` input above)
+typically carries `@refs/heads/main`, the branch the run was dispatched from.
+Neither a pull request nor a push to any other branch can trigger this
+workflow at all, so no other identity is possible. Pin the exact tag instead
+of the version range if you are verifying one specific release rather than
+"some release build of this workflow." Each signature also creates a public
+entry in the [Rekor](https://docs.sigstore.dev/logging/overview/) transparency
+log —
+this is expected and does not disclose anything beyond what the image push
+itself already made public.
+
 The state mount holds staged upload/download files, the shared destructive
 operation leases, and `known_hosts`. Do not delete its lease files while a
 server is running. Strict host-key checking is the default. For an isolated lab
@@ -649,6 +678,36 @@ sha256sum -c dist/rust-junosmcp_0.25.0_amd64.tar.gz.sha256
 pct push 115 dist/rust-junosmcp_0.25.0_amd64.tar.gz /tmp/jmcp.tar.gz
 pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.25.0_amd64/install.sh"
 ```
+
+**Downloading a prebuilt release tarball instead:** each GitHub release also
+publishes the tarball, its `.sha256` checksum, and a keyless cosign signature
+bundle (`.cosign.bundle`) for it, signed by the `Sign release tarball`
+workflow the same way the container image is signed above — no key pair,
+GitHub Actions OIDC only. Check the checksum *and* the signature; the checksum
+alone only proves the download was not corrupted in transit, not that it came
+from this repository's release workflow:
+
+```bash
+version=0.25.0
+base="https://github.com/fastrevmd-lab/rustjunosmcp/releases/download/v${version}"
+curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz"
+curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.sha256"
+curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle"
+
+sha256sum -c "rust-junosmcp_${version}_amd64.tar.gz.sha256"
+
+cosign verify-blob \
+  --certificate-identity "https://github.com/fastrevmd-lab/rustjunosmcp/.github/workflows/release-sign-tarball.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --bundle "rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle" \
+  "rust-junosmcp_${version}_amd64.tar.gz"
+```
+
+As with the image, `--certificate-identity` names the signing workflow's ref
+(`@refs/heads/main`, since that workflow itself lives and runs from `main`),
+not the release tag being verified. `cosign verify-blob` exits non-zero on any
+mismatch — wrong identity, wrong issuer, or a tarball that does not match the
+bundle — so a failure here means do not install, not "probably fine."
 
 **Edit the inventory:**
 
