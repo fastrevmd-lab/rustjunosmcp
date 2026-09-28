@@ -1,0 +1,36 @@
+<!--
+  Synthetic, hand-written per srx-policy-read-spec §11 (not live-confirmed).
+  node1 is secondary for every relevant redundancy group, so its fragment
+  carries an rpc-error rather than a session list — a normal per-node
+  result, not a failure of the whole call (spec §5).
+-->
+<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-information>
+        <flow-session>
+          <session-identifier>200001</session-identifier>
+          <session-protocol-name>tcp</session-protocol-name>
+          <source-address>10.1.0.5</source-address>
+          <source-port>44000</source-port>
+          <destination-address>198.51.100.9</destination-address>
+          <destination-port>443</destination-port>
+          <application>junos-https</application>
+          <policy-name>allow-web</policy-name>
+          <in-interface-name>reth1.0</in-interface-name>
+          <out-interface-name>reth0.0</out-interface-name>
+          <timeout>1800</timeout>
+          <duration>10</duration>
+        </flow-session>
+      </flow-session-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-severity>warning</error-severity>
+        <error-message>node is secondary for all relevant redundancy groups</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>

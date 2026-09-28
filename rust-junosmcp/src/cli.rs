@@ -197,6 +197,32 @@ pub struct Cli {
     #[arg(long = "allow-plane-owned-writes")]
     pub allow_plane_owned_writes: bool,
 
+    /// Allow direct-commit tools that never create a change set at all.
+    ///
+    /// `load_and_commit_config`, `render_and_apply_j2_template` (when it would
+    /// actually apply), `rollback_config` (when `commit=true`), and
+    /// `upgrade_junos` (when `confirm=true`) stage, validate, and commit a
+    /// device change in one call, with no independent second-principal
+    /// approval. That has no change-set flow to route through, so by default
+    /// this server refuses those calls outright rather than let a model decide
+    /// a firewall action alone.
+    ///
+    /// This applies identically over stdio and HTTP: stdio carries no caller
+    /// context at all, so it is refused on exactly the same terms as an
+    /// authenticated HTTP session.
+    ///
+    /// **Residual risk**: an operator can set this flag. Doing so is logged
+    /// loudly at startup and every direct-commit call is recorded in the audit
+    /// trail (`direct_commit_allowed=true`), but the second-principal review
+    /// the change-set flow provides does not happen. Prefer routing writes
+    /// through `create_change_set` / `approve_change_set` / `apply_change_set`
+    /// wherever the vendor API allows it, and reserve this flag for the tools
+    /// that cannot fit that shape.
+    ///
+    /// Defaults to false (refuse). Spelled identically on every mecmcp server.
+    #[arg(long = "allow-direct-commit")]
+    pub allow_direct_commit: bool,
+
     /// Web approver settings (--web-enabled-approver).
     #[command(flatten)]
     pub web_approver: WebApproverArgs,

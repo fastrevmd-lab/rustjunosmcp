@@ -1,0 +1,33 @@
+<!-- Synthetic, hand-written per srx-policy-read-spec §11 (not live-confirmed). -->
+<flow-session-information>
+  <flow-session>
+    <session-identifier>131073</session-identifier>
+    <session-protocol-name>tcp</session-protocol-name>
+    <source-address>10.0.0.5</source-address>
+    <source-port>33000</source-port>
+    <destination-address>8.8.8.8</destination-address>
+    <destination-port>443</destination-port>
+    <nat-source-address>192.0.2.1</nat-source-address>
+    <nat-source-port>40000</nat-source-port>
+    <application>junos-https</application>
+    <policy-name>allow-web</policy-name>
+    <in-interface-name>reth1.0</in-interface-name>
+    <out-interface-name>ge-0/0/0.0</out-interface-name>
+    <timeout>1800</timeout>
+    <duration>42</duration>
+  </flow-session>
+  <flow-session>
+    <session-identifier>131074</session-identifier>
+    <session-protocol-name>udp</session-protocol-name>
+    <source-address>10.0.0.7</source-address>
+    <source-port>51000</source-port>
+    <destination-address>203.0.113.9</destination-address>
+    <destination-port>53</destination-port>
+    <application>junos-dns-udp</application>
+    <policy-name>allow-dns</policy-name>
+    <in-interface-name>reth1.0</in-interface-name>
+    <out-interface-name>ge-0/0/0.0</out-interface-name>
+    <timeout>60</timeout>
+    <duration>5</duration>
+  </flow-session>
+</flow-session-information>

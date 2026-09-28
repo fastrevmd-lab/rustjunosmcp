@@ -55,5 +55,34 @@ jobs:
       # which this job already needs. Matches mecmcp and rustpanosmcp.
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
-      - name: cargo-deny (bans + sources)
-        run: cargo deny check bans sources
+      - name: cargo-deny (advisories + licenses + bans + sources)
+        run: cargo deny check advisories licenses bans sources
+
+  trivy:
+    name: trivy (fs + image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Installed from the upstream release binary rather than via
+      # aquasecurity/trivy-action, which runs as a Docker container action and
+      # so pulls aquasec/trivy from Docker Hub at run time — the same failure
+      # mode that pushed cargo-deny off cargo-deny-action above. Checksum
+      # pinned against the release's published checksums.txt.
+      - name: Install trivy
+        env:
+          TRIVY_VERSION: "0.73.0"
+          TRIVY_SHA256: "2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b"
+        run: |
+          curl -sSfL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tar.gz" | sha256sum -c -
+          tar -xzf trivy.tar.gz trivy
+          sudo mv trivy /usr/local/bin/trivy
+      - name: trivy fs (dependency + config scan)
+        run: trivy fs --config trivy.yaml --exit-code 1 --severity HIGH,CRITICAL .
+      - name: Build image for scanning
+        run: docker build -t rustjunosmcp:ci .
+      - name: trivy image (container scan)
+        run: trivy image --config trivy.yaml --exit-code 1 --severity HIGH,CRITICAL rustjunosmcp:ci

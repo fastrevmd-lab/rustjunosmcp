@@ -4,8 +4,10 @@
 pub mod appid_package;
 pub mod cluster_health;
 pub mod cluster_status;
+pub mod flow_sessions;
 pub mod idp_package;
 pub mod license;
+pub mod policy_match;
 pub mod services_status;
 pub mod signature_package;
 pub mod support_bundle;
@@ -47,5 +49,7 @@ mod schema_tripwire {
         assert_closed_and_aliased::<super::appid_package::AppidPackageArgs>("AppidPackageArgs");
         assert_closed_and_aliased::<super::idp_package::IdpPackageArgs>("IdpPackageArgs");
         assert_closed_and_aliased::<super::support_bundle::SupportBundleArgs>("SupportBundleArgs");
+        assert_closed_and_aliased::<super::flow_sessions::FlowSessionsArgs>("FlowSessionsArgs");
+        assert_closed_and_aliased::<super::policy_match::PolicyMatchArgs>("PolicyMatchArgs");
     }
 }

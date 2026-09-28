@@ -90,7 +90,8 @@ async fn main() -> Result<()> {
         redaction,
         journald: args.audit_journald,
     };
-    mecmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
+    let audit_sink =
+        mecmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
     mecmcp_audit::install_duration_metric_name("junosmcp_tool_duration_seconds");
     env_compat::emit_warnings(&warnings);
 
@@ -301,6 +302,22 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Direct-commit tools (load_and_commit_config, a committing
+    // render_and_apply_j2_template, rollback_config with commit=true, and a
+    // confirmed upgrade_junos) never create a change set, so they have no
+    // second-principal approval by construction. Refused by default; logging
+    // here mirrors the lab-mode and plane-owned-writes banners above.
+    let direct_commit = mecmcp_audit::DirectCommitPolicy::new(args.allow_direct_commit);
+    direct_commit.log_startup("rust-junosmcp");
+    if !args.allow_direct_commit {
+        tracing::info!(
+            "direct-commit tools disabled: load_and_commit_config, a committing \
+             render_and_apply_j2_template, a committing rollback_config, and a confirmed \
+             upgrade_junos are refused on stdio and HTTP alike. Use --allow-direct-commit to \
+             enable them."
+        );
+    }
+
     // The SSDF evidence pipeline, when configured. Built before the coordinator
     // because the coordinator takes its recorder, and started here rather than
     // lazily so a misconfiguration -- an unwritable spool, a credential with
@@ -391,6 +408,7 @@ async fn main() -> Result<()> {
         coordinator,
         args.allow_plane_owned_writes,
         args.web_approver.web_enabled_approver,
+        direct_commit,
     );
     #[cfg(feature = "srx")]
     let handler = handler.with_srx_runtime(
@@ -401,15 +419,21 @@ async fn main() -> Result<()> {
         ),
     );
 
-    // SIGHUP hot reload of the token store (unix only). On HUP, re-read the
-    // tokens file and atomically swap the ArcSwap so subsequent requests see
-    // the new state. Stdio mode and --allow-no-auth produce a None token_store
-    // and skip this entirely.
+    // SIGHUP hot reload (unix only): reopen the audit file for lossless log
+    // rotation, then — when configured — re-read the tokens file and
+    // inventory and atomically swap them in. The audit reopen runs whenever a
+    // file sink is configured, independent of the token store: stdio mode and
+    // --allow-no-auth still audit to a file and still need rotation to work.
     #[cfg(unix)]
-    if let (Some(store_file), Some(_path)) = (token_store.clone(), args.tokens_file.clone()) {
+    if audit_sink.is_some() || token_store.is_some() {
+        let store_and_path = match (token_store.clone(), args.tokens_file.clone()) {
+            (Some(store_file), Some(_path)) => Some(store_file),
+            _ => None,
+        };
         // Inventory is now mutable at runtime (add_device / reload_devices).
         let dm = dev_manager.clone();
         let hup_handler = handler.clone();
+        let hup_audit_sink = audit_sink.clone();
         tokio::spawn(async move {
             let mut hup = match tokio::signal::unix::signal(
                 tokio::signal::unix::SignalKind::hangup(),
@@ -421,7 +445,23 @@ async fn main() -> Result<()> {
                 }
             };
             while hup.recv().await.is_some() {
-                tracing::info!("SIGHUP: reloading token store and inventory");
+                tracing::info!("SIGHUP: reopening audit log and reloading token store/inventory");
+                // Reopen first: this is the lossless half of log rotation
+                // (rename the file, signal the process), and a failure here
+                // must not block the reloads below.
+                if let Some(sink) = &hup_audit_sink {
+                    match sink.reopen() {
+                        Ok(()) => {
+                            tracing::info!(path = %sink.path().display(), "audit log reopened");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, path = %sink.path().display(), "audit log reopen failed; keeping previous sink");
+                        }
+                    }
+                }
+                let Some(store_file) = &store_and_path else {
+                    continue;
+                };
                 // Reload inventory FIRST so the token store sees current routers.
                 match rust_junosmcp_core::tools::reload_devices::reload_current_from_disk(
                     dm.clone(),

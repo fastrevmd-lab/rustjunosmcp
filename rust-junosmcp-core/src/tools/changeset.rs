@@ -540,10 +540,41 @@ pub async fn create_change_set_with_cancel(
     // approved. An action that satisfies no valid shape used to survive create,
     // burn the approval, and occupy this principal's one pending change-set
     // slot until someone thought to call apply and watch it fail (#254).
+    //
+    // Also resolve each payload's format/mode here, for the same reason: an
+    // invalid combination (e.g. `mode=wipe`, or `format=set`+`mode=override`)
+    // used to be caught only inside `JunosTransaction::stage`, at apply time —
+    // by then a human has spent an approval and the principal's one pending
+    // slot is burned for nothing (Percy review, rustjunosmcp#425 F2).
+    let mut requests_override = false;
     for (index, action) in args.actions.iter().enumerate() {
         action
             .validate_shape(index)
             .map_err(JmcpError::Validation)?;
+
+        if let Some(payload) = &action.payload {
+            let format = payload.format.as_deref().unwrap_or("set");
+            // Validates the format alone; the text isn't needed for that, so
+            // avoid cloning the (potentially large) payload text just to check it.
+            crate::helpers::build_config_payload(String::new(), Some(format))?;
+            let requested_mode = crate::helpers::parse_load_mode(payload.mode.as_deref())?;
+            crate::helpers::resolve_load_action(format, requested_mode)?;
+            if requested_mode == rustez::LoadAction::Override {
+                requests_override = true;
+            }
+        }
+    }
+
+    // `override` is only permitted through this change-set path because it
+    // requires approval by a second principal (MEC-12). Lab mode waives that
+    // approval on every change set it creates — there is no second
+    // principal on a single-operator server — so allowing `override` there
+    // would silently defeat the only gate that makes it safe (Percy review,
+    // rustjunosmcp#425 F1).
+    if requests_override && coordinator.lab_mode() {
+        return Err(JmcpError::OverrideRequiresHumanApproval {
+            tool: "create_junos_change_set",
+        });
     }
 
     // Check every action against the device's configuration policy.
@@ -673,6 +704,7 @@ pub async fn approve_change_set_with_cancel(
             args.device,
             approver,
             args.expected_digest,
+            attribution.actor_type,
         )
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
@@ -790,7 +822,12 @@ pub async fn apply_change_set_with_cancel(
     let mut attribution = attribution;
     attribution.with_change_set(&args.change_set_id, approver_for_commit(&change_set_record));
 
-    // Deserialize the actions from the stored JSON and validate each against policy.
+    // Deserialize the actions from the stored JSON, validate each against
+    // policy, and track each payload action's resolved load action so the
+    // audit record can say what was actually requested rather than
+    // hardcoding "merge" (Percy review, rustjunosmcp#425 F4: an override
+    // apply used to be logged as a merge).
+    let mut resolved_modes: Vec<&'static str> = Vec::new();
     for action_value in &change_set_record.actions {
         let action: JunosAction = serde_json::from_value(action_value.clone())
             .map_err(|e| JmcpError::Validation(format!("failed to deserialize action: {e}")))?;
@@ -817,17 +854,27 @@ pub async fn apply_change_set_with_cancel(
                     });
                 }
             }
+
+            let requested_mode = crate::helpers::parse_load_mode(payload.mode.as_deref())?;
+            let load_action = crate::helpers::resolve_load_action(format, requested_mode)?;
+            resolved_modes.push(load_action.as_str());
         }
-        // Rollback actions do not need policy checks.
+        // Rollback actions do not need policy checks and carry no load mode.
     }
 
     // Build the transaction backend.
     let transaction = JunosTransaction::new(dm.clone(), args.device.clone());
 
     // For Junos, there is no XPath equivalent, so the primary target is None.
-    // The primary action discriminator: we use "merge" as the default for
-    // Junos config load operations (cfg.load() merges by default).
-    let primary_action = "merge";
+    // The primary action discriminator: the first payload action's resolved
+    // mode, or "mixed" when the change set's payload actions disagree, or
+    // "merge" (Junos's own default) when the change set has no payload
+    // actions at all (e.g. rollback-only).
+    let primary_action: &str = match resolved_modes.split_first() {
+        Some((first, rest)) if rest.iter().all(|m| m == first) => first,
+        Some(_) => "mixed",
+        None => "merge",
+    };
     let primary_target: Option<&str> = None;
 
     // Construct a stable canonical endpoint URL for the coordinator's guard.
@@ -2486,6 +2533,18 @@ mod tests {
         )
     }
 
+    fn test_coordinator_lab_mode(state_dir: &TempDir) -> Arc<ChangesetCoordinator> {
+        Arc::new(
+            ChangesetCoordinator::load(
+                Some(&state_dir.path().join("changeset-state.json")),
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(300),
+                true,
+            )
+            .unwrap(),
+        )
+    }
+
     /// #254: an action satisfying no valid shape used to be accepted, digested,
     /// and (in lab mode) approved, failing only at apply. The negative
     /// assertion at the end is the part that matters most: the rejected create
@@ -2540,6 +2599,7 @@ mod tests {
                     payload: Some(ConfigPayloadSpec {
                         text: "set system host-name test".into(),
                         format: Some("set".into()),
+                        mode: None,
                     }),
                     rollback_source: None,
                 }],
@@ -2580,6 +2640,7 @@ mod tests {
                         payload: Some(ConfigPayloadSpec {
                             text: "set system host-name test".into(),
                             format: Some("set".into()),
+                            mode: None,
                         }),
                         rollback_source: Some(1),
                     }],
@@ -2617,6 +2678,201 @@ mod tests {
         );
     }
 
+    /// Percy review F1 (rustjunosmcp#425): lab mode waives approval on every
+    /// change set it creates, so allowing `mode=override` there would commit
+    /// the whole candidate configuration with no human ever reviewing it.
+    /// `create_junos_change_set` must refuse override outright when the
+    /// coordinator is in lab mode, before anything is persisted or waived.
+    #[tokio::test]
+    async fn create_change_set_refuses_override_in_lab_mode() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator_lab_mode(&state_dir);
+        const FINGERPRINT: &str =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        let r = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "system { host-name test; }".into(),
+                        format: Some("text".into()),
+                        mode: Some("override".into()),
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        match r {
+            Err(JmcpError::OverrideRequiresHumanApproval { tool }) => {
+                assert_eq!(tool, "create_junos_change_set");
+            }
+            other => panic!("expected override to be refused in lab mode, got {other:?}"),
+        }
+    }
+
+    /// Non-override modes are unaffected by the lab-mode override refusal.
+    #[tokio::test]
+    async fn create_change_set_allows_merge_in_lab_mode() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator_lab_mode(&state_dir);
+        const FINGERPRINT: &str =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        let r = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "set system host-name test".into(),
+                        format: Some("set".into()),
+                        mode: None,
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            r.is_ok(),
+            "merge in lab mode must still be allowed, got {r:?}"
+        );
+    }
+
+    /// Percy review F2 (rustjunosmcp#425): an invalid `mode` or an
+    /// incompatible format/mode combination used to survive `create` and
+    /// fail only inside `JunosTransaction::stage`, at apply time — by then a
+    /// human has spent an approval and the principal's one pending slot is
+    /// burned. Both must now be rejected at create, before the pending slot
+    /// is consumed, mirroring the #254 test above.
+    #[tokio::test]
+    async fn create_change_set_rejects_unknown_mode_before_consuming_the_pending_slot() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FINGERPRINT: &str =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        let r = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "set system host-name test".into(),
+                        format: Some("set".into()),
+                        mode: Some("wipe".into()),
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm.clone(),
+            coordinator.clone(),
+            policy.clone(),
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            matches!(r, Err(JmcpError::BadLoadMode(ref m)) if m == "wipe"),
+            "expected an unknown mode to be rejected at create, got {r:?}"
+        );
+
+        // The slot must still be free.
+        let ok = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "set system host-name test".into(),
+                        format: Some("set".into()),
+                        mode: None,
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            ok.is_ok(),
+            "a rejected create must not consume the pending change-set slot, got {ok:?}"
+        );
+    }
+
+    /// Same class of bug as above, for the format/mode incompatibility rather
+    /// than an unknown mode string: `format=set` has no wire-level `override`
+    /// action, and that must be caught at create rather than at apply.
+    #[tokio::test]
+    async fn create_change_set_rejects_incompatible_format_and_mode_at_create() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = test_coordinator(&state_dir);
+        const FINGERPRINT: &str =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        let r = create_change_set(
+            CreateChangeSetArgs {
+                device: "r1".into(),
+                expected_fingerprint: FINGERPRINT.into(),
+                actions: vec![JunosAction {
+                    payload: Some(ConfigPayloadSpec {
+                        text: "set system host-name test".into(),
+                        format: Some("set".into()),
+                        mode: Some("override".into()),
+                    }),
+                    rollback_source: None,
+                }],
+            },
+            dm,
+            coordinator,
+            policy,
+            test_attribution("alice"),
+        )
+        .await;
+
+        assert!(
+            matches!(r, Err(JmcpError::IncompatibleFormatMode { .. })),
+            "expected format=set + mode=override to be rejected at create, got {r:?}"
+        );
+    }
+
     #[tokio::test]
     async fn approve_change_set_by_same_principal_fails() {
         let inv = inv_with(
@@ -2640,6 +2896,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2686,6 +2943,78 @@ mod tests {
         );
     }
 
+    /// House rule: a human approves. An agent principal — distinct from the
+    /// owner, so separation of duties alone would let this through — must
+    /// still be refused as the second approver.
+    #[tokio::test]
+    async fn approve_change_set_by_agent_actor_fails() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = Arc::new(
+            ChangesetCoordinator::load(
+                Some(&state_dir.path().join("changeset-state.json")),
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(300),
+                false,
+            )
+            .unwrap(),
+        );
+
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test".into(),
+                format: Some("set".into()),
+                mode: None,
+            }),
+            rollback_source: None,
+        };
+        let create_result =
+            create_change_set(
+                CreateChangeSetArgs {
+                    device: "r1".into(),
+                    expected_fingerprint:
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .into(),
+                    actions: vec![action],
+                },
+                dm.clone(),
+                coordinator.clone(),
+                policy,
+                test_attribution("alice"),
+            )
+            .await
+            .unwrap();
+
+        let change_set_id = create_result["change_set_id"].as_str().unwrap();
+        let plan_digest = create_result["plan_digest"].as_str().unwrap();
+
+        let mut bob_agent = test_attribution("bob");
+        bob_agent.actor_type = ActorType::Agent;
+
+        let r = approve_change_set(
+            ApproveChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+                expected_digest: plan_digest.into(),
+            },
+            coordinator.clone(),
+            dm.clone(),
+            bob_agent,
+        )
+        .await;
+
+        assert!(r.is_err());
+        let err_str = r.unwrap_err().to_string();
+        assert!(
+            err_str.contains("must be a human principal"),
+            "a non-human approver must be refused, got: {err_str}"
+        );
+    }
+
     #[tokio::test]
     async fn create_approve_status_flow() {
         let inv = inv_with(
@@ -2709,6 +3038,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2785,6 +3115,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test1".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2807,6 +3138,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test2".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2903,6 +3235,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2947,6 +3280,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test2".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -2987,6 +3321,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
@@ -3056,6 +3391,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };

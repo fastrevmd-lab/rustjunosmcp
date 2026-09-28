@@ -6,6 +6,45 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`--allow-direct-commit`, off by default.** `load_and_commit_config`, a
+  committing `render_and_apply_j2_template`, `rollback_config`, and
+  `upgrade_junos` stage, validate, and commit a device change in one call with
+  no change set and no second-principal review. Without the flag, all four
+  are refused before the device is touched, identically over stdio and HTTP.
+  With it, the server logs loudly at startup and every call is audited
+  (`direct_commit_allowed=true`; a refusal is audited too). See
+  `--allow-direct-commit` in the README.
+- **`approve_junos_change_set` now requires a human approver.** The mecmcp
+  dependency's `ChangesetCoordinator::approve_change_set` gained an
+  `approver_actor_type` argument and refuses anything but
+  `mecmcp_audit::ActorType::Human` — an agent or an unattributed caller could
+  already never propose and approve the same change set, but nothing
+  previously stopped it from standing in as the second principal.
+
+- **`get_junos_config` gains a `format` parameter** (`text` default, `set`,
+  `xml`, or `json`), rendered device-side via the matching Junos
+  `| display <format>` CLI modifier — the same mechanism
+  `execute_junos_command` already passes through untouched. Output flows
+  through the same policy check, XML-wrapper stripping, and output-cap
+  pipeline as the existing `text` format; there is no new unredacted path.
+  An unrecognized `format` is rejected before any device connection.
+
+- **The load tools gain a `mode` parameter** (`merge` default, `replace`, or
+  `override`) controlling the wire `action` for `<load-configuration>`:
+  `load_and_commit_config`, `render_and_apply_j2_template`, and the
+  change-set payload spec (`create_junos_change_set`'s `actions[].payload`).
+  `override` replaces the entire candidate configuration — the highest
+  blast-radius operation this server exposes — and is refused outright on
+  `load_and_commit_config` and `render_and_apply_j2_template`, which commit
+  directly with no second-principal review. It is permitted only through
+  `create_junos_change_set` → `approve_junos_change_set` →
+  `apply_junos_change_set`, which requires approval by a principal distinct
+  from the creator before anything commits (MEC-12). `config_format=set`
+  (configuration-set payloads) has no wire-level `override` action in Junos;
+  that combination is rejected before any RPC is sent regardless of path.
+
 - Raised MSRV to 1.89 (family-wide decision; enables mecmcp to drop aes pin)
 - **Release image and tarball are now signed keylessly with cosign** via
   GitHub Actions OIDC (no key pair, ever). The `Release image` workflow signs
@@ -759,7 +798,7 @@ container image is distroless as a direct result.
   it fails loudly at startup instead of running unprotected. Anyone relying on it
   should name the authority their clients actually send with `--allowed-host`,
   which is repeatable and precise. The deployed LXC 609 override already does
-  this (`--allowed-host 192.168.1.194`) and is unaffected.
+  this (`--allowed-host 192.0.2.10`) and is unaffected.
 
 ## [0.15.1] — 2026-07-31
 

@@ -1,7 +1,7 @@
 <ike-security-associations-information junos:style="detail">
 <ike-security-associations-block>
 <ike-sa-remote-address>
-192.168.1.161
+192.0.2.161
 </ike-sa-remote-address>
 <ike-sa-index>
 3128619
@@ -26,7 +26,7 @@ f8e88716124475b0
 IKEv2
 </ike-sa-exchange-type>
 <ike-sa-local-address>
-192.168.1.160
+192.0.2.160
 </ike-sa-local-address>
 <ike-sa-local-port>
 500

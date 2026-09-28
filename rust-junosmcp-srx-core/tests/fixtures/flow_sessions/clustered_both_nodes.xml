@@ -1,0 +1,43 @@
+<!-- Synthetic, hand-written per srx-policy-read-spec §11 (not live-confirmed). -->
+<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-information>
+        <flow-session>
+          <session-identifier>300001</session-identifier>
+          <session-protocol-name>tcp</session-protocol-name>
+          <source-address>10.1.0.5</source-address>
+          <source-port>44000</source-port>
+          <destination-address>198.51.100.9</destination-address>
+          <destination-port>443</destination-port>
+          <application>junos-https</application>
+          <policy-name>allow-web</policy-name>
+          <in-interface-name>reth1.0</in-interface-name>
+          <out-interface-name>reth0.0</out-interface-name>
+          <timeout>1800</timeout>
+          <duration>10</duration>
+        </flow-session>
+      </flow-session-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <flow-session-information>
+        <flow-session>
+          <session-identifier>300002</session-identifier>
+          <session-protocol-name>udp</session-protocol-name>
+          <source-address>10.2.0.9</source-address>
+          <source-port>55000</source-port>
+          <destination-address>198.51.100.20</destination-address>
+          <destination-port>53</destination-port>
+          <application>junos-dns-udp</application>
+          <policy-name>allow-dns</policy-name>
+          <in-interface-name>reth2.0</in-interface-name>
+          <out-interface-name>reth0.0</out-interface-name>
+          <timeout>60</timeout>
+          <duration>3</duration>
+        </flow-session>
+      </flow-session-information>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>

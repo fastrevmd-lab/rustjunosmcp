@@ -48,6 +48,59 @@ pub enum JmcpError {
     #[error("invalid config_format '{0}' (expected set, text, or xml)")]
     BadFormat(String),
 
+    /// Caller passed a `get_junos_config` `format` other than `text`, `set`,
+    /// `xml`, or `json`.
+    #[error("invalid format '{0}' for get_junos_config (expected text, set, xml, or json)")]
+    BadConfigFormat(String),
+
+    /// Caller passed a load `mode` other than `merge`, `replace`, or `override`.
+    #[error("invalid mode '{0}' (expected merge, replace, or override)")]
+    BadLoadMode(String),
+
+    /// `mode=override` (full candidate replacement) was requested on a path
+    /// that commits directly with no second-principal review. `override` is
+    /// the highest blast-radius operation this server exposes, so it is
+    /// refused everywhere except `create_junos_change_set` →
+    /// `approve_junos_change_set` → `apply_junos_change_set`, which requires
+    /// human approval before anything commits (MEC-12).
+    #[error(
+        "refused: mode=override on '{tool}' is refused because this tool commits directly with \
+         no second-principal review. Route the change through create_junos_change_set → \
+         approve_junos_change_set → apply_junos_change_set instead."
+    )]
+    OverrideRequiresChangeSet {
+        /// Name of the MCP tool that was refused.
+        tool: &'static str,
+    },
+
+    /// `mode=override` was requested on `create_junos_change_set` while the
+    /// server runs in `--lab-mode`. Lab mode waives approval on every change
+    /// set it creates (single-operator servers have no second principal), so
+    /// permitting `override` there would silently defeat the human-approval
+    /// gate that is the entire reason `override` is allowed on this path at
+    /// all (MEC-12). Refused unconditionally; there is no lab-mode override
+    /// flow today.
+    #[error(
+        "refused: mode=override on '{tool}' is refused while this server runs in lab mode, \
+         because lab mode waives approval and override has no other path to a human approver"
+    )]
+    OverrideRequiresHumanApproval {
+        /// Name of the MCP tool that was refused.
+        tool: &'static str,
+    },
+
+    /// Requested `mode` has no wire-level equivalent for the requested
+    /// `config_format`. Currently only `format=set` + `mode=override`: Junos
+    /// has no `override` action for a `configuration-set` (set-command list)
+    /// payload — only `action="set"` is valid for that payload shape.
+    #[error("mode '{mode}' is not compatible with config_format '{format}'")]
+    IncompatibleFormatMode {
+        /// The requested config format.
+        format: String,
+        /// The requested load mode.
+        mode: String,
+    },
+
     /// PFE command validation failed (e.g., contains literal quotes or shell
     /// metacharacters). Message describes why the command is unsafe.
     #[error("invalid pfe_command: {0}")]
@@ -402,6 +455,16 @@ pub enum JmcpError {
         authority: String,
     },
 
+    /// A direct-commit tool was refused because the server was not started
+    /// with `--allow-direct-commit`.
+    ///
+    /// This tool stages, validates, and commits a device change in one call,
+    /// with no independent second-principal approval — there is no change set
+    /// to route it through. Refused by default; pass `--allow-direct-commit`
+    /// to permit it, which is audited on every use.
+    #[error(transparent)]
+    DirectCommitDisabled(#[from] mecmcp_audit::DirectCommitRefused),
+
     /// Device has active config blocklist rules, which only apply to
     /// `config_format=set`. Caller requested `text` or `xml` instead.
     #[error("config blocklist rules require config_format=set; got '{format}'")]
@@ -572,6 +635,11 @@ impl JmcpError {
             Self::KeyFileMissing(_) => "not_found",
             Self::SshConfigInvalid { .. } => "invalid_input",
             Self::BadFormat(_) => "invalid_input",
+            Self::BadConfigFormat(_) => "invalid_input",
+            Self::BadLoadMode(_) => "invalid_input",
+            Self::OverrideRequiresChangeSet { .. } => "blocked",
+            Self::OverrideRequiresHumanApproval { .. } => "blocked",
+            Self::IncompatibleFormatMode { .. } => "invalid_input",
             Self::BadPfeCommand(_) => "invalid_input",
             Self::BadRollbackVersion(_) => "invalid_input",
             Self::BadSourcePath(_) => "invalid_input",
@@ -606,6 +674,7 @@ impl JmcpError {
             Self::Json(_) => "parse",
             Self::Denied { .. } => "blocked",
             Self::PlaneOwnedDevice { .. } => "blocked",
+            Self::DirectCommitDisabled(_) => "blocked",
             Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
             Self::BlocklistRuleInvalid { .. } => "invalid_input",
             Self::TemplateSyntax(_) => "parse",
@@ -662,6 +731,45 @@ mod tests {
             e.to_string(),
             "invalid config_format 'yaml' (expected set, text, or xml)"
         );
+    }
+
+    #[test]
+    fn bad_config_format_shows_invalid_value() {
+        let e = JmcpError::BadConfigFormat("yaml".into());
+        assert_eq!(
+            e.to_string(),
+            "invalid format 'yaml' for get_junos_config (expected text, set, xml, or json)"
+        );
+    }
+
+    #[test]
+    fn bad_load_mode_shows_invalid_value() {
+        let e = JmcpError::BadLoadMode("wipe".into());
+        assert_eq!(
+            e.to_string(),
+            "invalid mode 'wipe' (expected merge, replace, or override)"
+        );
+    }
+
+    #[test]
+    fn override_requires_change_set_names_the_tool() {
+        let e = JmcpError::OverrideRequiresChangeSet {
+            tool: "load_and_commit_config",
+        };
+        let s = e.to_string();
+        assert!(s.contains("load_and_commit_config"));
+        assert!(s.contains("create_junos_change_set"));
+    }
+
+    #[test]
+    fn incompatible_format_mode_names_both() {
+        let e = JmcpError::IncompatibleFormatMode {
+            format: "set".into(),
+            mode: "override".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("set"));
+        assert!(s.contains("override"));
     }
 
     #[test]

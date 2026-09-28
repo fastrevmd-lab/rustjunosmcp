@@ -1,10 +1,11 @@
-//! `get_junos_config` — return full or scoped text-format running config.
+//! `get_junos_config` — return full or scoped running config, in text (default),
+//! set, xml, or json format.
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{
-    excerpt, strip_config_xml_wrapper, validate_config_path, validate_input_length,
-    validate_output_caps,
+    config_display_suffix, excerpt, strip_config_xml_wrapper, validate_config_path,
+    validate_input_length, validate_output_caps,
 };
 use crate::policy::{Decision, Policy};
 use crate::tools::GetConfigArgs;
@@ -12,13 +13,31 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Build the `show configuration [<config_path>]` command for the requested
+/// `format`, appending the Junos `| display <format>` suffix that produces
+/// it (absent for `text`, the unmodified default this tool has always
+/// returned). Pure — no I/O, no RPC sent; an unrecognized `format` is
+/// rejected here before any device is touched.
+fn build_command(config_path: Option<&str>, format: &str) -> Result<String, JmcpError> {
+    let suffix = config_display_suffix(format)?;
+    let base = match config_path {
+        Some(path) if !path.trim().is_empty() => format!("show configuration {}", path.trim()),
+        _ => "show configuration".to_string(),
+    };
+    Ok(match suffix {
+        Some(suffix) => format!("{base} | {suffix}"),
+        None => base,
+    })
+}
+
 /// Retrieve the running configuration from a Junos device.
 ///
 /// Runs `show configuration [<config_path>]` over NETCONF, strips the XML
 /// wrapper, validates the `config_path` against injection (newlines, pipes,
 /// semicolons), checks the final command against policy, and applies optional
-/// output caps. Returns text-format configuration. Fails fast if the device
-/// is unknown or the path/command is denied.
+/// output caps. Returns configuration in the requested `format` (`text`,
+/// `set`, `xml`, or `json`). Fails fast if the device is unknown, `format` is
+/// not recognized, or the path/command is denied.
 pub async fn handle(
     args: GetConfigArgs,
     dm: Arc<DeviceManager>,
@@ -32,16 +51,12 @@ pub async fn handle(
         validate_config_path(path)?;
     }
 
+    // Build command up front: also validates `format` deterministically,
+    // before any inventory lookup or device connection.
+    let command = build_command(args.config_path.as_deref(), &args.format)?;
+
     // Fail fast on unknown devices so the policy check has a valid target.
     let _ = dm.inventory().get(&args.device)?;
-
-    // Build command: "show configuration" or "show configuration <path>"
-    let command = match &args.config_path {
-        Some(path) if !path.trim().is_empty() => {
-            format!("show configuration {}", path.trim())
-        }
-        _ => "show configuration".to_string(),
-    };
 
     // Check command against policy (same as execute_junos_command)
     if let Decision::Deny { rule, source, .. } = policy.check_command(&args.device, &command) {
@@ -113,6 +128,45 @@ mod tests {
         Arc::new(Policy::build(&inv).unwrap())
     }
 
+    #[test]
+    fn build_command_text_format_is_unchanged_from_before_this_field_existed() {
+        assert_eq!(build_command(None, "text").unwrap(), "show configuration");
+        assert_eq!(
+            build_command(Some("system services"), "text").unwrap(),
+            "show configuration system services"
+        );
+    }
+
+    #[test]
+    fn build_command_appends_the_matching_display_modifier() {
+        assert_eq!(
+            build_command(None, "set").unwrap(),
+            "show configuration | display set"
+        );
+        assert_eq!(
+            build_command(None, "xml").unwrap(),
+            "show configuration | display xml"
+        );
+        assert_eq!(
+            build_command(None, "json").unwrap(),
+            "show configuration | display json"
+        );
+    }
+
+    #[test]
+    fn build_command_combines_config_path_and_format() {
+        assert_eq!(
+            build_command(Some("system services"), "set").unwrap(),
+            "show configuration system services | display set"
+        );
+    }
+
+    #[test]
+    fn build_command_rejects_unknown_format_before_any_rpc() {
+        let r = build_command(None, "yaml");
+        assert!(matches!(r, Err(JmcpError::BadConfigFormat(ref s)) if s == "yaml"));
+    }
+
     #[tokio::test]
     async fn unknown_router_propagates_error() {
         let inv = test_inventory();
@@ -123,6 +177,7 @@ mod tests {
                 device: "nope".into(),
                 timeout: 5,
                 config_path: None,
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -203,6 +258,7 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some(huge_path),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -226,6 +282,7 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system services | save /tmp/x".to_string()),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -257,6 +314,7 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("foo; bar".to_string()),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -288,6 +346,7 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("system\nservices".to_string()),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -319,6 +378,7 @@ mod tests {
                 device: "r1".into(),
                 timeout: 5,
                 config_path: Some("\nsystem services".to_string()),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -369,6 +429,7 @@ mod tests {
                 timeout: 5,
                 // Passes the allowlist cleanly — no metacharacters at all.
                 config_path: Some("secrets".to_string()),
+                format: "text".into(),
                 max_lines: None,
                 max_bytes: None,
                 tail: false,
@@ -385,5 +446,62 @@ mod tests {
                  to the device. got: {other:?}"
             ),
         }
+    }
+
+    #[tokio::test]
+    async fn unknown_format_is_rejected_before_connect() {
+        let dm = Arc::new(DeviceManager::new(test_inventory()));
+        let policy = test_policy();
+        let r = handle(
+            GetConfigArgs {
+                device: "r1".into(),
+                timeout: 5,
+                config_path: None,
+                format: "yaml".into(),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
+            },
+            dm,
+            policy,
+        )
+        .await;
+        assert!(matches!(r, Err(JmcpError::BadConfigFormat(ref s)) if s == "yaml"));
+    }
+
+    /// The blocklist pattern is written against the base `show configuration`
+    /// command; the `| display set` suffix this tool appends for
+    /// `format=set` must not let a denied path slip past it by changing the
+    /// command's shape.
+    #[tokio::test]
+    async fn blocklisted_path_is_still_denied_with_a_non_text_format() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(
+            br#"{
+            "r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"},
+                  "blocklist":{"commands":[{"action":"deny","pattern":"show configuration secret*"}]}}
+        }"#,
+        )
+        .unwrap();
+        let inv = Arc::new(Inventory::load(f.path()).unwrap());
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = Arc::new(Policy::build(&inv).unwrap());
+
+        let result = handle(
+            GetConfigArgs {
+                device: "r1".into(),
+                timeout: 5,
+                config_path: Some("secrets".to_string()),
+                format: "set".into(),
+                max_lines: None,
+                max_bytes: None,
+                tail: false,
+            },
+            dm,
+            policy,
+        )
+        .await;
+
+        assert!(matches!(result, Err(JmcpError::Denied { .. })));
     }
 }
