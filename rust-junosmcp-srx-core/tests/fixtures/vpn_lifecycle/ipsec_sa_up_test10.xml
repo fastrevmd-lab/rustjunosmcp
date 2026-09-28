@@ -23,7 +23,7 @@ up
 0
 </sa-aux-spi>
 <sa-remote-gateway>
-192.168.1.161
+192.0.2.161
 </sa-remote-gateway>
 <sa-port>
 500
@@ -64,7 +64,7 @@ cb151b04
 0
 </sa-aux-spi>
 <sa-remote-gateway>
-192.168.1.161
+192.0.2.161
 </sa-remote-gateway>
 <sa-port>
 500

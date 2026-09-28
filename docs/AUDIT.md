@@ -238,7 +238,7 @@ SIEM integration when remote delivery is required.
 
 ### File sink
 
-When `--audit-log-file` is set, JSON events are appended to the specified file. The file is **append-only** — the server never rotates or truncates it, so retention is handled externally by `logrotate`.
+When `--audit-log-file` is set, JSON events are appended to the specified file. The server keeps the file handle `mecmcp_audit::init_tracing` returns and reopens it by path on `SIGHUP`, so rotation is lossless as long as the rotator renames the file and signals the process — the server never truncates it itself.
 
 #### Rotation & retention
 
@@ -253,14 +253,14 @@ A ready-to-install fragment ships at [`packaging/logrotate/rust-junosmcp-audit`]
     notifempty
     compress
     delaycompress
-    copytruncate
     su jmcp jmcp
+    postrotate
+        systemctl kill -s HUP rust-junosmcp.service >/dev/null 2>&1 || true
+    endscript
 }
 ```
 
-**`copytruncate` is required, not optional.** The server holds a single long-lived append (`O_APPEND`) file descriptor for the audit sink and never reopens it — `SIGHUP` is reserved for hot-reloading `devices.json`/`tokens.json` and does **not** reopen the audit file. With plain `create`-mode rotation (rename + create), the server would keep writing to the rotated inode and the active file would stay empty until the next restart. `copytruncate` copies the file, then truncates it in place; because the fd is `O_APPEND`, writes resume cleanly at offset 0 with no sparse gap.
-
-The tradeoff: `copytruncate` has an inherent small race — audit lines written between the copy and the truncate can be **lost** (never duplicated). At typical audit volumes this window is negligible. If zero-loss retention is required, forward events to a SIEM in real time (see below) instead of relying on the rotated files as the system of record.
+**Rename + reopen, not `copytruncate`.** `SIGHUP` reopens the audit file by path alongside the existing `devices.json`/`tokens.json` hot reload, so `postrotate` renames the file and signals the process; every write after that lands in a fresh inode at the same path. Nothing written before the rename is truncated and nothing written after it is lost — `copytruncate` copies the file and then truncates it in place, which drops whatever is written in the gap between those two steps.
 
 ### Field redaction
 
@@ -321,7 +321,7 @@ Filter on `target == "audit"` to separate audit events from operational logs.
 The following capabilities are planned but not yet implemented:
 
 1. **Direct RFC 5424 syslog sink** — native journald is implemented via `--audit-journald`, while direct RFC 5424 formatting and remote transport remain unimplemented and can be provided by the host's journald/rsyslog/SIEM integration.
-2. **Built-in log rotation** — the server does not manage file rotation in-process; retention is handled by the shipped `logrotate` fragment (see [Rotation & retention](#rotation--retention)). In-process size/age rotation with `SIGHUP`-reopen support remains out of scope by design.
+2. **Built-in log rotation** — the server does not decide when to rotate; it only reopens the file on `SIGHUP` (see [Rotation & retention](#rotation--retention)). In-process size/age-triggered rotation remains out of scope by design; retention is handled by the shipped `logrotate` fragment.
 3. **Per-field encryption** — sensitive canonical `AuditScope` metadata fields can be dropped or replaced with a keyed HMAC fingerprint via [Field redaction](#field-redaction). *Reversible* envelope encryption (recover the original from logs with a key) remains out of scope.
 
 ## Security & Privacy

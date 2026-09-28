@@ -2,24 +2,18 @@
 #
 # Install as /etc/logrotate.d/rust-junosmcp-audit (root:root, mode 0644).
 # Enable the sink by passing --audit-log-file (or JMCP_AUDIT_LOG_FILE). The
-# path below matches the packaged systemd unit,
-# which run as jmcp:jmcp with StateDirectory=jmcp (/var/lib/jmcp writable under
-# ProtectSystem=strict). Adjust paths/retention to your policy.
+# path below matches the packaged systemd unit, which runs as jmcp:jmcp with
+# StateDirectory=jmcp (/var/lib/jmcp writable under ProtectSystem=strict).
+# Adjust paths/retention to your policy.
 #
-# copytruncate is REQUIRED, not optional:
-#   The server holds a single long-lived append (O_APPEND) file descriptor for
-#   the audit sink and never reopens it. SIGHUP is reserved for hot-reloading
-#   devices.json / tokens.json and does NOT reopen the audit file. With plain
-#   `create`-mode rotation (rename + create), the server would keep writing to
-#   the rotated inode and the active file would stay empty until restart.
-#   copytruncate copies the file, then truncates it in place; because the fd is
-#   O_APPEND, writes resume cleanly at offset 0 with no sparse gap.
-#
-#   Caveat: copytruncate has an inherent small race — audit lines written
-#   between the copy and the truncate can be lost (and are never duplicated).
-#   At typical audit volumes with size-based daily rotation this window is
-#   negligible; if zero-loss is required, forward lines to a SIEM in real time
-#   (Vector/Filebeat tailing the file) rather than relying on the rotated files.
+# Rename + reopen, not copytruncate:
+#   The server keeps the AuditFileSink handle mecmcp_audit::init_tracing
+#   returns and reopens it by path on SIGHUP, alongside the existing
+#   devices.json/tokens.json hot reload. logrotate renames the file below,
+#   sends SIGHUP through `postrotate`, and every write after that point goes
+#   to a fresh inode at the same path. Nothing written before the rename is
+#   truncated and nothing written after it is lost — unlike copytruncate,
+#   which drops whatever lands between its copy and its truncate.
 
 /var/lib/jmcp/audit.jsonl {
     daily
@@ -29,6 +23,8 @@
     notifempty
     compress
     delaycompress
-    copytruncate
     su jmcp jmcp
+    postrotate
+        systemctl kill -s HUP rust-junosmcp.service >/dev/null 2>&1 || true
+    endscript
 }
