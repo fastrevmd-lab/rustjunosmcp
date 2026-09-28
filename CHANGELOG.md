@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-09-28
+
 ### Added
 
 - **`--allow-direct-commit`, off by default.** `load_and_commit_config`, a
@@ -46,6 +48,11 @@ All notable user-facing changes are recorded here. Format loosely follows
   that combination is rejected before any RPC is sent regardless of path.
 
 - Raised MSRV to 1.89 (family-wide decision; enables mecmcp to drop aes pin)
+- **Two new read-only SRX tools: `srx_flow_sessions`, `srx_policy_match`.**
+  `srx_flow_sessions` queries active flow sessions with hard-capped result
+  limits and node-aware summaries; `srx_policy_match` performs deterministic
+  5-tuple policy matching against both zone-pair and global policies,
+  returning the device's own verdict. Tool count: 37 → 39.
 - **Four new read-only SRX tools: `srx_list_policies`, `srx_resolve_address`,
   `srx_resolve_application`, `srx_list_nat_rules`.** Security policies by
   zone pair (incl. global policies and optional hit counts), address-book and
@@ -55,13 +62,20 @@ All notable user-facing changes are recorded here. Format loosely follows
   application resolution are configuration-sourced via a hand-built
   subtree-filtered `get-configuration` RPC. Names on policies and NAT rules
   are returned unresolved by design — use `srx_resolve_address` /
-  `srx_resolve_application` to expand them. Tool count: 37 → 41.
+  `srx_resolve_application` to expand them. Tool count: 39 → 43.
 - **Release image and tarball are now signed keylessly with cosign** via
   GitHub Actions OIDC (no key pair, ever). The `Release image` workflow signs
   the pushed image by digest; a new `Sign release tarball` workflow signs the
   LXC tarball once it is attached to a published GitHub release. See the
   README's "Verifying the image signature" and "Downloading a prebuilt release
   tarball instead" sections for `cosign verify` / `verify-blob` recipes.
+
+### Fixed
+
+- **cSRX devices now work**. rustez 0.18 tolerates cSRX rejecting
+  `<get-route-engine-information/>` during fact gathering
+  (fastrevmd-lab/rustez#54). Previously every tool call on a cSRX device failed
+  with `[OperationFailed] syntax error`.
 
 ## [0.25.0] - 2026-09-15
 

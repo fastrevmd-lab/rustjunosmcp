@@ -586,7 +586,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.25, 0.25.0).
+# Pull the prebuilt image (tags: latest, 0.25, 0.26.0).
 docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -657,13 +657,13 @@ authenticate that first connection out of band.
 Prefer to build locally instead:
 
 ```bash
-docker build -t rust-junosmcp:0.25 .
+docker build -t rust-junosmcp:0.26 .
 
 docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  rust-junosmcp:0.25
+  rust-junosmcp:0.26
 ```
 
 ## LXC (Proxmox)
@@ -678,7 +678,7 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Verify the checksum.
-sha256sum -c dist/rust-junosmcp_0.25.0_amd64.tar.gz.sha256
+sha256sum -c dist/rust-junosmcp_0.26.0_amd64.tar.gz.sha256
 
 # Push and install on VM 115. The installer copies the unified binary and unit
 # from its extracted package root.
@@ -694,8 +694,8 @@ sha256sum -c dist/rust-junosmcp_0.25.0_amd64.tar.gz.sha256
 #
 # Debian 13 also matches docs/PACKAGING.md §2, the container runtime base, and
 # rustpanosmcp — one distro generation to track CVEs against, not three.
-pct push 115 dist/rust-junosmcp_0.25.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.25.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.26.0_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.26.0_amd64/install.sh"
 ```
 
 **Downloading a prebuilt release tarball instead:** each GitHub release also
@@ -707,7 +707,7 @@ alone only proves the download was not corrupted in transit, not that it came
 from this repository's release workflow:
 
 ```bash
-version=0.25.0
+version=0.26.0
 base="https://github.com/fastrevmd-lab/rustjunosmcp/releases/download/v${version}"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.sha256"
