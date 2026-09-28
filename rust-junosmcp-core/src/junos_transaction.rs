@@ -80,6 +80,13 @@ pub struct ConfigPayloadSpec {
     /// Format: "set", "text", or "xml". Defaults to "set" if omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// Load mode: "merge" (default), "replace", or "override". `override`
+    /// replaces the entire candidate configuration; it is permitted here
+    /// (and only here) because a change set requires approval by a second
+    /// principal — `create_junos_change_set` → `approve_junos_change_set` →
+    /// `apply_junos_change_set` — before anything commits (MEC-12).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// Opaque staged-transaction handle retaining the session and lock until commit or discard.
@@ -409,6 +416,36 @@ impl DeviceTransaction for JunosTransaction {
             }
         }
 
+        // Resolve every action's payload/format/mode into a load instruction
+        // before opening a session or taking the candidate lock. Doing that
+        // resolution inside the load loop below meant a parse/resolve error on
+        // action N returned early via `?`, skipping the revert-and-unlock
+        // cleanup for actions 0..N already loaded into the locked candidate —
+        // breaking the all-or-none staging contract (Percy review,
+        // rustjunosmcp#425 F3). Resolving up front makes the load loop below
+        // infallible except for the wire call itself, so every error path goes
+        // through the existing cleanup.
+        enum ResolvedAction {
+            Rollback(u32),
+            Load(rustez::ConfigPayload, rustez::LoadAction),
+        }
+        let resolved_actions = actions
+            .iter()
+            .map(|action| {
+                if let Some(rollback) = action.rollback_source {
+                    Ok(ResolvedAction::Rollback(rollback))
+                } else if let Some(ref spec) = action.payload {
+                    let format = spec.format.as_deref().unwrap_or("set");
+                    let payload = build_config_payload(spec.text.clone(), Some(format))?;
+                    let requested_mode = crate::helpers::parse_load_mode(spec.mode.as_deref())?;
+                    let load_action = crate::helpers::resolve_load_action(format, requested_mode)?;
+                    Ok(ResolvedAction::Load(payload, load_action))
+                } else {
+                    unreachable!("exactly-one validation already checked this")
+                }
+            })
+            .collect::<Result<Vec<_>, JmcpError>>()?;
+
         // Open a session and lock the candidate. Load each action's payload or
         // rollback source. Capture the diff. The session is retained (not pooled)
         // until commit or discard so validate and commit see the same candidate.
@@ -438,14 +475,12 @@ impl DeviceTransaction for JunosTransaction {
         }
 
         // Load actions. Track success count for partial-failure revert.
-        for (loaded, action) in actions.iter().enumerate() {
-            let load_result = if let Some(rollback) = action.rollback_source {
-                cfg.rollback(rollback).await
-            } else if let Some(ref spec) = action.payload {
-                let payload = build_config_payload(spec.text.clone(), spec.format.as_deref())?;
-                cfg.load(payload).await.map(|_| ())
-            } else {
-                unreachable!("exactly-one validation already checked this");
+        for (loaded, resolved) in resolved_actions.into_iter().enumerate() {
+            let load_result = match resolved {
+                ResolvedAction::Rollback(rollback) => cfg.rollback(rollback).await,
+                ResolvedAction::Load(payload, load_action) => {
+                    cfg.load_with_action(payload, load_action).await.map(|_| ())
+                }
             };
 
             if let Err(error) = load_result {
@@ -1341,9 +1376,50 @@ mod tests {
             payload: payload.map(|text| ConfigPayloadSpec {
                 text: text.to_owned(),
                 format: Some("set".to_owned()),
+                mode: None,
             }),
             rollback_source,
         }
+    }
+
+    /// Like `action()`, but with an explicit `format` and `mode` for testing
+    /// how `stage()` resolves them into a wire `LoadAction`.
+    fn action_with_format_and_mode(text: &str, format: &str, mode: &str) -> JunosAction {
+        JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: text.to_owned(),
+                format: Some(format.to_owned()),
+                mode: Some(mode.to_owned()),
+            }),
+            rollback_source: None,
+        }
+    }
+
+    /// `mode` is orthogonal to the payload/rollback_source XOR invariant
+    /// `validate_shape` enforces — adding it must not change that check,
+    /// including for `override`, the one mode this path (unlike
+    /// `load_and_commit_config`) is allowed to carry.
+    #[test]
+    fn action_with_override_mode_still_passes_shape_validation() {
+        let a = action_with_format_and_mode("system { host-name x; }", "text", "override");
+        assert!(a.validate_shape(0).is_ok());
+    }
+
+    /// `ConfigPayloadSpec.mode` round-trips through JSON like `format` does —
+    /// the field an approver's `create_junos_change_set` call actually sends.
+    #[test]
+    fn config_payload_spec_deserializes_mode() {
+        let spec: ConfigPayloadSpec = serde_json::from_str(
+            r#"{"text":"system { host-name x; }","format":"text","mode":"override"}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.mode.as_deref(), Some("override"));
+    }
+
+    #[test]
+    fn config_payload_spec_mode_defaults_to_none() {
+        let spec: ConfigPayloadSpec = serde_json::from_str(r#"{"text":"set x"}"#).unwrap();
+        assert_eq!(spec.mode, None);
     }
 
     /// `payload` and `rollback_source` are mutually exclusive. Staging both
@@ -1398,6 +1474,34 @@ mod tests {
         assert!(
             message.contains("action 1"),
             "the error should identify which action failed, got: {message}"
+        );
+    }
+
+    /// Percy review F3 (rustjunosmcp#425): an invalid format/mode combination
+    /// on a later action used to be resolved inside the load loop, after the
+    /// candidate was already locked in a live session — so the error from
+    /// action 1 returned via `?` and skipped the revert-and-unlock cleanup for
+    /// action 0, already loaded into the shared candidate. Resolving every
+    /// action's mode up front, before a session is even opened, means this
+    /// error surfaces without any device contact: `offline_transaction`'s
+    /// router doesn't exist in the inventory, so reaching as far as
+    /// `device_manager.open()` would fail with a different error (device
+    /// lookup), not this one.
+    #[tokio::test]
+    async fn stage_resolves_every_action_mode_before_opening_a_session() {
+        let error = offline_transaction()
+            .stage(&[
+                action(Some("set system host-name a"), None),
+                action_with_format_and_mode("system { host-name b; }", "set", "override"),
+            ])
+            .await
+            .err()
+            .expect("format=set + mode=override on a later action must be refused");
+
+        assert!(
+            matches!(error, JmcpError::IncompatibleFormatMode { .. }),
+            "expected the format/mode mismatch to surface directly, with no \
+             device contact attempted, got: {error:?}"
         );
     }
 
