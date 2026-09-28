@@ -1,0 +1,10 @@
+<!-- Synthetic match-global-policies reply: an explicit global deny policy. -->
+<match-global-policies-results>
+  <policy-information>
+    <policy-name>block-legacy</policy-name>
+    <action-type>deny</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>7</policy-index>
+    <policy-sequence-number>1</policy-sequence-number>
+  </policy-information>
+</match-global-policies-results>

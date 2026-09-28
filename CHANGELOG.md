@@ -8,6 +8,21 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Added
 
+- **`--allow-direct-commit`, off by default.** `load_and_commit_config`, a
+  committing `render_and_apply_j2_template`, `rollback_config`, and
+  `upgrade_junos` stage, validate, and commit a device change in one call with
+  no change set and no second-principal review. Without the flag, all four
+  are refused before the device is touched, identically over stdio and HTTP.
+  With it, the server logs loudly at startup and every call is audited
+  (`direct_commit_allowed=true`; a refusal is audited too). See
+  `--allow-direct-commit` in the README.
+- **`approve_junos_change_set` now requires a human approver.** The mecmcp
+  dependency's `ChangesetCoordinator::approve_change_set` gained an
+  `approver_actor_type` argument and refuses anything but
+  `mecmcp_audit::ActorType::Human` — an agent or an unattributed caller could
+  already never propose and approve the same change set, but nothing
+  previously stopped it from standing in as the second principal.
+
 - **`get_junos_config` gains a `format` parameter** (`text` default, `set`,
   `xml`, or `json`), rendered device-side via the matching Junos
   `| display <format>` CLI modifier — the same mechanism

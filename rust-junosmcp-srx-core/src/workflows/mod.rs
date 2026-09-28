@@ -5,10 +5,12 @@ pub mod appid_package;
 pub mod cluster_health;
 pub mod cluster_status;
 mod config_fetch;
+pub mod flow_sessions;
 pub mod idp_package;
 pub mod license;
 pub mod list_nat_rules;
 pub mod list_policies;
+pub mod policy_match;
 mod resolve;
 pub mod resolve_address;
 pub mod resolve_application;
@@ -61,5 +63,7 @@ mod schema_tripwire {
             "ApplicationResolveArgs",
         );
         assert_closed_and_aliased::<super::list_nat_rules::NatRulesArgs>("NatRulesArgs");
+        assert_closed_and_aliased::<super::flow_sessions::FlowSessionsArgs>("FlowSessionsArgs");
+        assert_closed_and_aliased::<super::policy_match::PolicyMatchArgs>("PolicyMatchArgs");
     }
 }

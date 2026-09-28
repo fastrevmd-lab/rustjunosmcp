@@ -1,0 +1,32 @@
+<!--
+  Field VALUES are real, captured live against vsrx-ci (2026-09-27) via
+  `show security flow session summary`:
+
+    Unicast-sessions: 2
+    Multicast-sessions: 0
+    Services-offload-sessions: 0
+    Failed-sessions: 0
+    Sessions-in-drop-flow: 0
+    Sessions-in-use: 4
+      Valid sessions: 2
+      Pending sessions: 0
+      Invalidated sessions: 2
+      Sessions in other states: 0
+    Maximum-sessions: 2097152
+
+  Wrapping element names are NOT live-confirmed — see flow_sessions.rs module
+  docs and srx-policy-read-spec §11.
+-->
+<flow-session-summary-information>
+  <unicast-sessions>2</unicast-sessions>
+  <multicast-sessions>0</multicast-sessions>
+  <services-offload-sessions>0</services-offload-sessions>
+  <failed-sessions>0</failed-sessions>
+  <sessions-in-drop-flow>0</sessions-in-drop-flow>
+  <sessions-in-use>4</sessions-in-use>
+  <valid-sessions>2</valid-sessions>
+  <pending-sessions>0</pending-sessions>
+  <invalidated-sessions>2</invalidated-sessions>
+  <sessions-in-other-states>0</sessions-in-other-states>
+  <maximum-sessions>2097152</maximum-sessions>
+</flow-session-summary-information>

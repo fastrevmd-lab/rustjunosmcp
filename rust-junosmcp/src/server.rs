@@ -176,6 +176,9 @@ pub struct JmcpHandler {
     /// Whether to include staged actions in change-set status responses.
     /// Defaults to false. Set via --web-enabled-approver CLI flag.
     web_enabled_approver: bool,
+    /// Gate for tools that commit to a device with no change-set approval at
+    /// all. Refused by default; set via --allow-direct-commit CLI flag.
+    direct_commit: mecmcp_audit::DirectCommitPolicy,
     #[cfg(feature = "srx")]
     pub(super) started: Arc<tokio::time::Instant>,
     #[cfg(feature = "srx")]
@@ -198,6 +201,7 @@ impl JmcpHandler {
     /// `srx` feature is enabled. Authorization is not yet enforced at construction;
     /// call [`with_srx_runtime`](Self::with_srx_runtime) to configure SRX-specific
     /// authorization if the `srx` feature is enabled.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dm: Arc<DeviceManager>,
         policy: Arc<Policy>,
@@ -206,6 +210,7 @@ impl JmcpHandler {
         coordinator: Arc<mecmcp_changeset::ChangesetCoordinator>,
         allow_plane_owned_writes: bool,
         web_enabled_approver: bool,
+        direct_commit: mecmcp_audit::DirectCommitPolicy,
     ) -> Self {
         let concrete_router = Self::junos_tool_router();
         #[cfg(feature = "srx")]
@@ -224,6 +229,7 @@ impl JmcpHandler {
             tool_router,
             allow_plane_owned_writes,
             web_enabled_approver,
+            direct_commit,
             #[cfg(feature = "srx")]
             started: Arc::new(tokio::time::Instant::now()),
             #[cfg(feature = "srx")]
@@ -688,6 +694,9 @@ impl JmcpHandler {
             audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
+        if let Err(e) = self.direct_commit.check(&mut audit) {
+            return Self::to_call_result(Err(e.into()));
+        }
 
         audit.meta("config_bytes", args.config_text.len() as u64);
         let mut hasher = Sha256::new();
@@ -820,6 +829,14 @@ impl JmcpHandler {
             audit.deny("router_scope");
             return Self::scope_to_call_result(e);
         }
+        // Preview mode (commit=false) loads, diffs, and discards — no device
+        // mutation, so the direct-commit gate does not apply. Only the
+        // committing path needs a change set or the flag.
+        if args.commit
+            && let Err(e) = self.direct_commit.check(&mut audit)
+        {
+            return Self::to_call_result(Err(e.into()));
+        }
 
         audit.meta("version", args.version.to_string());
         if args.commit
@@ -949,6 +966,15 @@ impl JmcpHandler {
                 audit.deny("router_scope");
                 return Self::scope_to_call_result(e);
             }
+        }
+        // A dry run, or a render with no apply requested, never touches the
+        // device — the direct-commit gate only applies to the path that will
+        // actually commit.
+        if args.apply_config
+            && !args.dry_run
+            && let Err(e) = self.direct_commit.check(&mut audit)
+        {
+            return Self::to_call_result(Err(e.into()));
         }
 
         // Parse vars_content to count vars
@@ -1155,6 +1181,14 @@ impl JmcpHandler {
         if let Err(e) = self.check_router_scope(ctx, "upgrade_junos", &args.device) {
             audit.deny("router_scope");
             return Self::scope_to_call_result(e);
+        }
+        // confirm=false is the read-only pre-flight that returns the upgrade
+        // plan as ConfirmationRequired; it never touches the device, so the
+        // gate only applies once the caller has confirmed the destructive step.
+        if args.confirm
+            && let Err(e) = self.direct_commit.check(&mut audit)
+        {
+            return Self::to_call_result(Err(e.into()));
         }
 
         audit.meta("basename", args.source_path.clone());
@@ -1935,6 +1969,7 @@ mod scope_tests {
             ),
             false,
             false,
+            mecmcp_audit::DirectCommitPolicy::new(false),
         )
     }
 
@@ -2118,8 +2153,8 @@ mod scope_tests {
         // `cancel_junos_change_set` makes 36, and execute makes 37.
         // MEC-54's four SRX policy-read tools (srx_list_policies,
         // srx_resolve_address, srx_resolve_application, srx_list_nat_rules)
-        // make 41.
-        assert_eq!(names.len(), 41);
+        // make 41, and `srx_flow_sessions` + `srx_policy_match` make 43 (MEC-55).
+        assert_eq!(names.len(), 43);
     }
 
     #[test]
@@ -2289,6 +2324,7 @@ mod scope_tests {
             ),
             false,
             false,
+            mecmcp_audit::DirectCommitPolicy::new(false),
         );
         assert_eq!(h.transfer_config().staging_dir, cfg.staging_dir);
     }

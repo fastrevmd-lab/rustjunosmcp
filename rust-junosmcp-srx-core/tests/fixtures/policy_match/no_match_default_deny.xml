@@ -1,0 +1,22 @@
+<!--
+  NOT LIVE-CONFIRMED XML SHAPE. The "policy-name"/"action-type" field VALUES
+  and the CLI text they come from ARE real, captured live against vsrx-ci
+  (2026-09-27):
+
+    Policy: Default-Policy, action-type: deny-all, State: enabled, Index: 2
+      Sequence number: 2
+
+  The wrapping element names below (match-firewall-policies-results,
+  policy-information, policy-state, policy-index) are a hypothesis pending a
+  raw-RPC-capable capture tool — see policy_match.rs module docs and
+  srx-policy-read-spec §11.
+-->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>Default-Policy</policy-name>
+    <action-type>deny-all</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>2</policy-index>
+    <policy-sequence-number>2</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>

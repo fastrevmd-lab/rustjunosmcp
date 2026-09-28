@@ -62,6 +62,8 @@ const SRX_TOOLS: &[&str] = &[
     "manage_appid_signature_package",
     "validate_chassis_cluster_health",
     "collect_jtac_support_bundle",
+    "srx_flow_sessions",
+    "srx_policy_match",
 ];
 
 #[test]
@@ -182,9 +184,10 @@ fn lists_expected_tools() {
     // `confirm_junos_change_set` adds one more (#239),
     // `list_junos_change_sets` adds one more (#255), and
     // `cancel_junos_change_set` adds one more (#293), then execute adds one.
-    // MEC-54's four SRX policy-read tools add four more.
+    // MEC-54's four SRX policy-read tools add four more, and
+    // `srx_flow_sessions` + `srx_policy_match` add two more (MEC-55).
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 41);
+    assert_eq!(names.len(), 43);
     #[cfg(not(feature = "srx"))]
     assert_eq!(names.len(), 28);
 }

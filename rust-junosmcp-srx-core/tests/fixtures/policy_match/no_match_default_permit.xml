@@ -1,0 +1,24 @@
+<!--
+  NOT LIVE-CONFIRMED XML SHAPE. Synthetic counterpart to
+  no_match_default_deny.xml, for a device configured with
+  `set security policies default-policy permit-all`. Junos's CLI text for
+  this configuration is documented as:
+
+    Policy: Default-Policy, action-type: permit-all, State: enabled, Index: 2
+      Sequence number: 2
+
+  i.e. the same "Default-Policy" fallthrough as deny-all, with action-type
+  flipped — not live-captured against vsrx-ci (which defaults to deny-all),
+  so this is a hypothesis pending a live capture against a permit-all lab
+  device. See policy_match.rs module docs (Percy review fix, 2026-09-27) and
+  srx-policy-read-spec §11.
+-->
+<match-firewall-policies-results>
+  <policy-information>
+    <policy-name>Default-Policy</policy-name>
+    <action-type>permit-all</action-type>
+    <policy-state>enabled</policy-state>
+    <policy-index>2</policy-index>
+    <policy-sequence-number>2</policy-sequence-number>
+  </policy-information>
+</match-firewall-policies-results>
