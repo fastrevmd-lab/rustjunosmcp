@@ -3101,9 +3101,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7150505aff35546a0c8bfada665fdb40d280e0f825c6b38d86094ec022cfbb39"
+checksum = "90b358f7c991e2819f548144ea89a6b59e1ae6ce3a398ee7b085f6fe717c7da0"
 dependencies = [
  "quick-xml",
  "rustnetconf",
