@@ -89,6 +89,8 @@ pub async fn handle_with_cancel(
             payload: None,
             rollback_source: Some(version),
             mode,
+            // Unused: this loads an archived rollback, not a caller payload.
+            load_action: rustez::LoadAction::Merge,
         },
         timeout_dur,
         &ct,

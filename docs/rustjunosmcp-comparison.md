@@ -45,4 +45,4 @@ That simplicity may be attractive for labs, quick prototypes, and users who want
 
 For a production-oriented Junos and SRX automation stack, `rustjunosmcp` is already ahead of Juniper's official server in scale, security boundaries, operational safety, and feature depth.
 
-The main near-term risk is not feature parity with Juniper's server, but protocol drift with the newly finalized MCP 2026-07-28 spec. The fastest path is to treat the work as a foundation-layer transport migration first and a per-tool cleanup second.[cite:5][cite:6]
+The protocol-drift risk flagged in earlier revisions of this document — the newly finalized MCP 2026-07-28 spec — is resolved: `rmcp` 3 implements the 2026-07-28 revision as of `rustjunosmcp` v0.16.0, and the pinned version has since moved to 3.4.0 (`Cargo.lock`). Both the legacy `initialize`/`Mcp-Session-Id` handshake and stateless 2026-07-28 clients are served from the same binary (`legacy_session_mode` defaults to `true`). With the foundation-layer transport migration done, the near-term work is per-tool cleanup and hardening rather than a spec-compliance race.
