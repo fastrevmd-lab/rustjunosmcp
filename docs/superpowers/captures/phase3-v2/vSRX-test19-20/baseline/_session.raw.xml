@@ -843,7 +843,7 @@
                 <authentication>
                     <encrypted-password>$6$2OKfUw10$GIk.ae1jtRh30uHT.xfDd865Tp2tsl/4eqHBxf9ynKy009VG4XL6kY9Vpk/j51YZTBaJAxqKVcRf5hrOyNTs40</encrypted-password>
                     <ssh-ed25519>
-                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@gmail.com</name>
+                        <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
                 </authentication>
             </user>
