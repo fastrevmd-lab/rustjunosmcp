@@ -302,6 +302,22 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Direct-commit tools (load_and_commit_config, a committing
+    // render_and_apply_j2_template, rollback_config with commit=true, and a
+    // confirmed upgrade_junos) never create a change set, so they have no
+    // second-principal approval by construction. Refused by default; logging
+    // here mirrors the lab-mode and plane-owned-writes banners above.
+    let direct_commit = mecmcp_audit::DirectCommitPolicy::new(args.allow_direct_commit);
+    direct_commit.log_startup("rust-junosmcp");
+    if !args.allow_direct_commit {
+        tracing::info!(
+            "direct-commit tools disabled: load_and_commit_config, a committing \
+             render_and_apply_j2_template, a committing rollback_config, and a confirmed \
+             upgrade_junos are refused on stdio and HTTP alike. Use --allow-direct-commit to \
+             enable them."
+        );
+    }
+
     // The SSDF evidence pipeline, when configured. Built before the coordinator
     // because the coordinator takes its recorder, and started here rather than
     // lazily so a misconfiguration -- an unwritable spool, a credential with
@@ -392,6 +408,7 @@ async fn main() -> Result<()> {
         coordinator,
         args.allow_plane_owned_writes,
         args.web_approver.web_enabled_approver,
+        direct_commit,
     );
     #[cfg(feature = "srx")]
     let handler = handler.with_srx_runtime(
