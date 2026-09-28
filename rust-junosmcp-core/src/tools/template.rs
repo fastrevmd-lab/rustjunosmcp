@@ -73,7 +73,9 @@ pub(crate) fn detect_format(rendered: &str) -> &'static str {
 }
 
 use crate::device_manager::DeviceManager;
-use crate::helpers::build_config_payload;
+use crate::helpers::{
+    build_config_payload, parse_load_mode, refuse_override_outside_changeset, resolve_load_action,
+};
 use crate::policy::Policy;
 use crate::tools::TemplateArgs;
 use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
@@ -128,6 +130,14 @@ pub async fn handle_with_cancel(
         Some(other) => return Err(JmcpError::BadFormat(other.to_string())),
         None => detect_format(&rendered).to_string(),
     };
+
+    // `mode` is validated and gated before any payload is built or RPC is
+    // sent: `override` is the highest blast-radius operation this server
+    // exposes, and this tool commits directly with no second-principal
+    // review, so it is refused outright rather than forwarded to the device.
+    let load_mode = parse_load_mode(Some(&args.mode))?;
+    refuse_override_outside_changeset("render_and_apply_j2_template", load_mode)?;
+    let load_action = resolve_load_action(&format, load_mode)?;
 
     // Format gate: if any selected device has effective config rules,
     // the rendered format must be `set`. Same restriction as
@@ -193,7 +203,7 @@ pub async fn handle_with_cancel(
 
         let row = match commit_one(
             d,
-            payload.clone(),
+            (payload.clone(), load_action),
             &args.commit_comment,
             args.dry_run,
             &dm,
@@ -244,7 +254,7 @@ pub async fn handle_with_cancel(
 /// should treat the apply-mode return value as the comment that was used.
 async fn commit_one(
     device_name: &str,
-    payload: rustez::ConfigPayload,
+    (payload, load_action): (rustez::ConfigPayload, rustez::LoadAction),
     commit_comment: &str,
     dry_run: bool,
     dm: &Arc<DeviceManager>,
@@ -264,6 +274,7 @@ async fn commit_one(
             payload: Some(payload),
             rollback_source: None,
             mode,
+            load_action,
         },
         timeout,
         ct,
@@ -449,6 +460,7 @@ mod tests {
             commit_comment: "test".into(),
             dry_run: false,
             config_format: None,
+            mode: "merge".into(),
             timeout: 5,
         }
     }
@@ -537,5 +549,41 @@ mod tests {
         assert!(
             matches!(r, Err(JmcpError::TemplateFormatMismatch { ref format }) if format == "text")
         );
+    }
+
+    /// `render_and_apply_j2_template` commits in the same call with no
+    /// second-principal review, so — like `load_and_commit_config` —
+    /// `override` must be refused outright rather than forwarded to a
+    /// device. Checked even in render-only mode: the tool never accepts
+    /// `mode=override` at all, not just at apply time.
+    #[tokio::test]
+    async fn override_mode_is_refused_without_a_change_set() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let pol = Arc::new(Policy::build(&inv).unwrap());
+        let mut a = args_render_only(vec!["r1"]);
+        a.mode = "override".into();
+        let r = handle(a, dm, pol).await;
+        match r {
+            Err(JmcpError::OverrideRequiresChangeSet { tool }) => {
+                assert_eq!(tool, "render_and_apply_j2_template");
+            }
+            other => panic!("expected OverrideRequiresChangeSet, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_mode_is_rejected() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let pol = Arc::new(Policy::build(&inv).unwrap());
+        let mut a = args_render_only(vec!["r1"]);
+        a.mode = "wipe".into();
+        let r = handle(a, dm, pol).await;
+        assert!(matches!(r, Err(JmcpError::BadLoadMode(ref s)) if s == "wipe"));
     }
 }

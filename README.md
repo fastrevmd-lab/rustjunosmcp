@@ -214,6 +214,34 @@ rejected pre-flight in that case.
 > `blocklist` are not cross-compatible with Juniper/junos-mcp-server's
 > inventory format. Files without these fields remain drop-in compatible.
 
+## Config output format and load mode
+
+`get_junos_config` takes an optional `format`: `text` (default, unchanged),
+`set`, `xml`, or `json`. Each is rendered device-side via the matching Junos
+`| display <format>` CLI modifier, so output goes through the same policy
+check, blocklist, and output-cap pipeline as `text` today — there is no
+separate code path for the new formats.
+
+```json
+{ "router_name": "core-1", "config_path": "system services", "format": "set" }
+```
+
+`load_and_commit_config`, `render_and_apply_j2_template`, and
+`create_junos_change_set`'s per-action `payload` all take an optional
+`mode`: `merge` (default, unchanged), `replace`, or `override`.
+
+`override` replaces the *entire* candidate configuration — the highest
+blast-radius operation this server exposes. `load_and_commit_config` and
+`render_and_apply_j2_template` commit directly in the same call with no
+second-principal review, so they refuse `override` outright. It is only
+available through the change-set flow (`create_junos_change_set` →
+`approve_junos_change_set` → `apply_junos_change_set`), which requires a
+second principal to approve the plan before anything commits.
+
+`config_format=set` (a `configuration-set`, i.e. a list of `set`/`delete`
+commands) has no wire-level `override` action in Junos — that combination
+is rejected before any RPC is sent, on every path, including change sets.
+
 ## Confirmed commits (v0.3)
 
 `load_and_commit_config` supports Junos `commit confirmed` via the
