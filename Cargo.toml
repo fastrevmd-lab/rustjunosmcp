@@ -71,16 +71,27 @@ rustez       = "0.17"
 # capture (mecmcp#288), which populates model_id/session_id/client_name for
 # clients that declare MCP 2026-07-28 and are routed without a session header.
 # mecmcp 0.17.0: adds resolve_token_path and find_stale_secrets to mecmcp-auth.
-mecmcp-audit = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-auth  = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-transport = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-runtime = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-policy = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-inventory = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-device = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-changeset = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-scp = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
-mecmcp-secret = { version = "0.23.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.23.0" }
+#
+# TEMPORARY: pinned to the current head of fastrevmd-lab/mecmcp#383
+# (mec-12-human-approver-direct-commit-gate branch), not a released tag. That
+# PR adds the ActorType::Human approver check and DirectCommitPolicy this
+# crate now depends on, and it has not shipped a tagged release yet. The PR
+# has been rebased at least once already (Percy's review on rustjunosmcp#426
+# flagged an earlier pin, 5c7e938, as orphaned once mecmcp#383 moved to
+# 08c857b) — if it moves again before merging, re-pin to the new head.
+# Replace `rev` with the released `tag` once that PR merges and cuts a
+# version; repin all ten `mecmcp-*` crates together and regenerate
+# Cargo.lock, since they must all resolve to the same git ref.
+mecmcp-audit = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-auth  = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-transport = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-runtime = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-policy = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-inventory = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-device = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-changeset = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-scp = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-secret = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

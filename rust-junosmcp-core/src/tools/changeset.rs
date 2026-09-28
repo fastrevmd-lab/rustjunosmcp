@@ -704,6 +704,7 @@ pub async fn approve_change_set_with_cancel(
             args.device,
             approver,
             args.expected_digest,
+            attribution.actor_type,
         )
         .await
         .map_err(|e| JmcpError::Validation(e.to_string()))?;
@@ -2939,6 +2940,78 @@ mod tests {
         assert!(
             err_str.contains("owner cannot approve their own plan"),
             "self-approval must be refused, got: {err_str}"
+        );
+    }
+
+    /// House rule: a human approves. An agent principal — distinct from the
+    /// owner, so separation of duties alone would let this through — must
+    /// still be refused as the second approver.
+    #[tokio::test]
+    async fn approve_change_set_by_agent_actor_fails() {
+        let inv = inv_with(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv.clone()));
+        let policy = test_policy(inv);
+        let state_dir = TempDir::new().unwrap();
+        let coordinator = Arc::new(
+            ChangesetCoordinator::load(
+                Some(&state_dir.path().join("changeset-state.json")),
+                mecmcp_changeset::OperationLimits::default(),
+                std::time::Duration::from_secs(300),
+                false,
+            )
+            .unwrap(),
+        );
+
+        let action = JunosAction {
+            payload: Some(ConfigPayloadSpec {
+                text: "set system host-name test".into(),
+                format: Some("set".into()),
+                mode: None,
+            }),
+            rollback_source: None,
+        };
+        let create_result =
+            create_change_set(
+                CreateChangeSetArgs {
+                    device: "r1".into(),
+                    expected_fingerprint:
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .into(),
+                    actions: vec![action],
+                },
+                dm.clone(),
+                coordinator.clone(),
+                policy,
+                test_attribution("alice"),
+            )
+            .await
+            .unwrap();
+
+        let change_set_id = create_result["change_set_id"].as_str().unwrap();
+        let plan_digest = create_result["plan_digest"].as_str().unwrap();
+
+        let mut bob_agent = test_attribution("bob");
+        bob_agent.actor_type = ActorType::Agent;
+
+        let r = approve_change_set(
+            ApproveChangeSetArgs {
+                change_set_id: change_set_id.into(),
+                device: "r1".into(),
+                expected_digest: plan_digest.into(),
+            },
+            coordinator.clone(),
+            dm.clone(),
+            bob_agent,
+        )
+        .await;
+
+        assert!(r.is_err());
+        let err_str = r.unwrap_err().to_string();
+        assert!(
+            err_str.contains("must be a human principal"),
+            "a non-human approver must be refused, got: {err_str}"
         );
     }
 

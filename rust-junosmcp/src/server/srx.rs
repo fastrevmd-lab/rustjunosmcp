@@ -970,6 +970,7 @@ mod scope_tests {
             coordinator,
             false,
             false,
+            mecmcp_audit::DirectCommitPolicy::new(false),
         )
         .with_srx_runtime(authorization_required, Default::default())
     }

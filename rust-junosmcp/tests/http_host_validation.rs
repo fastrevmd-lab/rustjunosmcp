@@ -68,6 +68,7 @@ fn test_handler() -> JmcpHandler {
         coordinator,
         false,
         false,
+        mecmcp_audit::DirectCommitPolicy::new(false),
     )
 }
 
