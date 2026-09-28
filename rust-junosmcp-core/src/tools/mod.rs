@@ -60,6 +60,14 @@ fn default_version() -> i64 {
 fn default_set_format() -> String {
     "set".into()
 }
+/// Default `get_junos_config` output format (unmodified `show configuration`).
+fn default_get_config_format() -> String {
+    "text".into()
+}
+/// Default load mode: additive merge into the candidate, as today.
+fn default_load_mode() -> String {
+    "merge".into()
+}
 /// Default commit comment for load_commit and template tools.
 fn default_commit_comment() -> String {
     "Configuration loaded via MCP".into()
@@ -185,6 +193,12 @@ pub struct GetConfigArgs {
     // included — in place of the subtree they asked for (#253).
     #[serde(default, alias = "filter")]
     pub config_path: Option<String>,
+    /// Output format: `text` (default, unmodified `show configuration`),
+    /// `set`, `xml`, or `json`. Rendered device-side via the equivalent
+    /// `| display <format>` CLI modifier — the same mechanism
+    /// `execute_junos_command` already passes through for arbitrary commands.
+    #[serde(default = "default_get_config_format")]
+    pub format: String,
     /// Cap output to at most N lines (head; use `tail` for the last N).
     /// Includes the truncation marker, so the response never exceeds N lines.
     #[serde(default)]
@@ -242,6 +256,13 @@ pub struct LoadCommitArgs {
     /// Format: set, text, or xml.
     #[serde(default = "default_set_format")]
     pub config_format: String,
+    /// Load mode: `merge` (default, as today), `replace`, or `override`.
+    /// `override` replaces the entire candidate configuration and is always
+    /// refused here — this tool commits directly with no second-principal
+    /// review. Use `create_junos_change_set` → `approve_junos_change_set` →
+    /// `apply_junos_change_set` for an override that requires human approval.
+    #[serde(default = "default_load_mode")]
+    pub mode: String,
     /// Commit comment recorded in the device commit log.
     #[serde(default = "default_commit_comment")]
     pub commit_comment: String,
@@ -424,6 +445,13 @@ pub struct TemplateArgs {
     /// Override format detection ('set', 'text', 'xml'). Auto-detected if omitted.
     #[serde(default)]
     pub config_format: Option<String>,
+    /// Load mode: `merge` (default, as today), `replace`, or `override`.
+    /// `override` replaces the entire candidate configuration and is always
+    /// refused here — this tool commits directly with no second-principal
+    /// review. Use `create_junos_change_set` → `approve_junos_change_set` →
+    /// `apply_junos_change_set` for an override that requires human approval.
+    #[serde(default = "default_load_mode")]
+    pub mode: String,
     /// Connection timeout in seconds (per-device).
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -572,8 +600,32 @@ mod tests {
         let v = serde_json::json!({"router_name":"r1","config_text":"set x"});
         let a: LoadCommitArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.config_format, "set");
+        assert_eq!(a.mode, "merge");
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
         assert_eq!(a.timeout, 360);
+    }
+
+    #[test]
+    fn load_commit_accepts_explicit_mode() {
+        let v = serde_json::json!({
+            "router_name":"r1","config_text":"set x","mode":"replace"
+        });
+        let a: LoadCommitArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.mode, "replace");
+    }
+
+    #[test]
+    fn get_config_defaults_format_to_text() {
+        let v = serde_json::json!({"router_name":"r1"});
+        let a: GetConfigArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.format, "text");
+    }
+
+    #[test]
+    fn get_config_accepts_explicit_format() {
+        let v = serde_json::json!({"router_name":"r1","format":"json"});
+        let a: GetConfigArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.format, "json");
     }
 
     #[test]
@@ -689,6 +741,7 @@ mod tests {
         let a: TemplateArgs = serde_json::from_value(v).unwrap();
         assert!(!a.apply_config);
         assert!(!a.dry_run);
+        assert_eq!(a.mode, "merge");
         assert_eq!(a.commit_comment, "Configuration loaded via MCP");
         assert_eq!(a.device_name.as_deref(), Some("r1"));
         assert!(a.device_names.is_none());

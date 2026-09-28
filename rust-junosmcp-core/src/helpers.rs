@@ -1,7 +1,7 @@
 //! Pure helper functions, easily unit-testable without device contact.
 
 use crate::error::JmcpError;
-use rustez::ConfigPayload;
+use rustez::{ConfigPayload, LoadAction};
 
 /// Map the optional `config_format` string from the MCP tool input to
 /// a `rustez::ConfigPayload` constructor closure. Default = "set".
@@ -11,6 +11,84 @@ pub fn build_config_payload(text: String, fmt: Option<&str>) -> Result<ConfigPay
         "text" => Ok(ConfigPayload::Text(text)),
         "xml" => Ok(ConfigPayload::Xml(text)),
         other => Err(JmcpError::BadFormat(other.into())),
+    }
+}
+
+/// Map the optional load `mode` string from the MCP tool input to a
+/// `rustez::LoadAction`. Default = "merge". Only `merge`, `replace`, and
+/// `override` are caller-facing; `set` and `update` are internal wire
+/// concepts selected by `config_format`, not exposed as a `mode` value.
+pub fn parse_load_mode(mode: Option<&str>) -> Result<LoadAction, JmcpError> {
+    match mode.unwrap_or("merge") {
+        "merge" => Ok(LoadAction::Merge),
+        "replace" => Ok(LoadAction::Replace),
+        "override" => Ok(LoadAction::Override),
+        other => Err(JmcpError::BadLoadMode(other.into())),
+    }
+}
+
+/// Resolve the wire `action` for a `<load-configuration>` RPC from the
+/// requested `config_format` and `mode`, rejecting combinations Junos cannot
+/// perform before any RPC is sent.
+///
+/// Junos requires `action="set"` for a `configuration-set` (set-command list)
+/// payload — there is no separate wire-level replace/override action for a
+/// set-style load, because set commands are inherently incremental
+/// (add/delete statements the caller already controls). `merge` and
+/// `replace` are therefore both accepted for `config_format="set"` and both
+/// resolve to the one valid wire action; `override` has no set-format
+/// equivalent (there is nothing to "wholesale replace" a set-command list
+/// with) and is rejected here rather than sent to the device.
+///
+/// `text` and `xml` support the full `merge`/`replace`/`override` range
+/// unchanged.
+pub fn resolve_load_action(format: &str, mode: LoadAction) -> Result<LoadAction, JmcpError> {
+    match (format, mode) {
+        ("set", LoadAction::Override) => Err(JmcpError::IncompatibleFormatMode {
+            format: format.into(),
+            mode: "override".into(),
+        }),
+        ("set", _) => Ok(LoadAction::Set),
+        (_, mode) => Ok(mode),
+    }
+}
+
+/// Refuse `mode=override` on any load path that commits directly with no
+/// second-principal review.
+///
+/// `override` replaces the whole candidate configuration — the highest
+/// blast-radius operation this server exposes — so it is only permitted
+/// through `create_junos_change_set` → `approve_junos_change_set` →
+/// `apply_junos_change_set`, which requires a human approver distinct from
+/// the creator before anything commits (MEC-12). `load_and_commit_config`
+/// and `render_and_apply_j2_template` commit in the same call with no such
+/// gate and must refuse it outright.
+pub fn refuse_override_outside_changeset(
+    tool: &'static str,
+    mode: LoadAction,
+) -> Result<(), JmcpError> {
+    if mode == LoadAction::Override {
+        return Err(JmcpError::OverrideRequiresChangeSet { tool });
+    }
+    Ok(())
+}
+
+/// Map the `get_junos_config` `format` argument to the Junos CLI `| display`
+/// suffix that produces it. Default ("text") needs no suffix — that is the
+/// unmodified `show configuration` output this tool has always returned.
+///
+/// This reuses Junos's own `| display set|xml|json` pipe modifiers rather
+/// than adding a new NETCONF-level format path: `execute_junos_command`
+/// already passes these through untouched to the device (see
+/// `output::apply_pipe_modifiers`), so the device — not this server — does
+/// the actual rendering, the same way it does for the existing `text` format.
+pub fn config_display_suffix(format: &str) -> Result<Option<&'static str>, JmcpError> {
+    match format {
+        "text" => Ok(None),
+        "set" => Ok(Some("display set")),
+        "xml" => Ok(Some("display xml")),
+        "json" => Ok(Some("display json")),
+        other => Err(JmcpError::BadConfigFormat(other.into())),
     }
 }
 
@@ -294,6 +372,112 @@ mod tests {
     fn build_config_payload_rejects_unknown() {
         let r = build_config_payload("x".into(), Some("yaml"));
         assert!(matches!(r, Err(JmcpError::BadFormat(ref s)) if s == "yaml"));
+    }
+
+    #[test]
+    fn parse_load_mode_defaults_to_merge() {
+        assert_eq!(parse_load_mode(None).unwrap(), LoadAction::Merge);
+    }
+
+    #[test]
+    fn parse_load_mode_accepts_all_three_values() {
+        assert_eq!(parse_load_mode(Some("merge")).unwrap(), LoadAction::Merge);
+        assert_eq!(
+            parse_load_mode(Some("replace")).unwrap(),
+            LoadAction::Replace
+        );
+        assert_eq!(
+            parse_load_mode(Some("override")).unwrap(),
+            LoadAction::Override
+        );
+    }
+
+    #[test]
+    fn parse_load_mode_rejects_wire_level_actions_not_exposed_to_callers() {
+        // `set` and `update` are internal LoadAction variants selected by
+        // config_format, not accepted as a `mode` value.
+        for bad in ["set", "update", "wipe", ""] {
+            let r = parse_load_mode(Some(bad));
+            assert!(
+                matches!(r, Err(JmcpError::BadLoadMode(ref s)) if s == bad),
+                "expected BadLoadMode for {bad:?}, got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_load_action_passes_through_for_text_and_xml() {
+        for format in ["text", "xml"] {
+            for mode in [LoadAction::Merge, LoadAction::Replace, LoadAction::Override] {
+                assert_eq!(resolve_load_action(format, mode).unwrap(), mode);
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_load_action_normalizes_set_merge_and_replace_to_the_set_action() {
+        assert_eq!(
+            resolve_load_action("set", LoadAction::Merge).unwrap(),
+            LoadAction::Set
+        );
+        assert_eq!(
+            resolve_load_action("set", LoadAction::Replace).unwrap(),
+            LoadAction::Set
+        );
+    }
+
+    /// Junos has no wire-level "override" action for a configuration-set
+    /// payload; this combination must be rejected before any RPC is sent.
+    #[test]
+    fn resolve_load_action_rejects_set_format_with_override_mode() {
+        let r = resolve_load_action("set", LoadAction::Override);
+        match r {
+            Err(JmcpError::IncompatibleFormatMode { format, mode }) => {
+                assert_eq!(format, "set");
+                assert_eq!(mode, "override");
+            }
+            other => panic!("expected IncompatibleFormatMode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refuse_override_outside_changeset_allows_merge_and_replace() {
+        assert!(
+            refuse_override_outside_changeset("load_and_commit_config", LoadAction::Merge).is_ok()
+        );
+        assert!(
+            refuse_override_outside_changeset("load_and_commit_config", LoadAction::Replace)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn refuse_override_outside_changeset_rejects_override() {
+        let r = refuse_override_outside_changeset("load_and_commit_config", LoadAction::Override);
+        match r {
+            Err(JmcpError::OverrideRequiresChangeSet { tool }) => {
+                assert_eq!(tool, "load_and_commit_config");
+            }
+            other => panic!("expected OverrideRequiresChangeSet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_display_suffix_text_needs_no_suffix() {
+        assert_eq!(config_display_suffix("text").unwrap(), None);
+    }
+
+    #[test]
+    fn config_display_suffix_maps_set_xml_json() {
+        assert_eq!(config_display_suffix("set").unwrap(), Some("display set"));
+        assert_eq!(config_display_suffix("xml").unwrap(), Some("display xml"));
+        assert_eq!(config_display_suffix("json").unwrap(), Some("display json"));
+    }
+
+    #[test]
+    fn config_display_suffix_rejects_unknown() {
+        let r = config_display_suffix("yaml");
+        assert!(matches!(r, Err(JmcpError::BadConfigFormat(ref s)) if s == "yaml"));
     }
 
     #[test]

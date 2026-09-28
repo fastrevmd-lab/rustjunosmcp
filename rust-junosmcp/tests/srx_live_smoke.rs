@@ -3,7 +3,7 @@
 //! Live smoke against the LXC 601 deployment.
 //!
 //! Required env:
-//!   `JMCP_LIVE_URL`   e.g. `http://192.168.1.194:30030/mcp`
+//!   `JMCP_LIVE_URL`   e.g. `http://192.0.2.10:30030/mcp`
 //!   `JMCP_LIVE_TOKEN` bearer token
 //!
 //! Run: `cargo test -p rust-junosmcp --test srx_live_smoke -- --ignored`.

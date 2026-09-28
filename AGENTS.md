@@ -8,7 +8,8 @@ This Rust workspace implements one Junos and SRX MCP server:
 - `rust-junosmcp-core/` owns device I/O, base tools, and HTTP limits.
 - `rust-junosmcp-srx-core/` owns optional SRX workflows.
 - `rust-junosmcp-auth/` is the auth security boundary.
-- `rust-junosmcp-audit/` is the audit/compliance boundary.
+- Audit/compliance is owned by the external `mecmcp-audit` crate (not a
+  workspace member here); `rust-junosmcp-core` depends on it.
 
 Inventory mutation, file transfer, configuration load and commit, upgrades,
 support bundles, and package lifecycle tools are high risk.

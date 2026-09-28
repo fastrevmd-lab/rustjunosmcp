@@ -599,7 +599,7 @@ mod tests {
     /// rather than against what this module wishes it printed.
     const REAL_LOG: &str = "\
 0   2026-09-03 17:03:08 UTC by netconf via netconf
-    no-change-ref by reprobe-370-w (agent) on-behalf-of=self via unknown-public request.id=94ed336b-df9c-48d0-a9e4-2aa2cc50e429 change-set=30a15e0b686bae37
+    no-change-ref by reprobe-370-w (agent) on-behalf-of=self via unknown-public request.id=abadcafe-dead-4bad-8bad-c0dedeadbeef change-set=30a15e0b686bae37
 1   2026-07-28 17:54:19 UTC by root via other
 2   2026-07-20 22:04:08 UTC by netconf via netconf
     Remove unused srxoutpost super-user (shared-credential cleanup)
@@ -611,10 +611,10 @@ mod tests {
     /// Junos marks a commit as confirmed.
     #[test]
     fn commit_entry_includes_the_header_line() {
-        let entry = commit_entry_for_request_id(REAL_LOG, "94ed336b-df9c-48d0-a9e4-2aa2cc50e429")
+        let entry = commit_entry_for_request_id(REAL_LOG, "abadcafe-dead-4bad-8bad-c0dedeadbeef")
             .expect("the id is in the captured log");
         assert!(entry.starts_with("0   2026-09-03"), "entry was: {entry:?}");
-        assert!(entry.contains("request.id=94ed336b"));
+        assert!(entry.contains("request.id=abadcafe"));
         assert!(
             !entry.contains("2026-07-28"),
             "the entry must stop at the next header, not run into it"
@@ -634,7 +634,7 @@ mod tests {
     /// A plain commit's entry carries no confirm marker.
     #[test]
     fn plain_commit_entry_is_not_a_confirmed_commit() {
-        let entry = commit_entry_for_request_id(REAL_LOG, "94ed336b-df9c-48d0-a9e4-2aa2cc50e429")
+        let entry = commit_entry_for_request_id(REAL_LOG, "abadcafe-dead-4bad-8bad-c0dedeadbeef")
             .expect("present");
         assert!(!entry_is_confirmed_commit(entry));
     }
@@ -659,7 +659,7 @@ mod tests {
     fn a_provisional_commit_is_never_settled() {
         let record = test_record(
             LifecycleState::Indeterminate,
-            Some(test_attribution("94ed336b-df9c-48d0-a9e4-2aa2cc50e429")),
+            Some(test_attribution("abadcafe-dead-4bad-8bad-c0dedeadbeef")),
         );
         assert!(
             settle_from_outcome(
