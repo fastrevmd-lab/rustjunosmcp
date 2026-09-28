@@ -1,0 +1,54 @@
+name: Sign release tarball
+
+# The LXC release tarball is uploaded to the GitHub release by hand as the
+# last step of the documented release process (see
+# docs/superpowers/specs/2026-07-16-v0.8.0-release-design.md), after the tag
+# push and the `Release image` workflow have already run. So this signs on
+# `release: published`, not on the tag push itself -- the tarball asset does
+# not exist yet at tag-push time. A release is only published by the board
+# user, so this never fires from a PR, a branch push, or an unreviewed tag.
+on:
+  release:
+    types: [published]
+
+jobs:
+  sign-tarball:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Keyless cosign signing exchanges this job's OIDC token for a
+      # short-lived Fulcio certificate; no key material is stored anywhere.
+      id-token: write
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Download release tarball
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz'
+          shopt -s nullglob
+          tarballs=(*.tar.gz)
+          if [ "${#tarballs[@]}" -eq 0 ]; then
+            echo "No .tar.gz asset found on release $TAG; nothing to sign." >&2
+            exit 1
+          fi
+
+      - name: Sign tarball (keyless)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in *.tar.gz; do
+            cosign sign-blob --yes --bundle "${f}.cosign.bundle" "$f"
+          done
+
+      - name: Upload signature bundle to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" --repo "$REPO" *.cosign.bundle

@@ -56,6 +56,12 @@ All notable user-facing changes are recorded here. Format loosely follows
   subtree-filtered `get-configuration` RPC. Names on policies and NAT rules
   are returned unresolved by design — use `srx_resolve_address` /
   `srx_resolve_application` to expand them. Tool count: 37 → 41.
+- **Release image and tarball are now signed keylessly with cosign** via
+  GitHub Actions OIDC (no key pair, ever). The `Release image` workflow signs
+  the pushed image by digest; a new `Sign release tarball` workflow signs the
+  LXC tarball once it is attached to a published GitHub release. See the
+  README's "Verifying the image signature" and "Downloading a prebuilt release
+  tarball instead" sections for `cosign verify` / `verify-blob` recipes.
 
 ## [0.25.0] - 2026-09-15
 
