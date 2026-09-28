@@ -2968,6 +2968,7 @@ mod tests {
             payload: Some(ConfigPayloadSpec {
                 text: "set system host-name test".into(),
                 format: Some("set".into()),
+                mode: None,
             }),
             rollback_source: None,
         };
