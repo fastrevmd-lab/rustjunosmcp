@@ -1,0 +1,27 @@
+<configuration>
+  <applications>
+    <application>
+      <name>simple-tcp</name>
+      <protocol>tcp</protocol>
+      <destination-port>8080</destination-port>
+    </application>
+    <application>
+      <name>multi-term-app</name>
+      <term>
+        <name>t1</name>
+        <protocol>tcp</protocol>
+        <destination-port>8000</destination-port>
+      </term>
+      <term>
+        <name>t2</name>
+        <protocol>udp</protocol>
+        <destination-port>8001</destination-port>
+      </term>
+    </application>
+    <application>
+      <name>named-port-app</name>
+      <protocol>tcp</protocol>
+      <destination-port>ssh</destination-port>
+    </application>
+  </applications>
+</configuration>

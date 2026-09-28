@@ -137,6 +137,54 @@ pub fn text_of(xml: &str, name: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Extract `(error_tag, message)` from an `<rpc-error>` element, checked at
+/// the document root or as a direct child of it. Matches on element name
+/// only (`roxmltree` local name), not on a raw string search — a substring
+/// match on `"<rpc-error>"` misses replies where the tag carries a namespace
+/// prefix or attributes (Percy M5, MEC-83).
+///
+/// Callers must route on `error_tag`: `"not-configured"` means the feature
+/// is genuinely absent; anything else is a real per-node failure (permission
+/// denied, timeout, …) that must not be silently treated as empty
+/// configuration.
+pub fn rpc_error_parts(doc: &roxmltree::Document<'_>) -> Option<(String, String)> {
+    let root = doc.root_element();
+    let is_err = |n: &roxmltree::Node<'_, '_>| n.tag_name().name() == "rpc-error";
+
+    let err_node = if is_err(&root) {
+        Some(root)
+    } else {
+        root.children().find(|n| n.is_element() && is_err(n))
+    }?;
+
+    let error_tag = err_node
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-tag")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default();
+
+    let msg = err_node
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-message")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string());
+    let bad = err_node
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "bad-element")
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string());
+
+    let reason = match (msg, bad) {
+        (Some(m), Some(b)) => format!("rpc-error: {m} (bad-element: {b})"),
+        (Some(m), None) => format!("rpc-error: {m}"),
+        (None, Some(b)) => format!("rpc-error: bad-element={b}"),
+        (None, None) => "rpc-error (unknown)".into(),
+    };
+
+    Some((error_tag, reason))
+}
+
 /// Sanitize a raw XML string returned by `rustez`/`rustnetconf` so that
 /// `roxmltree` can parse it. Two problems are fixed:
 ///
@@ -331,6 +379,41 @@ fn find_attr_end(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_error_parts_reads_not_configured() {
+        let xml = r#"<nc:rpc-error xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+<nc:error-type>application</nc:error-type>
+<nc:error-tag>not-configured</nc:error-tag>
+<nc:error-severity>error</nc:error-severity>
+<nc:error-message>device does not support this feature</nc:error-message>
+</nc:rpc-error>"#;
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        let (tag, msg) = rpc_error_parts(&doc).expect("rpc-error must be detected");
+        assert_eq!(tag, "not-configured");
+        assert!(msg.contains("device does not support"));
+    }
+
+    #[test]
+    fn rpc_error_parts_reads_permission_denied() {
+        let xml = r#"<rpc-error>
+<error-type>protocol</error-type>
+<error-tag>access-denied</error-tag>
+<error-severity>error</error-severity>
+<error-message>permission denied</error-message>
+</rpc-error>"#;
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        let (tag, msg) = rpc_error_parts(&doc).expect("rpc-error must be detected");
+        assert_eq!(tag, "access-denied");
+        assert!(msg.contains("permission denied"));
+    }
+
+    #[test]
+    fn rpc_error_parts_none_for_benign_reply() {
+        let xml = "<security-policies-information/>";
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        assert!(rpc_error_parts(&doc).is_none());
+    }
 
     #[test]
     fn standalone_reply_returns_one_node_empty_name() {

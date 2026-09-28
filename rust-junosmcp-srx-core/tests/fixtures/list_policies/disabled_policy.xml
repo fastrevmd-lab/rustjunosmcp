@@ -1,0 +1,28 @@
+<security-policies-information>
+  <security-context>
+    <context-information>
+      <source-zone-name>trust</source-zone-name>
+      <destination-zone-name>untrust</destination-zone-name>
+    </context-information>
+    <policies>
+      <policy-information>
+        <policy-name>old-allow-rdp</policy-name>
+        <policy-state>disabled</policy-state>
+        <policy-identifier>9</policy-identifier>
+        <policy-sequence-number>1</policy-sequence-number>
+        <source-addresses>
+          <source-address><address-name>any</address-name></source-address>
+        </source-addresses>
+        <destination-addresses>
+          <destination-address><address-name>any</address-name></destination-address>
+        </destination-addresses>
+        <applications>
+          <application><application-name>any</application-name></application>
+        </applications>
+        <policy-action>
+          <action-type>permit</action-type>
+        </policy-action>
+      </policy-information>
+    </policies>
+  </security-context>
+</security-policies-information>

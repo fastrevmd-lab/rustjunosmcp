@@ -1,0 +1,29 @@
+<configuration>
+  <security>
+    <nat>
+      <source>
+        <rule-set>
+          <name>multi-zone-rs</name>
+          <from><zone>trust</zone><zone>dmz</zone></from>
+          <to><zone>untrust</zone></to>
+          <rule inactive="inactive">
+            <name>rule-disabled</name>
+            <src-nat-rule-match>
+              <source-address>10.0.0.0/24</source-address>
+              <destination-address>0.0.0.0/0</destination-address>
+              <destination-port>443</destination-port>
+              <protocol>tcp</protocol>
+            </src-nat-rule-match>
+            <then>
+              <source-nat>
+                <pool>
+                  <pool-name>my-pool</pool-name>
+                </pool>
+              </source-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </source>
+    </nat>
+  </security>
+</configuration>

@@ -1,0 +1,33 @@
+<configuration>
+  <security>
+    <nat>
+      <source>
+        <rule-set>
+          <name>repeated-values-rs</name>
+          <from><zone>trust</zone><zone>dmz</zone></from>
+          <to><zone>untrust</zone></to>
+          <rule>
+            <name>rule-multi</name>
+            <src-nat-rule-match>
+              <source-address>10.0.0.0/24</source-address>
+              <destination-address>0.0.0.0/0</destination-address>
+              <destination-port>80</destination-port>
+              <destination-port>443</destination-port>
+              <source-port>1024-2047</source-port>
+              <source-port>4000</source-port>
+              <protocol>tcp</protocol>
+              <protocol>udp</protocol>
+            </src-nat-rule-match>
+            <then>
+              <source-nat>
+                <pool>
+                  <pool-name>my-pool</pool-name>
+                </pool>
+              </source-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </source>
+    </nat>
+  </security>
+</configuration>

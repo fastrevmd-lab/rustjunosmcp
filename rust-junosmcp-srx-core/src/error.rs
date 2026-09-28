@@ -274,6 +274,49 @@ pub enum SrxError {
         /// Error detail.
         detail: String,
     },
+
+    // ---------------------------------------------------------------------
+    // Policy-read tools (MEC-54) — nested address-set / application-set
+    // resolution. Same `[code=<snake>] router=<name>: <detail>` convention.
+    // ---------------------------------------------------------------------
+    /// Nested address-set or application-set resolution encountered a
+    /// reference cycle. Refusing beats looping or returning a wrong partial
+    /// answer on a malformed config (fail-closed).
+    #[error("[code=resolution_cycle] router={router}: cycle resolving '{name}': {chain}")]
+    ResolutionCycle {
+        /// Device name.
+        router: String,
+        /// Name whose resolution re-entered a name already on the walk.
+        name: String,
+        /// The walk that led back to `name`, formatted as `a -> b -> c`.
+        chain: String,
+    },
+
+    /// Nested address-set or application-set resolution exceeded the maximum
+    /// walk depth — a second backstop behind explicit cycle rejection.
+    #[error(
+        "[code=resolution_depth_exceeded] router={router}: '{name}' exceeded max depth {max_depth}"
+    )]
+    ResolutionDepthExceeded {
+        /// Device name.
+        router: String,
+        /// Name being resolved when the depth cap was hit.
+        name: String,
+        /// Configured maximum depth.
+        max_depth: usize,
+    },
+
+    /// A requested or referenced address/application/set name was not found
+    /// in the device's configuration.
+    #[error("[code=resolution_name_not_found] router={router}: '{name}' not found in {book}")]
+    ResolutionNameNotFound {
+        /// Device name.
+        router: String,
+        /// Name that could not be resolved.
+        name: String,
+        /// Which book/scope was searched (e.g. "global address-book", "applications").
+        book: String,
+    },
 }
 
 impl SrxError {
@@ -316,6 +359,9 @@ impl SrxError {
             Self::BundleRpcSubsetFailed { .. } => "bundle_partial",
             Self::BundlePerRouterContention { .. } => "contention",
             Self::BundleConfigCaptureFailed { .. } => "capture_failed",
+            Self::ResolutionCycle { .. } => "resolution_cycle",
+            Self::ResolutionDepthExceeded { .. } => "resolution_depth_exceeded",
+            Self::ResolutionNameNotFound { .. } => "resolution_name_not_found",
         }
     }
 }

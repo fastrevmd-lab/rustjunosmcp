@@ -1,0 +1,26 @@
+<configuration>
+  <security>
+    <nat>
+      <source>
+        <rule-set>
+          <name>trust-to-untrust</name>
+          <from><zone>trust</zone></from>
+          <to><zone>untrust</zone></to>
+          <rule>
+            <name>rule1</name>
+            <src-nat-rule-match>
+              <source-address-name>internal-net-set</source-address-name>
+            </src-nat-rule-match>
+            <then>
+              <source-nat>
+                <pool>
+                  <pool-name>my-pool</pool-name>
+                </pool>
+              </source-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </source>
+    </nat>
+  </security>
+</configuration>

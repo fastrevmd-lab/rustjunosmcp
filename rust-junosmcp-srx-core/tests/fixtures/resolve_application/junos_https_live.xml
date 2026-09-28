@@ -1,0 +1,13 @@
+<configuration>
+  <applications/>
+  <groups>
+    <name>junos-defaults</name>
+    <applications>
+      <application>
+        <name>junos-https</name>
+        <protocol>tcp</protocol>
+        <destination-port>443</destination-port>
+      </application>
+    </applications>
+  </groups>
+</configuration>

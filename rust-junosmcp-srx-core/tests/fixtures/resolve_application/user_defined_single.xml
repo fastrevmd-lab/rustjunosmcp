@@ -1,0 +1,9 @@
+<configuration>
+  <applications>
+    <application>
+      <name>internal-billing-api</name>
+      <protocol>tcp</protocol>
+      <destination-port>8443</destination-port>
+    </application>
+  </applications>
+</configuration>

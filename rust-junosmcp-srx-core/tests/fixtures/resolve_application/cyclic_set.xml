@@ -1,0 +1,16 @@
+<configuration>
+  <applications>
+    <application-set>
+      <name>set-a</name>
+      <application-set>
+        <name>set-b</name>
+      </application-set>
+    </application-set>
+    <application-set>
+      <name>set-b</name>
+      <application-set>
+        <name>set-a</name>
+      </application-set>
+    </application-set>
+  </applications>
+</configuration>

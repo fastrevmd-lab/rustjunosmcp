@@ -212,13 +212,14 @@ fn lists_all_known_tools() {
         .collect();
     let expected: HashSet<&str> = rust_junosmcp_auth::KNOWN_TOOLS.iter().copied().collect();
     assert_eq!(names, expected);
-    assert_eq!(tools.len(), 39);
+    assert_eq!(tools.len(), 43);
     // 28 before Phase 5; the change-set tools took it to 33,
     // `confirm_junos_change_set` makes 34 (#239),
     // `list_junos_change_sets` makes 35 (#255), and
-    // `cancel_junos_change_set` makes 36 (#293), execute makes 37, and
-    // `srx_flow_sessions` + `srx_policy_match` make 39 (MEC-55).
-    assert_eq!(names.len(), 39);
+    // `cancel_junos_change_set` makes 36 (#293), and execute makes 37.
+    // MEC-54's four SRX policy-read tools make 41, and
+    // `srx_flow_sessions` + `srx_policy_match` make 43 (MEC-55).
+    assert_eq!(names.len(), 43);
 }
 
 #[test]

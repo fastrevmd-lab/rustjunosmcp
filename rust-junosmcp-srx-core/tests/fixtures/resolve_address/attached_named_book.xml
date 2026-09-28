@@ -1,0 +1,19 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>corp-book</name>
+      <address>
+        <name>h1</name>
+        <ip-prefix>10.10.10.1/32</ip-prefix>
+      </address>
+      <attach>
+        <zone>trust</zone>
+      </attach>
+    </address-book>
+    <zones>
+      <security-zone>
+        <name>trust</name>
+      </security-zone>
+    </zones>
+  </security>
+</configuration>

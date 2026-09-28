@@ -1,0 +1,10 @@
+<configuration>
+  <applications>
+    <application>
+      <name>custom-icmp</name>
+      <protocol>icmp</protocol>
+      <icmp-type>8</icmp-type>
+      <icmp-code>0</icmp-code>
+    </application>
+  </applications>
+</configuration>

@@ -614,6 +614,141 @@
       }
     }
   },
+  "srx_list_nat_rules": {
+    "name": "srx_list_nat_rules",
+    "description": "Lists source, destination, and static NAT rules, independently per kind. Match criteria carry unresolved address/address-set names, same as srx_list_policies — use srx_resolve_address to expand them. Optionally fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC round trips; a failed or unparsable join degrades to hit_count=None rather than failing the call). `limit` caps rules per kind (default 500); `truncated` is set if any kind was cut short.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "include_hit_counts": {
+          "description": "Also fetch and join per-rule hit counts (three extra RPC round trips).\nDefault false. Unconfirmed RPC tags — see module docs.",
+          "type": "boolean",
+          "default": false
+        },
+        "limit": {
+          "description": "Maximum number of rules to return per NAT kind.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 500
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      }
+    }
+  },
+  "srx_list_policies": {
+    "name": "srx_list_policies",
+    "description": "Lists security policies by from-zone/to-zone context, including global policies (zone `\"any\"`) and, optionally, per-policy hit counts. Names on each policy (addresses, applications) are returned unresolved — use srx_resolve_address / srx_resolve_application to expand them. Paginated via `limit`/`offset` (default limit 500); `truncated` and `total_count` in the response make any cutoff explicit rather than silent.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "from_zone": {
+          "description": "Restrict to this source zone. Omit with `to_zone` to enumerate all context pairs.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "to_zone": {
+          "description": "Restrict to this destination zone. Omit with `from_zone` to enumerate all context pairs.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "policy_name": {
+          "description": "Restrict to an exact policy name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "include_hit_counts": {
+          "description": "Also fetch and join per-policy hit counts (a second RPC round trip).\nDefault false. See module docs for the (live-confirmed) RPC tag.",
+          "type": "boolean",
+          "default": false
+        },
+        "limit": {
+          "description": "Maximum number of policies to return.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 500
+        },
+        "offset": {
+          "description": "Number of policies to skip before collecting `limit`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      }
+    }
+  },
   "srx_policy_match": {
     "name": "srx_policy_match",
     "description": "Deterministic \"would this traffic be allowed\" answer for a 5-tuple (`show security match-policies`) — the device's own verdict, never a model's inference from the policy list. verdict is one of permit / deny / reject / no_match; no_match (device default-policy fallthrough, no explicit policy matched) is distinct from an explicit deny/reject policy match, and carries default_action (deny or permit) for whichever default-policy the device applies. is_global marks a matched zone-independent (any/any) policy. The 5-tuple (source_ip, destination_ip, source_port, destination_port, protocol) is parsed into typed values and rejected with a typed error before any RPC is sent if malformed.",
@@ -680,6 +815,108 @@
         },
         "protocol": {
           "description": "Protocol: \"tcp\", \"udp\", \"icmp\" (case-insensitive), or a numeric IANA\nprotocol number.",
+          "type": "string"
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "srx_resolve_address": {
+    "name": "srx_resolve_address",
+    "description": "Resolves a Junos address or address-set name (global, or scoped to a zone's own address-book) to its flattened, deduplicated concrete leaves — prefixes, ranges, wildcards, or DNS names. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. DNS-name leaves are returned as-is — this tool never performs its own DNS resolution. `truncated` is set if the flattened member count exceeds the cap.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Address or address-set name to resolve.",
+          "type": "string"
+        },
+        "zone": {
+          "description": "Zone whose address-book to search. Omit to search the global address-book.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "include_raw": {
+          "description": "Include raw XML from device in response. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "router_name": {
+          "description": "Device name (aliased as router_name).\n\nAlias for `router`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "srx_resolve_application": {
+    "name": "srx_resolve_application",
+    "description": "Resolves a Junos application or application-set name — including `junos-*` predefined defaults — to its flattened, deduplicated concrete protocol/port leaves. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. `junos-*` defaults are served from a compiled-in static table when the device does not expose its `junos-defaults` group over NETCONF (a live device definition always takes precedence over the static table). `truncated` is set if the flattened member count exceeds the cap.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "router"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            }
+          ]
+        }
+      ],
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "router": {
+          "description": "Device name (aliased as router_name).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Application or application-set name to resolve.",
           "type": "string"
         },
         "include_raw": {

@@ -1,0 +1,25 @@
+<configuration>
+  <security>
+    <nat>
+      <static>
+        <rule-set>
+          <name>static-rs</name>
+          <from><zone>untrust</zone></from>
+          <rule>
+            <name>rule1</name>
+            <static-nat-rule-match>
+              <destination-address>203.0.113.0/24</destination-address>
+            </static-nat-rule-match>
+            <then>
+              <static-nat>
+                <prefix>
+                  <addr-prefix>10.0.0.0/24</addr-prefix>
+                </prefix>
+              </static-nat>
+            </then>
+          </rule>
+        </rule-set>
+      </static>
+    </nat>
+  </security>
+</configuration>

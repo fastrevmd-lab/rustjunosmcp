@@ -1,0 +1,11 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address>
+        <name>host1</name>
+        <ip-prefix>10.0.0.1/32</ip-prefix>
+      </address>
+    </address-book>
+  </security>
+</configuration>

@@ -185,6 +185,10 @@ const SRX_SERVER_TOOLS: &[&str] = &[
     "get_srx_security_services_status",
     "check_srx_feature_license",
     "vpn_lifecycle_report",
+    "srx_list_policies",
+    "srx_resolve_address",
+    "srx_resolve_application",
+    "srx_list_nat_rules",
     "manage_idp_security_package",
     "manage_appid_signature_package",
     "validate_chassis_cluster_health",
@@ -200,8 +204,8 @@ mod server_tools_const_tests {
     use std::collections::HashSet;
 
     #[test]
-    fn server_tools_len_is_eleven() {
-        assert_eq!(SRX_SERVER_TOOLS.len(), 11);
+    fn server_tools_len_is_fifteen() {
+        assert_eq!(SRX_SERVER_TOOLS.len(), 15);
     }
 
     #[test]
@@ -473,6 +477,225 @@ impl JmcpHandler {
             })?;
         let result = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing VpnLifecycleData: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_list_policies",
+        description = "Lists security policies by from-zone/to-zone context, including global \
+                       policies (zone `\"any\"`) and, optionally, per-policy hit counts. Names on \
+                       each policy (addresses, applications) are returned unresolved — use \
+                       srx_resolve_address / srx_resolve_application to expand them. Paginated via \
+                       `limit`/`offset` (default limit 500); `truncated` and `total_count` in the \
+                       response make any cutoff explicit rather than silent."
+    )]
+    async fn srx_list_policies(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::PolicyListArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "srx_list_policies", "read", vec![args.router.clone()]);
+
+        if let Err(e) = self.authorize_call(&extensions, "srx_list_policies", Some(&args.router)) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::list_policies::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing PolicyListData: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_resolve_address",
+        description = "Resolves a Junos address or address-set name (global, or scoped to a \
+                       zone's own address-book) to its flattened, deduplicated concrete leaves — \
+                       prefixes, ranges, wildcards, or DNS names. Nested sets are walked \
+                       recursively in this tool, never on the device; reference cycles are \
+                       rejected rather than looped. DNS-name leaves are returned as-is — this tool \
+                       never performs its own DNS resolution. `truncated` is set if the flattened \
+                       member count exceeds the cap."
+    )]
+    async fn srx_resolve_address(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::AddressResolveArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "srx_resolve_address",
+            "read",
+            vec![args.router.clone()],
+        );
+
+        if let Err(e) = self.authorize_call(&extensions, "srx_resolve_address", Some(&args.router))
+        {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::resolve_address::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_)
+                | rust_junosmcp_srx_core::SrxError::ResolutionNameNotFound { .. } => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing AddressResolution: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_resolve_application",
+        description = "Resolves a Junos application or application-set name — including \
+                       `junos-*` predefined defaults — to its flattened, deduplicated concrete \
+                       protocol/port leaves. Nested sets are walked recursively in this tool, \
+                       never on the device; reference cycles are rejected rather than looped. \
+                       `junos-*` defaults are served from a compiled-in static table when the \
+                       device does not expose its `junos-defaults` group over NETCONF (a live \
+                       device definition always takes precedence over the static table). \
+                       `truncated` is set if the flattened member count exceeds the cap."
+    )]
+    async fn srx_resolve_application(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::ApplicationResolveArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(
+            ctx,
+            "srx_resolve_application",
+            "read",
+            vec![args.router.clone()],
+        );
+
+        if let Err(e) =
+            self.authorize_call(&extensions, "srx_resolve_application", Some(&args.router))
+        {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::resolve_application::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_)
+                | rust_junosmcp_srx_core::SrxError::ResolutionNameNotFound { .. } => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing ApplicationResolution: {e}"), None)
+        });
+        match &result {
+            Ok(body) => {
+                audit.meta("output_bytes", body.len() as u64);
+                audit.succeed();
+            }
+            Err(e) => audit.fail_kind("serialize", e),
+        }
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+    }
+
+    #[tool(
+        name = "srx_list_nat_rules",
+        description = "Lists source, destination, and static NAT rules, independently per kind. \
+                       Match criteria carry unresolved address/address-set names, same as \
+                       srx_list_policies — use srx_resolve_address to expand them. Optionally \
+                       fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC \
+                       round trips; a failed or unparsable join degrades to hit_count=None rather \
+                       than failing the call). `limit` caps rules per kind (default 500); \
+                       `truncated` is set if any kind was cut short."
+    )]
+    async fn srx_list_nat_rules(
+        &self,
+        Parameters(args): Parameters<rust_junosmcp_srx_core::NatRulesArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "srx_list_nat_rules", "read", vec![args.router.clone()]);
+
+        if let Err(e) = self.authorize_call(&extensions, "srx_list_nat_rules", Some(&args.router)) {
+            audit.deny(match e {
+                ScopeError::MissingCallerContext => "missing_caller_context",
+                ScopeError::RouterNotInScope { .. } => "router_scope",
+                ScopeError::ToolNotInScope { .. } => "tool_scope",
+            });
+            return Self::srx_scope_to_call_result(e);
+        }
+        let mut device =
+            self.dm.open(&args.router).await.map_err(|e| {
+                rmcp::ErrorData::internal_error(format!("opening device: {e}"), None)
+            })?;
+        let resp = rust_junosmcp_srx_core::workflows::list_nat_rules::run(&mut device, args)
+            .await
+            .map_err(|e| match e {
+                rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
+                    rmcp::ErrorData::invalid_params(e.to_string(), None)
+                }
+                _ => rmcp::ErrorData::internal_error(e.to_string(), None),
+            })?;
+        let result = serde_json::to_string_pretty(&resp).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("serializing NatRules: {e}"), None)
         });
         match &result {
             Ok(body) => {

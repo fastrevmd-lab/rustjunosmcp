@@ -1,0 +1,13 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address>
+        <name>wc1</name>
+        <wildcard-address>
+          <name>10.0.0.0/255.255.0.0</name>
+        </wildcard-address>
+      </address>
+    </address-book>
+  </security>
+</configuration>

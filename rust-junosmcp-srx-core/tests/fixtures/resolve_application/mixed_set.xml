@@ -1,0 +1,18 @@
+<configuration>
+  <applications>
+    <application>
+      <name>app1</name>
+      <protocol>tcp</protocol>
+      <destination-port>9000</destination-port>
+    </application>
+    <application-set>
+      <name>mixed-set</name>
+      <application>
+        <name>app1</name>
+      </application>
+      <application>
+        <name>junos-https</name>
+      </application>
+    </application-set>
+  </applications>
+</configuration>

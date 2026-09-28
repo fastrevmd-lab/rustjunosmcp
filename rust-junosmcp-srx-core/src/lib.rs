@@ -34,8 +34,21 @@ pub use workflows::idp_package::{
 pub use workflows::license::{
     LicenseArgs, LicenseCounts, LicenseData, LicenseRecord, SrxLicensedFeature,
 };
+pub use workflows::list_nat_rules::{
+    DestinationNatRule, DestinationTranslation, NatMatch, NatRules, NatRulesArgs,
+    NatZoneOrInterface, SourceNatRule, SourceTranslation, StaticNatRule, StaticTranslation,
+};
+pub use workflows::list_policies::{
+    PolicyAction, PolicyListArgs, PolicyListData, PolicyLog, SecurityPolicy,
+};
 pub use workflows::policy_match::{
     DefaultAction, FiveTuple, MatchVerdict, MatchedPolicy, PolicyMatchArgs, PolicyMatchResult,
+};
+pub use workflows::resolve_address::{
+    AddressKind, AddressResolution, AddressResolveArgs, AddressScope, AddressValue, ResolvedAddress,
+};
+pub use workflows::resolve_application::{
+    ApplicationKind, ApplicationResolution, ApplicationResolveArgs, PortRange, ResolvedApplication,
 };
 pub use workflows::services_status::{
     AppIdInfo, AtpCloudInfo, IdpInfo, NodeServicesStatus, SecIntelInfo, ServicesStatusArgs,

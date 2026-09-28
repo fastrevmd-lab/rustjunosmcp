@@ -1,0 +1,22 @@
+<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <rpc-error>
+        <error-type>protocol</error-type>
+        <error-tag>access-denied</error-tag>
+        <error-severity>error</error-severity>
+        <error-message>permission denied</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-type>protocol</error-type>
+        <error-tag>access-denied</error-tag>
+        <error-severity>error</error-severity>
+        <error-message>permission denied</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>

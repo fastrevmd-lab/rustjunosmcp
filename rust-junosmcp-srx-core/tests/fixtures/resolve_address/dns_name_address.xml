@@ -1,0 +1,13 @@
+<configuration>
+  <security>
+    <address-book>
+      <name>global</name>
+      <address>
+        <name>dns1</name>
+        <dns-name>
+          <name>example.com</name>
+        </dns-name>
+      </address>
+    </address-book>
+  </security>
+</configuration>
