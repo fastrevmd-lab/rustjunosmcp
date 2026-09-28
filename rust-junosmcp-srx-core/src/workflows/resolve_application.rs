@@ -159,9 +159,9 @@ pub struct ResolvedApplication {
     pub icmp_type: Option<u8>,
     /// ICMP code, if `protocol` is `"icmp"`/`"icmp6"` and configured.
     pub icmp_code: Option<u8>,
-    /// `false` if this application (or its `term`, or an enclosing
-    /// application-set on the resolution path) is `inactive` in the
-    /// configuration.
+    /// `false` if this application (or its `term`) is `inactive` in the
+    /// configuration. Inactivity of an enclosing application-set is not
+    /// reflected here.
     pub active: bool,
     /// Whether this entry came from the device or the compiled-in fallback
     /// table (MEC-53 §10 Q4) — the static `junos-*` table is otherwise
@@ -387,9 +387,64 @@ struct ApplicationFields {
     icmp_code: Option<u8>,
 }
 
+/// Children of an `<application>` (or one of its `<term>`s) this parser
+/// understands. Percy R3 (MEC-378): anything else — `rpc-program-number`,
+/// `application-protocol` (ALG), `uuid`, … — narrows or changes the match
+/// in ways this tool can't represent, so the application fails closed
+/// instead of reading as a plain protocol/port match. The lazy parse keeps
+/// that failure scoped to lookups that actually reach this application.
+const KNOWN_APPLICATION_CHILDREN: &[&str] = &[
+    "name",
+    "description",
+    "protocol",
+    "source-port",
+    "destination-port",
+    "inactivity-timeout",
+    "icmp-type",
+    "icmp-code",
+    "icmp6-type",
+    "icmp6-code",
+];
+
+fn reject_unknown_children(
+    node: &roxmltree::Node<'_, '_>,
+    extra_allowed: &[&str],
+) -> Result<(), SrxError> {
+    for child in node.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        if !KNOWN_APPLICATION_CHILDREN.contains(&tag) && !extra_allowed.contains(&tag) {
+            return Err(SrxError::Parse(format!(
+                "unrecognised application child <{tag}>: refusing to report this \
+                 application rather than silently drop a match criterion"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a `u8` ICMP field, accepting it under either its ICMPv4 or ICMPv6
+/// tag. Both present is ambiguous and fails closed.
+fn parse_icmp_field(
+    node: &roxmltree::Node<'_, '_>,
+    v4_tag: &str,
+    v6_tag: &str,
+) -> Result<Option<u8>, SrxError> {
+    match (child_text(node, v4_tag), child_text(node, v6_tag)) {
+        (Some(_), Some(_)) => Err(SrxError::Parse(format!(
+            "application has both <{v4_tag}> and <{v6_tag}>"
+        ))),
+        (Some(t), None) | (None, Some(t)) => t
+            .parse::<u8>()
+            .map(Some)
+            .map_err(|_| SrxError::Parse(format!("invalid {v4_tag}/{v6_tag}: {t}"))),
+        (None, None) => Ok(None),
+    }
+}
+
 /// Parse one application-shaped node's core match fields. Shared by the
 /// whole-application and per-`term` parse paths.
 fn parse_application_fields(node: &roxmltree::Node<'_, '_>) -> Result<ApplicationFields, SrxError> {
+    reject_unknown_children(node, &[])?;
     let protocol = child_text(node, "protocol")
         .ok_or_else(|| SrxError::schema_mismatch("get-configuration", "application/protocol"))?;
     let source_port = child_text(node, "source-port").map(|t| parse_port_spec(&t));
@@ -400,18 +455,8 @@ fn parse_application_fields(node: &roxmltree::Node<'_, '_>) -> Result<Applicatio
                 .map_err(|_| SrxError::Parse(format!("invalid inactivity-timeout: {t}")))
         })
         .transpose()?;
-    let icmp_type = child_text(node, "icmp-type")
-        .map(|t| {
-            t.parse::<u8>()
-                .map_err(|_| SrxError::Parse(format!("invalid icmp-type: {t}")))
-        })
-        .transpose()?;
-    let icmp_code = child_text(node, "icmp-code")
-        .map(|t| {
-            t.parse::<u8>()
-                .map_err(|_| SrxError::Parse(format!("invalid icmp-code: {t}")))
-        })
-        .transpose()?;
+    let icmp_type = parse_icmp_field(node, "icmp-type", "icmp6-type")?;
+    let icmp_code = parse_icmp_field(node, "icmp-code", "icmp6-code")?;
     Ok(ApplicationFields {
         protocol,
         source_port,
@@ -456,6 +501,16 @@ fn parse_application_node(
         }]);
     }
 
+    // Only `term`s (plus name/description) may sit beside each other at the
+    // top level of a term-based application; anything else fails closed.
+    for child in app_node.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        if !matches!(tag, "name" | "description" | "term") {
+            return Err(SrxError::Parse(format!(
+                "unrecognised child <{tag}> beside <term> in application '{name}'"
+            )));
+        }
+    }
     let mut out = Vec::with_capacity(terms.len());
     for term in terms {
         let term_name = child_text(&term, "name").ok_or_else(|| {
@@ -739,6 +794,54 @@ mod tests {
         let data = resp.data.expect("data present");
         assert_eq!(data.members[0].icmp_type, Some(8));
         assert_eq!(data.members[0].icmp_code, Some(0));
+    }
+
+    #[test]
+    fn icmp6_type_is_parsed_not_dropped() {
+        // Percy R3 (MEC-378): an echo-only ICMPv6 application must not read
+        // as "all of ICMPv6" because <icmp6-type> was ignored.
+        let xml = "<configuration><applications><application>\
+            <name>v6-echo</name><protocol>icmp6</protocol>\
+            <icmp6-type>128</icmp6-type><icmp6-code>0</icmp6-code>\
+            </application></applications></configuration>";
+        let resp = parse("r1", "v6-echo", xml).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.members[0].protocol, "icmp6");
+        assert_eq!(data.members[0].icmp_type, Some(128));
+        assert_eq!(data.members[0].icmp_code, Some(0));
+    }
+
+    #[test]
+    fn unrecognised_application_child_fails_closed() {
+        // Percy R3 (MEC-378): rpc-program-number / application-protocol
+        // (ALG) change the match; silently dropping them made the
+        // application look like a plain protocol/port match.
+        for extra in [
+            "<rpc-program-number>100003</rpc-program-number>",
+            "<application-protocol>ftp</application-protocol>",
+        ] {
+            let xml = format!(
+                "<configuration><applications><application>\
+                 <name>odd</name><protocol>tcp</protocol>\
+                 <destination-port>2049</destination-port>{extra}\
+                 </application></applications></configuration>"
+            );
+            let err = parse("r1", "odd", &xml).expect_err("must fail closed");
+            assert!(matches!(err, SrxError::Parse(_)), "{extra}: {err}");
+        }
+    }
+
+    #[test]
+    fn unrecognised_child_in_term_or_beside_terms_fails_closed() {
+        let in_term = "<configuration><applications><application><name>t</name>\
+            <term><name>a</name><protocol>tcp</protocol><alg>x</alg></term>\
+            </application></applications></configuration>";
+        assert!(parse("r1", "t", in_term).is_err());
+        let beside = "<configuration><applications><application><name>t</name>\
+            <application-protocol>ftp</application-protocol>\
+            <term><name>a</name><protocol>tcp</protocol></term>\
+            </application></applications></configuration>";
+        assert!(parse("r1", "t", beside).is_err());
     }
 
     #[test]

@@ -139,12 +139,13 @@ pub struct NatMatch {
     pub destination_addresses: Vec<String>,
     /// Unresolved application/application-set names.
     pub applications: Vec<String>,
-    /// Source port match, if configured.
-    pub source_port: Option<NatPortMatch>,
-    /// Destination port match, if configured.
-    pub destination_port: Option<NatPortMatch>,
-    /// Protocol match (e.g. `"tcp"`), if configured.
-    pub protocol: Option<String>,
+    /// Source port matches (each a port or range); empty when not configured.
+    /// Junos accepts several values, so every one is kept (Percy R1, MEC-378).
+    pub source_ports: Vec<NatPortMatch>,
+    /// Destination port matches (each a port or range); empty when not configured.
+    pub destination_ports: Vec<NatPortMatch>,
+    /// Protocol matches (e.g. `["tcp", "udp"]`); empty when not configured.
+    pub protocols: Vec<String>,
 }
 
 /// Source NAT translation.
@@ -410,7 +411,7 @@ fn parse_source(
         let rule_set_name = child_text(&rule_set, "name")
             .ok_or_else(|| SrxError::schema_mismatch("get-configuration", "rule-set/name"))?;
         let from = parse_from(&rule_set)?;
-        let to = parse_to(&rule_set);
+        let to = parse_to(&rule_set)?;
         let rule_set_active = !is_inactive(&rule_set);
         for (i, rule) in rule_set
             .children()
@@ -669,23 +670,31 @@ fn is_inactive(node: &roxmltree::Node<'_, '_>) -> bool {
 fn parse_zone_selector_list(
     container: &roxmltree::Node<'_, '_>,
 ) -> Result<Vec<NatZoneOrInterface>, SrxError> {
-    let selectors: Vec<NatZoneOrInterface> = container
-        .children()
-        .filter(|n| n.is_element())
-        .filter_map(|child| {
-            let text = child.text().unwrap_or("").trim().to_string();
-            match child.tag_name().name() {
-                "zone" => Some(NatZoneOrInterface::Zone { name: text }),
-                "interface" => Some(NatZoneOrInterface::Interface { name: text }),
-                "routing-instance" => Some(NatZoneOrInterface::RoutingInstance { name: text }),
-                _ => None,
+    let container_tag = container.tag_name().name();
+    let mut selectors = Vec::new();
+    for child in container.children().filter(|n| n.is_element()) {
+        let text = child.text().unwrap_or("").trim().to_string();
+        selectors.push(match child.tag_name().name() {
+            "zone" => NatZoneOrInterface::Zone { name: text },
+            "interface" => NatZoneOrInterface::Interface { name: text },
+            "routing-instance" => NatZoneOrInterface::RoutingInstance { name: text },
+            // Fail closed: a selector we can't represent would otherwise make
+            // the rule-set look scoped narrower (or wider) than it is.
+            other => {
+                return Err(SrxError::Parse(format!(
+                    "unrecognised NAT rule-set <{container_tag}> selector <{other}>"
+                )));
             }
-        })
-        .collect();
+        });
+    }
     if selectors.is_empty() {
         return Err(SrxError::schema_mismatch(
             "get-configuration",
-            "rule-set/from (zone|interface|routing-instance)",
+            if container_tag == "to" {
+                "rule-set/to (zone|interface|routing-instance)"
+            } else {
+                "rule-set/from (zone|interface|routing-instance)"
+            },
         ));
     }
     Ok(selectors)
@@ -707,13 +716,16 @@ fn parse_from(rule_set: &roxmltree::Node<'_, '_>) -> Result<Vec<NatZoneOrInterfa
 /// MEC-83: the original parser had no `to` field at all, so a source NAT
 /// rule scoped `to zone untrust` was reported with no destination context).
 /// Absent entirely on a rule-set with no `to` stanza — that's a legitimate
-/// shape, not an error.
-fn parse_to(rule_set: &roxmltree::Node<'_, '_>) -> Vec<NatZoneOrInterface> {
-    rule_set
+/// shape, not an error. A `to` stanza that is present but unparseable is an
+/// error (Percy MEC-378): swallowing it would report "no to-restriction".
+fn parse_to(rule_set: &roxmltree::Node<'_, '_>) -> Result<Vec<NatZoneOrInterface>, SrxError> {
+    match rule_set
         .children()
         .find(|n| n.is_element() && n.tag_name().name() == "to")
-        .and_then(|to| parse_zone_selector_list(&to).ok())
-        .unwrap_or_default()
+    {
+        Some(to) => parse_zone_selector_list(&to),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Children of a NAT rule match container this parser understands.
@@ -824,9 +836,9 @@ fn parse_match(
     let mut source_addresses = Vec::new();
     let mut destination_addresses = Vec::new();
     let mut applications = Vec::new();
-    let mut source_port = None;
-    let mut destination_port = None;
-    let mut protocol = None;
+    let mut source_ports = Vec::new();
+    let mut destination_ports = Vec::new();
+    let mut protocols = Vec::new();
 
     for child in match_node.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
@@ -865,10 +877,10 @@ fn parse_match(
                     .ok_or_else(|| SrxError::Parse("empty <application> in NAT match".into()))?;
                 applications.push(text);
             }
-            "source-port" => source_port = Some(parse_nat_port(&child)?),
-            "destination-port" => destination_port = Some(parse_nat_port(&child)?),
+            "source-port" => source_ports.push(parse_nat_port(&child)?),
+            "destination-port" => destination_ports.push(parse_nat_port(&child)?),
             "protocol" => {
-                protocol = Some(
+                protocols.push(
                     child
                         .text()
                         .map(|t| t.trim().to_string())
@@ -884,9 +896,9 @@ fn parse_match(
         source_addresses,
         destination_addresses,
         applications,
-        source_port,
-        destination_port,
-        protocol,
+        source_ports,
+        destination_ports,
+        protocols,
     })
 }
 
@@ -1045,13 +1057,60 @@ mod tests {
             "inactive rule must report active=false"
         );
         assert_eq!(
-            data.source[0].match_.destination_port,
-            Some(NatPortMatch {
+            data.source[0].match_.destination_ports,
+            vec![NatPortMatch {
                 low: 443,
                 high: 443
-            })
+            }]
         );
-        assert_eq!(data.source[0].match_.protocol.as_deref(), Some("tcp"));
+        assert_eq!(data.source[0].match_.protocols, vec!["tcp".to_string()]);
+    }
+
+    #[test]
+    fn repeated_ports_and_protocols_are_all_kept() {
+        // Percy R1 (MEC-378): repeated <destination-port>/<source-port>/
+        // <protocol> used to overwrite, keeping only the last value and
+        // reporting the rule narrower than it is.
+        let source = fixture("source_repeated_ports_protocols.xml");
+        let hc = HashMap::new();
+        let resp = parse(&source, EMPTY, EMPTY, &hc, 500).expect("parse should not error");
+        let data = resp.data.expect("data present");
+        let m = &data.source[0].match_;
+        assert_eq!(
+            m.destination_ports,
+            vec![
+                NatPortMatch { low: 80, high: 80 },
+                NatPortMatch {
+                    low: 443,
+                    high: 443
+                },
+            ]
+        );
+        assert_eq!(
+            m.source_ports,
+            vec![
+                NatPortMatch {
+                    low: 1024,
+                    high: 2047
+                },
+                NatPortMatch {
+                    low: 4000,
+                    high: 4000
+                },
+            ]
+        );
+        assert_eq!(m.protocols, vec!["tcp".to_string(), "udp".to_string()]);
+    }
+
+    #[test]
+    fn unparseable_to_selector_fails_closed() {
+        // Percy MEC-378 minor: an unrecognised `to` selector must not be
+        // reported as "no to-restriction".
+        let source = fixture("source_multi_zone_inactive_ports.xml")
+            .replace("<to><zone>untrust</zone></to>", "<to><bogus>x</bogus></to>");
+        let hc = HashMap::new();
+        let err = parse(&source, EMPTY, EMPTY, &hc, 500).expect_err("must fail closed");
+        assert!(format!("{err}").contains("bogus"), "{err}");
     }
 
     #[test]

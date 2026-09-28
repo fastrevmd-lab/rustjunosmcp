@@ -264,6 +264,17 @@ pub fn parse(
         String,
     ) = match zone {
         Some(z) => match books.resolve_zone(z) {
+            // Percy R2 (MEC-378): the global book is visible in every zone,
+            // so a name missing from the zone's inline/attached book must
+            // still resolve from `global` rather than read as not-found.
+            Some((_, m)) if !m.contains_key(name) && books.global.contains_key(name) => (
+                &books.global,
+                AddressScope::Zone {
+                    zone: z.to_string(),
+                    book: "global".to_string(),
+                },
+                format!("global address-book (zone '{z}')"),
+            ),
             Some((book_name, m)) => (
                 m,
                 AddressScope::Zone {
@@ -706,6 +717,38 @@ mod tests {
             }
         );
         assert_eq!(data.members[0].name, "h1");
+    }
+
+    #[test]
+    fn attached_book_zone_falls_back_to_global_for_missing_name() {
+        // Percy R2 (MEC-378): `g1` lives only in the global book; `trust`
+        // has `corp-book` attached. Junos resolves `g1` in every zone, so
+        // this must not come back as ResolutionNameNotFound.
+        let xml = fixture("attached_named_book.xml").replace(
+            "<address-book>\n      <name>corp-book</name>",
+            "<address-book>\n      <name>global</name>\n      <address>\n        <name>g1</name>\n        <ip-prefix>192.0.2.10/32</ip-prefix>\n      </address>\n    </address-book>\n    <address-book>\n      <name>corp-book</name>",
+        );
+        assert!(xml.contains("<name>g1</name>"), "fixture edit applied");
+        let resp = parse("r1", "g1", Some("trust"), &xml).expect("g1 must resolve via global");
+        assert_eq!(resp.state, SrxState::Active);
+        let data = resp.data.expect("data present");
+        assert_eq!(
+            data.scope,
+            AddressScope::Zone {
+                zone: "trust".into(),
+                book: "global".into(),
+            }
+        );
+        assert_eq!(data.members[0].name, "g1");
+        // The attached book still wins for names it defines.
+        let resp = parse("r1", "h1", Some("trust"), &xml).expect("h1 resolves");
+        assert_eq!(
+            resp.data.expect("data").scope,
+            AddressScope::Zone {
+                zone: "trust".into(),
+                book: "corp-book".into(),
+            }
+        );
     }
 
     #[test]
