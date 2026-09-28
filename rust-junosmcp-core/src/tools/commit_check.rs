@@ -7,7 +7,7 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::{build_config_payload, excerpt, validate_input_length};
+use crate::helpers::{build_config_payload, excerpt, resolve_load_action, validate_input_length};
 use crate::policy::{Decision, Policy};
 use crate::tools::CommitCheckArgs;
 use crate::tools::candidate_transaction::{
@@ -76,6 +76,12 @@ pub async fn handle_with_cancel(
         }
     }
 
+    // commit_check_config has no caller-facing `mode`; it always validates
+    // with the merge-equivalent action for the requested format (unchanged
+    // from prior behavior — `resolve_load_action` maps format="set" to the
+    // required action="set" wire action Junos expects for a
+    // configuration-set payload).
+    let load_action = resolve_load_action(&args.config_format, rustez::LoadAction::Merge)?;
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
     let timeout_dur = Duration::from_secs(args.timeout);
 
@@ -86,6 +92,7 @@ pub async fn handle_with_cancel(
             payload: Some(payload),
             rollback_source: None,
             mode: CandidateMode::CommitCheck,
+            load_action,
         },
         timeout_dur,
         &ct,

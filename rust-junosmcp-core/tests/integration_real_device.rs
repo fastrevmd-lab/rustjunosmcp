@@ -109,6 +109,7 @@ async fn get_running_config() {
             device: "lab".into(),
             timeout: 360,
             config_path: None,
+            format: "text".into(),
             max_lines: None,
             max_bytes: None,
             tail: false,
@@ -258,6 +259,7 @@ async fn live_render_show_version_template_dry_run() {
         commit_comment: "rust-junosmcp template smoke".into(),
         dry_run: true,
         config_format: None,
+        mode: "merge".into(),
         timeout: 360,
     };
 
