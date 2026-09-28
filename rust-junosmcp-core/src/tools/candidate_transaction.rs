@@ -3,7 +3,7 @@
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use async_trait::async_trait;
-use rustez::{ConfigManager, ConfigPayload};
+use rustez::{ConfigManager, ConfigPayload, LoadAction};
 use rustnetconf::error::{NetconfError, RpcError};
 use rustnetconf::types::ErrorTag;
 use std::future::Future;
@@ -64,6 +64,11 @@ pub(crate) struct CandidateRequest {
     pub(crate) payload: Option<ConfigPayload>,
     pub(crate) rollback_source: Option<u32>,
     pub(crate) mode: CandidateMode,
+    /// Wire `action` for the `<load-configuration>` RPC when `payload` is
+    /// set. Ignored when `rollback_source` is used instead — a rollback
+    /// loads an archived config, not a caller-supplied payload, so it has no
+    /// merge/replace/override choice to make.
+    pub(crate) load_action: LoadAction,
 }
 
 /// Outcome of a commit-check. Distinguishes a genuine device rejection
@@ -92,7 +97,7 @@ pub(crate) enum CandidateResult {
 #[async_trait]
 pub(crate) trait CandidateBackend {
     async fn lock(&mut self) -> Result<(), JmcpError>;
-    async fn load(&mut self, payload: ConfigPayload) -> Result<(), JmcpError>;
+    async fn load(&mut self, payload: ConfigPayload, action: LoadAction) -> Result<(), JmcpError>;
     async fn load_rollback(&mut self, version: u32) -> Result<(), JmcpError>;
     async fn diff(&mut self) -> Result<String, JmcpError>;
     async fn commit_check(&mut self) -> Result<(), JmcpError>;
@@ -108,8 +113,8 @@ impl CandidateBackend for ConfigManager<'_> {
         ConfigManager::lock(self).await.map_err(Into::into)
     }
 
-    async fn load(&mut self, payload: ConfigPayload) -> Result<(), JmcpError> {
-        ConfigManager::load(self, payload)
+    async fn load(&mut self, payload: ConfigPayload, action: LoadAction) -> Result<(), JmcpError> {
+        ConfigManager::load_with_action(self, payload, action)
             .await
             .map(|_| ())
             .map_err(Into::into)
@@ -333,10 +338,17 @@ async fn primary_operation<B: CandidateBackend>(
         )
         .await?;
     } else {
+        let action = request.load_action;
         let payload = request.payload.ok_or_else(|| {
             JmcpError::Validation("candidate transaction requires a configuration payload".into())
         })?;
-        run_step(deadline, operation_timeout, ct, backend.load(payload)).await?;
+        run_step(
+            deadline,
+            operation_timeout,
+            ct,
+            backend.load(payload, action),
+        )
+        .await?;
     }
     let diff = run_step(deadline, operation_timeout, ct, backend.diff()).await?;
 
@@ -538,6 +550,7 @@ mod tests {
         dirty: bool,
         events: Vec<Op>,
         last_rollback_version: Option<u32>,
+        last_load_action: Option<LoadAction>,
     }
 
     struct FakeBackend {
@@ -597,9 +610,17 @@ mod tests {
             Ok(())
         }
 
-        async fn load(&mut self, _payload: ConfigPayload) -> Result<(), JmcpError> {
+        async fn load(
+            &mut self,
+            _payload: ConfigPayload,
+            action: LoadAction,
+        ) -> Result<(), JmcpError> {
             // Model a partial load: even a failed load can dirty candidate state.
-            self.state.lock().unwrap().dirty = true;
+            {
+                let mut state = self.state.lock().unwrap();
+                state.dirty = true;
+                state.last_load_action = Some(action);
+            }
             self.operation(Op::Load).await
         }
 
@@ -650,6 +671,7 @@ mod tests {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
             rollback_source: None,
             mode: CandidateMode::CommitWithComment("test".into()),
+            load_action: LoadAction::Set,
         }
     }
 
@@ -658,6 +680,7 @@ mod tests {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
             rollback_source: None,
             mode: CandidateMode::CommitCheck,
+            load_action: LoadAction::Set,
         }
     }
 
@@ -666,6 +689,7 @@ mod tests {
             payload: Some(ConfigPayload::Set("set system host-name test".into())),
             rollback_source: None,
             mode: CandidateMode::DryRun,
+            load_action: LoadAction::Set,
         }
     }
 
@@ -674,6 +698,30 @@ mod tests {
             payload: None,
             rollback_source: None,
             mode: CandidateMode::Discard,
+            load_action: LoadAction::Merge,
+        }
+    }
+
+    /// `CandidateRequest::load_action` must reach the backend's `load()` call
+    /// unchanged — this is the one hop between a resolved `mode` and the wire
+    /// `<load-configuration action=…>` attribute rustez sends.
+    #[tokio::test]
+    async fn requested_load_action_reaches_the_backend() {
+        for action in [LoadAction::Merge, LoadAction::Replace, LoadAction::Override] {
+            let state = Arc::new(Mutex::new(DeviceState::default()));
+            let mut backend = FakeBackend::new(state.clone());
+            let mut request = commit_request();
+            request.load_action = action;
+            let execution = run_fake(
+                &mut backend,
+                request,
+                Duration::from_secs(1),
+                Duration::from_millis(50),
+                &CancellationToken::new(),
+            )
+            .await;
+            assert!(execution.result.is_ok());
+            assert_eq!(state.lock().unwrap().last_load_action, Some(action));
         }
     }
 
@@ -1042,6 +1090,7 @@ mod tests {
                 payload: None,
                 rollback_source: Some(3),
                 mode: CandidateMode::DryRun,
+                load_action: LoadAction::Merge,
             },
             Duration::from_secs(1),
             Duration::from_millis(50),
@@ -1084,6 +1133,7 @@ mod tests {
                 payload: None,
                 rollback_source: Some(2),
                 mode: CandidateMode::CommitWithComment("rollback to 2".into()),
+                load_action: LoadAction::Merge,
             },
             Duration::from_secs(1),
             Duration::from_millis(50),
