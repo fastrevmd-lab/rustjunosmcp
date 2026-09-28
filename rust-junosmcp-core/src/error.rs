@@ -73,6 +73,22 @@ pub enum JmcpError {
         tool: &'static str,
     },
 
+    /// `mode=override` was requested on `create_junos_change_set` while the
+    /// server runs in `--lab-mode`. Lab mode waives approval on every change
+    /// set it creates (single-operator servers have no second principal), so
+    /// permitting `override` there would silently defeat the human-approval
+    /// gate that is the entire reason `override` is allowed on this path at
+    /// all (MEC-12). Refused unconditionally; there is no lab-mode override
+    /// flow today.
+    #[error(
+        "refused: mode=override on '{tool}' is refused while this server runs in lab mode, \
+         because lab mode waives approval and override has no other path to a human approver"
+    )]
+    OverrideRequiresHumanApproval {
+        /// Name of the MCP tool that was refused.
+        tool: &'static str,
+    },
+
     /// Requested `mode` has no wire-level equivalent for the requested
     /// `config_format`. Currently only `format=set` + `mode=override`: Junos
     /// has no `override` action for a `configuration-set` (set-command list)
@@ -612,6 +628,7 @@ impl JmcpError {
             Self::BadConfigFormat(_) => "invalid_input",
             Self::BadLoadMode(_) => "invalid_input",
             Self::OverrideRequiresChangeSet { .. } => "blocked",
+            Self::OverrideRequiresHumanApproval { .. } => "blocked",
             Self::IncompatibleFormatMode { .. } => "invalid_input",
             Self::BadPfeCommand(_) => "invalid_input",
             Self::BadRollbackVersion(_) => "invalid_input",

@@ -416,6 +416,36 @@ impl DeviceTransaction for JunosTransaction {
             }
         }
 
+        // Resolve every action's payload/format/mode into a load instruction
+        // before opening a session or taking the candidate lock. Doing that
+        // resolution inside the load loop below meant a parse/resolve error on
+        // action N returned early via `?`, skipping the revert-and-unlock
+        // cleanup for actions 0..N already loaded into the locked candidate —
+        // breaking the all-or-none staging contract (Percy review,
+        // rustjunosmcp#425 F3). Resolving up front makes the load loop below
+        // infallible except for the wire call itself, so every error path goes
+        // through the existing cleanup.
+        enum ResolvedAction {
+            Rollback(u32),
+            Load(rustez::ConfigPayload, rustez::LoadAction),
+        }
+        let resolved_actions = actions
+            .iter()
+            .map(|action| {
+                if let Some(rollback) = action.rollback_source {
+                    Ok(ResolvedAction::Rollback(rollback))
+                } else if let Some(ref spec) = action.payload {
+                    let format = spec.format.as_deref().unwrap_or("set");
+                    let payload = build_config_payload(spec.text.clone(), Some(format))?;
+                    let requested_mode = crate::helpers::parse_load_mode(spec.mode.as_deref())?;
+                    let load_action = crate::helpers::resolve_load_action(format, requested_mode)?;
+                    Ok(ResolvedAction::Load(payload, load_action))
+                } else {
+                    unreachable!("exactly-one validation already checked this")
+                }
+            })
+            .collect::<Result<Vec<_>, JmcpError>>()?;
+
         // Open a session and lock the candidate. Load each action's payload or
         // rollback source. Capture the diff. The session is retained (not pooled)
         // until commit or discard so validate and commit see the same candidate.
@@ -445,17 +475,12 @@ impl DeviceTransaction for JunosTransaction {
         }
 
         // Load actions. Track success count for partial-failure revert.
-        for (loaded, action) in actions.iter().enumerate() {
-            let load_result = if let Some(rollback) = action.rollback_source {
-                cfg.rollback(rollback).await
-            } else if let Some(ref spec) = action.payload {
-                let format = spec.format.as_deref().unwrap_or("set");
-                let payload = build_config_payload(spec.text.clone(), Some(format))?;
-                let requested_mode = crate::helpers::parse_load_mode(spec.mode.as_deref())?;
-                let load_action = crate::helpers::resolve_load_action(format, requested_mode)?;
-                cfg.load_with_action(payload, load_action).await.map(|_| ())
-            } else {
-                unreachable!("exactly-one validation already checked this");
+        for (loaded, resolved) in resolved_actions.into_iter().enumerate() {
+            let load_result = match resolved {
+                ResolvedAction::Rollback(rollback) => cfg.rollback(rollback).await,
+                ResolvedAction::Load(payload, load_action) => {
+                    cfg.load_with_action(payload, load_action).await.map(|_| ())
+                }
             };
 
             if let Err(error) = load_result {
@@ -1449,6 +1474,34 @@ mod tests {
         assert!(
             message.contains("action 1"),
             "the error should identify which action failed, got: {message}"
+        );
+    }
+
+    /// Percy review F3 (rustjunosmcp#425): an invalid format/mode combination
+    /// on a later action used to be resolved inside the load loop, after the
+    /// candidate was already locked in a live session — so the error from
+    /// action 1 returned via `?` and skipped the revert-and-unlock cleanup for
+    /// action 0, already loaded into the shared candidate. Resolving every
+    /// action's mode up front, before a session is even opened, means this
+    /// error surfaces without any device contact: `offline_transaction`'s
+    /// router doesn't exist in the inventory, so reaching as far as
+    /// `device_manager.open()` would fail with a different error (device
+    /// lookup), not this one.
+    #[tokio::test]
+    async fn stage_resolves_every_action_mode_before_opening_a_session() {
+        let error = offline_transaction()
+            .stage(&[
+                action(Some("set system host-name a"), None),
+                action_with_format_and_mode("system { host-name b; }", "set", "override"),
+            ])
+            .await
+            .err()
+            .expect("format=set + mode=override on a later action must be refused");
+
+        assert!(
+            matches!(error, JmcpError::IncompatibleFormatMode { .. }),
+            "expected the format/mode mismatch to surface directly, with no \
+             device contact attempted, got: {error:?}"
         );
     }
 
