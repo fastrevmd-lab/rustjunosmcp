@@ -449,7 +449,7 @@
     <system xmlns="http://yang.juniper.net/junos-es/conf/system">
         <host-name>vSRX-test3</host-name>
         <root-authentication>
-            <encrypted-password>$6$slN9fm9A$LPMXWgKf9v.MkzcbjQ4qSjQ3sNJMIILeSxDJawPXU5iV4oH39VUh6E0i6.YO9yT9E72p./dG/PyNIe.U73PIa0</encrypted-password>
+            <encrypted-password>$6$FAKESALT1$FAKEHASHVALUEDONOTUSE00000000000000000000000000000000000000000000000000000</encrypted-password>
         </root-authentication>
         <login>
             <user>
@@ -470,7 +470,7 @@
                 <uid>2001</uid>
                 <class>super-user</class>
                 <authentication>
-                    <encrypted-password>$6$2OKfUw10$GIk.ae1jtRh30uHT.xfDd865Tp2tsl/4eqHBxf9ynKy009VG4XL6kY9Vpk/j51YZTBaJAxqKVcRf5hrOyNTs40</encrypted-password>
+                    <encrypted-password>$6$FAKESALT2$FAKEHASHVALUEDONOTUSE11111111111111111111111111111111111111111111111111111</encrypted-password>
                     <ssh-ed25519>
                         <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
