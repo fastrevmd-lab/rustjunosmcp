@@ -275,13 +275,14 @@ the same config (or any valid config) without `confirm_timeout_mins`.
 ## File transfers (`transfer_file` / `fetch_file` / `list_staged_files`)
 
 `transfer_file` pushes a host-staged file to `/var/tmp/<basename>` on a Junos
-device using legacy SCP (`scp -O`, since Junos disables the OpenSSH SFTP
-subsystem). It is **idempotent on SHA-256**: if the remote file already exists
-with a matching digest the call returns `status: "skipped"`. Pass `force: true`
-to overwrite when digests differ.
+device using `mecmcp-scp`'s native SCP1 client over the SSH exec channel — the
+same wire protocol OpenSSH's `scp -O` forces, since Junos disables SFTP-over-SSH.
+No external `scp` process is spawned (#212). It is **idempotent on SHA-256**:
+if the remote file already exists with a matching digest the call returns
+`status: "skipped"`. Pass `force: true` to overwrite when digests differ.
 
 `fetch_file` is the mirror operation: it downloads `/var/tmp/<basename>` from a
-Junos device to the host staging dir using the same legacy SCP path. It is
+Junos device to the host staging dir using the same native SCP1 path. It is
 **idempotent on SHA-256** — if the local file already exists with a matching
 digest the call returns `status: "skipped"`. Per-router serialization and
 post-transfer SHA-256 re-verification apply identically to `transfer_file`.
@@ -302,8 +303,8 @@ Override at startup with `--staging-dir <path>`, `--known-hosts-file <path>`,
 and `--device-lease-dir <path>`. Junos and SRX services must use the same
 device lease directory.
 
-**Host-key policy (v0.5.2+):** scp runs with `StrictHostKeyChecking=yes` by
-default — unknown device host keys are refused. The `known_hosts` file must
+**Host-key policy (v0.5.2+):** host-key checking is strict by default —
+unknown device host keys are refused. The `known_hosts` file must
 exist before the first `transfer_file` / `upgrade_junos` call, otherwise the
 tool errors with `[code=known_hosts_missing]`. Pre-populate it with the
 bundled helper:
@@ -324,7 +325,7 @@ device and includes those entries under `device_files`.
 no `..`, no leading dot, ≤ 255 bytes); it is resolved relative to
 `--staging-dir` and never escapes it.
 
-**Pre-flight checks:** before scp, `transfer_file` runs
+**Pre-flight checks:** before transferring, `transfer_file` runs
 `show system storage no-forwarding` and refuses to push when free space on
 `/var` is below `local_size + 32 MiB`.
 
@@ -510,8 +511,10 @@ default `srx` feature, or 28 in a Junos-only build):
 > [`docs/HOW-TO-SETUP-DOCKER.md`](docs/HOW-TO-SETUP-DOCKER.md).
 
 Prebuilt images are published to GHCR on every version tag. The package is
-public — no `docker login` required. The runtime includes OpenSSH `scp` with
-legacy `-O` protocol support and runs as numeric UID/GID `65532:65532`.
+public — no `docker login` required. The runtime is `distroless` — no shell,
+`apt`, or OpenSSH client (#201) — and runs as numeric UID/GID `65532:65532`.
+`transfer_file`/`fetch_file` no longer spawn `scp`; they speak the SCP1 wire
+protocol natively via `mecmcp-scp` over the SSH exec channel (#212).
 
 Prepare read-only configuration/key mounts and one persistent writable state
 directory. Private-key paths in `devices.json` must use their in-container
@@ -549,12 +552,8 @@ The state mount holds staged upload/download files, the shared destructive
 operation leases, and `known_hosts`. Do not delete its lease files while a
 server is running. Strict host-key checking is the default. For an isolated lab
 only, append `--ssh-accept-new-host-keys` to the `docker run` command; this lets
-`scp` add first-seen keys to the writable state file, but does not authenticate
-that first connection out of band.
-
-Startup fails with `[code=scp_dependency_unavailable]` when the runtime cannot
-execute an OpenSSH-compatible `scp -O`. That check occurs before the MCP server
-accepts requests, so a broken custom image is not advertised as transfer-ready.
+the server add first-seen keys to the writable state file, but does not
+authenticate that first connection out of band.
 
 > **Apple Silicon (M-series):** images are built for `linux/amd64` only, so
 > they run under emulation on Apple Silicon. This works, but if you hit a
