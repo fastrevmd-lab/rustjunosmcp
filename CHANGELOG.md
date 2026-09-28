@@ -777,7 +777,7 @@ container image is distroless as a direct result.
   it fails loudly at startup instead of running unprotected. Anyone relying on it
   should name the authority their clients actually send with `--allowed-host`,
   which is repeatable and precise. The deployed LXC 609 override already does
-  this (`--allowed-host 192.168.1.194`) and is unaffected.
+  this (`--allowed-host 192.0.2.10`) and is unaffected.
 
 ## [0.15.1] — 2026-07-31
 
