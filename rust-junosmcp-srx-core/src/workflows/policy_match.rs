@@ -32,9 +32,29 @@
 //!
 //! i.e. the device's own default-deny fallthrough, confirming `action-type:
 //! deny-all` (not folded into a generic "deny") is the literal signal Junos
-//! uses for "no explicit policy matched". This also corroborates spec open
-//! question 1: the global any/any policy did **not** apply to this explicit
-//! zone-pair query.
+//! uses for "no explicit **zone-pair** policy matched".
+//!
+//! # Global policies (Percy review F1, MEC-302)
+//!
+//! That fallthrough is not the device's final answer. Junos evaluates
+//! zone-pair policies, then **global** policies, then the default policy —
+//! and `match-firewall-policies` only asks about the first tier. On
+//! `vsrx-ci` the zone-pair query above reports `Default-Policy, deny-all`
+//! while the same 5-tuple via `show security match-policies global` reports
+//! `Policy: vsrx-ci-1, action-type: permit … global`: the dataplane
+//! **permits** that traffic. An earlier revision stopped at the zone-pair
+//! reply and answered `no_match`/deny for traffic the firewall allows.
+//!
+//! So [`run`] now issues a second RPC whenever the zone-pair reply is the
+//! default fallthrough: `<match-global-policies>` with `source-ip`,
+//! `destination-ip`, `source-port`, `destination-port`, `protocol` and no
+//! zone arguments (request shape captured live via `| display xml rpc`). A
+//! real policy in that reply is the answer, with `is_global = true`.
+//! `NoMatch` is returned only when **both** tiers fall through. If the
+//! global query fails, the tool fails closed with an error rather than
+//! reporting the zone-pair default. [`resolve`] is the pure, unit-tested
+//! form of that decision. The global reply *body* element names are, like
+//! the zone-pair ones, not yet live-confirmed (F4).
 //!
 //! The fixtures below hand-write the XML element names following this
 //! crate's Junos XML conventions (hyphenated tags, `-results` root, a
@@ -260,8 +280,10 @@ pub fn parse_five_tuple(args: &PolicyMatchArgs) -> Result<FiveTuple, SrxError> {
 
 // ── `run()` — async entry point ───────────────────────────────────────────────
 
-/// Run `match-firewall-policies` against a pooled device and return a typed
-/// `SrxToolResponse<PolicyMatchResult>`.
+/// Run `match-firewall-policies` (and, on a default-policy fallthrough,
+/// `match-global-policies`) against a pooled device and return a typed
+/// `SrxToolResponse<PolicyMatchResult>`. See the module docs, "Global
+/// policies".
 pub async fn run(
     device: &mut PooledDevice,
     args: PolicyMatchArgs,
@@ -278,7 +300,7 @@ pub async fn run(
     let source_ip_s = five_tuple.source_ip.to_string();
     let destination_ip_s = five_tuple.destination_ip.to_string();
 
-    let reply = exec
+    let zone_reply = exec
         .call(
             "match-firewall-policies",
             &[
@@ -294,11 +316,75 @@ pub async fn run(
         .await
         .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?;
 
-    let mut parsed = parse(&reply)?;
+    // A zone-pair default-policy fallthrough is not the final answer: global
+    // policies are evaluated next. Any transport error here propagates (fail
+    // closed) — never fall back to the zone-pair default.
+    let zone_fell_through = parse(&zone_reply)?
+        .data
+        .is_some_and(|d| d.verdict == MatchVerdict::NoMatch);
+    let global_reply = if zone_fell_through {
+        Some(
+            exec.call(
+                "match-global-policies",
+                &[
+                    ("source-ip", source_ip_s.as_str()),
+                    ("destination-ip", destination_ip_s.as_str()),
+                    ("source-port", source_port_s.as_str()),
+                    ("destination-port", destination_port_s.as_str()),
+                    ("protocol", protocol_s.as_str()),
+                ],
+            )
+            .await
+            .map_err(|e| SrxError::Transport(rust_junosmcp_core::JmcpError::from(e)))?,
+        )
+    } else {
+        None
+    };
+
+    let mut parsed = resolve(&zone_reply, global_reply.as_deref())?;
     if args.include_raw {
-        parsed = parsed.with_raw(reply);
+        let raw = match global_reply {
+            Some(global) => format!("{zone_reply}\n{global}"),
+            None => zone_reply,
+        };
+        parsed = parsed.with_raw(raw);
     }
     Ok(parsed)
+}
+
+/// Combine the zone-pair reply and (when the zone-pair query fell through to
+/// the default policy) the global-policy reply into the device's final
+/// verdict, in Junos evaluation order: zone-pair, then global, then default.
+///
+/// Fails closed: a zone-pair fallthrough with no global reply is an error,
+/// because answering from the zone-pair default alone can report `deny` for
+/// traffic a global policy permits (or `permit` for traffic a global policy
+/// denies under `default-policy permit-all`).
+pub fn resolve(
+    zone_xml: &str,
+    global_xml: Option<&str>,
+) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> {
+    let zone = parse(zone_xml)?;
+    let zone_fell_through = zone
+        .data
+        .as_ref()
+        .is_some_and(|d| d.verdict == MatchVerdict::NoMatch);
+    if !zone_fell_through {
+        return Ok(zone);
+    }
+    let global_xml = global_xml.ok_or_else(|| {
+        SrxError::Parse(
+            "zone-pair query fell through to the default policy; the global-policy \
+             query is required before answering"
+                .into(),
+        )
+    })?;
+    let global = parse_global(global_xml)?;
+    let global_matched = global
+        .data
+        .as_ref()
+        .is_some_and(|d| d.verdict != MatchVerdict::NoMatch);
+    Ok(if global_matched { global } else { zone })
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -313,6 +399,23 @@ pub async fn run(
 /// routed through `multi_re_split` defensively, using whichever node
 /// responds first without an `<rpc-error>` (both should agree, per spec §6).
 pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> {
+    parse_reply(xml, "match-firewall-policies", false)
+}
+
+/// Parse a `match-global-policies` reply body. Same record shape as the
+/// zone-pair reply; any explicit policy here is a global policy, so
+/// `is_global` is always true for a match, and absent zone names mean
+/// `any` rather than a schema mismatch. A `deny-all`/`permit-all`
+/// `Default-Policy` record means the global tier also fell through.
+pub fn parse_global(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> {
+    parse_reply(xml, "match-global-policies", true)
+}
+
+fn parse_reply(
+    xml: &str,
+    rpc: &'static str,
+    global: bool,
+) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> {
     let cleaned = crate::xml::sanitize_rustez_xml(xml);
     let re_nodes = crate::xml::multi_re_split(&cleaned)?;
 
@@ -322,7 +425,7 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
         .ok_or_else(|| SrxError::Rpc {
             tag: "rpc-error".into(),
             severity: "error".into(),
-            message: "every node returned rpc-error for match-firewall-policies".into(),
+            message: format!("every node returned rpc-error for {rpc}"),
         })?;
 
     let doc = roxmltree::Document::parse(&node.inner_xml)
@@ -331,14 +434,12 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
     let policy_node = doc
         .descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "policy-information")
-        .ok_or_else(|| {
-            SrxError::schema_mismatch("match-firewall-policies", "policy-information")
-        })?;
+        .ok_or_else(|| SrxError::schema_mismatch(rpc, "policy-information"))?;
 
     let policy_name = child_text(&policy_node, "policy-name")
-        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "policy-name"))?;
+        .ok_or_else(|| SrxError::schema_mismatch(rpc, "policy-name"))?;
     let action_type = child_text(&policy_node, "action-type")
-        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "action-type"))?;
+        .ok_or_else(|| SrxError::schema_mismatch(rpc, "action-type"))?;
     let sequence: u32 = child_text(&policy_node, "policy-sequence-number")
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
@@ -376,16 +477,24 @@ pub fn parse(xml: &str) -> Result<SrxToolResponse<PolicyMatchResult>, SrxError> 
         }
     };
 
-    // Required (not defaulted to ""): an absent zone on an explicit policy
-    // match is a schema mismatch, not "unknown zone" — silently defaulting
-    // here previously meant a real schema drift could report is_global=false
-    // on what was actually a global policy hit, with no error at all.
-    let from_zone = child_text(&policy_node, "from-zone-name")
-        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "from-zone-name"))?;
-    let to_zone = child_text(&policy_node, "to-zone-name")
-        .ok_or_else(|| SrxError::schema_mismatch("match-firewall-policies", "to-zone-name"))?;
+    // Zone-pair reply: zones are required (not defaulted to ""): an absent
+    // zone on an explicit policy match is a schema mismatch, not "unknown
+    // zone" — silently defaulting here previously meant a real schema drift
+    // could report is_global=false on a global policy hit, with no error.
+    // Global reply: every explicit match is a global policy, whose zones are
+    // `any` by definition, so absent zone elements mean `any`.
+    let zone_field = |name: &'static str| -> Result<String, SrxError> {
+        match child_text(&policy_node, name) {
+            Some(z) => Ok(z),
+            None if global => Ok("any".to_string()),
+            None => Err(SrxError::schema_mismatch(rpc, name)),
+        }
+    };
+    let from_zone = zone_field("from-zone-name")?;
+    let to_zone = zone_field("to-zone-name")?;
 
-    let is_global = from_zone.eq_ignore_ascii_case("any") && to_zone.eq_ignore_ascii_case("any");
+    let is_global =
+        global || (from_zone.eq_ignore_ascii_case("any") && to_zone.eq_ignore_ascii_case("any"));
 
     Ok(SrxToolResponse::active(PolicyMatchResult {
         verdict,
@@ -585,17 +694,91 @@ mod tests {
     #[test]
     fn global_policy_hit_sets_is_global() {
         // "vsrx-ci-1" is the real global policy name observed live on
-        // vsrx-ci (spec §11); the surrounding match-policies XML is
+        // vsrx-ci (spec §11); the surrounding match-global-policies XML is
         // synthetic, following the confirmed field names.
         let xml = fixture("global_permit.xml");
-        let resp = parse(&xml).expect("parse should not error");
+        let resp = parse_global(&xml).expect("parse should not error");
         let data = resp.data.expect("data present");
         assert_eq!(data.verdict, MatchVerdict::Permit);
-        assert!(data.is_global, "any/any policy must set is_global");
+        assert!(data.is_global, "a global-policy match must set is_global");
         let policy = data.matched_policy.expect("matched_policy present");
         assert_eq!(policy.name, "vsrx-ci-1");
         assert_eq!(policy.from_zone, "any");
         assert_eq!(policy.to_zone, "any");
+    }
+
+    // ── resolve(): zone-pair → global → default (Percy F1, MEC-302) ──────────
+
+    #[test]
+    fn zone_fallthrough_then_global_permit_is_permit() {
+        // The live vsrx-ci case: the zone-pair query falls through to
+        // Default-Policy deny-all, but the global policy vsrx-ci-1 permits.
+        // The dataplane permits this traffic, so the tool must say Permit.
+        let resp = resolve(
+            &fixture("no_match_default_deny.xml"),
+            Some(&fixture("global_permit.xml")),
+        )
+        .expect("resolve should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.verdict, MatchVerdict::Permit);
+        assert!(data.is_global);
+        assert_eq!(data.default_action, None);
+        assert_eq!(
+            data.matched_policy.expect("matched_policy present").name,
+            "vsrx-ci-1"
+        );
+    }
+
+    #[test]
+    fn global_deny_overrides_default_permit_all() {
+        // Reverse direction: default-policy permit-all, but a global deny
+        // matches first — the traffic is denied, not permitted.
+        let resp = resolve(
+            &fixture("no_match_default_permit.xml"),
+            Some(&fixture("global_deny.xml")),
+        )
+        .expect("resolve should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.verdict, MatchVerdict::Deny);
+        assert!(data.is_global);
+    }
+
+    #[test]
+    fn both_tiers_fall_through_is_no_match_with_default_action() {
+        let resp = resolve(
+            &fixture("no_match_default_deny.xml"),
+            Some(&fixture("global_default_deny.xml")),
+        )
+        .expect("resolve should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.verdict, MatchVerdict::NoMatch);
+        assert!(!data.is_global);
+        assert_eq!(data.default_action, Some(DefaultAction::Deny));
+    }
+
+    #[test]
+    fn zone_fallthrough_without_global_reply_fails_closed() {
+        let err = resolve(&fixture("no_match_default_deny.xml"), None)
+            .expect_err("a zone-pair fallthrough must not be answered without the global tier");
+        assert!(matches!(err, SrxError::Parse(_)));
+    }
+
+    #[test]
+    fn explicit_zone_pair_match_does_not_need_global_reply() {
+        let resp = resolve(&fixture("permit.xml"), None).expect("resolve should not error");
+        let data = resp.data.expect("data present");
+        assert_eq!(data.verdict, MatchVerdict::Permit);
+        assert!(!data.is_global);
+    }
+
+    #[test]
+    fn global_rpc_error_fails_closed() {
+        let global = "<rpc-reply><rpc-error><error-severity>error</error-severity>\
+                      <error-message>boom</error-message></rpc-error></rpc-reply>";
+        assert!(
+            resolve(&fixture("no_match_default_deny.xml"), Some(global)).is_err(),
+            "a failed global query must be an error, not the zone-pair default"
+        );
     }
 
     #[test]

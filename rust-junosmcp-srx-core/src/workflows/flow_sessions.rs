@@ -587,16 +587,26 @@ fn compose_walk_raw(summary_xml: &str, walk_xml: &str, truncated: bool) -> Strin
 /// contract.
 ///
 /// A node whose only reply content is a `warning`-severity `rpc-error`
-/// still has its count read: only an absent/`error`-severity `rpc-error`
-/// skips a node, since that means the node produced no usable reply at all.
+/// still has its count read. A severity-less `rpc-error` (the routine reply
+/// from a cluster's secondary node) skips that node, as before. An explicit
+/// `error`-severity `rpc-error` on **any** node
+/// makes the whole total unavailable (`Ok(None)`, i.e. `CountUnavailable`):
+/// summing only the healthy nodes would under-count, and `plan_walk` could
+/// then let an unbounded walk proceed for the node that failed its summary
+/// (Percy F2, MEC-302 — fail closed).
 pub fn parse_summary_total(xml: &str) -> Result<Option<u64>, SrxError> {
     let re_nodes = crate::xml::multi_re_split(xml)?;
 
     let mut total: u64 = 0;
     let mut any_found = false;
     for re_node in &re_nodes {
-        if extract_rpc_error(&re_node.inner_xml).is_some_and(|e| !e.is_warning) {
-            continue;
+        match extract_rpc_error(&re_node.inner_xml) {
+            // An explicit error on any node: the total is unknowable.
+            Some(e) if e.is_error => return Ok(None),
+            // Severity-less (e.g. a cluster secondary node's routine
+            // "node is secondary" reply): that node has no usable summary.
+            Some(e) if !e.is_warning => continue,
+            _ => {}
         }
         let wrapped = ensure_single_root(&re_node.inner_xml);
         let doc = roxmltree::Document::parse(&wrapped)
@@ -795,6 +805,11 @@ struct RpcErrorInfo {
     /// unlike an absent severity or `error` (Junos's default when the
     /// element is omitted).
     is_warning: bool,
+    /// `<error-severity>error</error-severity>` explicitly present. A
+    /// severity-less rpc-error (e.g. the routine "node is secondary for all
+    /// relevant redundancy groups" reply from a cluster's secondary node) is
+    /// neither a warning nor an explicit error.
+    is_error: bool,
 }
 
 /// Extract a node's `<rpc-error>`, if the fragment contains one. `None`
@@ -817,9 +832,15 @@ fn extract_rpc_error(xml: &str) -> Option<RpcErrorInfo> {
         .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
         .and_then(|n| n.text())
         .is_some_and(|t| t.trim().eq_ignore_ascii_case("warning"));
+    let is_error = err
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
+        .and_then(|n| n.text())
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case("error"));
     Some(RpcErrorInfo {
         message,
         is_warning,
+        is_error,
     })
 }
 
@@ -993,6 +1014,36 @@ mod tests {
         let xml = fixture("summary_filtered_vsrx_ci.xml");
         let total = parse_summary_total(&xml).unwrap();
         assert_eq!(total, Some(1));
+    }
+
+    #[test]
+    fn summary_with_one_node_rpc_error_is_unavailable() {
+        // Percy F2 (MEC-302): node0 reports a count, node1 fails its summary
+        // with an error-severity rpc-error. Summing only node0 would
+        // under-count and let plan_walk proceed; the total must be None.
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-information>
+        <sessions-in-use>3</sessions-in-use>
+      </flow-session-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-severity>error</error-severity>
+        <error-message>node1 summary unavailable</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(parse_summary_total(xml).unwrap(), None);
+        assert_eq!(
+            plan_walk(None, DEFAULT_CAP),
+            WalkDecision::Refuse(RefusalReason::CountUnavailable),
+            "an unavailable total must refuse the walk"
+        );
     }
 
     #[test]
