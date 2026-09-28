@@ -82,16 +82,16 @@ rustez       = "0.17"
 # Replace `rev` with the released `tag` once that PR merges and cuts a
 # version; repin all ten `mecmcp-*` crates together and regenerate
 # Cargo.lock, since they must all resolve to the same git ref.
-mecmcp-audit = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-auth  = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-transport = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-runtime = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-policy = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-inventory = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-device = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-changeset = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-scp = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
-mecmcp-secret = { version = "0.23.1", git = "https://github.com/fastrevmd-lab/mecmcp", rev = "4b16b9c6946184740647daa83e918887547ee7ea" }
+mecmcp-audit = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-auth  = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-transport = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-runtime = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-policy = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-inventory = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-device = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-changeset = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-scp = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
+mecmcp-secret = { version = "0.24.0", git = "https://github.com/fastrevmd-lab/mecmcp", tag = "v0.24.0" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"

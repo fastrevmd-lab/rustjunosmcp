@@ -556,35 +556,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
-name = "cookie"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
-dependencies = [
- "percent-encoding",
- "time",
- "version_check",
-]
-
-[[package]]
-name = "cookie_store"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15b2c103cf610ec6cae3da84a766285b42fd16aad564758459e6ecf128c75206"
-dependencies = [
- "cookie",
- "document-features",
- "idna",
- "indexmap",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
- "time",
- "url",
-]
-
-[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -839,15 +810,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
 ]
 
 [[package]]
@@ -1714,12 +1676,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1776,8 +1732,8 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "mecmcp-audit"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1787,6 +1743,7 @@ dependencies = [
  "hmac",
  "log",
  "mecmcp-auth",
+ "mecmcp-secret",
  "metrics",
  "rustix",
  "serde",
@@ -1805,8 +1762,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-auth"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "arc-swap",
  "chrono",
@@ -1824,8 +1781,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-changeset"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
@@ -1845,8 +1802,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-device"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "async-trait",
  "rustix",
@@ -1861,8 +1818,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-inventory"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "mecmcp-secret",
  "serde",
@@ -1875,8 +1832,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-policy"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "globset",
  "serde",
@@ -1885,8 +1842,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-runtime"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "anyhow",
  "clap",
@@ -1903,8 +1860,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-scp"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1922,8 +1879,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-secret"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "rustix",
  "thiserror",
@@ -1932,8 +1889,8 @@ dependencies = [
 
 [[package]]
 name = "mecmcp-transport"
-version = "0.23.1"
-source = "git+https://github.com/fastrevmd-lab/mecmcp?rev=4b16b9c6946184740647daa83e918887547ee7ea#4b16b9c6946184740647daa83e918887547ee7ea"
+version = "0.24.0"
+source = "git+https://github.com/fastrevmd-lab/mecmcp?tag=v0.24.0#f34612a105efb80d6753641158e6dadb73272173"
 dependencies = [
  "axum",
  "axum-server",
@@ -1957,7 +1914,6 @@ dependencies = [
  "tokio-util",
  "tower-http 0.7.1",
  "tracing",
- "ureq 3.4.0",
  "zeroize",
 ]
 
@@ -3038,7 +2994,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
- "ureq 2.12.1",
+ "ureq",
  "uuid",
 ]
 
@@ -4047,34 +4003,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ureq"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "972d7902c8735f2695410b8aed7df6ed12a47394aa1c8d7af49f0497b731a94d"
-dependencies = [
- "base64 0.23.1",
- "cookie_store",
- "log",
- "percent-encoding",
- "serde",
- "serde_json",
- "ureq-proto",
- "utf8-zero",
-]
-
-[[package]]
-name = "ureq-proto"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da5f78b09e6941e1a0f2e30e695e4b120377b54d5e0aec11b594bb57b3971613"
-dependencies = [
- "base64 0.23.1",
- "http",
- "httparse",
- "log",
-]
-
-[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4091,12 +4019,6 @@ name = "urlencoding"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
-
-[[package]]
-name = "utf8-zero"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"

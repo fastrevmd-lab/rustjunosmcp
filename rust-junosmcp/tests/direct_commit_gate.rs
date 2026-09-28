@@ -94,7 +94,7 @@ fn stdio_refuses_load_and_commit_config_without_the_flag() {
 
 /// With `--allow-direct-commit`, the same stdio call passes the gate — it
 /// then fails for an unrelated reason (there is no real device at
-/// 127.0.0.1:22 in this test), but that failure must not be the direct-commit
+/// 127.0.0.1:1 in this test), but that failure must not be the direct-commit
 /// refusal, and the audit trail must show the flag was exercised.
 #[test]
 fn stdio_allows_load_and_commit_config_with_the_flag() {
@@ -120,7 +120,7 @@ fn stdio_allows_load_and_commit_config_with_the_flag() {
 fn stdio_refusal_is_visible_to_the_caller() {
     let mut child = common::spawn_stdio_server_with_args(&[
         "-f",
-        common::write_inventory_temp(&[("r1", "127.0.0.1", 22, "u", "/dev/null")])
+        common::write_inventory_temp(&[("r1", "127.0.0.1", 1, "u", "/dev/null")])
             .path()
             .to_str()
             .unwrap(),
@@ -278,6 +278,7 @@ fn stdio_allows_rollback_config_preview_without_the_flag() {
 
 const TEMPLATE_APPLY_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_and_apply_j2_template","arguments":{"template_content":"set system host-name {{ name }}","vars_content":"{\"name\":\"test\"}","device_name":"r1","apply_config":true,"dry_run":false}}}"#;
 const TEMPLATE_DRY_RUN_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_and_apply_j2_template","arguments":{"template_content":"set system host-name {{ name }}","vars_content":"{\"name\":\"test\"}","device_name":"r1","apply_config":true,"dry_run":true}}}"#;
+const TEMPLATE_RENDER_ONLY_REQUEST: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_and_apply_j2_template","arguments":{"template_content":"set system host-name {{ name }}","vars_content":"{\"name\":\"test\"}","device_name":"r1","apply_config":false,"dry_run":false}}}"#;
 
 /// `render_and_apply_j2_template` with `apply_config=true, dry_run=false`
 /// commits the rendered config, so it must be refused without the flag.
@@ -315,6 +316,23 @@ fn stdio_allows_template_dry_run_without_the_flag() {
     assert!(
         !record.contains("direct_commit_disabled"),
         "dry_run=true must not be gated: {record}"
+    );
+}
+
+/// `render_and_apply_j2_template` with `apply_config=false` only renders the
+/// template and never touches the device, so it must not be gated even with
+/// `dry_run=false` (guards against over-refusal of render-only calls).
+#[test]
+fn stdio_allows_template_render_only_without_the_flag() {
+    let lines = stderr_for_request(&[], TEMPLATE_RENDER_ONLY_REQUEST);
+
+    let audits = audit_lines(&lines);
+    assert!(
+        !audits
+            .iter()
+            .any(|line| line.contains("render_and_apply_j2_template")
+                && line.contains("direct_commit_disabled")),
+        "apply_config=false must not be gated: {audits:#?}"
     );
 }
 
