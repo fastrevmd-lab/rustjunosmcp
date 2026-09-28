@@ -739,8 +739,8 @@ mod tests {
     fn peer_filter_no_match_gives_empty_vecs() {
         let ike_xml = fixture("ike_sa_up_test10.xml");
         let ipsec_xml = fixture("ipsec_sa_up_test10.xml");
-        let resp =
-            parse_combined(&ike_xml, &ipsec_xml, Some("198.51.100.1"), None).expect("filtered parse");
+        let resp = parse_combined(&ike_xml, &ipsec_xml, Some("198.51.100.1"), None)
+            .expect("filtered parse");
         assert_eq!(resp.state, SrxState::Active, "still Active, just empty");
         let data = resp.data.unwrap();
         assert!(data.nodes[0].ike_sas.is_empty());
