@@ -552,7 +552,12 @@ impl JmcpHandler {
         extensions: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let ctx = caller_ctx(&extensions);
-        let mut audit = audit_scope(ctx, "srx_resolve_address", "read", vec![args.router.clone()]);
+        let mut audit = audit_scope(
+            ctx,
+            "srx_resolve_address",
+            "read",
+            vec![args.router.clone()],
+        );
 
         if let Err(e) = self.authorize_call(&extensions, "srx_resolve_address", Some(&args.router))
         {
@@ -667,8 +672,7 @@ impl JmcpHandler {
         let ctx = caller_ctx(&extensions);
         let mut audit = audit_scope(ctx, "srx_list_nat_rules", "read", vec![args.router.clone()]);
 
-        if let Err(e) = self.authorize_call(&extensions, "srx_list_nat_rules", Some(&args.router))
-        {
+        if let Err(e) = self.authorize_call(&extensions, "srx_list_nat_rules", Some(&args.router)) {
             audit.deny(match e {
                 ScopeError::MissingCallerContext => "missing_caller_context",
                 ScopeError::RouterNotInScope { .. } => "router_scope",

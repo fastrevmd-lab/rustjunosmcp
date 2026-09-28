@@ -641,7 +641,10 @@ fn parse_match(
         .children()
         .filter(|n| {
             n.is_element()
-                && matches!(n.tag_name().name(), "source-address" | "source-address-name")
+                && matches!(
+                    n.tag_name().name(),
+                    "source-address" | "source-address-name"
+                )
         })
         .filter_map(|n| n.text().map(|t| t.trim().to_string()))
         .collect();
