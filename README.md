@@ -18,8 +18,8 @@ the core Junos tools and, by default, the SRX security workflows through one
 tool registry and endpoint. It is drop-in compatible with
 [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server) on the
 inventory format and core tool surface, but built on async Rust
-([rustEZ](https://github.com/fastrevmd-lab/rustEZ) +
-[rustnetconf](https://github.com/fastrevmd-lab/rustnetconf)) instead of PyEZ.
+([rustEZ](https://github.com/mechubsec/rustez) +
+[rustnetconf](https://github.com/mechubsec/rustnetconf)) instead of PyEZ.
 
 ## Beyond Juniper/junos-mcp-server
 
@@ -57,14 +57,14 @@ parallel with a configurable concurrency cap.
 > [Upgrading to v0.10](#upgrading-to-v010) for the procedure.
 >
 > Security: the auth stack is now `unsafe`-free — `rust-junosmcp-auth` consumes
-> the shared [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp) crate,
+> the shared [`mecmcp-auth`](https://github.com/mechubsec/mecmcp) crate,
 > which replaces hand-rolled secret zeroing with `zeroize` and `libc::getuid`
 > with `rustix`. A malformed token entry also no longer takes the whole store
 > offline at load.
 >
 > Tool surface is unchanged at 27 tools (18 Junos-only with
 > `--no-default-features`). See the
-> [v0.10.0 release notes](https://github.com/fastrevmd-lab/rustjunosmcp/releases/tag/v0.10.0).
+> [v0.10.0 release notes](https://github.com/mechubsec/rustjunosmcp/releases/tag/v0.10.0).
 
 ## Feature scope
 
@@ -189,7 +189,7 @@ parallel with a configurable concurrency cap.
 - **Resilient token load** — scope names are validated on write rather than on
   load, so one stale entry no longer takes the whole store offline.
 - **Security** — `rust-junosmcp-auth` is now a thin re-export of the shared
-  [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp) crate and contains
+  [`mecmcp-auth`](https://github.com/mechubsec/mecmcp) crate and contains
   no `unsafe`; `zeroize` replaces hand-rolled secret zeroing and `rustix`
   replaces `libc::getuid`. Tool count unchanged (27 / 18).
 
@@ -532,7 +532,7 @@ Silence means it is off.
 ## Quick start (local)
 
 ```bash
-git clone https://github.com/fastrevmd-lab/rustjunosmcp.git
+git clone https://github.com/mechubsec/rustjunosmcp.git
 cd RustJunosMCP
 
 # Build the default 41-tool Junos/SRX server with TLS.
@@ -621,7 +621,7 @@ signing identity to that exact workflow, so a signature from anywhere else
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp '^https://github\.com/fastrevmd-lab/rustjunosmcp/\.github/workflows/release-image\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+|heads/main)$' \
+  --certificate-identity-regexp '^https://github\.com/mechubsec/rustjunosmcp/\.github/workflows/release-image\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+|heads/main)$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   ghcr.io/fastrevmd-lab/rust-junosmcp:latest
 ```
@@ -708,7 +708,7 @@ from this repository's release workflow:
 
 ```bash
 version=0.26.0
-base="https://github.com/fastrevmd-lab/rustjunosmcp/releases/download/v${version}"
+base="https://github.com/mechubsec/rustjunosmcp/releases/download/v${version}"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.sha256"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle"
@@ -716,7 +716,7 @@ curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle"
 sha256sum -c "rust-junosmcp_${version}_amd64.tar.gz.sha256"
 
 cosign verify-blob \
-  --certificate-identity "https://github.com/fastrevmd-lab/rustjunosmcp/.github/workflows/release-sign-tarball.yml@refs/heads/main" \
+  --certificate-identity "https://github.com/mechubsec/rustjunosmcp/.github/workflows/release-sign-tarball.yml@refs/heads/main" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --bundle "rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle" \
   "rust-junosmcp_${version}_amd64.tar.gz"
@@ -1265,7 +1265,7 @@ cargo test -p rust-junosmcp-core --test integration_real_device -- --ignored --n
 ## Audit forwarding to the event store
 
 The audit trail does not stay on this host. This server follows the family
-standard — [AUDIT-FORWARDING-STANDARD.md](https://github.com/fastrevmd-lab/mecmcp/blob/main/docs/AUDIT-FORWARDING-STANDARD.md).
+standard — [AUDIT-FORWARDING-STANDARD.md](https://github.com/mechubsec/mecmcp/blob/main/docs/AUDIT-FORWARDING-STANDARD.md).
 
 An audit record that only exists on the machine that produced it is not an audit
 trail: it is a log file on a box whose operator is the party the record is about.
@@ -1285,7 +1285,7 @@ server never truncates it.
 
 Records are written directly into SSDF's `ssdf.audit` as **hash-chained** rows,
 per SSDF's merged evidence contract, so that deleting or editing a row is
-detectable. Tracked in [mecmcp#292](https://github.com/fastrevmd-lab/mecmcp/issues/292).
+detectable. Tracked in [mecmcp#292](https://github.com/mechubsec/mecmcp/issues/292).
 
 A cheaper syslog path was designed and rejected: it works, but the records are
 unchained, and every other link here is tamper-evident by construction — plan

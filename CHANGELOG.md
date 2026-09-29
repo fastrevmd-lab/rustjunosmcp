@@ -74,7 +74,7 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 - **cSRX devices now work**. rustez 0.18 tolerates cSRX rejecting
   `<get-route-engine-information/>` during fact gathering
-  (fastrevmd-lab/rustez#54). Previously every tool call on a cSRX device failed
+  (mechubsec/rustez#54). Previously every tool call on a cSRX device failed
   with `[OperationFailed] syntax error`.
 
 ## [0.25.0] - 2026-09-15
@@ -120,7 +120,7 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 - **cSRX devices now work**. rustez 0.18 tolerates cSRX rejecting
   `<get-route-engine-information/>` during fact gathering
-  (fastrevmd-lab/rustez#54). Previously every tool call on a cSRX device failed
+  (mechubsec/rustez#54). Previously every tool call on a cSRX device failed
   with `[OperationFailed] syntax error`.
 
 - **Flaky test race in `timeout_budget_tests`**. Both tests mutated the same
@@ -1348,7 +1348,7 @@ container image is distroless as a direct result.
 ### Security
 
 - **The auth stack no longer contains any `unsafe`.** `rust-junosmcp-auth`
-  now re-exports [`mecmcp-auth`](https://github.com/fastrevmd-lab/mecmcp)
+  now re-exports [`mecmcp-auth`](https://github.com/mechubsec/mecmcp)
   v0.1.4 rather than carrying its own token, store, file, and caller
   modules. Three `unsafe` sites went with them — hand-rolled `write_volatile`
   secret zeroing (now `zeroize`) and `libc::getuid` (now `rustix`). One

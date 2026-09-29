@@ -1,6 +1,6 @@
 # Caller-Attributed Audit Coverage — Design
 
-- **Issue:** [#132](https://github.com/fastrevmd-lab/rustjunosmcp/issues/132) — [Medium] Complete caller-attributed audit coverage
+- **Issue:** [#132](https://github.com/mechubsec/rustjunosmcp/issues/132) — [Medium] Complete caller-attributed audit coverage
 - **Date:** 2026-07-12
 - **Status:** Approved (first pass)
 - **Scope note:** First pass — **core uniform coverage + redaction**. Pluggable

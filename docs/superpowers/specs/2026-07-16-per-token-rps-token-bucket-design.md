@@ -1,6 +1,6 @@
 # Per-Token RPS Token-Bucket Rate Limiting — Design
 
-- **Issue:** [#150](https://github.com/fastrevmd-lab/rustjunosmcp/issues/150) — [Low] Optional per-token RPS (token-bucket) rate limiting
+- **Issue:** [#150](https://github.com/mechubsec/rustjunosmcp/issues/150) — [Low] Optional per-token RPS (token-bucket) rate limiting
 - **Date:** 2026-07-16
 - **Status:** Approved design; written specification awaiting final review
 
