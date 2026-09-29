@@ -2999,18 +2999,18 @@ mod redaction_coverage_tests {
     #[test]
     fn to_call_result_redacts_every_fixture_secret_from_a_string_payload() {
         let payload = synthetic_device_payload();
-        for secret in FIXTURE_SECRETS {
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
             assert!(
                 payload.contains(secret),
-                "fixture setup bug: {secret} missing from synthetic payload"
+                "fixture setup bug: FIXTURE_SECRETS[{idx}] missing from synthetic payload"
             );
         }
         let result = JmcpHandler::to_call_result(Ok(Value::String(payload))).unwrap();
         let text = result_text(&result);
-        for secret in FIXTURE_SECRETS {
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
             assert!(
                 !text.contains(secret),
-                "secret leaked through to_call_result's success path: {secret}\ngot: {text}"
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's success path (value not printed)"
             );
         }
     }
@@ -3026,10 +3026,10 @@ mod redaction_coverage_tests {
         ]);
         let result = JmcpHandler::to_call_result(Ok(value)).unwrap();
         let text = result_text(&result);
-        for secret in FIXTURE_SECRETS {
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
             assert!(
                 !text.contains(secret),
-                "secret leaked through to_call_result's structured-payload path: {secret}\ngot: {text}"
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's structured-payload path (value not printed)"
             );
         }
     }
@@ -3042,10 +3042,10 @@ mod redaction_coverage_tests {
         let err = rust_junosmcp_core::JmcpError::ConfigParseHint(synthetic_device_payload());
         let result = JmcpHandler::to_call_result(Err(err)).unwrap();
         let text = result_text(&result);
-        for secret in FIXTURE_SECRETS {
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
             assert!(
                 !text.contains(secret),
-                "secret leaked through to_call_result's error path: {secret}\ngot: {text}"
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's error path (value not printed)"
             );
         }
     }
