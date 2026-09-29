@@ -69,5 +69,5 @@ uuid         = "1"
 # not just that it maps to the right enum variant. Same version rustnetconf
 # depends on (see the workspace `[patch.crates-io]` note); never shipped in
 # the server binary.
-russh        = { version = "0.62", default-features = false, features = ["ring"] }
+russh        = { version = "0.63", default-features = false, features = ["ring"] }
 zeroize      = "1"
