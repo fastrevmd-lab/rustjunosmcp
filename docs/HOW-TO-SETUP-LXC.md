@@ -43,12 +43,12 @@ the old binary has been replaced — an outage, not a build failure.
 Take the binary from the release image, which CI builds against the right glibc:
 
 ```bash
-docker create --name jx ghcr.io/fastrevmd-lab/rust-junosmcp:0.26.0
+docker create --name jx ghcr.io/mechubsec/rustjunosmcp:0.26.0
 docker cp jx:/usr/local/bin/rust-junosmcp ./rust-junosmcp
 docker rm jx
 ```
 
-No docker? `skopeo copy docker://ghcr.io/fastrevmd-lab/rust-junosmcp:0.26.0 dir:/tmp/img`
+No docker? `skopeo copy docker://ghcr.io/mechubsec/rustjunosmcp:0.26.0 dir:/tmp/img`
 then find the layer containing `usr/local/bin/rust-junosmcp` and untar it.
 
 ## 2. Assemble the install package

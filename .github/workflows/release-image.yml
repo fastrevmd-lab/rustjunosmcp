@@ -35,8 +35,8 @@ jobs:
     # mechubsec/mecmcp#440 merges and mecmcp cuts its next tag.
     uses: mechubsec/mecmcp/.github/workflows/reusable-release-image.yml@34bc01f1b7cddec9d73999170ae748dbeec76ff7
     with:
-      # GHCR requires a lowercase image path; the repo name is mixed-case.
-      image: ghcr.io/fastrevmd-lab/rust-junosmcp
+      # GHCR requires a lowercase image path; github.repository is already lowercase.
+      image: ghcr.io/${{ github.repository }}
       version: ${{ github.event.inputs.version }}
       ref: ${{ github.event.inputs.ref }}
       smoke-test-command: ./packaging/tests/container-scp-smoke.sh

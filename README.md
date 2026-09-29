@@ -597,7 +597,7 @@ locations under `/etc/jmcp/keys`.
 
 ```bash
 # Pull the prebuilt image (tags: latest, 0.25, 0.26.0).
-docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+docker pull ghcr.io/mechubsec/rustjunosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
 # source before starting the server in strict mode.
@@ -620,7 +620,7 @@ docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+  ghcr.io/mechubsec/rustjunosmcp:latest
 ```
 
 **Verifying the image signature:** every image pushed by the `Release image`
@@ -633,7 +633,7 @@ signing identity to that exact workflow, so a signature from anywhere else
 cosign verify \
   --certificate-identity-regexp '^https://github\.com/mechubsec/rustjunosmcp/\.github/workflows/release-image\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+|heads/main)$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+  ghcr.io/mechubsec/rustjunosmcp:latest
 ```
 
 This is a regexp, not an exact `--certificate-identity`, because GitHub embeds
@@ -651,6 +651,10 @@ entry in the [Rekor](https://docs.sigstore.dev/logging/overview/) transparency
 log —
 this is expected and does not disclose anything beyond what the image push
 itself already made public.
+
+Images published before 2026-09-29 were signed by the workflow under
+`github.com/fastrevmd-lab/RustJunosMCP`, so verifying an older tag needs that
+identity instead.
 
 The state mount holds staged upload/download files, the shared destructive
 operation leases, and `known_hosts`. Do not delete its lease files while a
