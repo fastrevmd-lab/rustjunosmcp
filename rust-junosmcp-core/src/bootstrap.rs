@@ -69,22 +69,44 @@ pub fn load_inventory(path: &Path) -> Result<(Arc<Inventory>, [u8; 32]), crate::
     }
 }
 
-/// Build the host-key verification policy for NETCONF SSH connections.
+/// SSH host-key verification mode for NETCONF connections, as selected by
+/// the server's CLI flags.
 ///
-/// Returns either strict known-hosts checking (production default) or
-/// accept-all mode (lab/TOFU setups only).
+/// `--ssh-accept-new-host-keys` and `--ssh-insecure-accept-any-host-key` are
+/// mutually exclusive (enforced by clap's `conflicts_with` on the CLI
+/// struct), so exactly one of `AcceptNew` / `AcceptAll` can be reached at
+/// once, never both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SshHostKeyMode {
+    /// Strict `known_hosts` lookup (production default). Unknown or changed
+    /// host keys are refused.
+    Strict,
+    /// Trust-on-first-use: pin an unknown host's key on first contact;
+    /// refuse a host that later presents a *different* key than the pinned
+    /// one. Selected by `--ssh-accept-new-host-keys`.
+    AcceptNew,
+    /// Accept any host key unconditionally, with no persistence and no
+    /// mismatch detection. Lab-only. Selected by
+    /// `--ssh-insecure-accept-any-host-key`.
+    AcceptAll,
+}
+
+/// Build the host-key verification policy for NETCONF SSH connections from
+/// the resolved [`SshHostKeyMode`].
 ///
-/// - `accept_new = true` → `HostKeyVerification::AcceptAll` (lab/TOFU mode)
-/// - `accept_new = false` → `HostKeyVerification::KnownHosts(known_hosts_file)` (strict, production default)
-///
-/// Production callers should pass `false` and supply a known_hosts file path.
-/// Lab setups may pass `true` to skip host-key validation, accepting any key
-/// on first connect (TOFU).
-pub fn build_host_key_policy(accept_new: bool, known_hosts_file: PathBuf) -> HostKeyVerification {
-    if accept_new {
-        HostKeyVerification::AcceptAll
-    } else {
-        HostKeyVerification::KnownHosts(known_hosts_file)
+/// Production callers should pass `Strict` and supply a known_hosts file
+/// path. `AcceptNew` pins first-contact keys into that same file (TOFU).
+/// `AcceptAll` skips verification entirely and is lab-only.
+pub fn build_host_key_policy(
+    mode: SshHostKeyMode,
+    known_hosts_file: PathBuf,
+) -> HostKeyVerification {
+    match mode {
+        SshHostKeyMode::Strict => HostKeyVerification::KnownHosts(known_hosts_file),
+        SshHostKeyMode::AcceptNew => HostKeyVerification::AcceptNew {
+            known_hosts: known_hosts_file,
+        },
+        SshHostKeyMode::AcceptAll => HostKeyVerification::AcceptAll,
     }
 }
 
@@ -100,7 +122,8 @@ mod tests {
 
     #[test]
     fn build_host_key_policy_strict_default() {
-        let policy = build_host_key_policy(false, std::path::PathBuf::from("/tmp/kh"));
+        let policy =
+            build_host_key_policy(SshHostKeyMode::Strict, std::path::PathBuf::from("/tmp/kh"));
         match policy {
             HostKeyVerification::KnownHosts(p) => {
                 assert_eq!(p, std::path::PathBuf::from("/tmp/kh"))
@@ -110,8 +133,28 @@ mod tests {
     }
 
     #[test]
-    fn build_host_key_policy_accept_all_when_opted_in() {
-        let policy = build_host_key_policy(true, std::path::PathBuf::from("/tmp/kh"));
+    fn build_host_key_policy_accept_new_when_opted_in() {
+        // MEC-44: `--ssh-accept-new-host-keys` must map to real TOFU
+        // (AcceptNew), not AcceptAll — the flag name promises "new keys are
+        // pinned", not "no verification at all".
+        let policy = build_host_key_policy(
+            SshHostKeyMode::AcceptNew,
+            std::path::PathBuf::from("/tmp/kh"),
+        );
+        match policy {
+            HostKeyVerification::AcceptNew { known_hosts } => {
+                assert_eq!(known_hosts, std::path::PathBuf::from("/tmp/kh"))
+            }
+            _ => panic!("expected AcceptNew variant"),
+        }
+    }
+
+    #[test]
+    fn build_host_key_policy_accept_all_when_insecure_flag_set() {
+        let policy = build_host_key_policy(
+            SshHostKeyMode::AcceptAll,
+            std::path::PathBuf::from("/tmp/kh"),
+        );
         assert!(matches!(policy, HostKeyVerification::AcceptAll));
     }
 

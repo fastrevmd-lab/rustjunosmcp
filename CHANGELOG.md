@@ -6,6 +6,28 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`--ssh-accept-new-host-keys` now gives real TOFU for NETCONF SSH, not
+  no-verification-at-all.** Previously the flag pinned scp's known_hosts
+  entries on first contact (`HostKeyVerification::AcceptNew`) but set NETCONF
+  SSH to `HostKeyVerification::AcceptAll` — an operator reading the flag name
+  had no reason to expect that NETCONF connections were left completely
+  unverified. NETCONF now uses `AcceptNew` too: an unknown host's key is
+  pinned on first contact, and a host that later presents a *different* key
+  is refused, on both the scp and NETCONF paths, against the same
+  `known_hosts` file (MEC-44).
+  **Behaviour change for anyone relying on the old flag for key rotation:**
+  a device that rotates its host key (reimage, RE swap) will now be refused
+  on reconnect instead of being silently re-trusted. Re-run
+  `scripts/scan-known-hosts.sh`, or delete the stale line from
+  `known_hosts`, after a legitimate rotation.
+- **New `--ssh-insecure-accept-any-host-key` flag**, lab-only, carries the
+  old blanket `HostKeyVerification::AcceptAll` behavior for NETCONF SSH under
+  an honestly-named opt-in. Mutually exclusive with
+  `--ssh-accept-new-host-keys`. Logged loudly at startup and recorded as an
+  audit event.
+
 ## [0.26.0] - 2026-09-28
 
 ### Added

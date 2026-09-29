@@ -248,9 +248,26 @@ pub struct Cli {
     /// Accept and pin new device host keys on first contact (TOFU,
     /// `StrictHostKeyChecking=accept-new`). Off by default — the server
     /// uses `StrictHostKeyChecking=yes` and requires a pre-populated
-    /// `known_hosts` (see scripts/scan-known-hosts.sh). Lab-only.
-    #[arg(long)]
+    /// `known_hosts` (see scripts/scan-known-hosts.sh).
+    ///
+    /// Applies identically to scp transfers and NETCONF SSH: a device
+    /// presenting a key that differs from what's already pinned is refused
+    /// on both paths — this flag does not disable host-key verification.
+    /// Mutually exclusive with `--ssh-insecure-accept-any-host-key`.
+    #[arg(long, conflicts_with = "ssh_insecure_accept_any_host_key")]
     pub ssh_accept_new_host_keys: bool,
+
+    /// Accept ANY device host key unconditionally, with no known_hosts
+    /// persistence and no mismatch detection (`HostKeyVerification::AcceptAll`
+    /// for NETCONF SSH). Off by default.
+    ///
+    /// **Lab-only — never use against production devices.** Unlike
+    /// `--ssh-accept-new-host-keys`, this gives no protection against a
+    /// man-in-the-middle: every connection, forever, trusts whatever key is
+    /// presented. Logged loudly at startup and recorded as an audit event.
+    /// Mutually exclusive with `--ssh-accept-new-host-keys`.
+    #[arg(long, conflicts_with = "ssh_accept_new_host_keys")]
+    pub ssh_insecure_accept_any_host_key: bool,
 
     /// Expose unauthenticated Prometheus metrics at /metrics (streamable-http only).
     #[arg(long)]
@@ -644,6 +661,34 @@ mod tests {
     fn ssh_accept_new_host_keys_parses_when_set() {
         let cli = Cli::parse_from(["rust-junosmcp", "--ssh-accept-new-host-keys"]);
         assert!(cli.ssh_accept_new_host_keys);
+    }
+
+    #[test]
+    fn ssh_insecure_accept_any_host_key_off_by_default() {
+        let cli = Cli::parse_from(["rust-junosmcp"]);
+        assert!(!cli.ssh_insecure_accept_any_host_key);
+    }
+
+    #[test]
+    fn ssh_insecure_accept_any_host_key_parses_when_set() {
+        let cli = Cli::parse_from(["rust-junosmcp", "--ssh-insecure-accept-any-host-key"]);
+        assert!(cli.ssh_insecure_accept_any_host_key);
+    }
+
+    #[test]
+    fn ssh_accept_new_and_insecure_accept_any_are_mutually_exclusive() {
+        // MEC-44: an operator must not be able to combine TOFU with
+        // no-verification-at-all; clap should refuse the combination before
+        // the server ever starts.
+        let result = Cli::try_parse_from([
+            "rust-junosmcp",
+            "--ssh-accept-new-host-keys",
+            "--ssh-insecure-accept-any-host-key",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected a clap error for combining both host-key flags"
+        );
     }
 
     #[test]

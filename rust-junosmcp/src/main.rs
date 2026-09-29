@@ -164,12 +164,22 @@ async fn main() -> Result<()> {
         "blocklist policy loaded"
     );
     // Mirror the scp host-key posture for NETCONF SSH:
-    //   default → strict KnownHosts lookup against --known-hosts-file
-    //   --ssh-accept-new-host-keys → lab/TOFU mode (AcceptAll)
-    // Without this opt-in the rustez/rustnetconf 0.11+ default is RejectAll
+    //   default                              → strict KnownHosts lookup against --known-hosts-file
+    //   --ssh-accept-new-host-keys           → real TOFU (AcceptNew): pin unknown hosts, refuse changed keys
+    //   --ssh-insecure-accept-any-host-key   → lab-only, no verification at all (AcceptAll)
+    // clap's conflicts_with on the two flags guarantees at most one is set.
+    // Without one of them the rustez/rustnetconf 0.11+ default is RejectAll
     // (fail-closed) and every op command would error `Unknown server key`.
+    use rust_junosmcp_core::bootstrap::SshHostKeyMode;
+    let host_key_mode = if args.ssh_accept_new_host_keys {
+        SshHostKeyMode::AcceptNew
+    } else if args.ssh_insecure_accept_any_host_key {
+        SshHostKeyMode::AcceptAll
+    } else {
+        SshHostKeyMode::Strict
+    };
     let host_key_policy = rust_junosmcp_core::bootstrap::build_host_key_policy(
-        args.ssh_accept_new_host_keys,
+        host_key_mode,
         args.known_hosts_file.clone(),
     );
     let dev_manager = Arc::new(
@@ -222,15 +232,29 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    if args.ssh_accept_new_host_keys {
-        tracing::warn!(
-            "--ssh-accept-new-host-keys: scp pins unknown host keys on first contact (TOFU); NETCONF SSH uses HostKeyVerification::AcceptAll. Use only in lab environments."
-        );
-    } else {
-        tracing::info!(
-            known_hosts = %args.known_hosts_file.display(),
-            "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
-        );
+    match host_key_mode {
+        SshHostKeyMode::AcceptNew => {
+            tracing::warn!(
+                "--ssh-accept-new-host-keys: scp and NETCONF SSH both pin unknown host keys on \
+                 first contact (TOFU) and refuse a host presenting a different key afterward. \
+                 The first connection to a given host is unauthenticated."
+            );
+        }
+        SshHostKeyMode::AcceptAll => {
+            tracing::warn!(
+                target: "audit",
+                "--ssh-insecure-accept-any-host-key: NETCONF SSH accepts ANY device host key \
+                 unconditionally, with no known_hosts persistence and no mismatch detection. \
+                 This gives no protection against a man-in-the-middle. Lab-only — do not run \
+                 this against production devices."
+            );
+        }
+        SshHostKeyMode::Strict => {
+            tracing::info!(
+                known_hosts = %args.known_hosts_file.display(),
+                "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
+            );
+        }
     }
     let transfer_cfg = TransferConfig {
         staging_dir: args.staging_dir.clone(),
@@ -240,7 +264,13 @@ async fn main() -> Result<()> {
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
-        accept_new_host_keys: args.ssh_accept_new_host_keys,
+        // `--ssh-insecure-accept-any-host-key` also puts scp in TOFU mode
+        // (AcceptNew) rather than leaving it strict: mecmcp-scp's
+        // HostKeyVerification has no AcceptAll-equivalent wired through
+        // ScpJob today, and refusing scp outright while NETCONF accepts
+        // anything would be a stranger mismatch than the one MEC-44 fixes.
+        accept_new_host_keys: args.ssh_accept_new_host_keys
+            || args.ssh_insecure_accept_any_host_key,
     };
     let device_leases = std::sync::Arc::new(
         rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)
