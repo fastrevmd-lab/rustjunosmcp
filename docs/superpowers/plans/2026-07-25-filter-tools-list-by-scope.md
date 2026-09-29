@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `tools/list` advertise only the tools the caller's token can actually invoke, closing [#199](https://github.com/fastrevmd-lab/rustjunosmcp/issues/199).
+**Goal:** Make `tools/list` advertise only the tools the caller's token can actually invoke, closing [#199](https://github.com/mechubsec/rustjunosmcp/issues/199).
 
 **Architecture:** A pure helper filters a `Vec<Tool>` through the same `ScopeSet::allows_tool(name, WRITE_TOOLS)` predicate that `check_tool_scope` already uses for `tools/call`. A hand-written `list_tools` in the `ServerHandler` impl calls that helper with the caller context pulled from `RequestContext.extensions`. Defining `list_tools` by hand suppresses the one `rmcp-macros` would otherwise generate.
 

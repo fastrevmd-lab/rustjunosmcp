@@ -79,7 +79,7 @@ resolver = "2"
 [workspace.package]
 edition      = "2021"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/fastrevmd-lab/RustJunosMCP"
+repository   = "https://github.com/mechubsec/rustjunosmcp"
 authors      = ["fastrevmd-lab"]
 ```
 
