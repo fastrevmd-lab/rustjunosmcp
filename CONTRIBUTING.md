@@ -2,7 +2,7 @@
 
 Thanks for considering a contribution. rust-junosmcp is a [Model Context
 Protocol](https://modelcontextprotocol.io/) server for Juniper Junos and SRX
-devices, written in Rust — part of the [mechub](https://github.com/fastrevmd-lab)
+devices, written in Rust — part of the [mechub](https://github.com/mechubsec)
 family of open-source, self-hosted network-security automation tooling. It's
 built on [rustnetconf](https://github.com/mechubsec/rustnetconf) and
 [rustEZ](https://github.com/mechubsec/rustez), and shares the `mecmcp`
