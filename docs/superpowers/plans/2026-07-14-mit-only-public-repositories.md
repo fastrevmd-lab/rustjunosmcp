@@ -168,9 +168,9 @@ Run:
 
 ```bash
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/rustjunosmcp --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adopts the repository's existing MIT terms as the sole current project license. Updates Cargo metadata, the OCI label, and active documentation while preserving historical records and third-party dependency license data. Offline, security, release, and CLI checks are included in the verification."
-gh pr checks --repo fastrevmd-lab/rustjunosmcp --watch
-gh pr merge --repo fastrevmd-lab/rustjunosmcp --merge --delete-branch
+gh pr create --repo mechubsec/rustjunosmcp --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adopts the repository's existing MIT terms as the sole current project license. Updates Cargo metadata, the OCI label, and active documentation while preserving historical records and third-party dependency license data. Offline, security, release, and CLI checks are included in the verification."
+gh pr checks --repo mechubsec/rustjunosmcp --watch
+gh pr merge --repo mechubsec/rustjunosmcp --merge --delete-branch
 cd /home/mharman/Projects/RustJunosMCP
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -295,9 +295,9 @@ git status -sb
 git add LICENSE rustez/Cargo.toml rustez-cli/Cargo.toml rustez-py/Cargo.toml rustez-py/pyproject.toml README.md
 git commit -m "chore: adopt MIT-only licensing"
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/rustez --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current license across the Rust library, CLI, Python bindings, and active documentation. Historical records and dependency license data remain unchanged; real-device tests were not run."
-gh pr checks --repo fastrevmd-lab/rustez --watch
-gh pr merge --repo fastrevmd-lab/rustez --merge --delete-branch
+gh pr create --repo mechubsec/rustez --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current license across the Rust library, CLI, Python bindings, and active documentation. Historical records and dependency license data remain unchanged; real-device tests were not run."
+gh pr checks --repo mechubsec/rustez --watch
+gh pr merge --repo mechubsec/rustez --merge --delete-branch
 cd /home/mharman/Projects/rustEZ
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -419,9 +419,9 @@ Run:
 git add LICENSE Cargo.toml rustnetconf-cli/Cargo.toml rustnetconf-yang/Cargo.toml README.md TODOS.md
 git commit -m "chore: adopt MIT-only licensing"
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/rustnetconf --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current license for the rustnetconf workspace and active documentation. Historical plans and all third-party dependency license data remain unchanged; live-device tests were not run."
-gh pr checks --repo fastrevmd-lab/rustnetconf --watch
-gh pr merge --repo fastrevmd-lab/rustnetconf --merge --delete-branch
+gh pr create --repo mechubsec/rustnetconf --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current license for the rustnetconf workspace and active documentation. Historical plans and all third-party dependency license data remain unchanged; live-device tests were not run."
+gh pr checks --repo mechubsec/rustnetconf --watch
+gh pr merge --repo mechubsec/rustnetconf --merge --delete-branch
 cd /home/mharman/Projects/rustnetconf
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -561,9 +561,9 @@ Run:
 git add LICENSE Cargo.toml fuzz/Cargo.toml Dockerfile README.md scripts/build-release.sh
 git commit -m "chore: adopt MIT-only licensing"
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/rustpanosmcp --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current project license across workspace metadata, fuzz metadata, container labels, documentation, and deterministic release archives. Dependency allowlists remain unchanged."
-gh pr checks --repo fastrevmd-lab/rustpanosmcp --watch
-gh pr merge --repo fastrevmd-lab/rustpanosmcp --merge --delete-branch
+gh pr create --repo mechubsec/rustpanosmcp --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current project license across workspace metadata, fuzz metadata, container labels, documentation, and deterministic release archives. Dependency allowlists remain unchanged."
+gh pr checks --repo mechubsec/rustpanosmcp --watch
+gh pr merge --repo mechubsec/rustpanosmcp --merge --delete-branch
 cd /home/mharman/Projects/rust-panosmcp
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -701,9 +701,9 @@ Run:
 git add LICENSE package.json package-lock.json README.md
 git commit -m "chore: adopt MIT-only licensing"
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/firewallintentconverter --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current project license in source, npm metadata, lockfile root metadata, README badge, and contribution terms. Third-party dependency license entries remain unchanged."
-gh pr checks --repo fastrevmd-lab/firewallintentconverter --watch
-gh pr merge --repo fastrevmd-lab/firewallintentconverter --merge --delete-branch
+gh pr create --repo mechubsec/firewallintentconverter --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Makes MIT the sole current project license in source, npm metadata, lockfile root metadata, README badge, and contribution terms. Third-party dependency license entries remain unchanged."
+gh pr checks --repo mechubsec/firewallintentconverter --watch
+gh pr merge --repo mechubsec/firewallintentconverter --merge --delete-branch
 cd /home/mharman/Projects/firewallintentconverter
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -830,9 +830,9 @@ Run:
 
 ```bash
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/fwconfigsantizer --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adds the required project-worktree ignore and makes MIT the sole current source and contribution license. Runtime application code is unchanged."
-gh pr view --repo fastrevmd-lab/fwconfigsantizer --json url,mergeStateStatus,statusCheckRollup
-gh pr merge --repo fastrevmd-lab/fwconfigsantizer --merge --delete-branch
+gh pr create --repo mechubsec/fwconfigsantizer --base main --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adds the required project-worktree ignore and makes MIT the sole current source and contribution license. Runtime application code is unchanged."
+gh pr view --repo mechubsec/fwconfigsantizer --json url,mergeStateStatus,statusCheckRollup
+gh pr merge --repo mechubsec/fwconfigsantizer --merge --delete-branch
 cd /home/mharman/Projects/fwconfigsantizer
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -866,7 +866,7 @@ Run:
 
 ```bash
 cd /home/mharman/Projects
-gh repo clone fastrevmd-lab/srxsync srxsync
+gh repo clone mechubsec/srxsync srxsync
 cd /home/mharman/Projects/srxsync
 git status -sb
 git pull --ff-only origin master
@@ -986,9 +986,9 @@ Run:
 git add .gitignore LICENSE pyproject.toml README.md
 git commit -m "chore: adopt MIT-only licensing"
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/srxsync --base master --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adds the required worktree ignore and makes MIT the sole current source, Python package, distribution, documentation, and contribution license. Real-device integration tests were not run."
-gh pr view --repo fastrevmd-lab/srxsync --json url,mergeStateStatus,statusCheckRollup
-gh pr merge --repo fastrevmd-lab/srxsync --merge --delete-branch
+gh pr create --repo mechubsec/srxsync --base master --head agent/mit-only-license --title "chore: adopt MIT-only licensing" --body "Adds the required worktree ignore and makes MIT the sole current source, Python package, distribution, documentation, and contribution license. Real-device integration tests were not run."
+gh pr view --repo mechubsec/srxsync --json url,mergeStateStatus,statusCheckRollup
+gh pr merge --repo mechubsec/srxsync --merge --delete-branch
 cd /home/mharman/Projects/srxsync
 git pull --ff-only origin master
 git worktree remove .worktrees/mit-only-license
@@ -1273,9 +1273,9 @@ Run:
 
 ```bash
 git push -u origin agent/mit-only-license
-gh pr create --repo fastrevmd-lab/fwskillsshare --base main --head agent/mit-only-license --title "chore: publish MIT-only skill catalog" --body "Removes 14 source-derived or otherwise non-MIT skill subtrees, deletes the obsolete provenance notice and Apache project license, and leaves seven MIT packages with repaired installer, catalog, metadata, and validation. No real-device validation was performed."
-gh pr view --repo fastrevmd-lab/fwskillsshare --json url,mergeStateStatus,statusCheckRollup
-gh pr merge --repo fastrevmd-lab/fwskillsshare --merge --delete-branch
+gh pr create --repo mechubsec/fwskillsshare --base main --head agent/mit-only-license --title "chore: publish MIT-only skill catalog" --body "Removes 14 source-derived or otherwise non-MIT skill subtrees, deletes the obsolete provenance notice and Apache project license, and leaves seven MIT packages with repaired installer, catalog, metadata, and validation. No real-device validation was performed."
+gh pr view --repo mechubsec/fwskillsshare --json url,mergeStateStatus,statusCheckRollup
+gh pr merge --repo mechubsec/fwskillsshare --merge --delete-branch
 cd /home/mharman/Projects/fwskillsshare
 git pull --ff-only origin main
 git worktree remove .worktrees/mit-only-license
@@ -1440,14 +1440,14 @@ Run:
 
 ```bash
 gh repo list fastrevmd-lab --visibility public --limit 200 --json name,url,licenseInfo --jq 'sort_by(.name) | map({name, url, license: .licenseInfo.key})'
-gh pr list --repo fastrevmd-lab/rustjunosmcp --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/rustez --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/rustnetconf --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/rustpanosmcp --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/firewallintentconverter --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/fwconfigsantizer --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/srxsync --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
-gh pr list --repo fastrevmd-lab/fwskillsshare --state merged --search '"chore: publish MIT-only skill catalog" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/rustjunosmcp --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/rustez --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/rustnetconf --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/rustpanosmcp --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/firewallintentconverter --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/fwconfigsantizer --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/srxsync --state merged --search '"chore: adopt MIT-only licensing" in:title' --limit 1 --json number,url,mergedAt
+gh pr list --repo mechubsec/fwskillsshare --state merged --search '"chore: publish MIT-only skill catalog" in:title' --limit 1 --json number,url,mergedAt
 gh pr list --repo fastrevmd-lab/mechubsite --state merged --search '"docs: show MIT-only repository licensing" in:title' --limit 1 --json number,url,mergedAt
 ```
 

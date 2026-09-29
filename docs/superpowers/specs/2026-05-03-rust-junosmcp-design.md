@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-03
 **Status:** Approved (brainstorm complete, awaiting implementation plan)
-**Scope:** v0.1 of a 1:1 Rust port of [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server), built on [rustEZ](https://github.com/fastrevmd-lab/rustEZ) and [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf) instead of PyEZ/ncclient.
+**Scope:** v0.1 of a 1:1 Rust port of [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server), built on [rustEZ](https://github.com/mechubsec/rustez) and [rustnetconf](https://github.com/mechubsec/rustnetconf) instead of PyEZ/ncclient.
 
 ---
 
@@ -188,7 +188,7 @@ impl DeviceManager {
 - Sidesteps vSRX/branch-SRX 3-session-per-device limit during interleaved tool calls.
 - rustEZ connect time is sub-second on fast links.
 
-**Pooling is upstream.** A `DevicePool` with per-platform session limits is on rustEZ's v0.3 roadmap (see [rustEZ README §Roadmap](https://github.com/fastrevmd-lab/rustEZ#roadmap)). When published, this project consumes it. Pool logic does not live here.
+**Pooling is upstream.** A `DevicePool` with per-platform session limits is on rustEZ's v0.3 roadmap (see [rustEZ README §Roadmap](https://github.com/mechubsec/rustez#roadmap)). When published, this project consumes it. Pool logic does not live here.
 
 **Concurrency:** every tool handler is `async fn`, takes `Arc<DeviceManager>` + `Arc<Inventory>` clones, no `&mut self`. rmcp dispatches concurrently; same-router contention surfaces as a clean rustEZ error to the LLM.
 

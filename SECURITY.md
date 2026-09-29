@@ -6,7 +6,7 @@ Please **do not** open a public GitHub issue for a security vulnerability.
 
 Instead, use GitHub's private vulnerability reporting for this repository:
 
-https://github.com/fastrevmd-lab/rustjunosmcp/security/advisories/new
+https://github.com/mechubsec/rustjunosmcp/security/advisories/new
 
 (Security tab → Advisories → "Report a vulnerability".)
 

@@ -1823,7 +1823,7 @@ Replace the v0.2.1 callout with v0.2.2:
 > swap). New CLI flags `--inventory-readonly` and
 > `--allow-password-auth-add`. SIGHUP now also reloads inventory.
 >
-> See the [v0.2.2 release notes](https://github.com/fastrevmd-lab/RustJunosMCP/releases/tag/v0.2.2).
+> See the [v0.2.2 release notes](https://github.com/mechubsec/rustjunosmcp/releases/tag/v0.2.2).
 ```
 
 - [ ] **Step 4: Drop the "Coming after v0.2" line**
