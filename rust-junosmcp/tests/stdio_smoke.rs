@@ -27,6 +27,7 @@ const JUNOS_TOOLS: &[&str] = &[
     "commit_check_config",
     "discard_candidate",
     "rollback_config",
+    "confirm_commit",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -185,11 +186,12 @@ fn lists_expected_tools() {
     // `list_junos_change_sets` adds one more (#255), and
     // `cancel_junos_change_set` adds one more (#293), then execute adds one.
     // MEC-54's four SRX policy-read tools add four more, and
-    // `srx_flow_sessions` + `srx_policy_match` add two more (MEC-55).
+    // `srx_flow_sessions` + `srx_policy_match` add two more (MEC-55), and
+    // `confirm_commit` adds one more (MEC-45).
     #[cfg(feature = "srx")]
-    assert_eq!(names.len(), 43);
+    assert_eq!(names.len(), 44);
     #[cfg(not(feature = "srx"))]
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 29);
 }
 
 #[cfg(feature = "srx")]

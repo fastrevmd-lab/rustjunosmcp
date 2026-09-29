@@ -223,6 +223,25 @@ pub struct Cli {
     #[arg(long = "allow-direct-commit")]
     pub allow_direct_commit: bool,
 
+    /// Server-wide default confirm-commit window, in whole minutes.
+    ///
+    /// `load_and_commit_config`, `render_and_apply_j2_template` (when it
+    /// applies), `rollback_config` (when `commit=true`), and
+    /// `apply_junos_change_set` issue a Junos confirmed commit by default: the
+    /// device arms an automatic rollback that fires unless the confirming
+    /// commit lands within this window. A model-drafted change that cuts
+    /// management access reverts itself instead of requiring someone to drive
+    /// to the box (MEC-45).
+    ///
+    /// A caller can override this per call via `confirm_timeout_mins`, or opt
+    /// out of the confirm window entirely with `confirm_timeout_mins: 0`
+    /// (recorded in the audit trail as `commit_confirmed=false`).
+    ///
+    /// Validated the same way as a per-call `confirm_timeout_mins`: must be
+    /// >= 1 and convert to seconds without overflow.
+    #[arg(long = "commit-confirm-default-mins", default_value_t = 10)]
+    pub commit_confirm_default_mins: u32,
+
     /// Web approver settings (--web-enabled-approver).
     #[command(flatten)]
     pub web_approver: WebApproverArgs,

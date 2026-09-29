@@ -74,7 +74,9 @@ pub(crate) fn detect_format(rendered: &str) -> &'static str {
 
 use crate::device_manager::DeviceManager;
 use crate::helpers::{
-    build_config_payload, parse_load_mode, refuse_override_outside_changeset, resolve_load_action,
+    ConfirmDecision, build_config_payload, confirm_timeout_to_secs, parse_load_mode,
+    refuse_override_outside_changeset, resolve_confirm_timeout, resolve_load_action,
+    rollback_deadline_unix,
 };
 use crate::policy::Policy;
 use crate::tools::TemplateArgs;
@@ -206,6 +208,7 @@ pub async fn handle_with_cancel(
             (payload.clone(), load_action),
             &args.commit_comment,
             args.dry_run,
+            args.confirm_timeout_mins,
             &dm,
             Duration::from_secs(args.timeout),
             &ct,
@@ -213,26 +216,34 @@ pub async fn handle_with_cancel(
         .await
         {
             Err(JmcpError::Cancelled) => return Err(JmcpError::Cancelled),
-            Ok(diff_or_id) => {
-                if args.dry_run {
-                    json!({
-                        "router": d,
-                        "rendered_template": rendered,
-                        "config_format": format,
-                        "diff": diff_or_id,
-                    })
-                } else {
-                    json!({
-                        "router": d,
-                        "rendered_template": rendered,
-                        "config_format": format,
-                        // Note: rustez's commit() does not return a server-issued
-                        // commit identifier, so we surface the supplied
-                        // commit_comment instead. Field name reflects what is
-                        // actually returned.
-                        "commit_comment": diff_or_id,
-                    })
+            Ok(CommitOneOutcome::DryRun { diff }) => json!({
+                "router": d,
+                "rendered_template": rendered,
+                "config_format": format,
+                "diff": diff,
+            }),
+            Ok(CommitOneOutcome::Committed { echo, confirmed }) => {
+                let mut row = json!({
+                    "router": d,
+                    "rendered_template": rendered,
+                    "config_format": format,
+                    // Note: rustez's commit() does not return a server-issued
+                    // commit identifier, so we surface the supplied
+                    // commit_comment instead. Field name reflects what is
+                    // actually returned.
+                    "commit_comment": echo,
+                });
+                if let Some(mins) = confirmed {
+                    row["confirmed"] = json!(true);
+                    row["rollback_in_minutes"] = json!(mins);
+                    row["rollback_deadline_unix"] = json!(rollback_deadline_unix(mins));
+                    row["message"] = json!(format!(
+                        "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
+                         Send another commit to confirm with confirm_commit.",
+                        mins
+                    ));
                 }
+                row
             }
             Err(e) => json!({
                 "router": d,
@@ -246,26 +257,50 @@ pub async fn handle_with_cancel(
     Ok(json!({ "results": rows, "applied": !args.dry_run }))
 }
 
-/// Commit (or dry-run) a rendered config payload to one device.
+/// Outcome of [`commit_one`]: either a dry-run diff, or a successful commit
+/// echo plus the confirm-commit window actually used (`None` when the caller
+/// opted out with `confirm_timeout_mins: 0`).
+enum CommitOneOutcome {
+    DryRun {
+        diff: String,
+    },
+    Committed {
+        echo: String,
+        confirmed: Option<u32>,
+    },
+}
+
 /// Commit (or dry-run) a rendered config payload to one device.
 ///
-/// Returns the diff string in dry-run mode, or the commit comment echo in apply
-/// mode. rustez does not return a server-issued commit identifier, so callers
-/// should treat the apply-mode return value as the comment that was used.
+/// Commit-confirmed by default (MEC-45): a bad template apply reverts itself
+/// unless the caller explicitly opts out with `confirm_timeout_mins: 0`.
+/// rustez does not return a server-issued commit identifier, so the apply-mode
+/// echo is the comment that was used, not a device-assigned commit ID.
+#[allow(clippy::too_many_arguments)]
 async fn commit_one(
     device_name: &str,
     (payload, load_action): (rustez::ConfigPayload, rustez::LoadAction),
     commit_comment: &str,
     dry_run: bool,
+    confirm_timeout_mins: Option<u32>,
     dm: &Arc<DeviceManager>,
     timeout: Duration,
     ct: &CancellationToken,
-) -> Result<String, JmcpError> {
+) -> Result<CommitOneOutcome, JmcpError> {
     let commit_comment = commit_comment.to_string();
-    let mode = if dry_run {
-        CandidateMode::DryRun
+    let (mode, confirmed) = if dry_run {
+        (CandidateMode::DryRun, None)
     } else {
-        CandidateMode::CommitWithComment(commit_comment.clone())
+        match resolve_confirm_timeout(confirm_timeout_mins) {
+            ConfirmDecision::Confirmed(mins) => {
+                let secs = confirm_timeout_to_secs(mins)?;
+                (CandidateMode::CommitConfirmed(secs), Some(mins))
+            }
+            ConfirmDecision::OptedOut => (
+                CandidateMode::CommitWithComment(commit_comment.clone()),
+                None,
+            ),
+        }
     };
     match candidate_transaction::run(
         dm,
@@ -281,8 +316,11 @@ async fn commit_one(
     )
     .await?
     {
-        CandidateResult::DryRun { diff } => Ok(diff),
-        CandidateResult::Committed { .. } => Ok(commit_comment),
+        CandidateResult::DryRun { diff } => Ok(CommitOneOutcome::DryRun { diff }),
+        CandidateResult::Committed { .. } => Ok(CommitOneOutcome::Committed {
+            echo: commit_comment,
+            confirmed,
+        }),
         CandidateResult::CommitFailed { error, .. } => Err(JmcpError::Validation(error)),
         _ => unreachable!("template transaction returned the wrong result kind"),
     }
@@ -461,6 +499,7 @@ mod tests {
             dry_run: false,
             config_format: None,
             mode: "merge".into(),
+            confirm_timeout_mins: None,
             timeout: 5,
         }
     }

@@ -27,6 +27,7 @@ pub const JUNOS_TOOLS: &[&str] = &[
     "approve_junos_change_set",
     "cancel_junos_change_set",
     "commit_check_config",
+    "confirm_commit",
     "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
@@ -85,6 +86,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "check_srx_feature_license",
     "collect_jtac_support_bundle",
     "commit_check_config",
+    "confirm_commit",
     "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
@@ -129,6 +131,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "add_device",
     "apply_junos_change_set",
     "approve_junos_change_set",
+    "confirm_commit",
     "confirm_junos_change_set",
     "create_junos_change_set",
     "discard_candidate",
@@ -182,7 +185,7 @@ mod tests {
             JUNOS_TOOLS.len() + SRX_TOOLS.len() + FACADE_TOOLS.len(),
             "endpoint registries must not contain duplicate tool names"
         );
-        assert_eq!(KNOWN_TOOLS.len(), 43);
+        assert_eq!(KNOWN_TOOLS.len(), 44);
     }
 
     #[test]

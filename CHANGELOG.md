@@ -102,6 +102,24 @@ All notable user-facing changes are recorded here. Format loosely follows
   (mechubsec/rustez#54). Previously every tool call on a cSRX device failed
   with `[OperationFailed] syntax error`.
 
+- **`confirm_commit`** — new write tool that sends the confirming commit for
+  a commit-confirmed window opened by `load_and_commit_config`,
+  `rollback_config`, or `render_and_apply_j2_template`, cancelling the
+  pending auto-rollback (MEC-45).
+
+### Changed
+
+- **Behaviour change: commit-confirmed is on by default.**
+  `load_and_commit_config`, `rollback_config` (`commit=true`),
+  `render_and_apply_j2_template`, and `apply_junos_change_set` now issue
+  `commit confirmed <window>` unless the caller passes
+  `confirm_timeout_mins: 0`. Previously these committed directly with no
+  auto-rollback net unless the caller opted in. The window defaults to the
+  new `--commit-confirm-default-mins` flag (default 10 minutes); a per-call
+  `confirm_timeout_mins` overrides it. The opt-out is recorded in the audit
+  event as `commit_confirmed=false`. The response and change-set status both
+  report `rollback_deadline_unix` (MEC-45).
+
 ## [0.25.0] - 2026-09-15
 
 ### Added

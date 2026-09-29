@@ -149,13 +149,14 @@
           "type": "string"
         },
         "confirm_timeout_mins": {
-          "description": "Optional confirmed-commit window, in whole minutes.\n\nWhen set, the device commits the change and schedules an automatic\nrollback after this many minutes unless `confirm_junos_change_set` is\ncalled first. Minutes, not seconds — that is what Junos schedules, and\nit matches `rollback_config`'s existing `confirm_timeout_mins`.\n\nOmit for an ordinary commit with no rollback timer.",
+          "description": "Confirmed-commit window, in whole minutes.\n\nThe device commits the change and schedules an automatic rollback\nafter this many minutes unless `confirm_junos_change_set` is called\nfirst. Minutes, not seconds — that is what Junos schedules, and it\nmatches `rollback_config`'s `confirm_timeout_mins`.\n\nDefaults to the server's `--commit-confirm-default-mins` (10 unless\nconfigured otherwise) when omitted — commit-confirmed is ON by\ndefault. Pass `0` to explicitly opt out and issue a plain commit\ninstead; this is recorded in the audit trail as\n`commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 71582788
         },
         "router_name": {
           "description": "Target device endpoint (device name from inventory).\n\nAlias for `device`; accepted for backward compatibility.",
@@ -337,6 +338,57 @@
         }
       },
       "additionalProperties": false
+    }
+  },
+  "confirm_commit": {
+    "name": "confirm_commit",
+    "description": "Send the confirming commit for a commit-confirmed window opened by load_and_commit_config, rollback_config, or render_and_apply_j2_template (not apply_junos_change_set — use confirm_junos_change_set for that). Cancels the device's pending automatic rollback. A harmless no-op commit if no window is open.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "device": {
+          "description": "The device with a pending confirm-commit window.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        },
+        "router_name": {
+          "description": "The device with a pending confirm-commit window.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The device with a pending confirm-commit window.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      }
     }
   },
   "confirm_junos_change_set": {
@@ -1478,13 +1530,13 @@
           "default": "Configuration loaded via MCP"
         },
         "confirm_timeout_mins": {
-          "description": "If set, uses confirmed commit with auto-rollback after N minutes.\nThe device will automatically revert if not confirmed within this window.",
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Defaults to the\nserver's `--commit-confirm-default-mins` (10 unless configured\notherwise) when omitted — commit-confirmed is ON by default. Pass `0`\nto explicitly opt out and issue a plain commit instead; this is\nrecorded in the audit trail as `commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 71582788,
           "default": null
         },
@@ -1626,6 +1678,17 @@
           "type": "string",
           "default": "merge"
         },
+        "confirm_timeout_mins": {
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Only meaningful\nwith `apply_config=true` and `dry_run=false`. Defaults to the server's\n`--commit-confirm-default-mins` (10 unless configured otherwise) when\nomitted — commit-confirmed is ON by default. Pass `0` to explicitly\nopt out and issue a plain commit instead; this is recorded in the\naudit trail as `commit_confirmed=false`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "maximum": 71582788,
+          "default": null
+        },
         "timeout": {
           "description": "Connection timeout in seconds (per-device).",
           "type": "integer",
@@ -1710,13 +1773,13 @@
           "default": false
         },
         "confirm_timeout_mins": {
-          "description": "If set with commit=true, uses confirmed commit with auto-rollback after N\nminutes if not confirmed within this window.",
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Only meaningful\nwith `commit=true`. Defaults to the server's\n`--commit-confirm-default-mins` (10 unless configured otherwise) when\nomitted — commit-confirmed is ON by default. Pass `0` to explicitly\nopt out and issue a plain commit instead; this is recorded in the\naudit trail as `commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 71582788,
           "default": null
         },

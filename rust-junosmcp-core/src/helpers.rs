@@ -159,6 +159,69 @@ pub fn confirm_timeout_to_secs(mins: u32) -> Result<u32, JmcpError> {
     })
 }
 
+/// Server-wide default confirm-commit window, in whole minutes, applied when a
+/// caller omits `confirm_timeout_mins`. Set once at startup from
+/// `--commit-confirm-default-mins` (MEC-45).
+///
+/// A deployment tuning knob, not per-call state — same rationale as
+/// `candidate_transaction::CLEANUP_TIMEOUT_SECS`: threading it through every
+/// tool's argument struct and call chain would touch every commit path to
+/// make one number configurable.
+static COMMIT_CONFIRM_DEFAULT_MINS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(10);
+
+/// Override the server-wide default confirm-commit window. Call once, before
+/// serving, with a value already validated by [`confirm_timeout_to_secs`].
+pub fn set_commit_confirm_default_mins(mins: u32) {
+    COMMIT_CONFIRM_DEFAULT_MINS.store(mins, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The configured server-wide default confirm-commit window, in minutes.
+pub fn commit_confirm_default_mins() -> u32 {
+    COMMIT_CONFIRM_DEFAULT_MINS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How a caller's `confirm_timeout_mins` combines with the server-wide
+/// default for one commit call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmDecision {
+    /// Issue a confirmed commit with this many minutes (the server default,
+    /// or an explicit per-call override).
+    Confirmed(u32),
+    /// The caller explicitly opted out with `confirm_timeout_mins: 0`: issue
+    /// a plain commit with no auto-rollback window.
+    OptedOut,
+}
+
+/// Resolve a caller-supplied `confirm_timeout_mins` against the server-wide
+/// default.
+///
+/// `None` (the field omitted) defaults ON: the server-configured window
+/// applies. `Some(0)` is the documented explicit opt-out for a plain
+/// (unconfirmed) commit — chosen over a separate `commit_confirmed: false`
+/// flag so there is exactly one knob to read, and `0` is already outside the
+/// `>= 1` range a real window accepts. `Some(n)` for `n >= 1` overrides the
+/// default with the caller's value (MEC-45).
+pub fn resolve_confirm_timeout(caller_mins: Option<u32>) -> ConfirmDecision {
+    match caller_mins {
+        None => ConfirmDecision::Confirmed(commit_confirm_default_mins()),
+        Some(0) => ConfirmDecision::OptedOut,
+        Some(mins) => ConfirmDecision::Confirmed(mins),
+    }
+}
+
+/// Unix timestamp of the auto-rollback deadline for a confirmed commit issued
+/// right now with a window of `mins` minutes. Saturates rather than panics on
+/// a clock earlier than the epoch or an overflowing addition — the caller
+/// gets a usable (if degenerate) deadline instead of a crashed tool call.
+pub fn rollback_deadline_unix(mins: u32) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    now.saturating_add(u64::from(mins).saturating_mul(60))
+}
+
 /// Validate a Junos configuration path for `get_junos_config` to prevent command injection.
 /// Junos config paths are hierarchy words: alphanumerics, hyphens, underscores, dots, slashes,
 /// colons, and single spaces between tokens. Rejects pipe operators, semicolons, newlines,
@@ -654,5 +717,70 @@ mod tests {
             }
             other => panic!("expected Validation error, got {other:?}"),
         }
+    }
+
+    // MEC-45: commit-confirmed default-on. `COMMIT_CONFIRM_DEFAULT_MINS` is a
+    // single process-wide atomic, and cargo test runs tests in parallel
+    // threads by default, so any test that changes it must hold this mutex
+    // for the duration of the change-assert-restore sequence — otherwise two
+    // such tests interleave and one observes the other's temporary value.
+    static DEFAULT_MINS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn resolve_confirm_timeout_omitted_uses_the_server_default() {
+        let _guard = DEFAULT_MINS_TEST_LOCK.lock().unwrap();
+        let original = commit_confirm_default_mins();
+        set_commit_confirm_default_mins(15);
+        assert_eq!(
+            resolve_confirm_timeout(None),
+            ConfirmDecision::Confirmed(15)
+        );
+        set_commit_confirm_default_mins(original);
+    }
+
+    #[test]
+    fn resolve_confirm_timeout_zero_is_the_documented_opt_out() {
+        assert_eq!(resolve_confirm_timeout(Some(0)), ConfirmDecision::OptedOut);
+    }
+
+    #[test]
+    fn resolve_confirm_timeout_explicit_value_overrides_the_default() {
+        let _guard = DEFAULT_MINS_TEST_LOCK.lock().unwrap();
+        let original = commit_confirm_default_mins();
+        set_commit_confirm_default_mins(15);
+        assert_eq!(
+            resolve_confirm_timeout(Some(5)),
+            ConfirmDecision::Confirmed(5)
+        );
+        set_commit_confirm_default_mins(original);
+    }
+
+    #[test]
+    fn rollback_deadline_unix_is_now_plus_the_window() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let deadline = rollback_deadline_unix(10);
+        assert!(deadline >= before + 600);
+        assert!(deadline < before + 600 + 5, "deadline should be ~now+600s");
+    }
+
+    #[test]
+    fn rollback_deadline_unix_does_not_panic_on_max_mins() {
+        // u32::MAX minutes in seconds (~2.6e11) is nowhere near u64::MAX
+        // (~1.8e19), so the saturating arithmetic never actually saturates
+        // for any valid `mins`. This test exists to prove the calculation
+        // stays panic-free (no overflow-checked add/mul) even at the type's
+        // extreme, not that saturation is reachable.
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let deadline = rollback_deadline_unix(u32::MAX);
+        let expected_window = u64::from(u32::MAX) * 60;
+        assert!(deadline >= before + expected_window);
+        assert!(deadline < before + expected_window + 5);
+        assert!(deadline < u64::MAX);
     }
 }
