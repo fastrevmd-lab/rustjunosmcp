@@ -50,6 +50,7 @@ mecmcp-changeset = { workspace = true }
 mecmcp-audit = { workspace = true }
 mecmcp-scp = { workspace = true }
 mecmcp-secret = { workspace = true }
+mecmcp-redact = { workspace = true }
 dashmap      = { workspace = true }
 futures      = "0.3"
 rustnetconf  = { workspace = true }

@@ -1,4 +1,23 @@
 //! SRX-specific rmcp adapters composed into the unified [`JmcpHandler`].
+//!
+//! Unlike the Junos tool surface in `server.rs`, these adapters do not share
+//! a single `to_call_result`-style choke point — each `#[tool]` method
+//! serializes its own typed response body and wraps it directly in
+//! `ContentBlock::text`, unredacted at that point. Redaction of every one of
+//! those `body` values happens once, uniformly, in
+//! [`super::redact_last_mile`] — the `ServerHandler::call_tool` post-processor
+//! that runs over every response leaving this server, Junos and SRX alike
+//! (MEC-859 F1/F2). It replaced an earlier per-site
+//! `mecmcp_redact::redact_text(&body)` wrap at each of these 16 call sites:
+//! that blanket line-oriented pass ran *after* `serde_json::to_string_pretty`
+//! had already produced valid JSON, and a false-positive text match could
+//! corrupt that JSON's structure rather than just over-redact a value.
+//! `redact_last_mile` uses [`super::redact_body`]'s JSON-first chain instead,
+//! so it redacts these already-serialized bodies structurally.
+//! `collect_jtac_support_bundle` additionally has its own dedicated, more
+//! precise redaction pass (`workflows::support_bundle::redact`) applied
+//! earlier, before the tarball is built; the last-mile pass on its summary
+//! response is a second, cheap safety net, not a replacement for that pass.
 
 use super::{JmcpHandler, audit_scope, caller_ctx, mint_request_id};
 
@@ -135,13 +154,58 @@ impl JmcpHandler {
         ))
     }
 
+    /// Map a workflow error to the `ErrorData` sent to the model.
+    ///
+    /// MEC-918 N2: `SignaturePackageConfirmationRequired`'s plan carries the
+    /// server-issued `confirmation_token` the caller must echo back on the
+    /// confirming call — it is protocol data, not a device secret, and
+    /// [`super::redact_last_mile`]'s blanket text-redaction pass over
+    /// `ErrorData.message` would otherwise strip it (the `token` denylist
+    /// term matches). So this redacts the plan itself, structurally, before
+    /// formatting the message — holding the token (and any other
+    /// server-defined field in [`super::REDACTION_KEY_EXEMPTIONS`]) out —
+    /// and tags `ErrorData.data` with the error's stable code so
+    /// `redact_last_mile` knows this message was already handled and skips
+    /// its own pass rather than redacting it a second, cruder time.
+    ///
+    /// MEC-931 N8: `confirmation_token` is **not** a
+    /// `REDACTION_KEY_EXEMPTIONS` entry — a device- or file-supplied field
+    /// with that name, anywhere else in the server, must be redacted like
+    /// any other `*token` value. The one place the server itself mints a
+    /// token is this plan's top level (`ConfirmationStore::issue`), so this
+    /// is the one place that restores it verbatim — lifted out before the
+    /// structural redaction pass and put back only when it has the exact
+    /// shape a real store issues (see [`is_minted_confirmation_token`]).
     fn signature_error_to_rmcp(e: rust_junosmcp_srx_core::SrxError) -> rmcp::ErrorData {
+        let code = e.audit_kind();
         match e {
             rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                 rmcp::ErrorData::invalid_params(e.to_string(), None)
             }
-            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationRequired { .. }
-            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired {
+            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationRequired {
+                router,
+                mut plan,
+            } => {
+                let token = plan
+                    .as_object_mut()
+                    .and_then(|o| o.remove("confirmation_token"));
+                super::redact_json_preserving_server_fields(&mut plan);
+                if let (Some(serde_json::Value::String(t)), Some(o)) = (token, plan.as_object_mut())
+                    && is_minted_confirmation_token(&t)
+                {
+                    o.insert(
+                        "confirmation_token".to_string(),
+                        serde_json::Value::String(t),
+                    );
+                }
+                rmcp::ErrorData::invalid_request(
+                    format!(
+                        "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true and the plan's confirmation_token; plan: {plan}"
+                    ),
+                    Some(serde_json::json!({ "code": code })),
+                )
+            }
+            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired {
                 ..
             }
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenInvalid {
@@ -150,7 +214,10 @@ impl JmcpHandler {
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationPlanDrift { .. }
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationCapacityExceeded {
                 ..
-            } => rmcp::ErrorData::invalid_request(e.to_string(), None),
+            } => rmcp::ErrorData::invalid_request(
+                e.to_string(),
+                Some(serde_json::json!({ "code": code })),
+            ),
             rust_junosmcp_srx_core::SrxError::Transport(
                 rust_junosmcp_core::JmcpError::DeviceLeaseBusy { .. },
             ) => rmcp::ErrorData::invalid_request(e.to_string(), None),
@@ -174,6 +241,28 @@ impl JmcpHandler {
         }
         Ok(())
     }
+}
+
+/// Shape `ConfirmationStore::issue` (in `rust-junosmcp-srx-core`) mints: an
+/// unpadded base64url encoding of 32 random bytes, always 43 characters of
+/// `[A-Za-z0-9_-]`.
+///
+/// MEC-918 N5/N6: a real token still must not be run through the denylist's
+/// text scan — 0.24% of 50,000 sampled tokens contained a denylisted
+/// substring (`psk`, `pw`, ...) by chance, which would fail roughly 1 in 420
+/// destructive confirmations closed at random. So the token
+/// `signature_error_to_rmcp` lifts out of the plan is restored verbatim only
+/// when it has this exact shape; anything else is treated as untrusted and
+/// left to the structural redaction pass, not silently passed through.
+///
+/// MEC-931 N8: this check, and the token it guards, live only here — the one
+/// place the server mints a `confirmation_token` — rather than as a
+/// server-wide key-name exemption. See `REDACTION_KEY_EXEMPTIONS` in
+/// `server.rs`.
+fn is_minted_confirmation_token(t: &str) -> bool {
+    t.len() == 43
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Source-declaration-order mirror of this server's `#[tool]` surface. The
@@ -230,6 +319,25 @@ mod server_tools_const_tests {
     }
 }
 
+/// Redaction coverage for the SRX tool surface.
+///
+/// Prior to MEC-859, each of these `#[tool]` methods wrapped its own `body`
+/// in `mecmcp_redact::redact_text(&body)` before constructing the
+/// `ContentBlock`, and this module asserted every `SRX_SERVER_TOOLS` entry
+/// was either covered by that pattern or explicitly excluded with a reason.
+/// That per-site wrap is gone: redaction of every SRX (and Junos) tool
+/// response now happens exactly once, uniformly, in
+/// [`super::redact_last_mile`] (`ServerHandler::call_tool`'s post-processor,
+/// MEC-859 F1/F2), so there is no longer a per-site call for a newly added
+/// tool to forget. The coverage question this module used to answer is
+/// answered structurally instead: `call_tool` cannot return a response
+/// without passing through `redact_last_mile` first. See
+/// `server::redact_last_mile_tests` for the functional tests (JSON/XML/text
+/// bodies redacted, still parse, host-name preserved; `Err` messages
+/// redacted) — those exercise `redact_last_mile` directly, since there is no
+/// fake device/transport in this test tree (`DeviceManager` opens a real
+/// `rustez::Device` over real SSH) to drive these handlers end-to-end.
+
 #[tool_router(router = srx_tool_router, vis = "pub(crate)")]
 impl JmcpHandler {
     #[tool(
@@ -266,7 +374,7 @@ impl JmcpHandler {
     #[tool(
         name = "get_chassis_cluster_status",
         description = "Chassis-cluster topology + health snapshot. Returns \
-                       state=not_configured for standalone SRX devices."
+                       state=not_configured for standalone SRX devices. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn get_chassis_cluster_status(
         &self,
@@ -323,7 +431,7 @@ impl JmcpHandler {
         description = "Reports the health and version of up to five SRX security services \
                        (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. \
                        Each sub-service is independently classified as active or not_configured. \
-                       The overall state is not_configured only when all five sub-services are absent."
+                       The overall state is not_configured only when all five sub-services are absent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn get_srx_security_services_status(
         &self,
@@ -381,7 +489,7 @@ impl JmcpHandler {
                        Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid \
                        license installed on the device. Returns state=not_configured when no \
                        matching license record is present (including the expected lab case where \
-                       only eval/trial licenses are installed)."
+                       only eval/trial licenses are installed). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn check_srx_feature_license(
         &self,
@@ -439,7 +547,7 @@ impl JmcpHandler {
                        the security stanza is absent. Optionally filter by `peer` (substring \
                        match against both IKE remote address and IPsec gateway) and/or `tunnel` \
                        (substring match against IPsec remote gateway — the brief-style IPsec \
-                       RPC does not surface the st0 interface name)."
+                       RPC does not surface the st0 interface name). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn vpn_lifecycle_report(
         &self,
@@ -495,7 +603,7 @@ impl JmcpHandler {
                        each policy (addresses, applications) are returned unresolved — use \
                        srx_resolve_address / srx_resolve_application to expand them. Paginated via \
                        `limit`/`offset` (default limit 500); `truncated` and `total_count` in the \
-                       response make any cutoff explicit rather than silent."
+                       response make any cutoff explicit rather than silent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_list_policies(
         &self,
@@ -546,7 +654,7 @@ impl JmcpHandler {
                        recursively in this tool, never on the device; reference cycles are \
                        rejected rather than looped. DNS-name leaves are returned as-is — this tool \
                        never performs its own DNS resolution. `truncated` is set if the flattened \
-                       member count exceeds the cap."
+                       member count exceeds the cap. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_resolve_address(
         &self,
@@ -605,7 +713,10 @@ impl JmcpHandler {
                        `junos-*` defaults are served from a compiled-in static table when the \
                        device does not expose its `junos-defaults` group over NETCONF (a live \
                        device definition always takes precedence over the static table). \
-                       `truncated` is set if the flattened member count exceeds the cap."
+                       `truncated` is set if the flattened member count exceeds the cap. \
+                       Output is redacted: config/device values matching known secret patterns \
+                       are replaced before being returned; structure and non-secret values are \
+                       preserved."
     )]
     async fn srx_resolve_application(
         &self,
@@ -664,7 +775,7 @@ impl JmcpHandler {
                        fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC \
                        round trips; a failed or unparsable join degrades to hit_count=None rather \
                        than failing the call). `limit` caps rules per kind (default 500); \
-                       `truncated` is set if any kind was cut short."
+                       `truncated` is set if any kind was cut short. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_list_nat_rules(
         &self,
@@ -894,7 +1005,7 @@ impl JmcpHandler {
                        recent_reboot, version_skew), severity, message, and optional \
                        structured detail. Verdict precedence: fail > warn > pass. \
                        Pass-through cluster_status snapshot is included when the cluster \
-                       RPC succeeded. include_raw=true appends concatenated raw RPC XML."
+                       RPC succeeded. include_raw=true appends concatenated raw RPC XML. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn validate_chassis_cluster_health(
         &self,
@@ -968,7 +1079,7 @@ impl JmcpHandler {
                        separate server-minted srxmcp-<uuid> returned as filesystem_id. \
                        Concurrent calls against the same router serialize on an in-process \
                        per-router semaphore and surface contention as \
-                       [code=bundle_per_router_contention]."
+                       [code=bundle_per_router_contention]. Captured artefacts are additionally redacted by a dedicated, more precise pass (locked element/key-name and Junos-hash rules) before they are written into the tarball."
     )]
     async fn collect_jtac_support_bundle(
         &self,
@@ -1040,7 +1151,7 @@ impl JmcpHandler {
                        (with the same filters applied); when that count exceeds the cap, or \
                        can't be determined, the full walk is refused outright (never issued) — \
                        regardless of whether a filter was supplied — and the response reports \
-                       total_count_reported with truncated=true."
+                       total_count_reported with truncated=true. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_flow_sessions(
         &self,
@@ -1095,7 +1206,7 @@ impl JmcpHandler {
                        policy. The 5-tuple (source_ip, \
                        destination_ip, source_port, destination_port, protocol) is parsed into \
                        typed values and rejected with a typed error before any RPC is sent if \
-                       malformed."
+                       malformed. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_policy_match(
         &self,
@@ -1343,6 +1454,217 @@ mod scope_tests {
                     "srx-01|192.0.2.1|830|netconf",
                 )
                 .is_ok()
+        );
+    }
+}
+
+/// MEC-918 N2/N3: `signature_error_to_rmcp` and `redact_last_mile` chained
+/// together, the same order `ServerHandler::call_tool` runs them in
+/// production, over the two shapes the review found the blanket last-mile
+/// pass corrupting — the confirmation plan's `confirmation_token`, and a
+/// `sessions`/cookie-bearing tool response.
+#[cfg(test)]
+mod signature_error_tests {
+    use super::*;
+    use rust_junosmcp_srx_core::SrxError;
+
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+
+    /// The two-call signature-package confirmation protocol requires the
+    /// caller to echo `confirmation_token` back verbatim on the confirming
+    /// call. Before MEC-918 N2's fix, `redact_last_mile`'s line-oriented
+    /// text fallback (the plan is embedded as JSON *inside* a larger
+    /// non-JSON error message, so it can't be redacted structurally as a
+    /// whole) matched `token` on the denylist and stripped it, making every
+    /// `download_and_install`/`rollback`/`uninstall` confirmation
+    /// impossible to complete. The fixture's `warning` field carries a
+    /// deliberately secret-shaped value to prove the fix does not do this
+    /// by turning redaction off for the rest of the plan.
+    #[test]
+    fn confirmation_required_plan_keeps_its_token_but_still_redacts_other_secrets() {
+        let store = rust_junosmcp_srx_core::workflows::signature_package::confirmation::ConfirmationStore::default();
+        let binding =
+            ConfirmationBinding::new(Some("alice"), "srx-01", "srx-01|192.0.2.1|830|netconf");
+        let plan = store
+            .issue(
+                serde_json::json!({
+                    "code": "confirmation_required",
+                    "router": "srx-01",
+                    "action": "download_and_install",
+                    "warning": format!("unexpected embedded hash {FAKE_JUNOS_HASH}"),
+                }),
+                binding,
+                "corr-1",
+            )
+            .unwrap();
+        let token = plan["confirmation_token"].as_str().unwrap().to_string();
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            error.message.contains(&token),
+            "confirmation_token must survive the last-mile pass so the caller can confirm"
+        );
+        assert!(
+            !error.message.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert_eq!(
+            error
+                .data
+                .as_ref()
+                .and_then(|data| data.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("confirmation_required"),
+            "ErrorData.data must tag the code so redact_last_mile can recognize this message as already handled"
+        );
+    }
+
+    /// A tool response carrying `srx_flow_sessions`/`vpn_lifecycle_report`
+    /// shapes (`sessions`, `session_id`, IKE `initiator_cookie`/
+    /// `responder_cookie`) must round-trip through `redact_last_mile`
+    /// unredacted — none of those are vendor secrets, just field names that
+    /// happen to contain a denylisted substring (`session`) — while an
+    /// actual secret elsewhere in the same body is still stripped.
+    #[test]
+    fn flow_sessions_and_ike_cookies_survive_the_last_mile_pass() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": "srx-01",
+            "sessions": [{
+                "session_id": 12345,
+                "initiator_cookie": "abc123",
+                "responder_cookie": "def456",
+            }],
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Ok(rmcp::model::CallToolResponse::Complete(
+                CallToolResult::success(vec![ContentBlock::text(body)]),
+            ));
+
+        crate::server::redact_last_mile(&mut result);
+
+        let rmcp::model::CallToolResponse::Complete(call_result) = result.unwrap() else {
+            panic!("expected a Complete response");
+        };
+        let text = &call_result.content[0].as_text().unwrap().text;
+        let value: serde_json::Value = serde_json::from_str(text)
+            .expect("redact_last_mile must return input that still parses as JSON");
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+        assert_eq!(value["sessions"][0]["responder_cookie"], "def456");
+        assert!(
+            !text.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+    }
+
+    /// MEC-931 N7: this test used to live in `server.rs`, ungated, and
+    /// pulled in `rust_junosmcp_srx_core` even when the `srx` feature (and
+    /// this whole module) is off, breaking `--no-default-features` CI. It
+    /// belongs here, where the module is already `srx`-only.
+    ///
+    /// MEC-918 N5/N6, MEC-931 N8: a real `confirmation_token`, minted by a
+    /// real `ConfirmationStore` and lifted out by `signature_error_to_rmcp`,
+    /// must survive `signature_error_to_rmcp` → `redact_last_mile` across
+    /// many samples, to pin the false-positive rate the text scan would
+    /// otherwise impose on it.
+    #[test]
+    fn real_confirmation_tokens_survive_the_last_mile_pass() {
+        let store = rust_junosmcp_srx_core::workflows::signature_package::confirmation::ConfirmationStore::default();
+        for i in 0..500 {
+            let binding =
+                ConfirmationBinding::new(Some("alice"), "srx-01", "srx-01|192.0.2.1|830|netconf");
+            let plan = store
+                .issue(
+                    serde_json::json!({"action": "download_and_install"}),
+                    binding,
+                    &format!("corr-{i}"),
+                )
+                .unwrap();
+            let token = plan["confirmation_token"].as_str().unwrap().to_string();
+            let err = SrxError::SignaturePackageConfirmationRequired {
+                router: "srx-01".to_string(),
+                plan,
+            };
+
+            let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+                Err(JmcpHandler::signature_error_to_rmcp(err));
+            crate::server::redact_last_mile(&mut result);
+
+            let error = result.unwrap_err();
+            assert!(
+                error.message.contains(&token),
+                "a real minted confirmation_token must never be altered by redaction"
+            );
+        }
+    }
+
+    /// MEC-931 N9: the 500-sample loop above catches the false-positive
+    /// regression only ~70% of the time (0.24% per-token alteration rate).
+    /// This pins it deterministically with a fixed 43-char base64url token
+    /// that is known to contain a denylisted substring (`psk`), so a
+    /// mutation that drops the minted-shape check fails every run, not just
+    /// most of them.
+    #[test]
+    fn confirmation_token_with_denylisted_substring_survives_verbatim() {
+        const DENYLISTED_SHAPED_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAPSKAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(DENYLISTED_SHAPED_TOKEN.len(), 43);
+        assert!(super::is_minted_confirmation_token(DENYLISTED_SHAPED_TOKEN));
+
+        let plan = serde_json::json!({
+            "action": "download_and_install",
+            "confirmation_token": DENYLISTED_SHAPED_TOKEN,
+        });
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            error.message.contains(DENYLISTED_SHAPED_TOKEN),
+            "a token with the minted shape must survive even when it contains a denylisted substring"
+        );
+    }
+
+    /// MEC-931 N8: `confirmation_token` is not a server-wide key-name
+    /// exemption. A `confirmation_token` nested *inside* the plan (not at
+    /// the top level `signature_error_to_rmcp` lifts out) is untrusted
+    /// device/file data wearing the server's field name and must still be
+    /// redacted like any other `*token` value.
+    #[test]
+    fn nested_confirmation_token_in_plan_is_still_redacted() {
+        const FAKE_NESTED_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let plan = serde_json::json!({
+            "action": "download_and_install",
+            "extra": { "confirmation_token": FAKE_NESTED_TOKEN },
+        });
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            !error.message.contains(FAKE_NESTED_TOKEN),
+            "a confirmation_token not minted at the plan's top level must not survive verbatim"
         );
     }
 }

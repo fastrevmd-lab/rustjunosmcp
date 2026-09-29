@@ -1,7 +1,7 @@
 {
   "check_srx_feature_license": {
     "name": "check_srx_feature_license",
-    "description": "Check whether a named SRX security feature (IDP, AppID, UTM Antivirus, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid license installed on the device. Returns state=not_configured when no matching license record is present (including the expected lab case where only eval/trial licenses are installed).",
+    "description": "Check whether a named SRX security feature (IDP, AppID, UTM Antivirus, Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid license installed on the device. Returns state=not_configured when no matching license record is present (including the expected lab case where only eval/trial licenses are installed). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
@@ -95,7 +95,7 @@
   },
   "collect_jtac_support_bundle": {
     "name": "collect_jtac_support_bundle",
-    "description": "Collects a JTAC-ready diagnostic bundle for the named router. problem_type accepts a closed enum value (chassis_cluster, vpn, traffic_loss, idp_appid, routing, generic) OR an array of values for multi-symptom cases. The 'generic' value short-circuits and runs `request support information | save /var/tmp/srxmcp-<rid>.tgz` on the device — fetch via the rust-junosmcp `fetch_file` tool. Per-type values capture the universal baseline (get-configuration, get-software-information, get-system-uptime-information, get-system-alarm-information) plus type-specific RPCs, and assemble the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). The response's bundle.location field is 'device' or 'lxc_staging'. Caller-supplied request_id is a validated correlation label used only in response metadata and audit logs. Filesystem paths always use a separate server-minted srxmcp-<uuid> returned as filesystem_id. Concurrent calls against the same router serialize on an in-process per-router semaphore and surface contention as [code=bundle_per_router_contention].",
+    "description": "Collects a JTAC-ready diagnostic bundle for the named router. problem_type accepts a closed enum value (chassis_cluster, vpn, traffic_loss, idp_appid, routing, generic) OR an array of values for multi-symptom cases. The 'generic' value short-circuits and runs `request support information | save /var/tmp/srxmcp-<rid>.tgz` on the device — fetch via the rust-junosmcp `fetch_file` tool. Per-type values capture the universal baseline (get-configuration, get-software-information, get-system-uptime-information, get-system-alarm-information) plus type-specific RPCs, and assemble the tarball on the MCP host under JMCP_SRX_STAGING_DIR (default /var/lib/jmcp/srx-staging/bundles/<router>/srxmcp-<rid>.tgz). The response's bundle.location field is 'device' or 'lxc_staging'. Caller-supplied request_id is a validated correlation label used only in response metadata and audit logs. Filesystem paths always use a separate server-minted srxmcp-<uuid> returned as filesystem_id. Concurrent calls against the same router serialize on an in-process per-router semaphore and surface contention as [code=bundle_per_router_contention]. Captured artefacts are additionally redacted by a dedicated, more precise pass (locked element/key-name and Junos-hash rules) before they are written into the tarball.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$defs": {
@@ -229,7 +229,7 @@
   },
   "get_chassis_cluster_status": {
     "name": "get_chassis_cluster_status",
-    "description": "Chassis-cluster topology + health snapshot. Returns state=not_configured for standalone SRX devices.",
+    "description": "Chassis-cluster topology + health snapshot. Returns state=not_configured for standalone SRX devices. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -269,7 +269,7 @@
   },
   "get_srx_security_services_status": {
     "name": "get_srx_security_services_status",
-    "description": "Reports the health and version of up to five SRX security services (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. Each sub-service is independently classified as active or not_configured. The overall state is not_configured only when all five sub-services are absent.",
+    "description": "Reports the health and version of up to five SRX security services (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. Each sub-service is independently classified as active or not_configured. The overall state is not_configured only when all five sub-services are absent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -509,7 +509,7 @@
   },
   "srx_flow_sessions": {
     "name": "srx_flow_sessions",
-    "description": "Filtered, hard-capped flow-session query (`show security flow session`). At least one filter (source_prefix, destination_prefix, source_port + protocol, destination_port + protocol, protocol, application, or session_identifier) is required unless acknowledge_unfiltered=true, in which case the query is still capped (default 200, hard ceiling 2000) and reported as truncated rather than silently returning everything that fit. Chassis-cluster session ownership is not synced across nodes, so sessions are grouped per node (re_name) and never merged into one table. Before any full walk, the device's own session-count summary is queried (with the same filters applied); when that count exceeds the cap, or can't be determined, the full walk is refused outright (never issued) — regardless of whether a filter was supplied — and the response reports total_count_reported with truncated=true.",
+    "description": "Filtered, hard-capped flow-session query (`show security flow session`). At least one filter (source_prefix, destination_prefix, source_port + protocol, destination_port + protocol, protocol, application, or session_identifier) is required unless acknowledge_unfiltered=true, in which case the query is still capped (default 200, hard ceiling 2000) and reported as truncated rather than silently returning everything that fit. Chassis-cluster session ownership is not synced across nodes, so sessions are grouped per node (re_name) and never merged into one table. Before any full walk, the device's own session-count summary is queried (with the same filters applied); when that count exceeds the cap, or can't be determined, the full walk is refused outright (never issued) — regardless of whether a filter was supplied — and the response reports total_count_reported with truncated=true. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -616,7 +616,7 @@
   },
   "srx_list_nat_rules": {
     "name": "srx_list_nat_rules",
-    "description": "Lists source, destination, and static NAT rules, independently per kind. Match criteria carry unresolved address/address-set names, same as srx_list_policies — use srx_resolve_address to expand them. Optionally fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC round trips; a failed or unparsable join degrades to hit_count=None rather than failing the call). `limit` caps rules per kind (default 500); `truncated` is set if any kind was cut short.",
+    "description": "Lists source, destination, and static NAT rules, independently per kind. Match criteria carry unresolved address/address-set names, same as srx_list_policies — use srx_resolve_address to expand them. Optionally fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC round trips; a failed or unparsable join degrades to hit_count=None rather than failing the call). `limit` caps rules per kind (default 500); `truncated` is set if any kind was cut short. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -668,7 +668,7 @@
   },
   "srx_list_policies": {
     "name": "srx_list_policies",
-    "description": "Lists security policies by from-zone/to-zone context, including global policies (zone `\"any\"`) and, optionally, per-policy hit counts. Names on each policy (addresses, applications) are returned unresolved — use srx_resolve_address / srx_resolve_application to expand them. Paginated via `limit`/`offset` (default limit 500); `truncated` and `total_count` in the response make any cutoff explicit rather than silent.",
+    "description": "Lists security policies by from-zone/to-zone context, including global policies (zone `\"any\"`) and, optionally, per-policy hit counts. Names on each policy (addresses, applications) are returned unresolved — use srx_resolve_address / srx_resolve_application to expand them. Paginated via `limit`/`offset` (default limit 500); `truncated` and `total_count` in the response make any cutoff explicit rather than silent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -751,7 +751,7 @@
   },
   "srx_policy_match": {
     "name": "srx_policy_match",
-    "description": "Deterministic \"would this traffic be allowed\" answer for a 5-tuple (`show security match-policies`) — the device's own verdict, never a model's inference from the policy list. verdict is one of permit / deny / reject / no_match; no_match (device default-policy fallthrough, no explicit policy matched) is distinct from an explicit deny/reject policy match, and carries default_action (deny or permit) for whichever default-policy the device applies. is_global marks a matched zone-independent (any/any) policy. The 5-tuple (source_ip, destination_ip, source_port, destination_port, protocol) is parsed into typed values and rejected with a typed error before any RPC is sent if malformed.",
+    "description": "Deterministic \"would this traffic be allowed\" answer for a 5-tuple (`show security match-policies`) — the device's own verdict, never a model's inference from the policy list. verdict is one of permit / deny / reject / no_match; no_match (device default-policy fallthrough, no explicit policy matched) is distinct from an explicit deny/reject policy match, and carries default_action (deny or permit) for whichever default-policy the device applies. is_global marks a matched zone-independent (any/any) policy. The 5-tuple (source_ip, destination_ip, source_port, destination_port, protocol) is parsed into typed values and rejected with a typed error before any RPC is sent if malformed. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -832,7 +832,7 @@
   },
   "srx_resolve_address": {
     "name": "srx_resolve_address",
-    "description": "Resolves a Junos address or address-set name (global, or scoped to a zone's own address-book) to its flattened, deduplicated concrete leaves — prefixes, ranges, wildcards, or DNS names. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. DNS-name leaves are returned as-is — this tool never performs its own DNS resolution. `truncated` is set if the flattened member count exceeds the cap.",
+    "description": "Resolves a Junos address or address-set name (global, or scoped to a zone's own address-book) to its flattened, deduplicated concrete leaves — prefixes, ranges, wildcards, or DNS names. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. DNS-name leaves are returned as-is — this tool never performs its own DNS resolution. `truncated` is set if the flattened member count exceeds the cap. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -887,7 +887,7 @@
   },
   "srx_resolve_application": {
     "name": "srx_resolve_application",
-    "description": "Resolves a Junos application or application-set name — including `junos-*` predefined defaults — to its flattened, deduplicated concrete protocol/port leaves. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. `junos-*` defaults are served from a compiled-in static table when the device does not expose its `junos-defaults` group over NETCONF (a live device definition always takes precedence over the static table). `truncated` is set if the flattened member count exceeds the cap.",
+    "description": "Resolves a Junos application or application-set name — including `junos-*` predefined defaults — to its flattened, deduplicated concrete protocol/port leaves. Nested sets are walked recursively in this tool, never on the device; reference cycles are rejected rather than looped. `junos-*` defaults are served from a compiled-in static table when the device does not expose its `junos-defaults` group over NETCONF (a live device definition always takes precedence over the static table). `truncated` is set if the flattened member count exceeds the cap. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -943,7 +943,7 @@
   },
   "validate_chassis_cluster_health": {
     "name": "validate_chassis_cluster_health",
-    "description": "Runs 8 chassis-cluster diagnostic RPCs (cluster status, interfaces, information, data-plane / control-plane statistics, per-RE software, alarms, uptime) and emits an ordered findings list with a rolled-up verdict (pass / warn / fail). Standalone SRX devices short-circuit to state=not_configured. Each Finding has check_id (red_led, disabled_secondary, control_link_failure, major_alarm, minor_alarm, recent_reboot, version_skew), severity, message, and optional structured detail. Verdict precedence: fail > warn > pass. Pass-through cluster_status snapshot is included when the cluster RPC succeeded. include_raw=true appends concatenated raw RPC XML.",
+    "description": "Runs 8 chassis-cluster diagnostic RPCs (cluster status, interfaces, information, data-plane / control-plane statistics, per-RE software, alarms, uptime) and emits an ordered findings list with a rolled-up verdict (pass / warn / fail). Standalone SRX devices short-circuit to state=not_configured. Each Finding has check_id (red_led, disabled_secondary, control_link_failure, major_alarm, minor_alarm, recent_reboot, version_skew), severity, message, and optional structured detail. Verdict precedence: fail > warn > pass. Pass-through cluster_status snapshot is included when the cluster RPC succeeded. include_raw=true appends concatenated raw RPC XML. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -991,7 +991,7 @@
   },
   "vpn_lifecycle_report": {
     "name": "vpn_lifecycle_report",
-    "description": "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, and correlations when VPN is configured (even if no SAs are currently up). Returns state=not_configured only when both IKE and IPsec RPCs report that the security stanza is absent. Optionally filter by `peer` (substring match against both IKE remote address and IPsec gateway) and/or `tunnel` (substring match against IPsec remote gateway — the brief-style IPsec RPC does not surface the st0 interface name).",
+    "description": "Correlates IKE (Phase-1) and IPsec (Phase-2) security associations for VPN troubleshooting. Returns state=active with IKE SA list, IPsec SA list, and correlations when VPN is configured (even if no SAs are currently up). Returns state=not_configured only when both IKE and IPsec RPCs report that the security stanza is absent. Optionally filter by `peer` (substring match against both IKE remote address and IPsec gateway) and/or `tunnel` (substring match against IPsec remote gateway — the brief-style IPsec RPC does not surface the st0 interface name). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [

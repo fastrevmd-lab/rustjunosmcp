@@ -50,7 +50,12 @@ pub async fn handle(args: ConfigDiffArgs, dm: Arc<DeviceManager>) -> Result<Valu
     })
     .await
     .map_err(|_| JmcpError::Timeout(timeout))??;
-    Ok(json!(strip_config_xml_wrapper(&result)))
+    // The diff is line-oriented Junos config syntax (unified `compare
+    // rollback` output), so it may carry the same secret-shaped values
+    // (`$9$...`, pre-shared-key, SNMP community, ...) a full `show
+    // configuration` would. Redact it before it reaches the caller.
+    let stripped = strip_config_xml_wrapper(&result);
+    Ok(json!(mecmcp_redact::redact_text(&stripped)))
 }
 
 #[cfg(test)]

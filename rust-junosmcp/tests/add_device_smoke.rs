@@ -105,8 +105,14 @@ fn add_device_password_auth_disabled_by_default() {
         }),
     );
     let s = err.to_string();
-    assert!(
-        s.contains("password authentication is not allowed"),
-        "got: {s}"
-    );
+    // MEC-14: every tool result, including error text, now passes through
+    // `mecmcp_redact::redact_text` (to_call_result's last-mile pass). This
+    // message's own denylisted key ("password") triggers the redactor's
+    // documented over-redaction cost (mecmcp-redact's text.rs, X1): once a
+    // denylisted key is found on a line with no quoting to bound its value,
+    // everything from there to the end of the line is replaced, even though
+    // this particular message never carried a secret. That is an accepted
+    // tradeoff of the shared crate, not a defect in this server, so the
+    // assertion only pins the part of the message that survives.
+    assert!(s.contains("password [REDACTED]"), "got: {s}");
 }
