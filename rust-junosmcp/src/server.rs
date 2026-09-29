@@ -86,6 +86,64 @@ pub(super) fn mint_request_id() -> String {
     format!("req-{nanos}")
 }
 
+/// Redact a serialized tool-output body without assuming its wire format.
+///
+/// Tries JSON first — every SRX adapter and `to_call_result`'s `Ok(other)`
+/// branch build their body with `serde_json::to_string_pretty`, so this is
+/// the common case — then XML, then falls back to
+/// [`mecmcp_redact::redact_text`] for genuinely unstructured input (CLI
+/// output, a plain error message).
+///
+/// Parsing and redacting structurally rather than scanning the serialized
+/// text is the point: a line-oriented pass over valid JSON/XML can match a
+/// non-secret value that happens to look secret-shaped and corrupt the
+/// surrounding syntax when it substitutes `[REDACTED]` in place of only
+/// part of a quoted value (MEC-859 F1). Parsing first means a false
+/// positive still redacts *a whole value*, not a fragment of the document
+/// structure, and re-running this over output that was already redacted
+/// structurally elsewhere is a no-op rather than a second, riskier pass.
+pub(super) fn redact_body(s: &str) -> String {
+    if let Ok(mut value) = serde_json::from_str::<Value>(s) {
+        mecmcp_redact::redact_json_value(&mut value);
+        return serde_json::to_string_pretty(&value)
+            .unwrap_or_else(|_| mecmcp_redact::redact_text(s));
+    }
+    if let Ok(redacted) = mecmcp_redact::redact_xml_str(s) {
+        return redacted;
+    }
+    mecmcp_redact::redact_text(s)
+}
+
+/// The last-mile redaction pass: runs once, in `ServerHandler::call_tool`,
+/// over every tool response leaving this server — Junos and SRX alike,
+/// success and error alike.
+///
+/// This exists alongside (not instead of) the redaction each tool already
+/// does closer to the device response, as a backstop: a tool added later
+/// that forgets its own redaction, or an error path that was never wired up
+/// (MEC-859 F2 — `SrxError::Rpc`/`Transport`/`XmlParse` messages reached
+/// `rmcp::ErrorData` unredacted), still cannot hand the model a secret.
+/// [`redact_body`]'s format-sniffing chain makes a second pass here safe to
+/// run unconditionally: content a call site already redacted structurally
+/// round-trips through this pass unchanged.
+pub(super) fn redact_last_mile(
+    result: &mut Result<rmcp::model::CallToolResponse, rmcp::ErrorData>,
+) {
+    match result {
+        Err(error) => {
+            error.message = redact_body(&error.message).into();
+        }
+        Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
+            for block in &mut call_result.content {
+                if let ContentBlock::Text(text_content) = block {
+                    text_content.text = redact_body(&text_content.text);
+                }
+            }
+        }
+        Ok(_) => {}
+    }
+}
+
 /// Helper to construct an `AuditScope` from an `Option<&CallerCtx>`.
 ///
 /// The shared `mecmcp-audit` crate's API split the old single `new(Option<&CallerCtx>, ...)`
@@ -291,34 +349,43 @@ impl JmcpHandler {
     }
 
     /// Convert a tool's `Result<Value, JmcpError>` into the `CallToolResult`
-    /// sent to the model. This is the single choke point nearly every Junos
-    /// tool's output passes through, so it is also where a last-mile
-    /// redaction pass lives: every string handed to `ContentBlock::text` —
-    /// success payloads, pretty-printed JSON payloads, and error text (which
-    /// can echo raw device output, e.g. a config-parse error) — is run
-    /// through [`mecmcp_redact::redact_text`] first.
+    /// sent to the model. Every branch is redacted before it reaches
+    /// `ContentBlock::text`:
     ///
-    /// `redact_text` is the safe universal fallback here: individual tools
-    /// (`get_junos_config`, `junos_config_diff`) additionally apply
-    /// format-aware structural redaction closer to the device response, but
-    /// this pass ensures nothing reaches the model unredacted even if a
-    /// tool is added later and forgets to.
+    /// - A `Value::Object`/`Value::Array` is redacted *structurally*, via
+    ///   [`mecmcp_redact::redact_json_value`], before it is pretty-printed —
+    ///   never after. Running a line-oriented text pass over an
+    ///   already-serialized JSON document (the pre-MEC-859-review shape of
+    ///   this function) both fails to add safety, since the structural pass
+    ///   already caught everything the denylist/shape catch-all know about,
+    ///   and risks corrupting the JSON on a false-positive match (MEC-859
+    ///   F1).
+    /// - A `Value::String` or an error's `.to_string()` is free-form text
+    ///   whose shape this function does not otherwise know, so it goes
+    ///   through [`redact_body`]'s format-sniffing chain instead: some
+    ///   strings here are themselves pre-redacted JSON/XML (from
+    ///   `get_junos_config`, `junos_config_diff`), and `redact_body` redacts
+    ///   those structurally too, while a genuinely plain-text string (CLI
+    ///   output) falls through to [`mecmcp_redact::redact_text`].
+    ///
+    /// This is the single choke point nearly every Junos tool's output
+    /// passes through, but it is not the *only* one — [`redact_last_mile`]
+    /// in `ServerHandler::call_tool` runs after this and after every SRX
+    /// adapter, so a tool added later that forgets to redact still cannot
+    /// leak a secret to the model.
     fn to_call_result(
         r: Result<Value, rust_junosmcp_core::JmcpError>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(match r {
             Ok(Value::String(s)) => {
-                CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&s))])
+                CallToolResult::success(vec![ContentBlock::text(redact_body(&s))])
             }
-            Ok(other) => {
+            Ok(mut other) => {
+                mecmcp_redact::redact_json_value(&mut other);
                 let pretty = serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string());
-                CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(
-                    &pretty,
-                ))])
+                CallToolResult::success(vec![ContentBlock::text(pretty)])
             }
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(mecmcp_redact::redact_text(
-                &e.to_string(),
-            ))]),
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(redact_body(&e.to_string()))]),
         })
     }
 
@@ -1922,7 +1989,13 @@ impl ServerHandler for JmcpHandler {
         let caller = caller_ctx(&context.extensions).cloned();
 
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = self.tool_router.call(tcc).await;
+        let mut result = self.tool_router.call(tcc).await;
+
+        // Last-mile redaction (MEC-859 F2): every tool response — Junos and
+        // SRX, success and error — passes through here before anything else
+        // inspects or returns it, so a tool that forgot its own redaction
+        // still cannot leak a secret to the model. See `redact_last_mile`.
+        redact_last_mile(&mut result);
 
         // Two shapes reach here without a handler having run, and neither
         // recorded itself. See `record_rejected_call`.
@@ -3062,5 +3135,156 @@ mod redaction_coverage_tests {
             // through the same function).
             let _ = excluded_reason(tool);
         }
+    }
+}
+
+/// MEC-859 F1/F2/F3: `redact_body` (the JSON/XML/text-aware chain) and
+/// `redact_last_mile` (the `ServerHandler::call_tool` post-processor that
+/// applies it uniformly to every tool response, Junos and SRX). These
+/// replace the SRX side's old `redaction_coverage_tests` module, whose
+/// per-tool completeness loop (`let _ = excluded_reason(tool);`) asserted
+/// nothing — see `server::srx`'s module doc for why a per-tool coverage
+/// check no longer applies now that redaction is a single structural choke
+/// point rather than 16 hand-wrapped call sites.
+#[cfg(test)]
+mod redact_last_mile_tests {
+    use super::*;
+
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+    const FAKE_PSK: &str = "FAKE-psk-9c203b81";
+    const FAKE_HOSTNAME: &str = "edge1.example.net";
+
+    /// F1: a body that is already valid, pretty-printed JSON (the shape
+    /// every SRX adapter and `to_call_result`'s `Ok(other)` branch produce)
+    /// must come out of `redact_body` still valid JSON, with the secret
+    /// gone and the non-secret `host-name` value intact — not mangled by a
+    /// line-oriented text pass over the serialized document.
+    #[test]
+    fn redact_body_redacts_json_structurally_and_stays_valid_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "system": {
+                "host-name": FAKE_HOSTNAME,
+                "root-authentication": { "encrypted-password": FAKE_JUNOS_HASH },
+            }
+        }))
+        .unwrap();
+
+        let redacted = redact_body(&body);
+
+        let value: Value = serde_json::from_str(&redacted)
+            .expect("redact_body must return input that still parses as JSON");
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked: {redacted}"
+        );
+        assert_eq!(
+            value["system"]["host-name"], FAKE_HOSTNAME,
+            "non-secret value lost or corrupted: {redacted}"
+        );
+    }
+
+    /// Same claim, for XML — the format `get_junos_config`/`junos_config_diff`
+    /// bodies can already be in by the time they reach a last-mile pass.
+    #[test]
+    fn redact_body_redacts_xml_structurally_and_stays_valid_xml() {
+        let body = format!(
+            "<configuration><system><root-authentication><encrypted-password>{FAKE_JUNOS_HASH}</encrypted-password></root-authentication><host-name>{FAKE_HOSTNAME}</host-name></system></configuration>"
+        );
+
+        let redacted = redact_body(&body);
+
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked: {redacted}"
+        );
+        assert!(
+            redacted.contains(FAKE_HOSTNAME) && redacted.contains("<host-name>"),
+            "non-secret structure lost: {redacted}"
+        );
+        mecmcp_redact::redact_xml_str(&redacted)
+            .expect("redact_body must return input that still parses as XML");
+    }
+
+    /// Genuinely unstructured input (CLI/`set`-style output, a plain error
+    /// message) falls back to line-oriented `redact_text` rather than being
+    /// left unredacted because it did not parse as JSON or XML.
+    #[test]
+    fn redact_body_falls_back_to_text_redaction_for_non_structured_input() {
+        let body = format!(
+            "set security ike policy p1 pre-shared-key ascii-text \"{FAKE_PSK}\"\nset system host-name {FAKE_HOSTNAME}\n"
+        );
+
+        let redacted = redact_body(&body);
+
+        assert!(!redacted.contains(FAKE_PSK), "secret leaked: {redacted}");
+        assert!(
+            redacted.contains(FAKE_HOSTNAME),
+            "non-secret value lost: {redacted}"
+        );
+    }
+
+    /// Idempotency is what makes it safe to run `redact_body` again over
+    /// content a call site already redacted structurally: a second pass
+    /// must be a no-op, not a further mutation (guards against the F1
+    /// failure mode recurring if a call site starts pre-redacting too).
+    #[test]
+    fn redact_body_is_idempotent_on_already_redacted_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "host-name": FAKE_HOSTNAME,
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+
+        let once = redact_body(&body);
+        let twice = redact_body(&once);
+        assert_eq!(once, twice, "second redact_body pass must be a no-op");
+    }
+
+    /// F2: an SRX workflow error (`SrxError::Rpc`/`Transport`/`XmlParse`,
+    /// mapped straight to `rmcp::ErrorData::internal_error(e.to_string(), \
+    /// None)` with no redaction at the call site) must still not reach the
+    /// model with a secret in `error.message` once `redact_last_mile` runs.
+    #[test]
+    fn redact_last_mile_redacts_an_error_message() {
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(rmcp::ErrorData::internal_error(
+                format!("device replied: pre-shared-key \"{FAKE_PSK}\" rejected"),
+                None,
+            ));
+
+        redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            !error.message.contains(FAKE_PSK),
+            "secret leaked through an unredacted error path: {}",
+            error.message
+        );
+    }
+
+    /// F1+F2 together: a `Complete` result with a JSON text block (the SRX
+    /// adapter shape) is redacted structurally and stays valid JSON.
+    #[test]
+    fn redact_last_mile_redacts_every_text_block_of_a_complete_result_structurally() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": FAKE_HOSTNAME,
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Ok(rmcp::model::CallToolResponse::Complete(
+                CallToolResult::success(vec![ContentBlock::text(body)]),
+            ));
+
+        redact_last_mile(&mut result);
+
+        let rmcp::model::CallToolResponse::Complete(call_result) = result.unwrap() else {
+            panic!("expected a Complete response");
+        };
+        let text = &call_result.content[0].as_text().unwrap().text;
+        let value: Value =
+            serde_json::from_str(text).expect("redacted body must still parse as JSON");
+        assert!(!text.contains(FAKE_JUNOS_HASH), "secret leaked: {text}");
+        assert_eq!(value["router"], FAKE_HOSTNAME, "hostname lost: {text}");
     }
 }

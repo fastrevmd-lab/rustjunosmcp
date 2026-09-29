@@ -3,15 +3,21 @@
 //! Unlike the Junos tool surface in `server.rs`, these adapters do not share
 //! a single `to_call_result`-style choke point — each `#[tool]` method
 //! serializes its own typed response body and wraps it directly in
-//! `ContentBlock::text`. Every one of those `body` values is passed through
-//! [`mecmcp_redact::redact_text`] immediately before wrapping, so device
-//! secrets pulled in by workflows (chassis-cluster status, VPN lifecycle
-//! reports, policy/NAT listings, ...) get the same last-mile redaction pass
-//! the Junos tools get from `to_call_result`. `collect_jtac_support_bundle`
-//! additionally has its own dedicated, more precise redaction pass
-//! (`workflows::support_bundle::redact`) applied earlier, before the tarball
-//! is built; the blanket `redact_text` pass here is a second, cheap safety
-//! net on its summary response, not a replacement for that pass.
+//! `ContentBlock::text`, unredacted at that point. Redaction of every one of
+//! those `body` values happens once, uniformly, in
+//! [`super::redact_last_mile`] — the `ServerHandler::call_tool` post-processor
+//! that runs over every response leaving this server, Junos and SRX alike
+//! (MEC-859 F1/F2). It replaced an earlier per-site
+//! `mecmcp_redact::redact_text(&body)` wrap at each of these 16 call sites:
+//! that blanket line-oriented pass ran *after* `serde_json::to_string_pretty`
+//! had already produced valid JSON, and a false-positive text match could
+//! corrupt that JSON's structure rather than just over-redact a value.
+//! `redact_last_mile` uses [`super::redact_body`]'s JSON-first chain instead,
+//! so it redacts these already-serialized bodies structurally.
+//! `collect_jtac_support_bundle` additionally has its own dedicated, more
+//! precise redaction pass (`workflows::support_bundle::redact`) applied
+//! earlier, before the tarball is built; the last-mile pass on its summary
+//! response is a second, cheap safety net, not a replacement for that pass.
 
 use super::{JmcpHandler, audit_scope, caller_ctx, mint_request_id};
 
@@ -245,76 +251,22 @@ mod server_tools_const_tests {
 
 /// Redaction coverage for the SRX tool surface.
 ///
-/// Unlike the Junos side (`server.rs`'s `to_call_result`), these adapters
-/// have no single shared choke point — each `#[tool]` method builds its own
-/// `body: String` and passes it through `ContentBlock::text`. Every one of
-/// those 15 sites was changed to wrap `body` in
-/// `mecmcp_redact::redact_text(&body)` before constructing the
-/// `ContentBlock`. There is no fake device/transport in this test tree
-/// (`DeviceManager` opens a real `rustez::Device` over real SSH), so these
-/// tools' handlers cannot be driven end-to-end here; the functional proof
-/// that `redact_text` actually strips the fixture secret shapes
-/// (`$9$...`, pre-shared-key, RADIUS/TACACS secret, SNMP community,
-/// password) lives in `server.rs`'s `redaction_coverage_tests`, which
-/// exercises the identical primitive both call sites share. What this test
-/// adds is the completeness check: every tool in `SRX_SERVER_TOOLS` is
-/// either covered (wraps `body` the same way) or explicitly excluded with a
-/// reason, so a newly added SRX tool is forced to be classified.
-#[cfg(test)]
-mod redaction_coverage_tests {
-    use super::SRX_SERVER_TOOLS;
-
-    /// Names, with reasons, of `SRX_SERVER_TOOLS` entries that return no
-    /// device-derived text at all — everything else is expected to route
-    /// its `body` through `mecmcp_redact::redact_text` the same way the 15
-    /// `ContentBlock::text(mecmcp_redact::redact_text(&body))` call sites in
-    /// this file do.
-    fn excluded_reason(tool: &str) -> Option<&'static str> {
-        match tool {
-            "srxmcp_status" => {
-                Some("returns this server's own version/endpoint/uptime; no device I/O")
-            }
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn every_srx_tool_is_covered_or_explicitly_excluded() {
-        assert!(
-            !SRX_SERVER_TOOLS.is_empty(),
-            "SRX_SERVER_TOOLS must not be empty"
-        );
-
-        let must_be_covered = [
-            "get_chassis_cluster_status",
-            "get_srx_security_services_status",
-            "check_srx_feature_license",
-            "vpn_lifecycle_report",
-            "srx_list_policies",
-            "srx_resolve_address",
-            "srx_resolve_application",
-            "srx_list_nat_rules",
-            "validate_chassis_cluster_health",
-            "collect_jtac_support_bundle",
-            "srx_flow_sessions",
-            "srx_policy_match",
-        ];
-        for tool in must_be_covered {
-            assert!(
-                SRX_SERVER_TOOLS.contains(&tool),
-                "test fixture drift: {tool} is not in SRX_SERVER_TOOLS anymore"
-            );
-            assert!(
-                excluded_reason(tool).is_none(),
-                "{tool} can return device-derived output and must not be in the exclusion list"
-            );
-        }
-
-        for tool in SRX_SERVER_TOOLS {
-            let _ = excluded_reason(tool);
-        }
-    }
-}
+/// Prior to MEC-859, each of these `#[tool]` methods wrapped its own `body`
+/// in `mecmcp_redact::redact_text(&body)` before constructing the
+/// `ContentBlock`, and this module asserted every `SRX_SERVER_TOOLS` entry
+/// was either covered by that pattern or explicitly excluded with a reason.
+/// That per-site wrap is gone: redaction of every SRX (and Junos) tool
+/// response now happens exactly once, uniformly, in
+/// [`super::redact_last_mile`] (`ServerHandler::call_tool`'s post-processor,
+/// MEC-859 F1/F2), so there is no longer a per-site call for a newly added
+/// tool to forget. The coverage question this module used to answer is
+/// answered structurally instead: `call_tool` cannot return a response
+/// without passing through `redact_last_mile` first. See
+/// `server::redact_last_mile_tests` for the functional tests (JSON/XML/text
+/// bodies redacted, still parse, host-name preserved; `Err` messages
+/// redacted) — those exercise `redact_last_mile` directly, since there is no
+/// fake device/transport in this test tree (`DeviceManager` opens a real
+/// `rustez::Device` over real SSH) to drive these handlers end-to-end.
 
 #[tool_router(router = srx_tool_router, vis = "pub(crate)")]
 impl JmcpHandler {
@@ -346,9 +298,7 @@ impl JmcpHandler {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -403,9 +353,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -462,9 +410,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -519,9 +465,7 @@ impl JmcpHandler {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -579,9 +523,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -631,9 +573,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -691,9 +631,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -756,9 +694,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -809,9 +745,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -900,9 +834,7 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            mecmcp_redact::redact_text(&body),
-        )]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -989,9 +921,7 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            mecmcp_redact::redact_text(&body),
-        )]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -1054,9 +984,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     // Keep the legacy staging alias in this description for exact v0.3.6 SRX
@@ -1136,9 +1064,7 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            mecmcp_redact::redact_text(&body),
-        )]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -1195,9 +1121,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 
     #[tool(
@@ -1252,9 +1176,7 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| {
-            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
-        })
+        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
     }
 }
 
