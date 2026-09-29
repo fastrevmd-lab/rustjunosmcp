@@ -2798,9 +2798,9 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.62.5"
+version = "0.62.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7c230e0ed9cbeb92fbad6c8848985d6df2a1464c0dc247a021abd666e9005e"
+checksum = "9decb68e4e44e1079700e54f17c8f23806ec53d7e0db73ab1c71d9dabc666812"
 dependencies = [
  "aes",
  "bitflags",
@@ -2915,6 +2915,7 @@ dependencies = [
  "polyval",
  "rand 0.10.3",
  "rand_core 0.10.1",
+ "ring",
  "russh-cryptovec",
  "russh-util",
  "salsa20",
@@ -3040,7 +3041,7 @@ dependencies = [
  "minijinja",
  "regex",
  "rmcp",
- "russh 0.62.5",
+ "russh 0.63.3",
  "rust-junosmcp-auth",
  "rustez",
  "rustnetconf",
@@ -3182,7 +3183,7 @@ dependencies = [
  "base64ct",
  "quick-xml",
  "ring",
- "russh 0.62.5",
+ "russh 0.62.7",
  "thiserror",
  "tokio",
  "tracing",
@@ -3645,7 +3646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
