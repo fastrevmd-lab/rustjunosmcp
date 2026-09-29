@@ -144,6 +144,13 @@ async fn main() -> Result<()> {
         anyhow::bail!("--enable-metrics requires --transport streamable-http");
     }
 
+    // Validated the same way as a per-call `confirm_timeout_mins` (MEC-45):
+    // must convert to seconds without overflow. Set once, before any tool
+    // call can read it via `resolve_confirm_timeout`.
+    rust_junosmcp_core::helpers::confirm_timeout_to_secs(args.commit_confirm_default_mins)
+        .map_err(|e| anyhow::anyhow!("invalid --commit-confirm-default-mins: {e}"))?;
+    rust_junosmcp_core::helpers::set_commit_confirm_default_mins(args.commit_confirm_default_mins);
+
     let inv_path = args.device_mapping.clone();
     let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
         .map_err(anyhow::Error::from)

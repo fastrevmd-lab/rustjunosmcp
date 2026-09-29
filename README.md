@@ -193,7 +193,7 @@ parallel with a configurable concurrency cap.
   no `unsafe`; `zeroize` replaces hand-rolled secret zeroing and `rustix`
   replaces `libc::getuid`. Tool count unchanged (27 / 18).
 
-### v0.11 (unreleased)
+### v0.11 (released)
 
 - **Four new read-only SRX tools** — `srx_list_policies` (security policies
   by from-zone/to-zone context, including global policies and optional
@@ -211,6 +211,23 @@ parallel with a configurable concurrency cap.
   paginated/capped with an explicit `truncated` flag rather than a silent
   cutoff. Tool count: 37 → 41 (9 → 13 SRX tools; Junos-only build unchanged
   at 27 / 18, since these are gated by the default `srx` feature).
+
+### v0.12 (unreleased)
+
+- **Commit-confirmed is on by default (breaking)** — `load_and_commit_config`,
+  `rollback_config` (`commit=true`), `render_and_apply_j2_template`, and
+  `apply_junos_change_set` now issue `commit confirmed` unless the caller
+  explicitly opts out with `confirm_timeout_mins: 0`. Previously a plain,
+  unconditional commit was the default; a model-drafted change that cut
+  management access had nothing bringing the device back. See
+  [Confirmed commits](#confirmed-commits-v03-default-on-since-v012).
+- **`--commit-confirm-default-mins`** (default `10`) sets the server-wide
+  window used when a call omits `confirm_timeout_mins`; a per-call value
+  still overrides it.
+- **`confirm_commit`** — new write tool that sends the confirming commit for
+  any of the four paths above, cancelling the pending auto-rollback.
+- Opting out is recorded in the audit event as `commit_confirmed=false`.
+- Tool count: 43 → 44 (27 → 28 Junos-only).
 
 ## Blocklist guardrails (v0.2)
 
@@ -261,12 +278,17 @@ second principal to approve the plan before anything commits.
 commands) has no wire-level `override` action in Junos — that combination
 is rejected before any RPC is sent, on every path, including change sets.
 
-## Confirmed commits (v0.3)
+## Confirmed commits (v0.3, default-on since v0.12)
 
-`load_and_commit_config` supports Junos `commit confirmed` via the
-`confirm_timeout_mins` parameter. The router auto-rolls back after N
-minutes unless a follow-up commit confirms the change — a critical safety
-net for remote config pushes that might break management connectivity.
+`load_and_commit_config`, `rollback_config` (with `commit=true`),
+`render_and_apply_j2_template`, and `apply_junos_change_set` all commit via
+Junos `commit confirmed` **by default** — the router auto-rolls back if
+nothing confirms the change within the window, so a bad push that cuts
+management access reverts itself instead of requiring a truck roll.
+
+The default window is the server's `--commit-confirm-default-mins` flag
+(default 10, same validation as the per-call parameter). A per-call
+`confirm_timeout_mins` overrides it for that one commit:
 
 ```json
 {
@@ -284,12 +306,28 @@ Response:
   "diff": "[edit interfaces ge-0/0/0]\n+   description test;",
   "confirmed": true,
   "rollback_in_minutes": 10,
+  "rollback_deadline_unix": 1780000600,
   "message": "Commit confirmed: auto-rollback in 10 minutes unless confirmed. Send another commit to confirm."
 }
 ```
 
-To confirm (prevent rollback), send another `load_and_commit_config` with
-the same config (or any valid config) without `confirm_timeout_mins`.
+`apply_junos_change_set`'s status response reports the same
+`rollback_deadline_unix`.
+
+**Opt out** of commit-confirmed for a single call by passing
+`confirm_timeout_mins: 0`; this issues a plain, unconditional commit and is
+recorded in the audit event as `commit_confirmed=false` so the exception is
+traceable after the fact.
+
+**To confirm** a pending window (cancel the scheduled auto-rollback), call
+the `confirm_commit` tool with the device name — it sends the confirming
+commit the same way `confirm_junos_change_set` does for the change-set
+path. Sending another `load_and_commit_config` (or `rollback_config` /
+`render_and_apply_j2_template`) also confirms, since Junos treats any
+commit against the candidate as confirmation regardless of which tool
+issued it. While a commit-confirmed window is open, `upgrade_junos` refuses
+to proceed (`commit_confirmed_active`) rather than reboot a device that
+might still roll back its configuration underneath the new image.
 
 ## File transfers (`transfer_file` / `fetch_file` / `list_staged_files`)
 

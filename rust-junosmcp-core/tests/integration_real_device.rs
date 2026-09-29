@@ -260,6 +260,7 @@ async fn live_render_show_version_template_dry_run() {
         dry_run: true,
         config_format: None,
         mode: "merge".into(),
+        confirm_timeout_mins: None,
         timeout: 360,
     };
 

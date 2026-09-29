@@ -17,13 +17,13 @@ use rust_junosmcp_core::{
     DeviceManager, Policy,
     progress::ProgressHeartbeat,
     tools::{
-        AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
-        ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
-        ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs, TemplateArgs,
-        TransferFileArgs, UpgradeJunosArgs, add_device, batch, changeset, commit_check,
-        config_diff, discard_candidate, execute_command, facts, fetch_file, get_config,
-        list_staged_files, load_commit, pfe, reload_devices, rollback_config, router_list,
-        template, transfer_file, upgrade_junos,
+        AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, ConfirmCommitArgs, DiscardCandidateArgs,
+        ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs,
+        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs,
+        TemplateArgs, TransferFileArgs, UpgradeJunosArgs, add_device, batch, changeset,
+        commit_check, config_diff, confirm_commit, discard_candidate, execute_command, facts,
+        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices,
+        rollback_config, router_list, template, transfer_file, upgrade_junos,
     },
 };
 use serde_json::Value;
@@ -100,6 +100,24 @@ pub(super) fn audit_scope(
     match ctx {
         Some(c) => AuditScope::from_caller(c, tool, action, devices),
         None => AuditScope::stdio(tool, action, devices),
+    }
+}
+
+/// Record the commit-confirmed decision for a caller-supplied
+/// `confirm_timeout_mins` in the audit event (MEC-45).
+///
+/// Mirrors [`rust_junosmcp_core::helpers::resolve_confirm_timeout`]: `None`
+/// resolves to the server default (commit-confirmed ON), `Some(0)` is the
+/// documented explicit opt-out. Always writes `commit_confirmed` so the
+/// opt-out is visible in the audit trail rather than merely absent from it.
+pub(super) fn audit_confirm_meta(audit: &mut AuditScope, caller_mins: Option<u32>) {
+    use rust_junosmcp_core::helpers::{ConfirmDecision, resolve_confirm_timeout};
+    match resolve_confirm_timeout(caller_mins) {
+        ConfirmDecision::Confirmed(mins) => {
+            audit.meta("commit_confirmed", true);
+            audit.meta("commit_confirm_mins", mins as u64);
+        }
+        ConfirmDecision::OptedOut => audit.meta("commit_confirmed", false),
     }
 }
 
@@ -376,6 +394,7 @@ const SERVER_TOOLS: &[&str] = &[
     "commit_check_config",
     "discard_candidate",
     "rollback_config",
+    "confirm_commit",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -404,11 +423,11 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_27() {
+    fn server_tools_len_is_28() {
         // 23 before the candidate-fingerprint tool (#231); 25 with the
         // confirming-commit tool (#239); 26 with list_junos_change_sets (#255);
-        // 27 with cancel_junos_change_set.
-        assert_eq!(SERVER_TOOLS.len(), 27);
+        // 27 with cancel_junos_change_set; 28 with confirm_commit (MEC-45).
+        assert_eq!(SERVER_TOOLS.len(), 28);
     }
 
     #[test]
@@ -704,9 +723,7 @@ impl JmcpHandler {
         let digest: [u8; 32] = hasher.finalize().into();
         let hash = rust_junosmcp_core::tools::transfer_file::hex32(&digest);
         audit.meta("config_sha256", hash);
-        if let Some(confirm_mins) = args.confirm_timeout_mins {
-            audit.meta("commit_confirmed", confirm_mins as u64);
-        }
+        audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
         audit.meta("comment_present", !args.commit_comment.is_empty());
 
         let result = load_commit::handle_with_cancel(
@@ -839,10 +856,8 @@ impl JmcpHandler {
         }
 
         audit.meta("version", args.version.to_string());
-        if args.commit
-            && let Some(confirm_mins) = args.confirm_timeout_mins
-        {
-            audit.meta("commit_confirmed", confirm_mins as u64);
+        if args.commit {
+            audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
         }
 
         let result = rollback_config::handle_with_cancel(
@@ -852,6 +867,47 @@ impl JmcpHandler {
             ct,
         )
         .await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
+        name = "confirm_commit",
+        description = "Send the confirming commit for a commit-confirmed window opened by load_and_commit_config, rollback_config, or render_and_apply_j2_template (not apply_junos_change_set — use confirm_junos_change_set for that). Cancels the device's pending automatic rollback. A harmless no-op commit if no window is open."
+    )]
+    async fn confirm_commit(
+        &self,
+        Parameters(args): Parameters<ConfirmCommitArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "confirm_commit", "commit", vec![args.device.clone()]);
+
+        if let Err(e) = self.check_tool_scope(ctx, "confirm_commit") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "confirm_commit", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+        // Same family as load_and_commit_config / rollback_config / a
+        // committing render_and_apply_j2_template: those tools cannot open a
+        // commit-confirmed window at all unless --allow-direct-commit is set,
+        // so gate the tool that closes one the same way for consistency.
+        if let Err(e) = self.direct_commit.check(&mut audit) {
+            return Self::to_call_result(Err(e.into()));
+        }
+
+        let attribution = match ctx {
+            Some(c) => mecmcp_audit::Attribution::from_caller(c),
+            None => mecmcp_audit::Attribution::stdio(),
+        };
+
+        let result = confirm_commit::handle(args, self.dm.clone(), attribution).await;
         match &result {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind(e.audit_kind(), e),
@@ -983,7 +1039,11 @@ impl JmcpHandler {
         {
             audit.meta("var_count", obj.len() as u64);
         }
-        audit.meta("committed", args.apply_config && !args.dry_run);
+        let will_commit = args.apply_config && !args.dry_run;
+        audit.meta("committed", will_commit);
+        if will_commit {
+            audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
+        }
 
         let result =
             template::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await;
@@ -1450,6 +1510,7 @@ impl JmcpHandler {
         };
 
         let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
+        audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
 
         let result = changeset::apply_change_set_with_cancel(
             args,
@@ -2154,7 +2215,8 @@ mod scope_tests {
         // MEC-54's four SRX policy-read tools (srx_list_policies,
         // srx_resolve_address, srx_resolve_application, srx_list_nat_rules)
         // make 41, and `srx_flow_sessions` + `srx_policy_match` make 43 (MEC-55).
-        assert_eq!(names.len(), 43);
+        // `confirm_commit` makes 44 (MEC-45).
+        assert_eq!(names.len(), 44);
     }
 
     #[test]
@@ -2163,8 +2225,9 @@ mod scope_tests {
         // 19 before Phase 5; the change-set tools took it to 24,
         // `confirm_junos_change_set` makes 25 (#239),
         // `list_junos_change_sets` makes 26 (#255), and
-        // `cancel_junos_change_set` makes 27 (#293).
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 27);
+        // `cancel_junos_change_set` makes 27 (#293), `confirm_commit` makes
+        // 28 (MEC-45).
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 28);
     }
 
     #[test]
