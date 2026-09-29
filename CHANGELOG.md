@@ -6,19 +6,40 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
-### Fixed
+## [0.27.0] - 2026-09-29
 
-- **`--ssh-insecure-accept-any-host-key` now also disables host-key
-  verification for scp (`transfer_file` / `upgrade_junos`), not just
-  NETCONF SSH.** The MEC-44 landing (below) left scp on `AcceptNew` (TOFU)
-  under this flag, so a device presenting a changed key was still refused
-  over scp despite the flag's name promising to accept any key. Both
-  transports now share one `SshHostKeyMode` end-to-end
-  (`Strict` / `AcceptNew` / `AcceptAll`), so `--ssh-insecure-accept-any-host-key`
-  means the same thing on both paths.
+### Security
+
+- **Redact device secrets from tool output.** `get_junos_config` and
+  `junos_config_diff` returned raw device configuration, including Junos
+  `$9$`-style reversibly-encrypted values, PSKs, SNMP communities, and
+  RADIUS/TACACS secrets, straight to the calling model (the README also
+  wrongly called these values "hashed" — they are symmetrically encrypted
+  and recoverable with the device's master key). Redaction is now applied
+  at the two tool-specific call sites and, as a last-mile safety net, in a
+  single `call_tool` post-processor covering every tool response, so a
+  newly added tool cannot silently skip it. Tool descriptions and the
+  README now say output is redacted (MEC-14).
+
+### Added
+
+- **`confirm_commit`** — new write tool that sends the confirming commit for
+  a commit-confirmed window opened by `load_and_commit_config`,
+  `rollback_config`, or `render_and_apply_j2_template`, cancelling the
+  pending auto-rollback (MEC-45).
 
 ### Changed
 
+- **Behaviour change: commit-confirmed is on by default.**
+  `load_and_commit_config`, `rollback_config` (`commit=true`),
+  `render_and_apply_j2_template`, and `apply_junos_change_set` now issue
+  `commit confirmed <window>` unless the caller passes
+  `confirm_timeout_mins: 0`. Previously these committed directly with no
+  auto-rollback net unless the caller opted in. The window defaults to the
+  new `--commit-confirm-default-mins` flag (default 10 minutes); a per-call
+  `confirm_timeout_mins` overrides it. The opt-out is recorded in the audit
+  event as `commit_confirmed=false`. The response and change-set status both
+  report `rollback_deadline_unix` (MEC-45).
 - **`--ssh-accept-new-host-keys` now gives real TOFU for NETCONF SSH, not
   no-verification-at-all.** Previously the flag pinned scp's known_hosts
   entries on first contact (`HostKeyVerification::AcceptNew`) but set NETCONF
@@ -41,6 +62,23 @@ All notable user-facing changes are recorded here. Format loosely follows
 - **Container images now publish to `ghcr.io/mechubsec/rustjunosmcp`** —
   the repo moved to the mechubsec organization, and images are renamed to
   match. Older tags were copied from the previous name.
+
+### Fixed
+
+- **`--ssh-insecure-accept-any-host-key` now also disables host-key
+  verification for scp (`transfer_file` / `upgrade_junos`), not just
+  NETCONF SSH.** The MEC-44 landing (above) left scp on `AcceptNew` (TOFU)
+  under this flag, so a device presenting a changed key was still refused
+  over scp despite the flag's name promising to accept any key. Both
+  transports now share one `SshHostKeyMode` end-to-end
+  (`Strict` / `AcceptNew` / `AcceptAll`), so `--ssh-insecure-accept-any-host-key`
+  means the same thing on both paths.
+- **`srx_flow_sessions` fails closed on two more summary-parsing gaps**
+  (MEC-745): a node reporting no error but also no recognised session-count
+  element no longer has its missing count silently papered over by the
+  other nodes' totals, and an early warning-severity `rpc-error` on a node
+  can no longer mask a later error-severity one on the same node. Both
+  previously risked understating the true session count.
 
 ## [0.26.0] - 2026-09-28
 
@@ -112,24 +150,6 @@ All notable user-facing changes are recorded here. Format loosely follows
   `<get-route-engine-information/>` during fact gathering
   (mechubsec/rustez#54). Previously every tool call on a cSRX device failed
   with `[OperationFailed] syntax error`.
-
-- **`confirm_commit`** — new write tool that sends the confirming commit for
-  a commit-confirmed window opened by `load_and_commit_config`,
-  `rollback_config`, or `render_and_apply_j2_template`, cancelling the
-  pending auto-rollback (MEC-45).
-
-### Changed
-
-- **Behaviour change: commit-confirmed is on by default.**
-  `load_and_commit_config`, `rollback_config` (`commit=true`),
-  `render_and_apply_j2_template`, and `apply_junos_change_set` now issue
-  `commit confirmed <window>` unless the caller passes
-  `confirm_timeout_mins: 0`. Previously these committed directly with no
-  auto-rollback net unless the caller opted in. The window defaults to the
-  new `--commit-confirm-default-mins` flag (default 10 minutes); a per-call
-  `confirm_timeout_mins` overrides it. The opt-out is recorded in the audit
-  event as `commit_confirmed=false`. The response and change-set status both
-  report `rollback_deadline_unix` (MEC-45).
 
 ## [0.25.0] - 2026-09-15
 
