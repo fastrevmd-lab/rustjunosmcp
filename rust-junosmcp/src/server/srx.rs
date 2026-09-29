@@ -167,6 +167,15 @@ impl JmcpHandler {
     /// and tags `ErrorData.data` with the error's stable code so
     /// `redact_last_mile` knows this message was already handled and skips
     /// its own pass rather than redacting it a second, cruder time.
+    ///
+    /// MEC-931 N8: `confirmation_token` is **not** a
+    /// `REDACTION_KEY_EXEMPTIONS` entry — a device- or file-supplied field
+    /// with that name, anywhere else in the server, must be redacted like
+    /// any other `*token` value. The one place the server itself mints a
+    /// token is this plan's top level (`ConfirmationStore::issue`), so this
+    /// is the one place that restores it verbatim — lifted out before the
+    /// structural redaction pass and put back only when it has the exact
+    /// shape a real store issues (see [`is_minted_confirmation_token`]).
     fn signature_error_to_rmcp(e: rust_junosmcp_srx_core::SrxError) -> rmcp::ErrorData {
         let code = e.audit_kind();
         match e {
@@ -177,7 +186,18 @@ impl JmcpHandler {
                 router,
                 mut plan,
             } => {
+                let token = plan
+                    .as_object_mut()
+                    .and_then(|o| o.remove("confirmation_token"));
                 super::redact_json_preserving_server_fields(&mut plan);
+                if let (Some(serde_json::Value::String(t)), Some(o)) = (token, plan.as_object_mut())
+                    && is_minted_confirmation_token(&t)
+                {
+                    o.insert(
+                        "confirmation_token".to_string(),
+                        serde_json::Value::String(t),
+                    );
+                }
                 rmcp::ErrorData::invalid_request(
                     format!(
                         "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true and the plan's confirmation_token; plan: {plan}"
@@ -221,6 +241,28 @@ impl JmcpHandler {
         }
         Ok(())
     }
+}
+
+/// Shape `ConfirmationStore::issue` (in `rust-junosmcp-srx-core`) mints: an
+/// unpadded base64url encoding of 32 random bytes, always 43 characters of
+/// `[A-Za-z0-9_-]`.
+///
+/// MEC-918 N5/N6: a real token still must not be run through the denylist's
+/// text scan — 0.24% of 50,000 sampled tokens contained a denylisted
+/// substring (`psk`, `pw`, ...) by chance, which would fail roughly 1 in 420
+/// destructive confirmations closed at random. So the token
+/// `signature_error_to_rmcp` lifts out of the plan is restored verbatim only
+/// when it has this exact shape; anything else is treated as untrusted and
+/// left to the structural redaction pass, not silently passed through.
+///
+/// MEC-931 N8: this check, and the token it guards, live only here — the one
+/// place the server mints a `confirmation_token` — rather than as a
+/// server-wide key-name exemption. See `REDACTION_KEY_EXEMPTIONS` in
+/// `server.rs`.
+fn is_minted_confirmation_token(t: &str) -> bool {
+    t.len() == 43
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Source-declaration-order mirror of this server's `#[tool]` surface. The
@@ -1522,6 +1564,107 @@ mod signature_error_tests {
         assert!(
             !text.contains(FAKE_JUNOS_HASH),
             "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+    }
+
+    /// MEC-931 N7: this test used to live in `server.rs`, ungated, and
+    /// pulled in `rust_junosmcp_srx_core` even when the `srx` feature (and
+    /// this whole module) is off, breaking `--no-default-features` CI. It
+    /// belongs here, where the module is already `srx`-only.
+    ///
+    /// MEC-918 N5/N6, MEC-931 N8: a real `confirmation_token`, minted by a
+    /// real `ConfirmationStore` and lifted out by `signature_error_to_rmcp`,
+    /// must survive `signature_error_to_rmcp` → `redact_last_mile` across
+    /// many samples, to pin the false-positive rate the text scan would
+    /// otherwise impose on it.
+    #[test]
+    fn real_confirmation_tokens_survive_the_last_mile_pass() {
+        let store = rust_junosmcp_srx_core::workflows::signature_package::confirmation::ConfirmationStore::default();
+        for i in 0..500 {
+            let binding =
+                ConfirmationBinding::new(Some("alice"), "srx-01", "srx-01|192.0.2.1|830|netconf");
+            let plan = store
+                .issue(
+                    serde_json::json!({"action": "download_and_install"}),
+                    binding,
+                    &format!("corr-{i}"),
+                )
+                .unwrap();
+            let token = plan["confirmation_token"].as_str().unwrap().to_string();
+            let err = SrxError::SignaturePackageConfirmationRequired {
+                router: "srx-01".to_string(),
+                plan,
+            };
+
+            let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+                Err(JmcpHandler::signature_error_to_rmcp(err));
+            crate::server::redact_last_mile(&mut result);
+
+            let error = result.unwrap_err();
+            assert!(
+                error.message.contains(&token),
+                "a real minted confirmation_token must never be altered by redaction"
+            );
+        }
+    }
+
+    /// MEC-931 N9: the 500-sample loop above catches the false-positive
+    /// regression only ~70% of the time (0.24% per-token alteration rate).
+    /// This pins it deterministically with a fixed 43-char base64url token
+    /// that is known to contain a denylisted substring (`psk`), so a
+    /// mutation that drops the minted-shape check fails every run, not just
+    /// most of them.
+    #[test]
+    fn confirmation_token_with_denylisted_substring_survives_verbatim() {
+        const DENYLISTED_SHAPED_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAPSKAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(DENYLISTED_SHAPED_TOKEN.len(), 43);
+        assert!(super::is_minted_confirmation_token(DENYLISTED_SHAPED_TOKEN));
+
+        let plan = serde_json::json!({
+            "action": "download_and_install",
+            "confirmation_token": DENYLISTED_SHAPED_TOKEN,
+        });
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            error.message.contains(DENYLISTED_SHAPED_TOKEN),
+            "a token with the minted shape must survive even when it contains a denylisted substring"
+        );
+    }
+
+    /// MEC-931 N8: `confirmation_token` is not a server-wide key-name
+    /// exemption. A `confirmation_token` nested *inside* the plan (not at
+    /// the top level `signature_error_to_rmcp` lifts out) is untrusted
+    /// device/file data wearing the server's field name and must still be
+    /// redacted like any other `*token` value.
+    #[test]
+    fn nested_confirmation_token_in_plan_is_still_redacted() {
+        const FAKE_NESTED_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let plan = serde_json::json!({
+            "action": "download_and_install",
+            "extra": { "confirmation_token": FAKE_NESTED_TOKEN },
+        });
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            !error.message.contains(FAKE_NESTED_TOKEN),
+            "a confirmation_token not minted at the plan's top level must not survive verbatim"
         );
     }
 }

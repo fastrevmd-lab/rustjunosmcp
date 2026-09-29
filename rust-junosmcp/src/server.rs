@@ -135,9 +135,14 @@ pub(super) fn redact_body(s: &str) -> String {
 /// - `initiator_cookie`, `responder_cookie` — IKE cookies from
 ///   `vpn_lifecycle_report`, public per the IKE protocol, not secret key
 ///   material.
-/// - `confirmation_token` — the server-issued token the two-call
-///   signature-package confirmation protocol requires back verbatim; see
-///   [`super::srx::JmcpHandler::signature_error_to_rmcp`].
+///
+/// `confirmation_token` is deliberately **not** in this list — see MEC-931
+/// N8. The server-issued token the two-call signature-package confirmation
+/// protocol requires back verbatim is held out of redaction locally, in
+/// [`super::srx::JmcpHandler::signature_error_to_rmcp`], at the one place
+/// the server mints it, rather than by exempting the key name here for
+/// every caller. A device or file JSON body that happens to carry a
+/// `confirmation_token` key is not that plan and must not skip redaction.
 ///
 /// MEC-918 N3.
 const REDACTION_KEY_EXEMPTIONS: &[&str] = &[
@@ -146,25 +151,7 @@ const REDACTION_KEY_EXEMPTIONS: &[&str] = &[
     "session_identifier",
     "initiator_cookie",
     "responder_cookie",
-    "confirmation_token",
 ];
-
-/// Shape `ConfirmationStore::issue` (in `rust-junosmcp-srx-core`) mints: an
-/// unpadded base64url encoding of 32 random bytes, always 43 characters of
-/// `[A-Za-z0-9_-]`.
-///
-/// MEC-918 N5/N6: a real token still must not be run through the denylist's
-/// text scan — 0.24% of 50,000 sampled tokens contained a denylisted
-/// substring (`psk`, `pw`, ...) by chance, which would fail roughly 1 in 420
-/// destructive confirmations closed at random. So `confirmation_token` is
-/// restored verbatim only when it has this exact shape; anything else under
-/// that key name is treated as an untrusted value and re-redacted, not
-/// silently passed through.
-fn is_minted_confirmation_token(t: &str) -> bool {
-    t.len() == 43
-        && t.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
 
 /// Paste [`REDACTION_KEY_EXEMPTIONS`] values from `original` back into
 /// `redacted` at matching paths, walking both trees in lockstep.
@@ -194,11 +181,7 @@ fn restore_exempt_fields(original: &Value, redacted: &mut Value) {
                 let Some(red_v) = red.get_mut(key) else {
                     continue;
                 };
-                if key == "confirmation_token"
-                    && orig_v.as_str().is_some_and(is_minted_confirmation_token)
-                {
-                    *red_v = orig_v.clone();
-                } else if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
+                if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
                     let mut wrapped = serde_json::json!({ "value": orig_v.clone() });
                     redact_json_preserving_server_fields(&mut wrapped);
                     *red_v = wrapped["value"].take();
@@ -3417,21 +3400,37 @@ mod redact_last_mile_tests {
     /// pass through unredacted. Each of these shapes leaked verbatim at
     /// b5cf01a; `restore_exempt_fields` must re-redact the value under a
     /// neutral wrapper key instead of pasting the original back untouched.
+    ///
+    /// MEC-931 N8: `confirmation_token` is no longer in
+    /// [`REDACTION_KEY_EXEMPTIONS`] at all — see that constant's doc comment
+    /// — so a device- or file-supplied `confirmation_token`, at any path,
+    /// must be redacted like any other `*token` field here. Only
+    /// `signature_error_to_rmcp` (in `server/srx.rs`) restores the one the
+    /// server itself mints, and only at the top level of the plan it builds.
     #[test]
     fn redact_body_still_scans_inside_and_as_exempt_fields() {
         const FAKE_PW: &str = "FAKE-nested-pw-7f3a";
+        // A 43-char base64url string, the shape a real confirmation_token
+        // has, but not one any store actually issued.
+        const FAKE_TOKEN_SHAPED: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         let cases = [
             serde_json::json!({"sessions":[{"session_id":1,"password":FAKE_PW,"note":format!("x {FAKE_JUNOS_HASH}")}]}),
             serde_json::json!({"sessions": FAKE_JUNOS_HASH}),
             serde_json::json!({"session_id": FAKE_JUNOS_HASH}),
             serde_json::json!({"initiator_cookie": format!("pre-shared-key {FAKE_JUNOS_HASH}")}),
             serde_json::json!({"secret":{"confirmation_token": FAKE_JUNOS_HASH}}),
+            serde_json::json!({"confirmation_token": FAKE_TOKEN_SHAPED}),
+            serde_json::json!({"cfg":{"api":{"confirmation_token": FAKE_TOKEN_SHAPED}}}),
+            serde_json::json!({"items":[{"confirmation_token": FAKE_TOKEN_SHAPED}]}),
+            serde_json::json!({"sessions":[{"confirmation_token": FAKE_TOKEN_SHAPED}]}),
         ];
         for case in cases {
             let body = serde_json::to_string_pretty(&case).unwrap();
             let redacted = redact_body(&body);
             assert!(
-                !redacted.contains(FAKE_JUNOS_HASH) && !redacted.contains(FAKE_PW),
+                !redacted.contains(FAKE_JUNOS_HASH)
+                    && !redacted.contains(FAKE_PW)
+                    && !redacted.contains(FAKE_TOKEN_SHAPED),
                 "secret leaked through an exempt-key subtree (case: {case}) (redacted value not printed to avoid echoing it into test output)"
             );
         }
@@ -3445,41 +3444,6 @@ mod redact_last_mile_tests {
         let value: Value = serde_json::from_str(&redacted).unwrap();
         assert_eq!(value["sessions"][0]["session_id"], 12345);
         assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
-    }
-
-    /// MEC-918 N5/N6: a `confirmation_token` with the exact shape
-    /// `ConfirmationStore::issue` mints survives `redact_last_mile`
-    /// unredacted end to end (a real store, not a hand-written fixture, so
-    /// the 43-char base64url shape check is exercised against the real
-    /// producer rather than an approximation of it), across many samples to
-    /// pin the false-positive rate the text scan would otherwise impose.
-    #[test]
-    fn real_confirmation_tokens_survive_the_last_mile_pass() {
-        use rust_junosmcp_srx_core::workflows::signature_package::confirmation::{
-            ConfirmationBinding, ConfirmationStore,
-        };
-        use std::time::Duration;
-
-        let store = ConfirmationStore::new(Duration::from_secs(300), 10_000);
-        for i in 0..500 {
-            let binding = ConfirmationBinding::new(Some("alice"), "srx-01", "device-1");
-            let plan = store
-                .issue(
-                    serde_json::json!({"action": "download_and_install"}),
-                    binding,
-                    &format!("corr-{i}"),
-                )
-                .unwrap();
-            let token = plan["confirmation_token"].as_str().unwrap().to_string();
-
-            let mut wrapped = serde_json::json!({ "confirmation_token": token });
-            redact_json_preserving_server_fields(&mut wrapped);
-            assert_eq!(
-                wrapped["confirmation_token"].as_str(),
-                Some(token.as_str()),
-                "a real minted confirmation_token must never be altered by redaction"
-            );
-        }
     }
 
     /// Idempotency is what makes it safe to run `redact_body` again over
