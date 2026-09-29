@@ -114,7 +114,7 @@ resolver = "2"
 version      = "0.1.0"
 edition      = "2021"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/fastrevmd-lab/RustJunosMCP"
+repository   = "https://github.com/mechubsec/rustjunosmcp"
 authors      = ["fastrevmd-lab"]
 
 [workspace.dependencies]
@@ -2166,7 +2166,7 @@ COPY . .
 RUN cargo build --release --bin rust-junosmcp
 
 FROM gcr.io/distroless/cc-debian12:nonroot
-LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/RustJunosMCP"
+LABEL org.opencontainers.image.source="https://github.com/mechubsec/rustjunosmcp"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /src/target/release/rust-junosmcp /usr/local/bin/rust-junosmcp
 ENV RUST_LOG=info
@@ -2405,7 +2405,7 @@ git commit -m "build: LXC tarball packaging with hardened systemd unit"
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server for Juniper Junos
 devices, written in Rust. Drop-in compatible with [Juniper/junos-mcp-server](https://github.com/Juniper/junos-mcp-server)
-on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/fastrevmd-lab/rustEZ) + [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf))
+on the inventory format and tool surface, but built on async Rust ([rustEZ](https://github.com/mechubsec/rustez) + [rustnetconf](https://github.com/mechubsec/rustnetconf))
 instead of PyEZ.
 
 ## v0.1 scope
@@ -2435,8 +2435,8 @@ before deploying. The same warnings apply.
 
 ```bash
 # Clone alongside rustEZ (path dependency in v0.1).
-git clone https://github.com/fastrevmd-lab/rustEZ.git
-git clone https://github.com/fastrevmd-lab/RustJunosMCP.git
+git clone https://github.com/mechubsec/rustez.git
+git clone https://github.com/mechubsec/rustjunosmcp.git
 cd RustJunosMCP
 
 # Build.
@@ -2711,7 +2711,7 @@ jobs:
       - name: Checkout rustEZ (path dep)
         uses: actions/checkout@v4
         with:
-          repository: fastrevmd-lab/rustEZ
+          repository: mechubsec/rustez
           path: rustEZ
 
       - name: Install Rust toolchain
@@ -2748,7 +2748,7 @@ jobs:
           path: RustJunosMCP
       - uses: actions/checkout@v4
         with:
-          repository: fastrevmd-lab/rustEZ
+          repository: mechubsec/rustez
           path: rustEZ
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-audit --locked

@@ -1,6 +1,6 @@
 # HTTP Resource & Session Limits — Design
 
-- **Issue:** [#131](https://github.com/fastrevmd-lab/rustjunosmcp/issues/131) — [Medium] Add HTTP resource and session limits
+- **Issue:** [#131](https://github.com/mechubsec/rustjunosmcp/issues/131) — [Medium] Add HTTP resource and session limits
 - **Date:** 2026-07-12
 - **Status:** Approved (first pass)
 - **Scope note:** This spec covers the **first pass** — core DoS guardrails. Several

@@ -4,8 +4,8 @@ Thanks for considering a contribution. rust-junosmcp is a [Model Context
 Protocol](https://modelcontextprotocol.io/) server for Juniper Junos and SRX
 devices, written in Rust — part of the [mechub](https://github.com/fastrevmd-lab)
 family of open-source, self-hosted network-security automation tooling. It's
-built on [rustnetconf](https://github.com/fastrevmd-lab/rustnetconf) and
-[rustEZ](https://github.com/fastrevmd-lab/rustEZ), and shares the `mecmcp`
+built on [rustnetconf](https://github.com/mechubsec/rustnetconf) and
+[rustEZ](https://github.com/mechubsec/rustez), and shares the `mecmcp`
 crate family (auth, transport, runtime, policy, audit, etc.) with sibling
 mechub MCP servers.
 
@@ -88,7 +88,7 @@ they're templates, not real inventory.
 
 New dependencies, and version bumps that touch `deny.toml`'s allow-list, get
 reviewed for maintenance status, license, and attack surface. The `mecmcp-*`
-crates are pinned to a git tag (`fastrevmd-lab/mecmcp`) rather than
+crates are pinned to a git tag (`mechubsec/mecmcp`) rather than
 crates.io; all of them must move together to the same tag in one PR — mixing
 tags produces two incompatible copies of shared types in the dependency
 graph (see the comment in `Cargo.toml`).
