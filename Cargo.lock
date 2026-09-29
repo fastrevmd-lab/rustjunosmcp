@@ -3040,6 +3040,7 @@ dependencies = [
  "minijinja",
  "regex",
  "rmcp",
+ "russh 0.62.5",
  "rust-junosmcp-auth",
  "rustez",
  "rustnetconf",
@@ -3056,6 +3057,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -3174,8 +3176,7 @@ dependencies = [
 [[package]]
 name = "rustnetconf"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc2a0a08a9551fceb15ee599fa393999d98ae5dd838ed0aff77acca570de9094"
+source = "git+https://github.com/mechubsec/rustnetconf?rev=29373d652386cc96d6e7b7c79e70515aec324a2a#29373d652386cc96d6e7b7c79e70515aec324a2a"
 dependencies = [
  "async-trait",
  "base64ct",

@@ -334,7 +334,17 @@ scripts/scan-known-hosts.sh --inventory /etc/jmcp/devices.json \
 ```
 
 For lab / first-contact use, pass `--ssh-accept-new-host-keys` to fall back
-to OpenSSH's `accept-new` (TOFU) mode.
+to OpenSSH's `accept-new` (TOFU) mode: unknown hosts are pinned to
+`known_hosts` on first contact, and a host presenting a *different* key
+afterward is still refused. This applies identically to `transfer_file` /
+`upgrade_junos` (scp) and NETCONF SSH.
+
+**`--ssh-insecure-accept-any-host-key` (lab-only):** skips
+host-key verification entirely for NETCONF SSH — no known_hosts persistence,
+no mismatch detection, no protection against a man-in-the-middle. Mutually
+exclusive with `--ssh-accept-new-host-keys`. Logged loudly at startup and
+recorded as an audit event. Never use this against production devices; use
+`--ssh-accept-new-host-keys` instead, which gives TOFU semantics safely.
 
 `list_staged_files` returns the contents of the host staging dir. If
 `router_name` is supplied it also runs `file list /var/tmp/ detail` on the
