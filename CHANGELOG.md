@@ -27,6 +27,9 @@ All notable user-facing changes are recorded here. Format loosely follows
   an honestly-named opt-in. Mutually exclusive with
   `--ssh-accept-new-host-keys`. Logged loudly at startup and recorded as an
   audit event.
+- **Container images now publish to `ghcr.io/mechubsec/rustjunosmcp`** —
+  the repo moved to the mechubsec organization, and images are renamed to
+  match. Older tags were copied from the previous name.
 
 ## [0.26.0] - 2026-09-28
 
