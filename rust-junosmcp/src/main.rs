@@ -250,7 +250,8 @@ async fn main() -> Result<()> {
         SshHostKeyMode::AcceptAll => {
             tracing::warn!(
                 target: "audit",
-                "--ssh-insecure-accept-any-host-key: NETCONF SSH accepts ANY device host key \
+                "--ssh-insecure-accept-any-host-key: NETCONF SSH and scp \
+                 (transfer_file/fetch_file/upgrade_junos) accept ANY device host key \
                  unconditionally, with no known_hosts persistence and no mismatch detection. \
                  This gives no protection against a man-in-the-middle. Lab-only — do not run \
                  this against production devices."
@@ -259,7 +260,7 @@ async fn main() -> Result<()> {
         SshHostKeyMode::Strict => {
             tracing::info!(
                 known_hosts = %args.known_hosts_file.display(),
-                "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
+                "ssh host-key policy: scp and NETCONF SSH both require a matching pinned key (strict, default)"
             );
         }
     }
@@ -271,13 +272,12 @@ async fn main() -> Result<()> {
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
-        // `--ssh-insecure-accept-any-host-key` also puts scp in TOFU mode
-        // (AcceptNew) rather than leaving it strict: mecmcp-scp's
-        // HostKeyVerification has no AcceptAll-equivalent wired through
-        // ScpJob today, and refusing scp outright while NETCONF accepts
-        // anything would be a stranger mismatch than the one MEC-44 fixes.
-        accept_new_host_keys: args.ssh_accept_new_host_keys
-            || args.ssh_insecure_accept_any_host_key,
+        // scp shares the exact same host-key mode as NETCONF SSH above:
+        // `--ssh-insecure-accept-any-host-key` now gives scp a real
+        // mecmcp_scp::HostKeyVerification::AcceptAll, not TOFU (MEC-44
+        // follow-up — the flag name must mean the same thing on both
+        // transports).
+        host_key_mode,
     };
     let device_leases = std::sync::Arc::new(
         rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)

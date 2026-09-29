@@ -278,7 +278,8 @@ pub struct Cli {
 
     /// Accept ANY device host key unconditionally, with no known_hosts
     /// persistence and no mismatch detection (`HostKeyVerification::AcceptAll`
-    /// for NETCONF SSH). Off by default.
+    /// for both NETCONF SSH and scp — `transfer_file` / `fetch_file` /
+    /// `upgrade_junos`). Off by default.
     ///
     /// **Lab-only — never use against production devices.** Unlike
     /// `--ssh-accept-new-host-keys`, this gives no protection against a

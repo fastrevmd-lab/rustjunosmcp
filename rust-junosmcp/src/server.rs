@@ -1993,7 +1993,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
-            accept_new_host_keys: false,
+            host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
         }
     }
 
@@ -2363,7 +2363,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
-            accept_new_host_keys: false,
+            host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
         };
         let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
             transfer_cfg: cfg.clone(),
