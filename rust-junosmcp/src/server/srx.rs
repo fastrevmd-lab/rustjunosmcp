@@ -1440,15 +1440,22 @@ mod signature_error_tests {
     /// by turning redaction off for the rest of the plan.
     #[test]
     fn confirmation_required_plan_keeps_its_token_but_still_redacts_other_secrets() {
-        let plan = serde_json::json!({
-            "code": "confirmation_required",
-            "router": "srx-01",
-            "action": "download_and_install",
-            "confirmation_token": "QQtoken-abc123",
-            "confirmation_expires_at": "2026-01-01T00:00:00Z",
-            "correlation_id": "corr-1",
-            "warning": format!("unexpected embedded hash {FAKE_JUNOS_HASH}"),
-        });
+        let store = rust_junosmcp_srx_core::workflows::signature_package::confirmation::ConfirmationStore::default();
+        let binding =
+            ConfirmationBinding::new(Some("alice"), "srx-01", "srx-01|192.0.2.1|830|netconf");
+        let plan = store
+            .issue(
+                serde_json::json!({
+                    "code": "confirmation_required",
+                    "router": "srx-01",
+                    "action": "download_and_install",
+                    "warning": format!("unexpected embedded hash {FAKE_JUNOS_HASH}"),
+                }),
+                binding,
+                "corr-1",
+            )
+            .unwrap();
+        let token = plan["confirmation_token"].as_str().unwrap().to_string();
         let err = SrxError::SignaturePackageConfirmationRequired {
             router: "srx-01".to_string(),
             plan,
@@ -1460,7 +1467,7 @@ mod signature_error_tests {
 
         let error = result.unwrap_err();
         assert!(
-            error.message.contains("QQtoken-abc123"),
+            error.message.contains(&token),
             "confirmation_token must survive the last-mile pass so the caller can confirm"
         );
         assert!(

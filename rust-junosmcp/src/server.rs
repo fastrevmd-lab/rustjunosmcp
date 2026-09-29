@@ -149,15 +149,44 @@ const REDACTION_KEY_EXEMPTIONS: &[&str] = &[
     "confirmation_token",
 ];
 
+/// Shape `ConfirmationStore::issue` (in `rust-junosmcp-srx-core`) mints: an
+/// unpadded base64url encoding of 32 random bytes, always 43 characters of
+/// `[A-Za-z0-9_-]`.
+///
+/// MEC-918 N5/N6: a real token still must not be run through the denylist's
+/// text scan — 0.24% of 50,000 sampled tokens contained a denylisted
+/// substring (`psk`, `pw`, ...) by chance, which would fail roughly 1 in 420
+/// destructive confirmations closed at random. So `confirmation_token` is
+/// restored verbatim only when it has this exact shape; anything else under
+/// that key name is treated as an untrusted value and re-redacted, not
+/// silently passed through.
+fn is_minted_confirmation_token(t: &str) -> bool {
+    t.len() == 43
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// Paste [`REDACTION_KEY_EXEMPTIONS`] values from `original` back into
 /// `redacted` at matching paths, walking both trees in lockstep.
 ///
 /// `mecmcp_redact::redact_json_value` has no per-key exemption in its own
 /// API — the denylist's substring match is intentional there (vendor field
 /// names vary in spelling) and exempting a term crate-wide would weaken it
-/// for every other caller. So this server holds its own exemptions locally:
-/// redact everything, then restore the pre-redaction value back in at
-/// exactly the paths this server has decided are not secrets.
+/// for every other caller. So this server holds its own exemptions locally.
+///
+/// MEC-918 N5: exempting a key name is not the same as exempting its value.
+/// The first cut of this function pasted the whole original subtree back in
+/// verbatim, which skipped the denylist on nested keys, the crypt-hash/PEM/
+/// `ENC` shape scan, and the text `k=v` scan for anything living under an
+/// exempt key — e.g. `{"sessions":[{"password":"..."}]}` came back with the
+/// password intact. Instead: re-redact the exempt key's original value under
+/// a neutral wrapper key (so the crate's substring match on the exempt name
+/// itself can't fire) and restore *that*, not the untouched original. The
+/// one exception is `confirmation_token` when it has the shape a real store
+/// issues — see [`is_minted_confirmation_token`] for why that one short-
+/// circuits the scan instead of merely dodging its own key name. Never
+/// descend into a subtree whose parent key is already denylisted; nothing
+/// should be un-redacted there, exempt name or not.
 fn restore_exempt_fields(original: &Value, redacted: &mut Value) {
     match (original, redacted) {
         (Value::Object(orig), Value::Object(red)) => {
@@ -165,9 +194,15 @@ fn restore_exempt_fields(original: &Value, redacted: &mut Value) {
                 let Some(red_v) = red.get_mut(key) else {
                     continue;
                 };
-                if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
+                if key == "confirmation_token"
+                    && orig_v.as_str().is_some_and(is_minted_confirmation_token)
+                {
                     *red_v = orig_v.clone();
-                } else {
+                } else if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
+                    let mut wrapped = serde_json::json!({ "value": orig_v.clone() });
+                    redact_json_preserving_server_fields(&mut wrapped);
+                    *red_v = wrapped["value"].take();
+                } else if !mecmcp_redact::denylist::is_denylisted_key(key) {
                     restore_exempt_fields(orig_v, red_v);
                 }
             }
@@ -481,7 +516,7 @@ impl JmcpHandler {
                 CallToolResult::success(vec![ContentBlock::text(redact_body(&s))])
             }
             Ok(mut other) => {
-                mecmcp_redact::redact_json_value(&mut other);
+                redact_json_preserving_server_fields(&mut other);
                 let pretty = serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string());
                 CallToolResult::success(vec![ContentBlock::text(pretty)])
             }
@@ -3374,6 +3409,77 @@ mod redact_last_mile_tests {
             !redacted.contains(FAKE_JUNOS_HASH),
             "secret leaked (not printed here to avoid echoing it into test output)"
         );
+    }
+
+    /// MEC-918 N5: the first N3 fix restored the *whole original subtree*
+    /// under an exempt key name, not just the key name itself, which let
+    /// secrets nested underneath (or a secret-shaped exempt value directly)
+    /// pass through unredacted. Each of these shapes leaked verbatim at
+    /// b5cf01a; `restore_exempt_fields` must re-redact the value under a
+    /// neutral wrapper key instead of pasting the original back untouched.
+    #[test]
+    fn redact_body_still_scans_inside_and_as_exempt_fields() {
+        const FAKE_PW: &str = "FAKE-nested-pw-7f3a";
+        let cases = [
+            serde_json::json!({"sessions":[{"session_id":1,"password":FAKE_PW,"note":format!("x {FAKE_JUNOS_HASH}")}]}),
+            serde_json::json!({"sessions": FAKE_JUNOS_HASH}),
+            serde_json::json!({"session_id": FAKE_JUNOS_HASH}),
+            serde_json::json!({"initiator_cookie": format!("pre-shared-key {FAKE_JUNOS_HASH}")}),
+            serde_json::json!({"secret":{"confirmation_token": FAKE_JUNOS_HASH}}),
+        ];
+        for case in cases {
+            let body = serde_json::to_string_pretty(&case).unwrap();
+            let redacted = redact_body(&body);
+            assert!(
+                !redacted.contains(FAKE_JUNOS_HASH) && !redacted.contains(FAKE_PW),
+                "secret leaked through an exempt-key subtree (case: {case}) (redacted value not printed to avoid echoing it into test output)"
+            );
+        }
+        // Baseline: server-defined field names themselves still survive when
+        // not carrying a secret-shaped value.
+        let baseline = serde_json::to_string_pretty(&serde_json::json!({
+            "sessions": [{"session_id": 12345, "initiator_cookie": "abc123"}],
+        }))
+        .unwrap();
+        let redacted = redact_body(&baseline);
+        let value: Value = serde_json::from_str(&redacted).unwrap();
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+    }
+
+    /// MEC-918 N5/N6: a `confirmation_token` with the exact shape
+    /// `ConfirmationStore::issue` mints survives `redact_last_mile`
+    /// unredacted end to end (a real store, not a hand-written fixture, so
+    /// the 43-char base64url shape check is exercised against the real
+    /// producer rather than an approximation of it), across many samples to
+    /// pin the false-positive rate the text scan would otherwise impose.
+    #[test]
+    fn real_confirmation_tokens_survive_the_last_mile_pass() {
+        use rust_junosmcp_srx_core::workflows::signature_package::confirmation::{
+            ConfirmationBinding, ConfirmationStore,
+        };
+        use std::time::Duration;
+
+        let store = ConfirmationStore::new(Duration::from_secs(300), 10_000);
+        for i in 0..500 {
+            let binding = ConfirmationBinding::new(Some("alice"), "srx-01", "device-1");
+            let plan = store
+                .issue(
+                    serde_json::json!({"action": "download_and_install"}),
+                    binding,
+                    &format!("corr-{i}"),
+                )
+                .unwrap();
+            let token = plan["confirmation_token"].as_str().unwrap().to_string();
+
+            let mut wrapped = serde_json::json!({ "confirmation_token": token });
+            redact_json_preserving_server_fields(&mut wrapped);
+            assert_eq!(
+                wrapped["confirmation_token"].as_str(),
+                Some(token.as_str()),
+                "a real minted confirmation_token must never be altered by redaction"
+            );
+        }
     }
 
     /// Idempotency is what makes it safe to run `redact_body` again over
