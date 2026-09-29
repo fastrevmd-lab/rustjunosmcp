@@ -1,6 +1,6 @@
 # Unified Junos and SRX MCP Server — Design
 
-- **Issue:** [#163](https://github.com/fastrevmd-lab/rustjunosmcp/issues/163) — Merge `rust-srxmcp` into `rust-junosmcp` behind an `srx` feature
+- **Issue:** [#163](https://github.com/mechubsec/rustjunosmcp/issues/163) — Merge `rust-srxmcp` into `rust-junosmcp` behind an `srx` feature
 - **Date:** 2026-07-16
 - **Release:** `0.8.0`
 - **Status:** Approved design; written specification awaiting final review

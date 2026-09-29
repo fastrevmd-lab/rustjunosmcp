@@ -37,7 +37,7 @@ RUN install -d -m 0750 -o 65532 -g 65532 \
 # bookworm (glibc 2.36) and this is debian13 (glibc 2.41), so the direction is
 # safe. Moving the builder forward would require moving this first.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97
-LABEL org.opencontainers.image.source="https://github.com/fastrevmd-lab/rustjunosmcp"
+LABEL org.opencontainers.image.source="https://github.com/mechubsec/rustjunosmcp"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # CA certificates are shipped in gcr.io/distroless/cc-* at /etc/ssl/certs. The

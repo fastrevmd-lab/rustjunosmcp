@@ -1,6 +1,6 @@
 # Per-Router In-Flight Limits — Design
 
-- **Issue:** [#147](https://github.com/fastrevmd-lab/rustjunosmcp/issues/147)
+- **Issue:** [#147](https://github.com/mechubsec/rustjunosmcp/issues/147)
 - **Date:** 2026-07-14
 - **Status:** Approved
 

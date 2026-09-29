@@ -1,6 +1,6 @@
 # Filter `tools/list` by the caller's token tool scope
 
-**Issue:** [#199](https://github.com/fastrevmd-lab/rustjunosmcp/issues/199)
+**Issue:** [#199](https://github.com/mechubsec/rustjunosmcp/issues/199)
 **Date:** 2026-07-25
 **Status:** approved, ready for implementation plan
 
