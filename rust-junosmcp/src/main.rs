@@ -243,7 +243,8 @@ async fn main() -> Result<()> {
         SshHostKeyMode::AcceptAll => {
             tracing::warn!(
                 target: "audit",
-                "--ssh-insecure-accept-any-host-key: NETCONF SSH accepts ANY device host key \
+                "--ssh-insecure-accept-any-host-key: NETCONF SSH and scp \
+                 (transfer_file/fetch_file/upgrade_junos) accept ANY device host key \
                  unconditionally, with no known_hosts persistence and no mismatch detection. \
                  This gives no protection against a man-in-the-middle. Lab-only — do not run \
                  this against production devices."
@@ -252,7 +253,7 @@ async fn main() -> Result<()> {
         SshHostKeyMode::Strict => {
             tracing::info!(
                 known_hosts = %args.known_hosts_file.display(),
-                "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
+                "ssh host-key policy: scp and NETCONF SSH both require a matching pinned key (strict, default)"
             );
         }
     }
