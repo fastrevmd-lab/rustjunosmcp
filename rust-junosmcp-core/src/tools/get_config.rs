@@ -22,11 +22,13 @@ use std::time::Duration;
 /// through [`mecmcp_redact::redact_text`]. `xml` and `json` output is parsed
 /// and structurally redacted via [`mecmcp_redact::redact_xml_str`] /
 /// [`mecmcp_redact::redact_json_value`] so secrets are caught regardless of
-/// where they sit in the structure; if output caps or an unexpected device
-/// reply make the fragment unparseable, this falls back to `redact_text`
+/// where they sit in the structure; if an unexpected or malformed device
+/// reply makes the fragment unparseable, this falls back to `redact_text`
 /// rather than shipping an unredacted body (the crate's `redact_text` is
 /// documented as a safe universal fallback: it still catches key=value/
-/// secret-shaped patterns in any format).
+/// secret-shaped patterns in any format). This runs before `max_lines` /
+/// `max_bytes` / `tail` output caps are applied (see the caller), so a
+/// caps-truncated fragment is never what reaches this function.
 fn redact_config_output(text: &str, format: &str) -> String {
     match format {
         "xml" => match mecmcp_redact::redact_xml_str(text) {
@@ -193,11 +195,12 @@ mod tests {
 
     #[test]
     fn redact_config_output_xml_falls_back_to_text_redaction_on_unparseable_input() {
-        // A caps-truncated XML fragment is not well-formed; redact_config_output
-        // must still scrub the secret rather than shipping it unredacted. The
-        // hash sits on its own line, clearly delimited, so the line-oriented
-        // fallback's bare-crypt-hash catch-all is unambiguously exercised
-        // regardless of the (deliberately broken) surrounding markup.
+        // A malformed XML fragment (e.g. an unexpected device reply) is not
+        // well-formed; redact_config_output must still scrub the secret
+        // rather than shipping it unredacted. The hash sits on its own line,
+        // clearly delimited, so the line-oriented fallback's bare-crypt-hash
+        // catch-all is unambiguously exercised regardless of the
+        // (deliberately broken) surrounding markup.
         let truncated_xml = format!("<configuration>\n{FAKE_JUNOS_HASH}\n<unterminated");
         let out = redact_config_output(&truncated_xml, "xml");
         assert!(

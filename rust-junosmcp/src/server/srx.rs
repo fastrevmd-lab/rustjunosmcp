@@ -154,13 +154,38 @@ impl JmcpHandler {
         ))
     }
 
+    /// Map a workflow error to the `ErrorData` sent to the model.
+    ///
+    /// MEC-918 N2: `SignaturePackageConfirmationRequired`'s plan carries the
+    /// server-issued `confirmation_token` the caller must echo back on the
+    /// confirming call — it is protocol data, not a device secret, and
+    /// [`super::redact_last_mile`]'s blanket text-redaction pass over
+    /// `ErrorData.message` would otherwise strip it (the `token` denylist
+    /// term matches). So this redacts the plan itself, structurally, before
+    /// formatting the message — holding the token (and any other
+    /// server-defined field in [`super::REDACTION_KEY_EXEMPTIONS`]) out —
+    /// and tags `ErrorData.data` with the error's stable code so
+    /// `redact_last_mile` knows this message was already handled and skips
+    /// its own pass rather than redacting it a second, cruder time.
     fn signature_error_to_rmcp(e: rust_junosmcp_srx_core::SrxError) -> rmcp::ErrorData {
+        let code = e.audit_kind();
         match e {
             rust_junosmcp_srx_core::SrxError::InvalidInput(_) => {
                 rmcp::ErrorData::invalid_params(e.to_string(), None)
             }
-            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationRequired { .. }
-            | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired {
+            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationRequired {
+                router,
+                mut plan,
+            } => {
+                super::redact_json_preserving_server_fields(&mut plan);
+                rmcp::ErrorData::invalid_request(
+                    format!(
+                        "[code=confirmation_required] router={router}: confirmation required — re-call with confirm=true and the plan's confirmation_token; plan: {plan}"
+                    ),
+                    Some(serde_json::json!({ "code": code })),
+                )
+            }
+            rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenRequired {
                 ..
             }
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationTokenInvalid {
@@ -169,7 +194,10 @@ impl JmcpHandler {
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationPlanDrift { .. }
             | rust_junosmcp_srx_core::SrxError::SignaturePackageConfirmationCapacityExceeded {
                 ..
-            } => rmcp::ErrorData::invalid_request(e.to_string(), None),
+            } => rmcp::ErrorData::invalid_request(
+                e.to_string(),
+                Some(serde_json::json!({ "code": code })),
+            ),
             rust_junosmcp_srx_core::SrxError::Transport(
                 rust_junosmcp_core::JmcpError::DeviceLeaseBusy { .. },
             ) => rmcp::ErrorData::invalid_request(e.to_string(), None),
@@ -1384,6 +1412,109 @@ mod scope_tests {
                     "srx-01|192.0.2.1|830|netconf",
                 )
                 .is_ok()
+        );
+    }
+}
+
+/// MEC-918 N2/N3: `signature_error_to_rmcp` and `redact_last_mile` chained
+/// together, the same order `ServerHandler::call_tool` runs them in
+/// production, over the two shapes the review found the blanket last-mile
+/// pass corrupting — the confirmation plan's `confirmation_token`, and a
+/// `sessions`/cookie-bearing tool response.
+#[cfg(test)]
+mod signature_error_tests {
+    use super::*;
+    use rust_junosmcp_srx_core::SrxError;
+
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+
+    /// The two-call signature-package confirmation protocol requires the
+    /// caller to echo `confirmation_token` back verbatim on the confirming
+    /// call. Before MEC-918 N2's fix, `redact_last_mile`'s line-oriented
+    /// text fallback (the plan is embedded as JSON *inside* a larger
+    /// non-JSON error message, so it can't be redacted structurally as a
+    /// whole) matched `token` on the denylist and stripped it, making every
+    /// `download_and_install`/`rollback`/`uninstall` confirmation
+    /// impossible to complete. The fixture's `warning` field carries a
+    /// deliberately secret-shaped value to prove the fix does not do this
+    /// by turning redaction off for the rest of the plan.
+    #[test]
+    fn confirmation_required_plan_keeps_its_token_but_still_redacts_other_secrets() {
+        let plan = serde_json::json!({
+            "code": "confirmation_required",
+            "router": "srx-01",
+            "action": "download_and_install",
+            "confirmation_token": "QQtoken-abc123",
+            "confirmation_expires_at": "2026-01-01T00:00:00Z",
+            "correlation_id": "corr-1",
+            "warning": format!("unexpected embedded hash {FAKE_JUNOS_HASH}"),
+        });
+        let err = SrxError::SignaturePackageConfirmationRequired {
+            router: "srx-01".to_string(),
+            plan,
+        };
+
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(JmcpHandler::signature_error_to_rmcp(err));
+        crate::server::redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            error.message.contains("QQtoken-abc123"),
+            "confirmation_token must survive the last-mile pass so the caller can confirm"
+        );
+        assert!(
+            !error.message.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert_eq!(
+            error
+                .data
+                .as_ref()
+                .and_then(|data| data.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("confirmation_required"),
+            "ErrorData.data must tag the code so redact_last_mile can recognize this message as already handled"
+        );
+    }
+
+    /// A tool response carrying `srx_flow_sessions`/`vpn_lifecycle_report`
+    /// shapes (`sessions`, `session_id`, IKE `initiator_cookie`/
+    /// `responder_cookie`) must round-trip through `redact_last_mile`
+    /// unredacted — none of those are vendor secrets, just field names that
+    /// happen to contain a denylisted substring (`session`) — while an
+    /// actual secret elsewhere in the same body is still stripped.
+    #[test]
+    fn flow_sessions_and_ike_cookies_survive_the_last_mile_pass() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": "srx-01",
+            "sessions": [{
+                "session_id": 12345,
+                "initiator_cookie": "abc123",
+                "responder_cookie": "def456",
+            }],
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Ok(rmcp::model::CallToolResponse::Complete(
+                CallToolResult::success(vec![ContentBlock::text(body)]),
+            ));
+
+        crate::server::redact_last_mile(&mut result);
+
+        let rmcp::model::CallToolResponse::Complete(call_result) = result.unwrap() else {
+            panic!("expected a Complete response");
+        };
+        let text = &call_result.content[0].as_text().unwrap().text;
+        let value: serde_json::Value = serde_json::from_str(text)
+            .expect("redact_last_mile must return input that still parses as JSON");
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+        assert_eq!(value["sessions"][0]["responder_cookie"], "def456");
+        assert!(
+            !text.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
         );
     }
 }

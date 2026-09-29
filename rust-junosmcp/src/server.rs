@@ -90,7 +90,8 @@ pub(super) fn mint_request_id() -> String {
 ///
 /// Tries JSON first — every SRX adapter and `to_call_result`'s `Ok(other)`
 /// branch build their body with `serde_json::to_string_pretty`, so this is
-/// the common case — then XML, then falls back to
+/// the common case — then XML (only when the trimmed input actually opens
+/// with `<`; see MEC-918 N1 below), then falls back to
 /// [`mecmcp_redact::redact_text`] for genuinely unstructured input (CLI
 /// output, a plain error message).
 ///
@@ -102,16 +103,92 @@ pub(super) fn mint_request_id() -> String {
 /// positive still redacts *a whole value*, not a fragment of the document
 /// structure, and re-running this over output that was already redacted
 /// structurally elsewhere is a no-op rather than a second, riskier pass.
+///
+/// MEC-918 N1: `mecmcp_redact::redact_xml_str` is a quick-xml *writer*, not
+/// just a parser — round-tripping plain text (`execute_junos_command`
+/// output, a `show route` dump, an error message) through it XML-escapes
+/// every `"`, `'`, and `>` it contains, corrupting non-XML output. Only
+/// attempt the XML path when the input actually looks like a document
+/// (trimmed, starts with `<`), so plain text falls straight through to
+/// [`mecmcp_redact::redact_text`] unescaped.
 pub(super) fn redact_body(s: &str) -> String {
     if let Ok(mut value) = serde_json::from_str::<Value>(s) {
-        mecmcp_redact::redact_json_value(&mut value);
+        redact_json_preserving_server_fields(&mut value);
         return serde_json::to_string_pretty(&value)
             .unwrap_or_else(|_| mecmcp_redact::redact_text(s));
     }
-    if let Ok(redacted) = mecmcp_redact::redact_xml_str(s) {
+    if s.trim_start().starts_with('<')
+        && let Ok(redacted) = mecmcp_redact::redact_xml_str(s)
+    {
         return redacted;
     }
     mecmcp_redact::redact_text(s)
+}
+
+/// Server-defined field names that survive [`redact_body`] /
+/// [`redact_json_preserving_server_fields`] unredacted even though they
+/// overlap a `mecmcp-redact` denylist term by substring (`sessions` contains
+/// `session`; `confirmation_token` contains `token`). These are protocol
+/// data the caller needs verbatim, not vendor secrets:
+/// - `sessions`, `session_id`, `session_identifier` — `srx_flow_sessions`
+///   table rows (a firewall session ID/table, not a login session token).
+/// - `initiator_cookie`, `responder_cookie` — IKE cookies from
+///   `vpn_lifecycle_report`, public per the IKE protocol, not secret key
+///   material.
+/// - `confirmation_token` — the server-issued token the two-call
+///   signature-package confirmation protocol requires back verbatim; see
+///   [`super::srx::JmcpHandler::signature_error_to_rmcp`].
+///
+/// MEC-918 N3.
+const REDACTION_KEY_EXEMPTIONS: &[&str] = &[
+    "sessions",
+    "session_id",
+    "session_identifier",
+    "initiator_cookie",
+    "responder_cookie",
+    "confirmation_token",
+];
+
+/// Paste [`REDACTION_KEY_EXEMPTIONS`] values from `original` back into
+/// `redacted` at matching paths, walking both trees in lockstep.
+///
+/// `mecmcp_redact::redact_json_value` has no per-key exemption in its own
+/// API — the denylist's substring match is intentional there (vendor field
+/// names vary in spelling) and exempting a term crate-wide would weaken it
+/// for every other caller. So this server holds its own exemptions locally:
+/// redact everything, then restore the pre-redaction value back in at
+/// exactly the paths this server has decided are not secrets.
+fn restore_exempt_fields(original: &Value, redacted: &mut Value) {
+    match (original, redacted) {
+        (Value::Object(orig), Value::Object(red)) => {
+            for (key, orig_v) in orig {
+                let Some(red_v) = red.get_mut(key) else {
+                    continue;
+                };
+                if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
+                    *red_v = orig_v.clone();
+                } else {
+                    restore_exempt_fields(orig_v, red_v);
+                }
+            }
+        }
+        (Value::Array(orig), Value::Array(red)) => {
+            for (orig_v, red_v) in orig.iter().zip(red.iter_mut()) {
+                restore_exempt_fields(orig_v, red_v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Redact a JSON value in place, like [`mecmcp_redact::redact_json_value`],
+/// except holding [`REDACTION_KEY_EXEMPTIONS`] keys out. See
+/// [`restore_exempt_fields`] for why the exemption lives here rather than in
+/// `mecmcp-redact`.
+pub(super) fn redact_json_preserving_server_fields(value: &mut Value) {
+    let original = value.clone();
+    mecmcp_redact::redact_json_value(value);
+    restore_exempt_fields(&original, value);
 }
 
 /// The last-mile redaction pass: runs once, in `ServerHandler::call_tool`,
@@ -126,12 +203,35 @@ pub(super) fn redact_body(s: &str) -> String {
 /// [`redact_body`]'s format-sniffing chain makes a second pass here safe to
 /// run unconditionally: content a call site already redacted structurally
 /// round-trips through this pass unchanged.
+///
+/// MEC-918 N2: that "safe to run unconditionally" claim breaks for one
+/// shape — `SrxError::SignaturePackageConfirmationRequired`'s message embeds
+/// the confirmation plan as JSON *inside* a larger non-JSON string (`[code=
+/// ...] router=...: ...; plan: {...}`), so [`redact_body`] can't parse it
+/// structurally and falls through to the line-oriented
+/// [`mecmcp_redact::redact_text`] pass, which would strip the
+/// `confirmation_token` the two-call confirmation protocol requires back
+/// verbatim — fine for a device secret, fails the caller closed for a
+/// protocol token that was never a secret to begin with.
+/// `signature_error_to_rmcp` already redacts that plan structurally (holding
+/// the token out via [`redact_json_preserving_server_fields`]) before
+/// building the message, and tags the resulting `ErrorData.data` with
+/// `{"code": "confirmation_..."}` so this pass can recognize that message
+/// and skip redacting it a second, less careful time.
 pub(super) fn redact_last_mile(
     result: &mut Result<rmcp::model::CallToolResponse, rmcp::ErrorData>,
 ) {
     match result {
         Err(error) => {
-            error.message = redact_body(&error.message).into();
+            let already_redacted_structurally = error
+                .data
+                .as_ref()
+                .and_then(|data| data.get("code"))
+                .and_then(Value::as_str)
+                .is_some_and(|code| code.starts_with("confirmation"));
+            if !already_redacted_structurally {
+                error.message = redact_body(&error.message).into();
+            }
         }
         Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
             for block in &mut call_result.content {
@@ -3175,11 +3275,11 @@ mod redact_last_mile_tests {
             .expect("redact_body must return input that still parses as JSON");
         assert!(
             !redacted.contains(FAKE_JUNOS_HASH),
-            "secret leaked: {redacted}"
+            "secret leaked (not printed here to avoid echoing it into test output)"
         );
         assert_eq!(
             value["system"]["host-name"], FAKE_HOSTNAME,
-            "non-secret value lost or corrupted: {redacted}"
+            "non-secret value lost or corrupted"
         );
     }
 
@@ -3195,11 +3295,11 @@ mod redact_last_mile_tests {
 
         assert!(
             !redacted.contains(FAKE_JUNOS_HASH),
-            "secret leaked: {redacted}"
+            "secret leaked (not printed here to avoid echoing it into test output)"
         );
         assert!(
             redacted.contains(FAKE_HOSTNAME) && redacted.contains("<host-name>"),
-            "non-secret structure lost: {redacted}"
+            "non-secret structure lost"
         );
         mecmcp_redact::redact_xml_str(&redacted)
             .expect("redact_body must return input that still parses as XML");
@@ -3216,10 +3316,63 @@ mod redact_last_mile_tests {
 
         let redacted = redact_body(&body);
 
-        assert!(!redacted.contains(FAKE_PSK), "secret leaked: {redacted}");
         assert!(
-            redacted.contains(FAKE_HOSTNAME),
-            "non-secret value lost: {redacted}"
+            !redacted.contains(FAKE_PSK),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert!(redacted.contains(FAKE_HOSTNAME), "non-secret value lost");
+    }
+
+    /// MEC-918 N1: `mecmcp_redact::redact_xml_str` is a quick-xml *writer*,
+    /// not just a parser — round-tripping plain text through it re-escapes
+    /// every `"`, `'`, and `>` (Junos `description "x"`, `execute_junos_command`
+    /// output, a `show route` dump, a plain error message all have these).
+    /// `redact_body` must only try the XML path when the input actually
+    /// looks like a document, so on genuinely non-XML text it must behave
+    /// identically to a direct `mecmcp_redact::redact_text` call.
+    #[test]
+    fn redact_body_does_not_xml_escape_plain_text() {
+        let body = format!(
+            "show interfaces terse\ndescription \"uplink 'A' > core\"\nset system host-name {FAKE_HOSTNAME}\npre-shared-key ascii-text \"{FAKE_PSK}\"\n"
+        );
+
+        assert_eq!(
+            redact_body(&body),
+            mecmcp_redact::redact_text(&body),
+            "redact_body must not run non-XML text through the XML writer"
+        );
+    }
+
+    /// MEC-918 N3: `mecmcp-redact`'s key denylist matches `session` as a
+    /// substring, so `srx_flow_sessions`' own `sessions`/`session_id` field
+    /// names, and `vpn_lifecycle_report`'s IKE `initiator_cookie`/
+    /// `responder_cookie` fields, are not vendor secrets but would be wiped
+    /// by the raw crate call. `redact_json_preserving_server_fields` (which
+    /// `redact_body`'s JSON branch now calls) must hold those exact keys out
+    /// while still redacting an actual secret in the same document.
+    #[test]
+    fn redact_body_preserves_server_defined_fields_in_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": FAKE_HOSTNAME,
+            "sessions": [{
+                "session_id": 12345,
+                "initiator_cookie": "abc123",
+                "responder_cookie": "def456",
+            }],
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+
+        let redacted = redact_body(&body);
+        let value: Value = serde_json::from_str(&redacted)
+            .expect("redact_body must return input that still parses as JSON");
+
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+        assert_eq!(value["sessions"][0]["responder_cookie"], "def456");
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
         );
     }
 
@@ -3257,8 +3410,7 @@ mod redact_last_mile_tests {
         let error = result.unwrap_err();
         assert!(
             !error.message.contains(FAKE_PSK),
-            "secret leaked through an unredacted error path: {}",
-            error.message
+            "secret leaked through an unredacted error path (not printed here to avoid echoing it into test output)"
         );
     }
 
@@ -3284,7 +3436,10 @@ mod redact_last_mile_tests {
         let text = &call_result.content[0].as_text().unwrap().text;
         let value: Value =
             serde_json::from_str(text).expect("redacted body must still parse as JSON");
-        assert!(!text.contains(FAKE_JUNOS_HASH), "secret leaked: {text}");
-        assert_eq!(value["router"], FAKE_HOSTNAME, "hostname lost: {text}");
+        assert!(
+            !text.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert_eq!(value["router"], FAKE_HOSTNAME, "hostname lost");
     }
 }
