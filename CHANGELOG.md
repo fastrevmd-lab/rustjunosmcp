@@ -6,6 +6,17 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--ssh-insecure-accept-any-host-key` now also disables host-key
+  verification for scp (`transfer_file` / `upgrade_junos`), not just
+  NETCONF SSH.** The MEC-44 landing (below) left scp on `AcceptNew` (TOFU)
+  under this flag, so a device presenting a changed key was still refused
+  over scp despite the flag's name promising to accept any key. Both
+  transports now share one `SshHostKeyMode` end-to-end
+  (`Strict` / `AcceptNew` / `AcceptAll`), so `--ssh-insecure-accept-any-host-key`
+  means the same thing on both paths.
+
 ### Changed
 
 - **`--ssh-accept-new-host-keys` now gives real TOFU for NETCONF SSH, not
