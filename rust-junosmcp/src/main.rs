@@ -264,13 +264,12 @@ async fn main() -> Result<()> {
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
-        // `--ssh-insecure-accept-any-host-key` also puts scp in TOFU mode
-        // (AcceptNew) rather than leaving it strict: mecmcp-scp's
-        // HostKeyVerification has no AcceptAll-equivalent wired through
-        // ScpJob today, and refusing scp outright while NETCONF accepts
-        // anything would be a stranger mismatch than the one MEC-44 fixes.
-        accept_new_host_keys: args.ssh_accept_new_host_keys
-            || args.ssh_insecure_accept_any_host_key,
+        // scp shares the exact same host-key mode as NETCONF SSH above:
+        // `--ssh-insecure-accept-any-host-key` now gives scp a real
+        // mecmcp_scp::HostKeyVerification::AcceptAll, not TOFU (MEC-44
+        // follow-up — the flag name must mean the same thing on both
+        // transports).
+        host_key_mode,
     };
     let device_leases = std::sync::Arc::new(
         rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)

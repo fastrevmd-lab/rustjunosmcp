@@ -40,8 +40,8 @@ fn skipped_response(
 /// Validates basename (rejects path traversal), requires SSH-key auth, enforces
 /// per-router serialization, probes remote SHA-256 via NETCONF, skips if local
 /// file already matches, verifies SHA-256 post-fetch, and atomically promotes
-/// `.partial` to the canonical name. Requires `known_hosts` unless `accept_new_host_keys`
-/// is enabled (TOFU mode). Respects cancellation.
+/// `.partial` to the canonical name. Requires `known_hosts` in `Strict` mode;
+/// `AcceptNew`/`AcceptAll` tolerate a missing one. Respects cancellation.
 pub async fn handle(
     args: FetchFileArgs,
     dm: Arc<DeviceManager>,
@@ -62,14 +62,19 @@ pub async fn handle(
             .unwrap_or_else(|| args.remote_path.clone());
         validate_source_basename(&local_basename)?;
 
-        // RJMCP-SEC-004: known_hosts is mandatory unless the operator opted
-        // into TOFU (`--ssh-accept-new-host-keys`).
+        // RJMCP-SEC-004: known_hosts is mandatory in Strict mode.
+        use crate::bootstrap::SshHostKeyMode;
         match std::fs::metadata(&cfg.known_hosts_file) {
             Ok(m) if m.is_file() => {}
-            _ if cfg.accept_new_host_keys => {
+            _ if cfg.host_key_mode == SshHostKeyMode::AcceptNew => {
                 tracing::info!(
                     known_hosts = %cfg.known_hosts_file.display(),
                     "fetch_file: known_hosts missing; running in accept-new (TOFU) mode"
+                );
+            }
+            _ if cfg.host_key_mode == SshHostKeyMode::AcceptAll => {
+                tracing::info!(
+                    "fetch_file: known_hosts missing; running in accept-any (insecure, lab-only) mode"
                 );
             }
             _ => {
@@ -182,7 +187,7 @@ pub async fn handle(
             port,
             remote_path: remote_path.clone(),
             local_path: partial_path.clone(),
-            accept_new_host_keys: cfg.accept_new_host_keys,
+            host_key_mode: cfg.host_key_mode,
         };
         let outcome = cfg.scp_runner.fetch(&job, &ct).await.map_err(|e| {
             let _ = std::fs::remove_file(&partial_path);
@@ -246,7 +251,7 @@ mod handle_validation_tests {
             // so the v0.5.2 pre-check (`KnownHostsMissing`) doesn't short-
             // circuit them. A dedicated test below asserts that strict-mode
             // + missing known_hosts fails closed.
-            accept_new_host_keys: true,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::AcceptNew,
         }
     }
 
@@ -306,7 +311,7 @@ mod handle_validation_tests {
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))), "got {r:?}");
     }
 
-    /// Strict mode (`accept_new_host_keys=false`) must fail closed when the
+    /// Strict mode (`SshHostKeyMode::Strict`) must fail closed when the
     /// configured `known_hosts_file` is missing or not a regular file.
     #[tokio::test]
     async fn strict_mode_rejects_missing_known_hosts() {
@@ -317,7 +322,7 @@ mod handle_validation_tests {
         );
         let dm = Arc::new(DeviceManager::new(inv));
         let mut c = cfg(dir.path());
-        c.accept_new_host_keys = false;
+        c.host_key_mode = crate::bootstrap::SshHostKeyMode::Strict;
         c.known_hosts_file = dir.path().join("no-such-known_hosts");
         let r = handle(
             FetchFileArgs {
@@ -336,6 +341,39 @@ mod handle_validation_tests {
         assert!(
             matches!(r, Err(JmcpError::KnownHostsMissing(_))),
             "expected KnownHostsMissing in strict mode, got {r:?}"
+        );
+    }
+
+    /// MEC-44 follow-up: `AcceptAll` must not require known_hosts to exist
+    /// for fetch, mirroring the transfer_file behaviour.
+    #[tokio::test]
+    async fn accept_all_mode_tolerates_missing_known_hosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let inv = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv));
+        let mut c = cfg(dir.path());
+        c.host_key_mode = crate::bootstrap::SshHostKeyMode::AcceptAll;
+        c.known_hosts_file = dir.path().join("no-such-known_hosts");
+        let r = handle(
+            FetchFileArgs {
+                device: "r1".into(),
+                remote_path: "ok.tgz".into(),
+                local_name: None,
+                force: false,
+                verify: true,
+                timeout: 5,
+            },
+            dm,
+            c,
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            !matches!(r, Err(JmcpError::KnownHostsMissing(_))),
+            "AcceptAll must not require known_hosts to exist, got {r:?}"
         );
     }
 

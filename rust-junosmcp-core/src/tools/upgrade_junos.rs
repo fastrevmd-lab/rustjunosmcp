@@ -1209,7 +1209,7 @@ mod handle_early_exit_tests {
                 transfer_locks: Arc::new(TransferLocks::default()),
                 // Test bypasses the known_hosts pre-check; covered by the
                 // dedicated pre-check tests in transfer_file.rs.
-                accept_new_host_keys: true,
+                host_key_mode: crate::bootstrap::SshHostKeyMode::AcceptNew,
             },
             device_leases: Arc::new(
                 DeviceLeaseManager::for_directory(dir.join("device-leases")).unwrap(),

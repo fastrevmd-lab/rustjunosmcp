@@ -340,7 +340,8 @@ afterward is still refused. This applies identically to `transfer_file` /
 `upgrade_junos` (scp) and NETCONF SSH.
 
 **`--ssh-insecure-accept-any-host-key` (lab-only):** skips
-host-key verification entirely for NETCONF SSH — no known_hosts persistence,
+host-key verification entirely for both NETCONF SSH *and* scp
+(`transfer_file` / `upgrade_junos`) — no known_hosts persistence,
 no mismatch detection, no protection against a man-in-the-middle. Mutually
 exclusive with `--ssh-accept-new-host-keys`. Logged loudly at startup and
 recorded as an audit event. Never use this against production devices; use

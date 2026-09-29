@@ -39,7 +39,7 @@ fn test_handler() -> JmcpHandler {
         known_hosts_file: std::path::PathBuf::from("/dev/null"),
         scp_runner: Arc::new(MecmcpScpRunner),
         transfer_locks: Arc::new(Default::default()),
-        accept_new_host_keys: false,
+        host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
     };
     // Use a tempdir for leases to avoid permissions issues with /tmp
     let lease_dir = tempfile::tempdir().expect("test lease tempdir");

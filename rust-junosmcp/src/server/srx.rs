@@ -1166,7 +1166,7 @@ mod scope_tests {
             transfer_locks: Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
-            accept_new_host_keys: false,
+            host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
         };
         let lease_dir = tempfile::tempdir().unwrap();
         let device_leases = Arc::new(DeviceLeaseManager::for_directory(lease_dir.path()).unwrap());
