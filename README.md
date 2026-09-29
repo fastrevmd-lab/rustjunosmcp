@@ -429,8 +429,17 @@ before deploying. The same warnings apply.
 - Restrict network access to the MCP server.
 - Don't deploy to untrusted networks.
 - Set `devices.json` permissions to `0600` — it contains SSH credentials.
-- `get_junos_config` returns the full config including `## SECRET-DATA`
-  hashed password lines. Restrict this tool's scope to trusted tokens.
+- `get_junos_config`, `junos_config_diff`, and other tools returning device
+  config or command output are redacted before the response reaches the
+  caller: values matching known secret patterns — including Junos
+  `## SECRET-DATA` values (`$9$...`-style strings, which are **reversibly
+  encrypted** with Juniper's proprietary symmetric cipher, not hashed —
+  anyone holding the device's master key/passphrase can recover the
+  plaintext), IKE pre-shared-keys, RADIUS/TACACS secrets, and SNMP
+  communities — are replaced with a marker while structure, hostnames, and
+  non-secret values are preserved. This is a best-effort net (a denylist plus
+  a value-shape catch-all), not a guarantee; still restrict this tool's scope
+  to trusted tokens.
 - `reload_devices` requires `file_name` to be a *relative* path resolving
   inside the original `--device-mapping` directory (since v0.5.2). Absolute
   paths, `..` traversal, and symlinks pointing outside the inventory

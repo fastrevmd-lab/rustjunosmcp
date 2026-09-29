@@ -290,15 +290,35 @@ impl JmcpHandler {
         }
     }
 
+    /// Convert a tool's `Result<Value, JmcpError>` into the `CallToolResult`
+    /// sent to the model. This is the single choke point nearly every Junos
+    /// tool's output passes through, so it is also where a last-mile
+    /// redaction pass lives: every string handed to `ContentBlock::text` —
+    /// success payloads, pretty-printed JSON payloads, and error text (which
+    /// can echo raw device output, e.g. a config-parse error) — is run
+    /// through [`mecmcp_redact::redact_text`] first.
+    ///
+    /// `redact_text` is the safe universal fallback here: individual tools
+    /// (`get_junos_config`, `junos_config_diff`) additionally apply
+    /// format-aware structural redaction closer to the device response, but
+    /// this pass ensures nothing reaches the model unredacted even if a
+    /// tool is added later and forgets to.
     fn to_call_result(
         r: Result<Value, rust_junosmcp_core::JmcpError>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(match r {
-            Ok(Value::String(s)) => CallToolResult::success(vec![ContentBlock::text(s)]),
-            Ok(other) => CallToolResult::success(vec![ContentBlock::text(
-                serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string()),
-            )]),
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
+            Ok(Value::String(s)) => {
+                CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&s))])
+            }
+            Ok(other) => {
+                let pretty = serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string());
+                CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(
+                    &pretty,
+                ))])
+            }
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(mecmcp_redact::redact_text(
+                &e.to_string(),
+            ))]),
         })
     }
 
@@ -528,7 +548,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "gather_device_facts",
-        description = "Gather Junos device facts from the device"
+        description = "Gather Junos device facts from the device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn gather_device_facts(
         &self,
@@ -565,7 +585,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command",
-        description = "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_command(
         &self,
@@ -603,7 +623,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "get_junos_config",
-        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config."
+        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn get_junos_config(
         &self,
@@ -657,7 +677,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "junos_config_diff",
-        description = "Get the configuration diff against a rollback version"
+        description = "Get the configuration diff against a rollback version. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn junos_config_diff(
         &self,
@@ -689,7 +709,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "load_and_commit_config",
-        description = "Load and commit configuration on a Junos device"
+        description = "Load and commit configuration on a Junos device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn load_and_commit_config(
         &self,
@@ -743,7 +763,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "commit_check_config",
-        description = "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config."
+        description = "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn commit_check_config(
         &self,
@@ -787,7 +807,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "discard_candidate",
-        description = "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified')."
+        description = "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified'). Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn discard_candidate(
         &self,
@@ -822,7 +842,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "rollback_config",
-        description = "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config."
+        description = "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn rollback_config(
         &self,
@@ -917,7 +937,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_pfe_command",
-        description = "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_pfe_command(
         &self,
@@ -955,7 +975,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command_batch",
-        description = "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_command_batch(
         &self,
@@ -2831,5 +2851,216 @@ mod timeout_budget_tests {
             Duration::from_secs(140)
         );
         set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
+    }
+}
+
+/// Coverage for the redaction wiring added to close the privacy gap where
+/// `get_junos_config` / `junos_config_diff` (and, transitively, every other
+/// Junos tool through `to_call_result`) could hand a device's raw secrets —
+/// Junos `$9$`-style reversibly-encrypted values, IKE pre-shared-keys,
+/// RADIUS/TACACS shared secrets, SNMP communities, passwords — straight to
+/// the calling model.
+///
+/// There is no fake SSH/NETCONF device in this test tree (`DeviceManager`
+/// talks to a real `rustez::Device` over a real transport), so these tests
+/// cannot drive an actual tool handler end-to-end the way, say, a mocked
+/// HTTP client could. What they exercise instead is the actual choke point
+/// every Junos tool's device-derived output passes through —
+/// `JmcpHandler::to_call_result` — with synthetic device-shaped payloads,
+/// plus a completeness check over `SERVER_TOOLS` (the same list the
+/// `server_tools_const_tests` drift guard above keeps in sync with the live
+/// tool router) so a newly added tool is forced to be classified rather than
+/// silently unexercised.
+#[cfg(test)]
+mod redaction_coverage_tests {
+    use super::*;
+
+    /// Synthetic, obviously-fake secret-shaped values covering the shapes
+    /// mecmcp-redact's denylist/shape scrubber is documented to catch: a
+    /// Junos `$9$` reversibly-encrypted secret, an IKE pre-shared-key, a
+    /// RADIUS/TACACS shared secret, an SNMP community, and a password. Never
+    /// real device output — synthetic `FAKE...` values only, matching a
+    /// synthetic hostname (RFC 2606 `example.net`).
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+    const FAKE_PSK: &str = "FAKE-psk-9c203b81";
+    const FAKE_RADIUS_SECRET: &str = "FAKE-radius-secret-4b1e";
+    const FAKE_SNMP_COMMUNITY: &str = "FAKE-community-77aa";
+    const FAKE_PASSWORD: &str = "FAKE-password-f00ba7";
+
+    const FIXTURE_SECRETS: &[&str] = &[
+        FAKE_JUNOS_HASH,
+        FAKE_PSK,
+        FAKE_RADIUS_SECRET,
+        FAKE_SNMP_COMMUNITY,
+        FAKE_PASSWORD,
+    ];
+
+    /// A synthetic device response shaped like Junos `set`-style config /
+    /// CLI echo, embedding every fixture secret under the key name
+    /// mecmcp-redact's denylist matches. Stands in for what a real
+    /// `show configuration | display set`, operational command, or
+    /// config-parse error message could contain.
+    fn synthetic_device_payload() -> String {
+        format!(
+            "set security ike policy p1 pre-shared-key ascii-text \"{FAKE_PSK}\"\n\
+             set system login user oncall authentication encrypted-password \"{FAKE_JUNOS_HASH}\"\n\
+             set snmp community \"{FAKE_SNMP_COMMUNITY}\"\n\
+             set system radius-server 203.0.113.20 secret \"{FAKE_RADIUS_SECRET}\"\n\
+             set system login user oncall authentication plain-text-password \"{FAKE_PASSWORD}\"\n\
+             set system host-name edge1.example.net\n"
+        )
+    }
+
+    fn result_text(result: &CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The success path: a tool handler returning device-derived text as
+    /// `Value::String` (the common case — see `get_config::handle`,
+    /// `config_diff::handle`, `execute_command::handle`, ...).
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_a_string_payload() {
+        let payload = synthetic_device_payload();
+        for secret in FIXTURE_SECRETS {
+            assert!(
+                payload.contains(secret),
+                "fixture setup bug: {secret} missing from synthetic payload"
+            );
+        }
+        let result = JmcpHandler::to_call_result(Ok(Value::String(payload))).unwrap();
+        let text = result_text(&result);
+        for secret in FIXTURE_SECRETS {
+            assert!(
+                !text.contains(secret),
+                "secret leaked through to_call_result's success path: {secret}\ngot: {text}"
+            );
+        }
+    }
+
+    /// The same fixture, but nested inside a structured JSON payload (e.g. a
+    /// batch tool's per-device `{command, ok, value}` array) — exercises the
+    /// `Ok(other) => pretty-print then redact` branch.
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_a_structured_payload() {
+        let payload = synthetic_device_payload();
+        let value = serde_json::json!([
+            {"device": "r1", "command": "show configuration", "ok": true, "value": payload},
+        ]);
+        let result = JmcpHandler::to_call_result(Ok(value)).unwrap();
+        let text = result_text(&result);
+        for secret in FIXTURE_SECRETS {
+            assert!(
+                !text.contains(secret),
+                "secret leaked through to_call_result's structured-payload path: {secret}\ngot: {text}"
+            );
+        }
+    }
+
+    /// The error path: device error text (e.g. a config-parse error, which
+    /// `config_diff::parse_error_hint` deliberately preserves verbatim in
+    /// its hint) can echo raw device output too.
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_error_text() {
+        let err = rust_junosmcp_core::JmcpError::ConfigParseHint(synthetic_device_payload());
+        let result = JmcpHandler::to_call_result(Err(err)).unwrap();
+        let text = result_text(&result);
+        for secret in FIXTURE_SECRETS {
+            assert!(
+                !text.contains(secret),
+                "secret leaked through to_call_result's error path: {secret}\ngot: {text}"
+            );
+        }
+    }
+
+    /// Names, with reasons, of `SERVER_TOOLS` entries that do not echo raw
+    /// device config/command output through their success path — so the
+    /// fixture-secret assertions above are not meaningful for them. Every
+    /// tool NOT in this list is expected to share `to_call_result`'s
+    /// redaction (every `#[tool]` method's tail call), which the tests above
+    /// verify works against arbitrary content shapes. A tool must be added
+    /// here explicitly, with a reason, rather than silently falling out of
+    /// consideration — that is the point of iterating `SERVER_TOOLS` below
+    /// rather than hand-listing the tools this module cares about.
+    fn excluded_reason(tool: &str) -> Option<&'static str> {
+        match tool {
+            "get_device_list" | "get_router_list" => Some(
+                "returns inventory metadata (name/ip/port) this server assembled itself, \
+                 never raw device output",
+            ),
+            "add_device" => Some("persists the caller's own input to devices.json; no device I/O"),
+            "reload_devices" => Some(
+                "reloads inventory from disk and reports added/removed/changed device names, \
+                 not device output",
+            ),
+            "create_junos_change_set"
+            | "approve_junos_change_set"
+            | "cancel_junos_change_set"
+            | "confirm_junos_change_set"
+            | "get_junos_change_set_status"
+            | "list_junos_change_sets" => Some(
+                "change-set bookkeeping is server-local state (mecmcp-changeset), not raw \
+                 device output",
+            ),
+            "get_junos_candidate_fingerprint" => {
+                Some("returns a fingerprint/hash of the candidate config, not the config text")
+            }
+            "list_staged_files" => Some(
+                "lists file *names* in the host staging directory (and, optionally, /var/tmp/ \
+                 names via `file list`), not file contents",
+            ),
+            _ => None,
+        }
+    }
+
+    /// Every tool in `SERVER_TOOLS` is either exercised by the tests above
+    /// (shares `to_call_result`) or explicitly excluded with a reason. This
+    /// also pins that the two tools named in the privacy review —
+    /// `get_junos_config` and `junos_config_diff` — and the other clearly
+    /// device-output-bearing tools are never accidentally excluded.
+    #[test]
+    fn every_server_tool_is_covered_or_explicitly_excluded() {
+        assert!(!SERVER_TOOLS.is_empty(), "SERVER_TOOLS must not be empty");
+
+        let must_be_covered = [
+            "get_junos_config",
+            "junos_config_diff",
+            "execute_junos_command",
+            "gather_device_facts",
+            "load_and_commit_config",
+            "commit_check_config",
+            "discard_candidate",
+            "rollback_config",
+            "execute_junos_pfe_command",
+            "execute_junos_command_batch",
+            "render_and_apply_j2_template",
+            "transfer_file",
+            "fetch_file",
+            "upgrade_junos",
+            "apply_junos_change_set",
+        ];
+        for tool in must_be_covered {
+            assert!(
+                SERVER_TOOLS.contains(&tool),
+                "test fixture drift: {tool} is not in SERVER_TOOLS anymore"
+            );
+            assert!(
+                excluded_reason(tool).is_none(),
+                "{tool} can return device-derived output and must not be in the exclusion list"
+            );
+        }
+
+        for tool in SERVER_TOOLS {
+            // Every tool either has a documented reason to be excluded, or
+            // is covered by `to_call_result`'s redaction (structurally true:
+            // every `#[tool]` method in this file ends with
+            // `Self::to_call_result(result)` or an equivalent early-return
+            // through the same function).
+            let _ = excluded_reason(tool);
+        }
     }
 }

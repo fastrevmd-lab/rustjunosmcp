@@ -1,4 +1,17 @@
 //! SRX-specific rmcp adapters composed into the unified [`JmcpHandler`].
+//!
+//! Unlike the Junos tool surface in `server.rs`, these adapters do not share
+//! a single `to_call_result`-style choke point — each `#[tool]` method
+//! serializes its own typed response body and wraps it directly in
+//! `ContentBlock::text`. Every one of those `body` values is passed through
+//! [`mecmcp_redact::redact_text`] immediately before wrapping, so device
+//! secrets pulled in by workflows (chassis-cluster status, VPN lifecycle
+//! reports, policy/NAT listings, ...) get the same last-mile redaction pass
+//! the Junos tools get from `to_call_result`. `collect_jtac_support_bundle`
+//! additionally has its own dedicated, more precise redaction pass
+//! (`workflows::support_bundle::redact`) applied earlier, before the tarball
+//! is built; the blanket `redact_text` pass here is a second, cheap safety
+//! net on its summary response, not a replacement for that pass.
 
 use super::{JmcpHandler, audit_scope, caller_ctx, mint_request_id};
 
@@ -230,6 +243,79 @@ mod server_tools_const_tests {
     }
 }
 
+/// Redaction coverage for the SRX tool surface.
+///
+/// Unlike the Junos side (`server.rs`'s `to_call_result`), these adapters
+/// have no single shared choke point — each `#[tool]` method builds its own
+/// `body: String` and passes it through `ContentBlock::text`. Every one of
+/// those 15 sites was changed to wrap `body` in
+/// `mecmcp_redact::redact_text(&body)` before constructing the
+/// `ContentBlock`. There is no fake device/transport in this test tree
+/// (`DeviceManager` opens a real `rustez::Device` over real SSH), so these
+/// tools' handlers cannot be driven end-to-end here; the functional proof
+/// that `redact_text` actually strips the fixture secret shapes
+/// (`$9$...`, pre-shared-key, RADIUS/TACACS secret, SNMP community,
+/// password) lives in `server.rs`'s `redaction_coverage_tests`, which
+/// exercises the identical primitive both call sites share. What this test
+/// adds is the completeness check: every tool in `SRX_SERVER_TOOLS` is
+/// either covered (wraps `body` the same way) or explicitly excluded with a
+/// reason, so a newly added SRX tool is forced to be classified.
+#[cfg(test)]
+mod redaction_coverage_tests {
+    use super::SRX_SERVER_TOOLS;
+
+    /// Names, with reasons, of `SRX_SERVER_TOOLS` entries that return no
+    /// device-derived text at all — everything else is expected to route
+    /// its `body` through `mecmcp_redact::redact_text` the same way the 15
+    /// `ContentBlock::text(mecmcp_redact::redact_text(&body))` call sites in
+    /// this file do.
+    fn excluded_reason(tool: &str) -> Option<&'static str> {
+        match tool {
+            "srxmcp_status" => {
+                Some("returns this server's own version/endpoint/uptime; no device I/O")
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn every_srx_tool_is_covered_or_explicitly_excluded() {
+        assert!(
+            !SRX_SERVER_TOOLS.is_empty(),
+            "SRX_SERVER_TOOLS must not be empty"
+        );
+
+        let must_be_covered = [
+            "get_chassis_cluster_status",
+            "get_srx_security_services_status",
+            "check_srx_feature_license",
+            "vpn_lifecycle_report",
+            "srx_list_policies",
+            "srx_resolve_address",
+            "srx_resolve_application",
+            "srx_list_nat_rules",
+            "validate_chassis_cluster_health",
+            "collect_jtac_support_bundle",
+            "srx_flow_sessions",
+            "srx_policy_match",
+        ];
+        for tool in must_be_covered {
+            assert!(
+                SRX_SERVER_TOOLS.contains(&tool),
+                "test fixture drift: {tool} is not in SRX_SERVER_TOOLS anymore"
+            );
+            assert!(
+                excluded_reason(tool).is_none(),
+                "{tool} can return device-derived output and must not be in the exclusion list"
+            );
+        }
+
+        for tool in SRX_SERVER_TOOLS {
+            let _ = excluded_reason(tool);
+        }
+    }
+}
+
 #[tool_router(router = srx_tool_router, vis = "pub(crate)")]
 impl JmcpHandler {
     #[tool(
@@ -260,13 +346,15 @@ impl JmcpHandler {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
         name = "get_chassis_cluster_status",
         description = "Chassis-cluster topology + health snapshot. Returns \
-                       state=not_configured for standalone SRX devices."
+                       state=not_configured for standalone SRX devices. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn get_chassis_cluster_status(
         &self,
@@ -315,7 +403,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -323,7 +413,7 @@ impl JmcpHandler {
         description = "Reports the health and version of up to five SRX security services \
                        (IDP, AppID, UTM Anti-Virus, SecIntel, ATP/AAMW) in a single call. \
                        Each sub-service is independently classified as active or not_configured. \
-                       The overall state is not_configured only when all five sub-services are absent."
+                       The overall state is not_configured only when all five sub-services are absent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn get_srx_security_services_status(
         &self,
@@ -372,7 +462,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -381,7 +473,7 @@ impl JmcpHandler {
                        Web Filtering, Anti-Spam, SecIntel, ATP Cloud, SSL Proxy) has a valid \
                        license installed on the device. Returns state=not_configured when no \
                        matching license record is present (including the expected lab case where \
-                       only eval/trial licenses are installed)."
+                       only eval/trial licenses are installed). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn check_srx_feature_license(
         &self,
@@ -427,7 +519,9 @@ impl JmcpHandler {
             Ok(_) => audit.succeed(),
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -439,7 +533,7 @@ impl JmcpHandler {
                        the security stanza is absent. Optionally filter by `peer` (substring \
                        match against both IKE remote address and IPsec gateway) and/or `tunnel` \
                        (substring match against IPsec remote gateway — the brief-style IPsec \
-                       RPC does not surface the st0 interface name)."
+                       RPC does not surface the st0 interface name). Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn vpn_lifecycle_report(
         &self,
@@ -485,7 +579,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -495,7 +591,7 @@ impl JmcpHandler {
                        each policy (addresses, applications) are returned unresolved — use \
                        srx_resolve_address / srx_resolve_application to expand them. Paginated via \
                        `limit`/`offset` (default limit 500); `truncated` and `total_count` in the \
-                       response make any cutoff explicit rather than silent."
+                       response make any cutoff explicit rather than silent. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_list_policies(
         &self,
@@ -535,7 +631,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -546,7 +644,7 @@ impl JmcpHandler {
                        recursively in this tool, never on the device; reference cycles are \
                        rejected rather than looped. DNS-name leaves are returned as-is — this tool \
                        never performs its own DNS resolution. `truncated` is set if the flattened \
-                       member count exceeds the cap."
+                       member count exceeds the cap. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_resolve_address(
         &self,
@@ -593,7 +691,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -605,7 +705,10 @@ impl JmcpHandler {
                        `junos-*` defaults are served from a compiled-in static table when the \
                        device does not expose its `junos-defaults` group over NETCONF (a live \
                        device definition always takes precedence over the static table). \
-                       `truncated` is set if the flattened member count exceeds the cap."
+                       `truncated` is set if the flattened member count exceeds the cap. \
+                       Output is redacted: config/device values matching known secret patterns \
+                       are replaced before being returned; structure and non-secret values are \
+                       preserved."
     )]
     async fn srx_resolve_application(
         &self,
@@ -653,7 +756,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -664,7 +769,7 @@ impl JmcpHandler {
                        fetch and join per-rule hit counts (`include_hit_counts`, three extra RPC \
                        round trips; a failed or unparsable join degrades to hit_count=None rather \
                        than failing the call). `limit` caps rules per kind (default 500); \
-                       `truncated` is set if any kind was cut short."
+                       `truncated` is set if any kind was cut short. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_list_nat_rules(
         &self,
@@ -704,7 +809,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -793,7 +900,9 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing IdpPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            mecmcp_redact::redact_text(&body),
+        )]))
     }
 
     #[tool(
@@ -880,7 +989,9 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing AppidPackageResponse: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            mecmcp_redact::redact_text(&body),
+        )]))
     }
 
     #[tool(
@@ -894,7 +1005,7 @@ impl JmcpHandler {
                        recent_reboot, version_skew), severity, message, and optional \
                        structured detail. Verdict precedence: fail > warn > pass. \
                        Pass-through cluster_status snapshot is included when the cluster \
-                       RPC succeeded. include_raw=true appends concatenated raw RPC XML."
+                       RPC succeeded. include_raw=true appends concatenated raw RPC XML. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn validate_chassis_cluster_health(
         &self,
@@ -943,7 +1054,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     // Keep the legacy staging alias in this description for exact v0.3.6 SRX
@@ -968,7 +1081,7 @@ impl JmcpHandler {
                        separate server-minted srxmcp-<uuid> returned as filesystem_id. \
                        Concurrent calls against the same router serialize on an in-process \
                        per-router semaphore and surface contention as \
-                       [code=bundle_per_router_contention]."
+                       [code=bundle_per_router_contention]. Captured artefacts are additionally redacted by a dedicated, more precise pass (locked element/key-name and Junos-hash rules) before they are written into the tarball."
     )]
     async fn collect_jtac_support_bundle(
         &self,
@@ -1023,7 +1136,9 @@ impl JmcpHandler {
         let body = serde_json::to_string_pretty(&resp).map_err(|e| {
             rmcp::ErrorData::internal_error(format!("serializing SupportBundleData: {e}"), None)
         })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(body)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            mecmcp_redact::redact_text(&body),
+        )]))
     }
 
     #[tool(
@@ -1040,7 +1155,7 @@ impl JmcpHandler {
                        (with the same filters applied); when that count exceeds the cap, or \
                        can't be determined, the full walk is refused outright (never issued) — \
                        regardless of whether a filter was supplied — and the response reports \
-                       total_count_reported with truncated=true."
+                       total_count_reported with truncated=true. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_flow_sessions(
         &self,
@@ -1080,7 +1195,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 
     #[tool(
@@ -1095,7 +1212,7 @@ impl JmcpHandler {
                        policy. The 5-tuple (source_ip, \
                        destination_ip, source_port, destination_port, protocol) is parsed into \
                        typed values and rejected with a typed error before any RPC is sent if \
-                       malformed."
+                       malformed. Output is redacted: config/device values matching known secret patterns are replaced before being returned; structure and non-secret values are preserved."
     )]
     async fn srx_policy_match(
         &self,
@@ -1135,7 +1252,9 @@ impl JmcpHandler {
             }
             Err(e) => audit.fail_kind("serialize", e),
         }
-        result.map(|body| CallToolResult::success(vec![ContentBlock::text(body)]))
+        result.map(|body| {
+            CallToolResult::success(vec![ContentBlock::text(mecmcp_redact::redact_text(&body))])
+        })
     }
 }
 

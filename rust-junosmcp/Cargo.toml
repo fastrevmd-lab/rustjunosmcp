@@ -76,6 +76,7 @@ mecmcp-auth = { workspace = true }
 mecmcp-changeset = { workspace = true }
 mecmcp-transport = { workspace = true }
 mecmcp-runtime = { workspace = true }
+mecmcp-redact = { workspace = true }
 rust-junosmcp-srx-core = { version = "0.26.0", path = "../rust-junosmcp-srx-core", optional = true }
 tokio              = { workspace = true }
 tokio-util         = { workspace = true }

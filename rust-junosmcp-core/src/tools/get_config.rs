@@ -13,6 +13,40 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Redact device secrets (Junos `$9$`-style reversibly-encrypted values,
+/// PSKs, SNMP communities, RADIUS/TACACS secrets, ...) from configuration
+/// text before it reaches the caller, using the redactor that matches the
+/// requested display `format`.
+///
+/// `text` and `set` output is line-oriented Junos config syntax, so it goes
+/// through [`mecmcp_redact::redact_text`]. `xml` and `json` output is parsed
+/// and structurally redacted via [`mecmcp_redact::redact_xml_str`] /
+/// [`mecmcp_redact::redact_json_value`] so secrets are caught regardless of
+/// where they sit in the structure; if output caps or an unexpected device
+/// reply make the fragment unparseable, this falls back to `redact_text`
+/// rather than shipping an unredacted body (the crate's `redact_text` is
+/// documented as a safe universal fallback: it still catches key=value/
+/// secret-shaped patterns in any format).
+fn redact_config_output(text: &str, format: &str) -> String {
+    match format {
+        "xml" => match mecmcp_redact::redact_xml_str(text) {
+            Ok(redacted) => redacted,
+            Err(_) => mecmcp_redact::redact_text(text),
+        },
+        "json" => match serde_json::from_str::<Value>(text) {
+            Ok(mut value) => {
+                mecmcp_redact::redact_json_value(&mut value);
+                serde_json::to_string_pretty(&value)
+                    .unwrap_or_else(|_| mecmcp_redact::redact_text(text))
+            }
+            Err(_) => mecmcp_redact::redact_text(text),
+        },
+        // "text" and "set", and any future/unknown format: line-oriented
+        // redaction is the correct and safe choice.
+        _ => mecmcp_redact::redact_text(text),
+    }
+}
+
 /// Build the `show configuration [<config_path>]` command for the requested
 /// `format`, appending the Junos `| display <format>` suffix that produces
 /// it (absent for `text`, the unmodified default this tool has always
@@ -95,9 +129,10 @@ pub async fn handle(
     // applied after the XML wrapper is stripped so a line budget counts
     // configuration lines, not markup.
     let stripped = strip_config_xml_wrapper(&result);
+    let redacted = redact_config_output(&stripped, &args.format);
     let capped = crate::output::process_output(
         &command,
-        stripped,
+        redacted,
         args.max_lines,
         args.max_bytes,
         args.tail,
@@ -111,6 +146,87 @@ mod tests {
     use crate::inventory::Inventory;
     use crate::policy::Policy;
     use std::io::Write;
+
+    // ── redact_config_output: synthetic secret fixtures, never real device
+    // output — see MEC-14 (device secrets reaching tool-output callers). ────
+
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+    const FAKE_PSK: &str = "FAKE-psk-9c203b81";
+    const FAKE_SNMP_COMMUNITY: &str = "FAKE-community-77aa";
+
+    #[test]
+    fn redact_config_output_text_strips_set_style_secrets() {
+        let text = format!(
+            "set security ike policy p1 pre-shared-key ascii-text \"{FAKE_PSK}\"\n\
+             set snmp community \"{FAKE_SNMP_COMMUNITY}\"\n\
+             set system host-name edge1.example.net\n"
+        );
+        let out = redact_config_output(&text, "text");
+        assert!(!out.contains(FAKE_PSK), "PSK leaked: {out}");
+        assert!(
+            !out.contains(FAKE_SNMP_COMMUNITY),
+            "community leaked: {out}"
+        );
+        assert!(out.contains("edge1.example.net"), "hostname lost: {out}");
+    }
+
+    #[test]
+    fn redact_config_output_set_strips_set_style_secrets() {
+        let text = format!("set snmp community \"{FAKE_SNMP_COMMUNITY}\";\n");
+        let out = redact_config_output(&text, "set");
+        assert!(
+            !out.contains(FAKE_SNMP_COMMUNITY),
+            "community leaked: {out}"
+        );
+    }
+
+    #[test]
+    fn redact_config_output_xml_strips_secret_elements_structurally() {
+        let xml = format!(
+            "<configuration><system><root-authentication><encrypted-password>{FAKE_JUNOS_HASH}</encrypted-password></root-authentication></system><host-name>edge1.example.net</host-name></configuration>"
+        );
+        let out = redact_config_output(&xml, "xml");
+        assert!(!out.contains(FAKE_JUNOS_HASH), "hash leaked: {out}");
+        assert!(out.contains("edge1.example.net"), "hostname lost: {out}");
+        assert!(out.contains("<host-name>"), "structure lost: {out}");
+    }
+
+    #[test]
+    fn redact_config_output_xml_falls_back_to_text_redaction_on_unparseable_input() {
+        // A caps-truncated XML fragment is not well-formed; redact_config_output
+        // must still scrub the secret rather than shipping it unredacted. The
+        // hash sits on its own line, clearly delimited, so the line-oriented
+        // fallback's bare-crypt-hash catch-all is unambiguously exercised
+        // regardless of the (deliberately broken) surrounding markup.
+        let truncated_xml = format!("<configuration>\n{FAKE_JUNOS_HASH}\n<unterminated");
+        let out = redact_config_output(&truncated_xml, "xml");
+        assert!(
+            !out.contains(FAKE_JUNOS_HASH),
+            "hash leaked via unparseable-XML fallback: {out}"
+        );
+    }
+
+    #[test]
+    fn redact_config_output_json_strips_secret_fields_structurally() {
+        let json_text = format!(
+            r#"{{"system":{{"host-name":"edge1.example.net","root-authentication":{{"encrypted-password":"{FAKE_JUNOS_HASH}"}}}}}}"#
+        );
+        let out = redact_config_output(&json_text, "json");
+        assert!(!out.contains(FAKE_JUNOS_HASH), "hash leaked: {out}");
+        assert!(out.contains("edge1.example.net"), "hostname lost: {out}");
+    }
+
+    #[test]
+    fn redact_config_output_json_falls_back_to_text_redaction_on_unparseable_input() {
+        // Same rationale as the XML fallback test above: deliberately
+        // unparseable JSON, with the hash on its own clearly-delimited line.
+        let truncated_json = format!("{{\n{FAKE_JUNOS_HASH}\n\"unterminated");
+        let out = redact_config_output(&truncated_json, "json");
+        assert!(
+            !out.contains(FAKE_JUNOS_HASH),
+            "hash leaked via unparseable-JSON fallback: {out}"
+        );
+    }
 
     fn test_inventory() -> Arc<Inventory> {
         let mut f = tempfile::NamedTempFile::new().unwrap();

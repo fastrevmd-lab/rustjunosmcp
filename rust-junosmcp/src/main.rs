@@ -121,6 +121,9 @@ async fn main() -> Result<()> {
         audit_redact: args.audit_redact.clone(),
         audit_hmac_key_file: args.audit_hmac_key_file.clone(),
         evidence: args.evidence.clone(),
+        // Not exposed as a rust-junosmcp CLI flag yet; no approval-digest
+        // coordinator is wired into this binary, so there is no key to pass.
+        approval_digest_key_file: None,
     };
     mecmcp_runtime::cli_validate::validate(&shared_cli).map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -574,6 +577,10 @@ async fn main() -> Result<()> {
                 max_requests_per_second_per_token: args.max_requests_per_second_per_token,
                 max_request_burst_per_token: args.max_request_burst_per_token,
                 max_inflight_requests_per_device: args.max_inflight_requests_per_router,
+                // Not exposed as a rust-junosmcp CLI flag yet: X-Forwarded-For
+                // is never trusted, matching this crate's own pre-trusted-proxy
+                // behavior (the peer address is always the rate-limit key).
+                trusted_proxies: Vec::new(),
                 max_sessions: args.max_sessions,
                 max_sessions_per_token: args.max_sessions_per_token,
                 session_idle_timeout_secs: args.session_idle_timeout_secs,
