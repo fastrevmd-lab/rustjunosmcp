@@ -16,36 +16,8 @@ on:
         required: false
         default: ''
 
-env:
-  # GHCR requires a lowercase image path; the repo name is mixed-case.
-  IMAGE: ghcr.io/fastrevmd-lab/rust-junosmcp
-
 jobs:
-  sbom:
-    name: SBOM (CycloneDX)
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
-      - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
-      # One .cdx.json per workspace member; the binary's (rust-junosmcp.cdx.json)
-      # is the one that matches what actually ships in the image.
-      - name: Generate SBOM
-        run: cargo cyclonedx --all --format json
-      - name: Upload SBOM
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sbom-cyclonedx
-          path: '**/*.cdx.json'
-          retention-days: 90
-
-  build-push:
-    runs-on: ubuntu-24.04
+  release:
     permissions:
       contents: read
       packages: write
@@ -55,59 +27,16 @@ jobs:
       # workflow_dispatch backfill of an already-tagged release (see the
       # `ref` input above) -- never from a PR or an untagged branch push --
       # so a Rekor transparency-log entry is only ever created for a
-      # board-approved release.
+      # board-approved release. A reusable workflow's permissions can only
+      # be narrowed by the caller, never widened, so this job must grant
+      # them itself -- see mecmcp's docs/RELEASE-WORKFLOWS.md.
       id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          # Build source: an explicit ref if given, else the dispatched branch
-          # (main) on manual runs, or the pushed tag on tag-triggered runs.
-          ref: ${{ github.event.inputs.ref || github.ref }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.IMAGE }}
-          # v0.7.0 -> tags 0.7.0, 0.7, latest. The `value=` override makes the
-          # manual workflow_dispatch path derive the version from the input;
-          # on a tag push the input is empty and metadata falls back to the ref.
-          tags: |
-            type=semver,pattern={{version}},value=${{ github.event.inputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.version }}
-            type=raw,value=latest
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Test container runtime and SCP transfers
-        run: ./packaging/tests/container-scp-smoke.sh
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign image (keyless)
-        # Sign by digest, not by the mutable tags above -- a tag can be
-        # repointed later, but the digest is what was actually just pushed.
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+    # TODO(MEC-514 follow-up): repin to a released mecmcp tag once
+    # mechubsec/mecmcp#440 merges and mecmcp cuts its next tag.
+    uses: mechubsec/mecmcp/.github/workflows/reusable-release-image.yml@34bc01f1b7cddec9d73999170ae748dbeec76ff7
+    with:
+      # GHCR requires a lowercase image path; the repo name is mixed-case.
+      image: ghcr.io/fastrevmd-lab/rust-junosmcp
+      version: ${{ github.event.inputs.version }}
+      ref: ${{ github.event.inputs.ref }}
+      smoke-test-command: ./packaging/tests/container-scp-smoke.sh
