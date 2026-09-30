@@ -719,7 +719,7 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.25, 0.26, 0.27.1).
+# Pull the prebuilt image (tags: latest, 0.25, 0.26, 0.27).
 docker pull ghcr.io/mechubsec/rustjunosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
@@ -830,7 +830,7 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Verify the checksum.
-sha256sum -c dist/rust-junosmcp_0.27.1_amd64.tar.gz.sha256
+sha256sum -c dist/rust-junosmcp_0.27.2_amd64.tar.gz.sha256
 
 # Push and install on VM 115. The installer copies the unified binary and unit
 # from its extracted package root.
@@ -846,8 +846,8 @@ sha256sum -c dist/rust-junosmcp_0.27.1_amd64.tar.gz.sha256
 #
 # Debian 13 also matches docs/PACKAGING.md §2, the container runtime base, and
 # rustpanosmcp — one distro generation to track CVEs against, not three.
-pct push 115 dist/rust-junosmcp_0.27.1_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.27.1_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.27.2_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.27.2_amd64/install.sh"
 ```
 
 **Downloading a prebuilt release tarball instead:** each GitHub release also
@@ -859,7 +859,7 @@ alone only proves the download was not corrupted in transit, not that it came
 from this repository's release workflow:
 
 ```bash
-version=0.27.1
+version=0.27.2
 base="https://github.com/mechubsec/rustjunosmcp/releases/download/v${version}"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.sha256"
