@@ -21,6 +21,5 @@ jobs:
       # caller, never widened, so this job must grant them itself -- see
       # mecmcp's docs/RELEASE-WORKFLOWS.md.
       id-token: write
-    # TODO(MEC-514 follow-up): repin to a released mecmcp tag once
-    # mechubsec/mecmcp#440 merges and mecmcp cuts its next tag.
-    uses: mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@34bc01f1b7cddec9d73999170ae748dbeec76ff7
+    # Pinned to mecmcp main after #440 merged (squash). Repin to a mecmcp tag once one is cut.
+    uses: mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@e97d10bbe788b05201d592f1351168659756aa7b
