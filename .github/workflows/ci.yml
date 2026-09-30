@@ -19,6 +19,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout RustJunosMCP
         uses: actions/checkout@v7.0.1
@@ -60,6 +61,7 @@ jobs:
 
   audit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -71,6 +73,7 @@ jobs:
 
   packaging:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout RustJunosMCP
         uses: actions/checkout@v7.0.1
@@ -114,6 +117,7 @@ jobs:
 
   container:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout RustJunosMCP
         uses: actions/checkout@v7.0.1
