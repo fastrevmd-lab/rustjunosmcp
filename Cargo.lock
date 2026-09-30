@@ -3005,6 +3005,7 @@ dependencies = [
  "mecmcp-transport",
  "metrics",
  "metrics-exporter-prometheus",
+ "rand 0.10.3",
  "rcgen",
  "reqwest",
  "rmcp",
