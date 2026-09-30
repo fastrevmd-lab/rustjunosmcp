@@ -435,6 +435,68 @@ pub enum JmcpError {
         line_number: Option<usize>,
     },
 
+    /// Tool call was blocked by the fail-closed allowlist engine (MEC-93):
+    /// under `mode: allowlist`, no allowlist entry's token sequence was a
+    /// whole-token prefix of the input, a `|` pipe stage didn't match
+    /// `allowed_pipes`, or the raw input contained a forbidden
+    /// metacharacter (`;`, `>`, `<`, backtick, newline/CR).
+    ///
+    /// `reason` is the machine-readable code from
+    /// `mecmcp_policy::AllowlistDenyReason::as_str()` (`not_allowlisted`,
+    /// `pipe_not_allowlisted`, `forbidden_metachar`) and doubles as this
+    /// error's `audit_kind()`, so the audit trail records *why* a command
+    /// was refused, not just that it was. `input_excerpt` is built from the
+    /// *normalized* command (`Decision::DenyAllowlist::normalized`), never
+    /// the raw input — the raw input can still contain the newline that
+    /// triggered `forbidden_metachar`, which could smuggle a forged line
+    /// into a log file.
+    #[error("denied by allowlist: {tool} on '{router}': {reason}; input: {input_excerpt}")]
+    DeniedAllowlist {
+        /// Name of the MCP tool that was blocked.
+        tool: &'static str,
+        /// Name of the device the tool call was targeting.
+        router: String,
+        /// Machine-readable reason code (`not_allowlisted`,
+        /// `pipe_not_allowlisted`, or `forbidden_metachar`).
+        reason: &'static str,
+        /// Excerpt of the normalized (not raw) blocked input.
+        input_excerpt: String,
+    },
+
+    /// An `allow`/`allowed_pipes` entry in the inventory failed to compile:
+    /// it contained a glob metacharacter (`*`, `?`, `[`) — allowlist entries
+    /// are literal token prefixes, never globs — or was empty/all-whitespace.
+    /// Returned during inventory/policy load (before the server starts) so
+    /// an operator's typo never silently becomes a policy gap.
+    #[error("invalid allowlist entry for {scope}: entry '{entry}' {reason}")]
+    AllowlistEntryInvalid {
+        /// Scope where the invalid entry was found (e.g. device name or
+        /// "_blocklist_defaults").
+        scope: String,
+        /// The entry string that failed to compile.
+        entry: String,
+        /// Human-readable reason the entry was rejected.
+        reason: String,
+    },
+
+    /// `Policy::check_config` returned `Decision::DenyAllowlist`, which the
+    /// config domain (a fail-open blocklist, unaffected by `CommandMode`)
+    /// contracts to never produce (MEC-1096 F4). This should be
+    /// unreachable with the current `mecmcp-policy` version; refused rather
+    /// than `unreachable!()`-panicking on a device-action request path, so a
+    /// future library change that violates the contract fails closed
+    /// instead of aborting mid-transaction.
+    #[error(
+        "policy invariant violated: {tool} on '{router}': check_config returned \
+         DenyAllowlist, which the config domain must never produce"
+    )]
+    ConfigDomainAllowlistInvariant {
+        /// Name of the MCP tool that hit the invariant violation.
+        tool: &'static str,
+        /// Name of the device the tool call was targeting.
+        router: String,
+    },
+
     /// Destructive operation refused on a plane-owned device.
     ///
     /// This device's `config_authority` indicates it is managed by a plane (Mist,
@@ -673,6 +735,12 @@ impl JmcpError {
             Self::Io(_) => "io",
             Self::Json(_) => "parse",
             Self::Denied { .. } => "blocked",
+            // The reason code IS the audit_kind, per MEC-93 spec item 4: the
+            // audit trail records not just that a command was refused, but
+            // which of the library's three allowlist-deny reasons fired.
+            Self::DeniedAllowlist { reason, .. } => reason,
+            Self::AllowlistEntryInvalid { .. } => "invalid_input",
+            Self::ConfigDomainAllowlistInvariant { .. } => "blocked",
             Self::PlaneOwnedDevice { .. } => "blocked",
             Self::DirectCommitDisabled(_) => "blocked",
             Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
