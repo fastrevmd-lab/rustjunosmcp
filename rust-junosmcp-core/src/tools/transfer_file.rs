@@ -586,11 +586,10 @@ pub struct ScpJob {
     pub local_path: PathBuf,
     /// Remote directory where the file will be placed (e.g., "/var/tmp/").
     pub remote_dir: String,
-    /// When `true`, emit `StrictHostKeyChecking=accept-new` (TOFU); when
-    /// `false`, emit `StrictHostKeyChecking=yes` (strict — refuses unknown
-    /// host keys). Default for the server is `false` as of v0.5.2; opt in
-    /// via `--ssh-accept-new-host-keys` for lab provisioning.
-    pub accept_new_host_keys: bool,
+    /// Host-key verification policy for this connection. Mirrors the
+    /// NETCONF SSH policy 1:1 (MEC-44): `Strict` is the default,
+    /// `AcceptNew` is real TOFU, `AcceptAll` is the lab-only flag.
+    pub host_key_mode: crate::bootstrap::SshHostKeyMode,
 }
 
 /// Inputs for one SCP download job.
@@ -610,16 +609,16 @@ pub struct ScpFetchJob {
     pub remote_path: String,
     /// Full local destination path under the staging directory.
     pub local_path: PathBuf,
-    /// When `true`, emit `StrictHostKeyChecking=accept-new` (TOFU); when
-    /// `false`, emit `StrictHostKeyChecking=yes` (strict — refuses unknown
-    /// host keys). Default for the server is `false` as of v0.5.2; opt in
-    /// via `--ssh-accept-new-host-keys` for lab provisioning.
-    pub accept_new_host_keys: bool,
+    /// Host-key verification policy for this connection. Mirrors the
+    /// NETCONF SSH policy 1:1 (MEC-44): `Strict` is the default,
+    /// `AcceptNew` is real TOFU, `AcceptAll` is the lab-only flag.
+    pub host_key_mode: crate::bootstrap::SshHostKeyMode,
 }
 
 #[cfg(test)]
 mod runner_property_tests {
     use super::*;
+    use crate::bootstrap::SshHostKeyMode;
 
     /// Tests asserting host-key policy, key-only auth, and other security
     /// properties that were previously checked via argv inspection. These now
@@ -633,31 +632,36 @@ mod runner_property_tests {
             port: 22,
             local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
             remote_dir: "/var/tmp/".into(),
-            accept_new_host_keys: false,
+            host_key_mode: SshHostKeyMode::Strict,
         }
     }
 
     #[test]
     fn job_default_uses_strict_host_key_policy() {
         // RJMCP-SEC-004: default policy must be strict (HostKeyVerification::KnownHosts);
-        // TOFU (AcceptAll) is opt-in only.
+        // TOFU/AcceptAll are opt-in only.
         let j = job();
-        assert!(
-            !j.accept_new_host_keys,
-            "default job must have accept_new_host_keys=false"
-        );
+        assert_eq!(j.host_key_mode, SshHostKeyMode::Strict);
     }
 
     #[test]
     fn job_respects_accept_new_host_keys_flag() {
         let j = ScpJob {
-            accept_new_host_keys: true,
+            host_key_mode: SshHostKeyMode::AcceptNew,
             ..job()
         };
-        assert!(
-            j.accept_new_host_keys,
-            "accept_new_host_keys=true must be preserved"
-        );
+        assert_eq!(j.host_key_mode, SshHostKeyMode::AcceptNew);
+    }
+
+    #[test]
+    fn job_respects_accept_all_host_keys_flag() {
+        // MEC-44 follow-up: --ssh-insecure-accept-any-host-key must reach scp
+        // as AcceptAll too, not just NETCONF.
+        let j = ScpJob {
+            host_key_mode: SshHostKeyMode::AcceptAll,
+            ..job()
+        };
+        assert_eq!(j.host_key_mode, SshHostKeyMode::AcceptAll);
     }
 
     #[test]
@@ -688,17 +692,14 @@ mod runner_property_tests {
             port: 22,
             remote_path: "/var/tmp/foo.tgz".into(),
             local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
-            accept_new_host_keys: false,
+            host_key_mode: SshHostKeyMode::Strict,
         }
     }
 
     #[test]
     fn fetch_job_default_uses_strict_host_key_policy() {
         let j = fetch_job();
-        assert!(
-            !j.accept_new_host_keys,
-            "default fetch_job must have accept_new_host_keys=false"
-        );
+        assert_eq!(j.host_key_mode, SshHostKeyMode::Strict);
     }
 
     #[test]
@@ -708,6 +709,39 @@ mod runner_property_tests {
             j.known_hosts_file,
             std::path::PathBuf::from("/etc/jmcp/known_hosts")
         );
+    }
+
+    #[test]
+    fn scp_host_key_verification_maps_strict() {
+        let v = super::scp_host_key_verification(
+            SshHostKeyMode::Strict,
+            "/etc/jmcp/known_hosts".into(),
+        );
+        assert!(
+            matches!(v, mecmcp_scp::HostKeyVerification::KnownHosts(p) if p.as_path() == std::path::Path::new("/etc/jmcp/known_hosts"))
+        );
+    }
+
+    #[test]
+    fn scp_host_key_verification_maps_accept_new() {
+        let v = super::scp_host_key_verification(
+            SshHostKeyMode::AcceptNew,
+            "/etc/jmcp/known_hosts".into(),
+        );
+        assert!(
+            matches!(v, mecmcp_scp::HostKeyVerification::AcceptNew(p) if p.as_path() == std::path::Path::new("/etc/jmcp/known_hosts"))
+        );
+    }
+
+    #[test]
+    fn scp_host_key_verification_maps_accept_all() {
+        // MEC-44 follow-up: the lab-only flag must give scp a real
+        // mecmcp_scp::HostKeyVerification::AcceptAll, not TOFU.
+        let v = super::scp_host_key_verification(
+            SshHostKeyMode::AcceptAll,
+            "/etc/jmcp/known_hosts".into(),
+        );
+        assert!(matches!(v, mecmcp_scp::HostKeyVerification::AcceptAll));
     }
 }
 
@@ -877,18 +911,30 @@ impl MecmcpScpRunner {
     }
 }
 
+/// Map the shared [`crate::bootstrap::SshHostKeyMode`] (also used for
+/// NETCONF SSH) onto `mecmcp_scp`'s own `HostKeyVerification` enum.
+///
+/// MEC-44 follow-up: scp previously only ever got `KnownHosts` or
+/// `AcceptNew`, so `--ssh-insecure-accept-any-host-key` gave scp TOFU
+/// instead of the "accept any key" the flag name promises. This mirrors
+/// [`crate::bootstrap::build_host_key_policy`] 1:1 so both transports read
+/// the flags identically.
+fn scp_host_key_verification(
+    mode: crate::bootstrap::SshHostKeyMode,
+    known_hosts_file: PathBuf,
+) -> mecmcp_scp::HostKeyVerification {
+    use crate::bootstrap::SshHostKeyMode;
+    match mode {
+        SshHostKeyMode::Strict => mecmcp_scp::HostKeyVerification::KnownHosts(known_hosts_file),
+        SshHostKeyMode::AcceptNew => mecmcp_scp::HostKeyVerification::AcceptNew(known_hosts_file),
+        SshHostKeyMode::AcceptAll => mecmcp_scp::HostKeyVerification::AcceptAll,
+    }
+}
+
 #[async_trait::async_trait]
 impl ScpRunner for MecmcpScpRunner {
     async fn run(&self, job: &ScpJob, ct: &CancellationToken) -> std::io::Result<ScpOutcome> {
-        use mecmcp_scp::{HostKeyVerification, ScpClient, SshAuth, SshConfig};
-
-        // Build SshConfig from the job parameters.
-        // accept_new_host_keys=true uses AcceptNew (add to known_hosts); false uses KnownHosts (strict).
-        let host_key_verification = if job.accept_new_host_keys {
-            HostKeyVerification::AcceptNew(job.known_hosts_file.clone())
-        } else {
-            HostKeyVerification::KnownHosts(job.known_hosts_file.clone())
-        };
+        use mecmcp_scp::{ScpClient, SshAuth, SshConfig};
 
         let ssh_config = SshConfig {
             host: job.host.clone(),
@@ -898,7 +944,10 @@ impl ScpRunner for MecmcpScpRunner {
                 path: job.private_key_path.clone(),
                 passphrase: None,
             },
-            host_key_verification,
+            host_key_verification: scp_host_key_verification(
+                job.host_key_mode,
+                job.known_hosts_file.clone(),
+            ),
         };
 
         // Connect
@@ -931,15 +980,7 @@ impl ScpRunner for MecmcpScpRunner {
         job: &ScpFetchJob,
         ct: &CancellationToken,
     ) -> std::io::Result<ScpOutcome> {
-        use mecmcp_scp::{HostKeyVerification, ScpClient, SshAuth, SshConfig};
-
-        // Build SshConfig from the job parameters.
-        // accept_new_host_keys=true uses AcceptNew (add to known_hosts); false uses KnownHosts (strict).
-        let host_key_verification = if job.accept_new_host_keys {
-            HostKeyVerification::AcceptNew(job.known_hosts_file.clone())
-        } else {
-            HostKeyVerification::KnownHosts(job.known_hosts_file.clone())
-        };
+        use mecmcp_scp::{ScpClient, SshAuth, SshConfig};
 
         let ssh_config = SshConfig {
             host: job.host.clone(),
@@ -949,7 +990,10 @@ impl ScpRunner for MecmcpScpRunner {
                 path: job.private_key_path.clone(),
                 passphrase: None,
             },
-            host_key_verification,
+            host_key_verification: scp_host_key_verification(
+                job.host_key_mode,
+                job.known_hosts_file.clone(),
+            ),
         };
 
         // Connect
@@ -1081,7 +1125,7 @@ mod runner_tests {
             port: 22,
             local_path: "/var/lib/jmcp/staging/x.tgz".into(),
             remote_dir: "/var/tmp/".into(),
-            accept_new_host_keys: false,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::Strict,
         };
         let ct = CancellationToken::new();
         let out = runner.run(&job, &ct).await.unwrap();
@@ -1105,7 +1149,7 @@ mod runner_tests {
             port: 22,
             local_path: "/var/lib/jmcp/staging/x.tgz".into(),
             remote_dir: "/var/tmp/".into(),
-            accept_new_host_keys: false,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::Strict,
         };
         let ct = CancellationToken::new();
         let ct2 = ct.clone();
@@ -1131,7 +1175,7 @@ mod runner_tests {
             port: 22,
             remote_path: "/var/tmp/foo.tgz".into(),
             local_path: "/var/lib/jmcp/staging/foo.tgz".into(),
-            accept_new_host_keys: false,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::Strict,
         };
         let ct = CancellationToken::new();
         let out = runner.fetch(&job, &ct).await.unwrap();
@@ -1421,11 +1465,12 @@ pub struct TransferConfig {
     /// `Arc<TransferLocks>` across all transfer_file calls in the process
     /// so the limit is process-wide (not per-call). (issue #26, L4)
     pub transfer_locks: Arc<TransferLocks>,
-    /// Host-key policy passed through to every `ScpJob`. When `false`
-    /// (default since v0.5.2 — RJMCP-SEC-004) scp uses
-    /// `StrictHostKeyChecking=yes`, refusing unknown host keys. Opt in via
-    /// `--ssh-accept-new-host-keys` for first-contact TOFU in labs.
-    pub accept_new_host_keys: bool,
+    /// Host-key policy passed through to every `ScpJob`/`ScpFetchJob`.
+    /// `Strict` (default since v0.5.2 — RJMCP-SEC-004) refuses unknown host
+    /// keys. `AcceptNew` opts in to first-contact TOFU. `AcceptAll` is the
+    /// lab-only "accept any key" mode (MEC-44 follow-up: scp now honors
+    /// this the same as NETCONF SSH).
+    pub host_key_mode: crate::bootstrap::SshHostKeyMode,
 }
 
 /// Transfer a file from the staging directory to a device's /var/tmp/.
@@ -1446,13 +1491,13 @@ pub async fn handle(
             return Err(JmcpError::Cancelled);
         }
         validate_source_basename(&args.source_path)?;
-        // RJMCP-SEC-004: known_hosts is mandatory unless the operator opted
-        // into TOFU (`--ssh-accept-new-host-keys`). Probing here keeps the
-        // failure mode loud and synchronous instead of hidden inside scp's
-        // stderr after a queue + connect round-trip.
+        // RJMCP-SEC-004: known_hosts is mandatory in Strict mode. Probing
+        // here keeps the failure mode loud and synchronous instead of
+        // hidden inside scp's stderr after a queue + connect round-trip.
+        use crate::bootstrap::SshHostKeyMode;
         match std::fs::metadata(&cfg.known_hosts_file) {
             Ok(m) if m.is_file() => {}
-            _ if cfg.accept_new_host_keys => {
+            _ if cfg.host_key_mode == SshHostKeyMode::AcceptNew => {
                 // TOFU mode tolerates a missing known_hosts (scp will create
                 // it on first contact). Still log so operators see what's
                 // happening.
@@ -1461,13 +1506,24 @@ pub async fn handle(
                     "transfer_file: known_hosts missing; running in accept-new (TOFU) mode"
                 );
             }
+            _ if cfg.host_key_mode == SshHostKeyMode::AcceptAll => {
+                // Lab-only: no verification and no known_hosts persistence
+                // at all, so a missing file is expected, not an error.
+                tracing::info!(
+                    "transfer_file: known_hosts missing; running in accept-any (insecure, lab-only) mode"
+                );
+            }
             _ => {
                 return Err(JmcpError::KnownHostsMissing(cfg.known_hosts_file.clone()));
             }
         }
         tracing::info!(
             router = %args.device,
-            host_key_policy = if cfg.accept_new_host_keys { "accept-new" } else { "strict" },
+            host_key_policy = match cfg.host_key_mode {
+                SshHostKeyMode::Strict => "strict",
+                SshHostKeyMode::AcceptNew => "accept-new",
+                SshHostKeyMode::AcceptAll => "accept-all",
+            },
             "transfer_file: host-key policy"
         );
         // Per-router serialization (issue #26, L4). Acquired AFTER basename
@@ -1616,7 +1672,7 @@ pub async fn handle(
             port,
             local_path: local_path.clone(),
             remote_dir: "/var/tmp/".into(),
-            accept_new_host_keys: cfg.accept_new_host_keys,
+            host_key_mode: cfg.host_key_mode,
         };
         tracing::info!(
             router = %args.device,
@@ -1802,7 +1858,7 @@ mod handle_validation_tests {
             // so the v0.5.2 pre-check (`KnownHostsMissing`) doesn't short-
             // circuit them. A dedicated test below asserts that strict-mode
             // + missing known_hosts fails closed.
-            accept_new_host_keys: true,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::AcceptNew,
         }
     }
 
@@ -1836,7 +1892,7 @@ mod handle_validation_tests {
         assert!(matches!(r, Err(JmcpError::BadSourcePath(_))));
     }
 
-    /// RJMCP-SEC-004: strict-mode (`accept_new_host_keys=false`) must fail
+    /// RJMCP-SEC-004: strict-mode (`SshHostKeyMode::Strict`) must fail
     /// closed when the configured `known_hosts_file` is missing or not a
     /// regular file. This fires before the staged-file check, so even a
     /// missing source surfaces `KnownHostsMissing` first.
@@ -1849,7 +1905,7 @@ mod handle_validation_tests {
         );
         let dm = Arc::new(DeviceManager::new(inv));
         let mut c = cfg(dir.path());
-        c.accept_new_host_keys = false;
+        c.host_key_mode = crate::bootstrap::SshHostKeyMode::Strict;
         c.known_hosts_file = dir.path().join("no-such-known_hosts");
         let r = handle(
             TransferFileArgs {
@@ -1867,6 +1923,40 @@ mod handle_validation_tests {
         assert!(
             matches!(r, Err(JmcpError::KnownHostsMissing(_))),
             "expected KnownHostsMissing in strict mode, got {r:?}"
+        );
+    }
+
+    /// MEC-44 follow-up: `AcceptAll` (the lab-only
+    /// `--ssh-insecure-accept-any-host-key` flag) never persists a
+    /// known_hosts file, so a missing one must not trip
+    /// `KnownHostsMissing` the way it does in `Strict` mode.
+    #[tokio::test]
+    async fn accept_all_mode_tolerates_missing_known_hosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let inv = build_inv(
+            r#"{"r1":{"ip":"127.0.0.1","username":"u",
+                     "auth":{"type":"password","password":"x"}}}"#,
+        );
+        let dm = Arc::new(DeviceManager::new(inv));
+        let mut c = cfg(dir.path());
+        c.host_key_mode = crate::bootstrap::SshHostKeyMode::AcceptAll;
+        c.known_hosts_file = dir.path().join("no-such-known_hosts");
+        let r = handle(
+            TransferFileArgs {
+                device: "r1".into(),
+                source_path: "foo.tgz".into(),
+                force: false,
+                verify: true,
+                timeout: 5,
+            },
+            dm,
+            c,
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            !matches!(r, Err(JmcpError::KnownHostsMissing(_))),
+            "AcceptAll must not require known_hosts to exist, got {r:?}"
         );
     }
 
@@ -2081,7 +2171,7 @@ mod scp_unit_tests {
             known_hosts_file: "/etc/jmcp/known_hosts".into(),
             local_path: "/var/lib/jmcp/staging/abc/junos.tgz".into(),
             remote_dir: "/var/tmp/".into(),
-            accept_new_host_keys: false,
+            host_key_mode: crate::bootstrap::SshHostKeyMode::Strict,
         };
         let ct = CancellationToken::new();
         let outcome = (mock.clone() as Arc<dyn ScpRunner>)

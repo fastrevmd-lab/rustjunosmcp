@@ -4,8 +4,9 @@
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
 use crate::helpers::{
-    build_config_payload, confirm_timeout_to_secs, excerpt, parse_load_mode,
-    refuse_override_outside_changeset, resolve_load_action, validate_input_length,
+    ConfirmDecision, build_config_payload, confirm_timeout_to_secs, excerpt, parse_load_mode,
+    refuse_override_outside_changeset, resolve_confirm_timeout, resolve_load_action,
+    rollback_deadline_unix, validate_input_length,
 };
 use crate::policy::{Decision, Policy};
 use crate::tools::LoadCommitArgs;
@@ -110,13 +111,18 @@ pub async fn handle_with_cancel(
     let payload = build_config_payload(args.config_text, Some(&args.config_format))?;
 
     let timeout_dur = Duration::from_secs(args.timeout);
-    let confirmed = args.confirm_timeout_mins;
-    let mode = match confirmed {
-        Some(mins) => {
+    // Commit-confirmed by default (MEC-45): a bad load that cuts management
+    // access reverts itself unless the caller explicitly opts out with
+    // `confirm_timeout_mins: 0`.
+    let (mode, confirmed) = match resolve_confirm_timeout(args.confirm_timeout_mins) {
+        ConfirmDecision::Confirmed(mins) => {
             let secs = confirm_timeout_to_secs(mins)?;
-            CandidateMode::CommitConfirmed(secs)
+            (CandidateMode::CommitConfirmed(secs), Some(mins))
         }
-        None => CandidateMode::CommitWithComment(args.commit_comment.clone()),
+        ConfirmDecision::OptedOut => (
+            CandidateMode::CommitWithComment(args.commit_comment.clone()),
+            None,
+        ),
     };
     let result = candidate_transaction::run(
         &dm,
@@ -138,9 +144,10 @@ pub async fn handle_with_cancel(
             if let Some(mins) = confirmed {
                 obj["confirmed"] = json!(true);
                 obj["rollback_in_minutes"] = json!(mins);
+                obj["rollback_deadline_unix"] = json!(rollback_deadline_unix(mins));
                 obj["message"] = json!(format!(
                     "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
-                     Send another commit to confirm.",
+                     Send another commit to confirm with confirm_commit.",
                     mins
                 ));
                 if !args.commit_comment.is_empty() {

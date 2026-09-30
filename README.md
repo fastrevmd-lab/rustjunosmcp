@@ -193,7 +193,7 @@ parallel with a configurable concurrency cap.
   no `unsafe`; `zeroize` replaces hand-rolled secret zeroing and `rustix`
   replaces `libc::getuid`. Tool count unchanged (27 / 18).
 
-### v0.11 (unreleased)
+### v0.11 (released)
 
 - **Four new read-only SRX tools** — `srx_list_policies` (security policies
   by from-zone/to-zone context, including global policies and optional
@@ -211,6 +211,23 @@ parallel with a configurable concurrency cap.
   paginated/capped with an explicit `truncated` flag rather than a silent
   cutoff. Tool count: 37 → 41 (9 → 13 SRX tools; Junos-only build unchanged
   at 27 / 18, since these are gated by the default `srx` feature).
+
+### v0.12 (unreleased)
+
+- **Commit-confirmed is on by default (breaking)** — `load_and_commit_config`,
+  `rollback_config` (`commit=true`), `render_and_apply_j2_template`, and
+  `apply_junos_change_set` now issue `commit confirmed` unless the caller
+  explicitly opts out with `confirm_timeout_mins: 0`. Previously a plain,
+  unconditional commit was the default; a model-drafted change that cut
+  management access had nothing bringing the device back. See
+  [Confirmed commits](#confirmed-commits-v03-default-on-since-v012).
+- **`--commit-confirm-default-mins`** (default `10`) sets the server-wide
+  window used when a call omits `confirm_timeout_mins`; a per-call value
+  still overrides it.
+- **`confirm_commit`** — new write tool that sends the confirming commit for
+  any of the four paths above, cancelling the pending auto-rollback.
+- Opting out is recorded in the audit event as `commit_confirmed=false`.
+- Tool count: 43 → 44 (27 → 28 Junos-only).
 
 ## Blocklist guardrails (v0.2)
 
@@ -336,12 +353,17 @@ second principal to approve the plan before anything commits.
 commands) has no wire-level `override` action in Junos — that combination
 is rejected before any RPC is sent, on every path, including change sets.
 
-## Confirmed commits (v0.3)
+## Confirmed commits (v0.3, default-on since v0.12)
 
-`load_and_commit_config` supports Junos `commit confirmed` via the
-`confirm_timeout_mins` parameter. The router auto-rolls back after N
-minutes unless a follow-up commit confirms the change — a critical safety
-net for remote config pushes that might break management connectivity.
+`load_and_commit_config`, `rollback_config` (with `commit=true`),
+`render_and_apply_j2_template`, and `apply_junos_change_set` all commit via
+Junos `commit confirmed` **by default** — the router auto-rolls back if
+nothing confirms the change within the window, so a bad push that cuts
+management access reverts itself instead of requiring a truck roll.
+
+The default window is the server's `--commit-confirm-default-mins` flag
+(default 10, same validation as the per-call parameter). A per-call
+`confirm_timeout_mins` overrides it for that one commit:
 
 ```json
 {
@@ -359,12 +381,28 @@ Response:
   "diff": "[edit interfaces ge-0/0/0]\n+   description test;",
   "confirmed": true,
   "rollback_in_minutes": 10,
+  "rollback_deadline_unix": 1780000600,
   "message": "Commit confirmed: auto-rollback in 10 minutes unless confirmed. Send another commit to confirm."
 }
 ```
 
-To confirm (prevent rollback), send another `load_and_commit_config` with
-the same config (or any valid config) without `confirm_timeout_mins`.
+`apply_junos_change_set`'s status response reports the same
+`rollback_deadline_unix`.
+
+**Opt out** of commit-confirmed for a single call by passing
+`confirm_timeout_mins: 0`; this issues a plain, unconditional commit and is
+recorded in the audit event as `commit_confirmed=false` so the exception is
+traceable after the fact.
+
+**To confirm** a pending window (cancel the scheduled auto-rollback), call
+the `confirm_commit` tool with the device name — it sends the confirming
+commit the same way `confirm_junos_change_set` does for the change-set
+path. Sending another `load_and_commit_config` (or `rollback_config` /
+`render_and_apply_j2_template`) also confirms, since Junos treats any
+commit against the candidate as confirmation regardless of which tool
+issued it. While a commit-confirmed window is open, `upgrade_junos` refuses
+to proceed (`commit_confirmed_active`) rather than reboot a device that
+might still roll back its configuration underneath the new image.
 
 ## File transfers (`transfer_file` / `fetch_file` / `list_staged_files`)
 
@@ -409,7 +447,18 @@ scripts/scan-known-hosts.sh --inventory /etc/jmcp/devices.json \
 ```
 
 For lab / first-contact use, pass `--ssh-accept-new-host-keys` to fall back
-to OpenSSH's `accept-new` (TOFU) mode.
+to OpenSSH's `accept-new` (TOFU) mode: unknown hosts are pinned to
+`known_hosts` on first contact, and a host presenting a *different* key
+afterward is still refused. This applies identically to `transfer_file` /
+`upgrade_junos` (scp) and NETCONF SSH.
+
+**`--ssh-insecure-accept-any-host-key` (lab-only):** skips
+host-key verification entirely for both NETCONF SSH *and* scp
+(`transfer_file` / `upgrade_junos`) — no known_hosts persistence,
+no mismatch detection, no protection against a man-in-the-middle. Mutually
+exclusive with `--ssh-accept-new-host-keys`. Logged loudly at startup and
+recorded as an audit event. Never use this against production devices; use
+`--ssh-accept-new-host-keys` instead, which gives TOFU semantics safely.
 
 `list_staged_files` returns the contents of the host staging dir. If
 `router_name` is supplied it also runs `file list /var/tmp/ detail` on the
@@ -455,8 +504,17 @@ before deploying. The same warnings apply.
 - Restrict network access to the MCP server.
 - Don't deploy to untrusted networks.
 - Set `devices.json` permissions to `0600` — it contains SSH credentials.
-- `get_junos_config` returns the full config including `## SECRET-DATA`
-  hashed password lines. Restrict this tool's scope to trusted tokens.
+- `get_junos_config`, `junos_config_diff`, and other tools returning device
+  config or command output are redacted before the response reaches the
+  caller: values matching known secret patterns — including Junos
+  `## SECRET-DATA` values (`$9$...`-style strings, which are **reversibly
+  encrypted** with Juniper's proprietary symmetric cipher, not hashed —
+  anyone holding the device's master key/passphrase can recover the
+  plaintext), IKE pre-shared-keys, RADIUS/TACACS secrets, and SNMP
+  communities — are replaced with a marker while structure, hostnames, and
+  non-secret values are preserved. This is a best-effort net (a denylist plus
+  a value-shape catch-all), not a guarantee; still restrict this tool's scope
+  to trusted tokens.
 - `reload_devices` requires `file_name` to be a *relative* path resolving
   inside the original `--device-mapping` directory (since v0.5.2). Absolute
   paths, `..` traversal, and symlinks pointing outside the inventory
@@ -661,8 +719,8 @@ directory. Private-key paths in `devices.json` must use their in-container
 locations under `/etc/jmcp/keys`.
 
 ```bash
-# Pull the prebuilt image (tags: latest, 0.25, 0.26.0).
-docker pull ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+# Pull the prebuilt image (tags: latest, 0.25, 0.26, 0.27.1).
+docker pull ghcr.io/mechubsec/rustjunosmcp:latest
 
 # Prepare host paths. Review scanned host-key fingerprints against a trusted
 # source before starting the server in strict mode.
@@ -685,7 +743,7 @@ docker run --rm -i \
   -v "$PWD/devices.json:/etc/jmcp/devices.json:ro" \
   -v "$PWD/keys:/etc/jmcp/keys:ro" \
   -v "$PWD/jmcp-state:/var/lib/jmcp" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+  ghcr.io/mechubsec/rustjunosmcp:latest
 ```
 
 **Verifying the image signature:** every image pushed by the `Release image`
@@ -698,7 +756,7 @@ signing identity to that exact workflow, so a signature from anywhere else
 cosign verify \
   --certificate-identity-regexp '^https://github\.com/mechubsec/rustjunosmcp/\.github/workflows/release-image\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+|heads/main)$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  ghcr.io/fastrevmd-lab/rust-junosmcp:latest
+  ghcr.io/mechubsec/rustjunosmcp:latest
 ```
 
 This is a regexp, not an exact `--certificate-identity`, because GitHub embeds
@@ -716,6 +774,25 @@ entry in the [Rekor](https://docs.sigstore.dev/logging/overview/) transparency
 log —
 this is expected and does not disclose anything beyond what the image push
 itself already made public.
+
+Images published before 2026-09-29 were signed by the workflow under
+`github.com/fastrevmd-lab/RustJunosMCP`, so verifying an older tag needs that
+identity instead.
+
+**Verifying the SBOM attestation:** on release, a CycloneDX SBOM of the Rust
+dependency graph (not the image's distroless runtime base) is attached to the
+GitHub release and also pushed as an in-toto attestation on the image, signed
+keylessly the same way as above. This attestation is signed by the
+`release-sbom.yml` workflow, a **different identity** from the image
+signature's `release-image.yml` identity above, because it is a separate job
+that runs after the image is already pushed:
+
+```bash
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity-regexp '^https://github\.com/mechubsec/rustjunosmcp/\.github/workflows/release-sbom\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/mechubsec/rustjunosmcp:<version>
+```
 
 The state mount holds staged upload/download files, the shared destructive
 operation leases, and `known_hosts`. Do not delete its lease files while a
@@ -753,7 +830,7 @@ docker run --rm -i \
 ./scripts/package-lxc.sh
 
 # Verify the checksum.
-sha256sum -c dist/rust-junosmcp_0.26.0_amd64.tar.gz.sha256
+sha256sum -c dist/rust-junosmcp_0.27.1_amd64.tar.gz.sha256
 
 # Push and install on VM 115. The installer copies the unified binary and unit
 # from its extracted package root.
@@ -769,8 +846,8 @@ sha256sum -c dist/rust-junosmcp_0.26.0_amd64.tar.gz.sha256
 #
 # Debian 13 also matches docs/PACKAGING.md §2, the container runtime base, and
 # rustpanosmcp — one distro generation to track CVEs against, not three.
-pct push 115 dist/rust-junosmcp_0.26.0_amd64.tar.gz /tmp/jmcp.tar.gz
-pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.26.0_amd64/install.sh"
+pct push 115 dist/rust-junosmcp_0.27.1_amd64.tar.gz /tmp/jmcp.tar.gz
+pct exec 115 -- bash -c "tar xzf /tmp/jmcp.tar.gz -C /tmp && /tmp/rust-junosmcp_0.27.1_amd64/install.sh"
 ```
 
 **Downloading a prebuilt release tarball instead:** each GitHub release also
@@ -782,7 +859,7 @@ alone only proves the download was not corrupted in transit, not that it came
 from this repository's release workflow:
 
 ```bash
-version=0.26.0
+version=0.27.1
 base="https://github.com/mechubsec/rustjunosmcp/releases/download/v${version}"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz"
 curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.sha256"

@@ -13,6 +13,7 @@ pub use candidate_transaction::{
 pub mod changeset;
 pub mod commit_check;
 pub mod config_diff;
+pub mod confirm_commit;
 pub mod discard_candidate;
 pub mod execute_command;
 pub mod facts;
@@ -266,10 +267,14 @@ pub struct LoadCommitArgs {
     /// Commit comment recorded in the device commit log.
     #[serde(default = "default_commit_comment")]
     pub commit_comment: String,
-    /// If set, uses confirmed commit with auto-rollback after N minutes.
-    /// The device will automatically revert if not confirmed within this window.
+    /// Confirmed-commit window in minutes, with auto-rollback if not
+    /// confirmed (via `confirm_commit`) within this window. Defaults to the
+    /// server's `--commit-confirm-default-mins` (10 unless configured
+    /// otherwise) when omitted — commit-confirmed is ON by default. Pass `0`
+    /// to explicitly opt out and issue a plain commit instead; this is
+    /// recorded in the audit trail as `commit_confirmed=false`.
     #[serde(default)]
-    #[schemars(range(min = 1, max = 71_582_788))]
+    #[schemars(range(min = 0, max = 71_582_788))]
     pub confirm_timeout_mins: Option<u32>,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
@@ -322,16 +327,37 @@ pub struct RollbackConfigArgs {
     /// discards (no commit). If true, loads and commits.
     #[serde(default)]
     pub commit: bool,
-    /// If set with commit=true, uses confirmed commit with auto-rollback after N
-    /// minutes if not confirmed within this window.
+    /// Confirmed-commit window in minutes, with auto-rollback if not
+    /// confirmed (via `confirm_commit`) within this window. Only meaningful
+    /// with `commit=true`. Defaults to the server's
+    /// `--commit-confirm-default-mins` (10 unless configured otherwise) when
+    /// omitted — commit-confirmed is ON by default. Pass `0` to explicitly
+    /// opt out and issue a plain commit instead; this is recorded in the
+    /// audit trail as `commit_confirmed=false`.
     #[serde(default)]
-    #[schemars(range(min = 1, max = 71_582_788))]
+    #[schemars(range(min = 0, max = 71_582_788))]
     pub confirm_timeout_mins: Option<u32>,
     /// Commit comment recorded in the device commit log when commit=true (normal
     /// commit only). IGNORED during confirmed commits (confirm_timeout_mins set)
     /// due to rustez API limitation. Defaults to "rollback to N via rollback_config".
     #[serde(default)]
     pub commit_comment: Option<String>,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
+/// Arguments for `confirm_commit`: sends the confirming commit for a
+/// confirmed commit issued by `load_and_commit_config`, `rollback_config`, or
+/// `render_and_apply_j2_template` (not `apply_junos_change_set` — that one is
+/// confirmed with `confirm_junos_change_set`, keyed by `operation_id`).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = crate::schema_alias::device_aliases)]
+pub struct ConfirmCommitArgs {
+    /// The device with a pending confirm-commit window.
+    #[serde(alias = "router_name", alias = "router")]
+    pub device: String,
     /// Connection timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -452,6 +478,16 @@ pub struct TemplateArgs {
     /// `apply_junos_change_set` for an override that requires human approval.
     #[serde(default = "default_load_mode")]
     pub mode: String,
+    /// Confirmed-commit window in minutes, with auto-rollback if not
+    /// confirmed (via `confirm_commit`) within this window. Only meaningful
+    /// with `apply_config=true` and `dry_run=false`. Defaults to the server's
+    /// `--commit-confirm-default-mins` (10 unless configured otherwise) when
+    /// omitted — commit-confirmed is ON by default. Pass `0` to explicitly
+    /// opt out and issue a plain commit instead; this is recorded in the
+    /// audit trail as `commit_confirmed=false`.
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 71_582_788))]
+    pub confirm_timeout_mins: Option<u32>,
     /// Connection timeout in seconds (per-device).
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -1059,6 +1095,7 @@ mod unknown_field_tripwire {
         check::<CommitCheckArgs>("CommitCheckArgs", DEVICE);
         check::<DiscardCandidateArgs>("DiscardCandidateArgs", DEVICE);
         check::<RollbackConfigArgs>("RollbackConfigArgs", DEVICE);
+        check::<ConfirmCommitArgs>("ConfirmCommitArgs", DEVICE);
         check::<ExecutePfeArgs>("ExecutePfeArgs", DEVICE);
         check::<TransferFileArgs>("TransferFileArgs", DEVICE);
         check::<FetchFileArgs>("FetchFileArgs", DEVICE);
@@ -1170,6 +1207,7 @@ mod unknown_field_tripwire {
             CommitCheckArgs,
             DiscardCandidateArgs,
             RollbackConfigArgs,
+            ConfirmCommitArgs,
             ExecutePfeArgs,
             ExecuteBatchArgs,
             TemplateArgs,

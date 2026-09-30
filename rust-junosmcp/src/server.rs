@@ -17,13 +17,13 @@ use rust_junosmcp_core::{
     DeviceManager, Policy,
     progress::ProgressHeartbeat,
     tools::{
-        AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, DiscardCandidateArgs, ExecuteBatchArgs,
-        ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs, GetConfigArgs,
-        ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs, TemplateArgs,
-        TransferFileArgs, UpgradeJunosArgs, add_device, batch, changeset, commit_check,
-        config_diff, discard_candidate, execute_command, facts, fetch_file, get_config,
-        list_staged_files, load_commit, pfe, reload_devices, rollback_config, router_list,
-        template, transfer_file, upgrade_junos,
+        AddDeviceArgs, CommitCheckArgs, ConfigDiffArgs, ConfirmCommitArgs, DiscardCandidateArgs,
+        ExecuteBatchArgs, ExecuteCommandArgs, ExecutePfeArgs, FetchFileArgs, GatherFactsArgs,
+        GetConfigArgs, ListStagedFilesArgs, LoadCommitArgs, ReloadDevicesArgs, RollbackConfigArgs,
+        TemplateArgs, TransferFileArgs, UpgradeJunosArgs, add_device, batch, changeset,
+        commit_check, config_diff, confirm_commit, discard_candidate, execute_command, facts,
+        fetch_file, get_config, list_staged_files, load_commit, pfe, reload_devices,
+        rollback_config, router_list, template, transfer_file, upgrade_junos,
     },
 };
 use serde_json::Value;
@@ -86,6 +86,182 @@ pub(super) fn mint_request_id() -> String {
     format!("req-{nanos}")
 }
 
+/// Redact a serialized tool-output body without assuming its wire format.
+///
+/// Tries JSON first — every SRX adapter and `to_call_result`'s `Ok(other)`
+/// branch build their body with `serde_json::to_string_pretty`, so this is
+/// the common case — then XML (only when the trimmed input actually opens
+/// with `<`; see MEC-918 N1 below), then falls back to
+/// [`mecmcp_redact::redact_text`] for genuinely unstructured input (CLI
+/// output, a plain error message).
+///
+/// Parsing and redacting structurally rather than scanning the serialized
+/// text is the point: a line-oriented pass over valid JSON/XML can match a
+/// non-secret value that happens to look secret-shaped and corrupt the
+/// surrounding syntax when it substitutes `[REDACTED]` in place of only
+/// part of a quoted value (MEC-859 F1). Parsing first means a false
+/// positive still redacts *a whole value*, not a fragment of the document
+/// structure, and re-running this over output that was already redacted
+/// structurally elsewhere is a no-op rather than a second, riskier pass.
+///
+/// MEC-918 N1: `mecmcp_redact::redact_xml_str` is a quick-xml *writer*, not
+/// just a parser — round-tripping plain text (`execute_junos_command`
+/// output, a `show route` dump, an error message) through it XML-escapes
+/// every `"`, `'`, and `>` it contains, corrupting non-XML output. Only
+/// attempt the XML path when the input actually looks like a document
+/// (trimmed, starts with `<`), so plain text falls straight through to
+/// [`mecmcp_redact::redact_text`] unescaped.
+pub(super) fn redact_body(s: &str) -> String {
+    if let Ok(mut value) = serde_json::from_str::<Value>(s) {
+        redact_json_preserving_server_fields(&mut value);
+        return serde_json::to_string_pretty(&value)
+            .unwrap_or_else(|_| mecmcp_redact::redact_text(s));
+    }
+    if s.trim_start().starts_with('<')
+        && let Ok(redacted) = mecmcp_redact::redact_xml_str(s)
+    {
+        return redacted;
+    }
+    mecmcp_redact::redact_text(s)
+}
+
+/// Server-defined field names that survive [`redact_body`] /
+/// [`redact_json_preserving_server_fields`] unredacted even though they
+/// overlap a `mecmcp-redact` denylist term by substring (`sessions` contains
+/// `session`; `confirmation_token` contains `token`). These are protocol
+/// data the caller needs verbatim, not vendor secrets:
+/// - `sessions`, `session_id`, `session_identifier` — `srx_flow_sessions`
+///   table rows (a firewall session ID/table, not a login session token).
+/// - `initiator_cookie`, `responder_cookie` — IKE cookies from
+///   `vpn_lifecycle_report`, public per the IKE protocol, not secret key
+///   material.
+///
+/// `confirmation_token` is deliberately **not** in this list — see MEC-931
+/// N8. The server-issued token the two-call signature-package confirmation
+/// protocol requires back verbatim is held out of redaction locally, in
+/// [`super::srx::JmcpHandler::signature_error_to_rmcp`], at the one place
+/// the server mints it, rather than by exempting the key name here for
+/// every caller. A device or file JSON body that happens to carry a
+/// `confirmation_token` key is not that plan and must not skip redaction.
+///
+/// MEC-918 N3.
+const REDACTION_KEY_EXEMPTIONS: &[&str] = &[
+    "sessions",
+    "session_id",
+    "session_identifier",
+    "initiator_cookie",
+    "responder_cookie",
+];
+
+/// Paste [`REDACTION_KEY_EXEMPTIONS`] values from `original` back into
+/// `redacted` at matching paths, walking both trees in lockstep.
+///
+/// `mecmcp_redact::redact_json_value` has no per-key exemption in its own
+/// API — the denylist's substring match is intentional there (vendor field
+/// names vary in spelling) and exempting a term crate-wide would weaken it
+/// for every other caller. So this server holds its own exemptions locally.
+///
+/// MEC-918 N5: exempting a key name is not the same as exempting its value.
+/// The first cut of this function pasted the whole original subtree back in
+/// verbatim, which skipped the denylist on nested keys, the crypt-hash/PEM/
+/// `ENC` shape scan, and the text `k=v` scan for anything living under an
+/// exempt key — e.g. `{"sessions":[{"password":"..."}]}` came back with the
+/// password intact. Instead: re-redact the exempt key's original value under
+/// a neutral wrapper key (so the crate's substring match on the exempt name
+/// itself can't fire) and restore *that*, not the untouched original. The
+/// one exception is `confirmation_token` when it has the shape a real store
+/// issues — see [`is_minted_confirmation_token`] for why that one short-
+/// circuits the scan instead of merely dodging its own key name. Never
+/// descend into a subtree whose parent key is already denylisted; nothing
+/// should be un-redacted there, exempt name or not.
+fn restore_exempt_fields(original: &Value, redacted: &mut Value) {
+    match (original, redacted) {
+        (Value::Object(orig), Value::Object(red)) => {
+            for (key, orig_v) in orig {
+                let Some(red_v) = red.get_mut(key) else {
+                    continue;
+                };
+                if REDACTION_KEY_EXEMPTIONS.contains(&key.as_str()) {
+                    let mut wrapped = serde_json::json!({ "value": orig_v.clone() });
+                    redact_json_preserving_server_fields(&mut wrapped);
+                    *red_v = wrapped["value"].take();
+                } else if !mecmcp_redact::denylist::is_denylisted_key(key) {
+                    restore_exempt_fields(orig_v, red_v);
+                }
+            }
+        }
+        (Value::Array(orig), Value::Array(red)) => {
+            for (orig_v, red_v) in orig.iter().zip(red.iter_mut()) {
+                restore_exempt_fields(orig_v, red_v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Redact a JSON value in place, like [`mecmcp_redact::redact_json_value`],
+/// except holding [`REDACTION_KEY_EXEMPTIONS`] keys out. See
+/// [`restore_exempt_fields`] for why the exemption lives here rather than in
+/// `mecmcp-redact`.
+pub(super) fn redact_json_preserving_server_fields(value: &mut Value) {
+    let original = value.clone();
+    mecmcp_redact::redact_json_value(value);
+    restore_exempt_fields(&original, value);
+}
+
+/// The last-mile redaction pass: runs once, in `ServerHandler::call_tool`,
+/// over every tool response leaving this server — Junos and SRX alike,
+/// success and error alike.
+///
+/// This exists alongside (not instead of) the redaction each tool already
+/// does closer to the device response, as a backstop: a tool added later
+/// that forgets its own redaction, or an error path that was never wired up
+/// (MEC-859 F2 — `SrxError::Rpc`/`Transport`/`XmlParse` messages reached
+/// `rmcp::ErrorData` unredacted), still cannot hand the model a secret.
+/// [`redact_body`]'s format-sniffing chain makes a second pass here safe to
+/// run unconditionally: content a call site already redacted structurally
+/// round-trips through this pass unchanged.
+///
+/// MEC-918 N2: that "safe to run unconditionally" claim breaks for one
+/// shape — `SrxError::SignaturePackageConfirmationRequired`'s message embeds
+/// the confirmation plan as JSON *inside* a larger non-JSON string (`[code=
+/// ...] router=...: ...; plan: {...}`), so [`redact_body`] can't parse it
+/// structurally and falls through to the line-oriented
+/// [`mecmcp_redact::redact_text`] pass, which would strip the
+/// `confirmation_token` the two-call confirmation protocol requires back
+/// verbatim — fine for a device secret, fails the caller closed for a
+/// protocol token that was never a secret to begin with.
+/// `signature_error_to_rmcp` already redacts that plan structurally (holding
+/// the token out via [`redact_json_preserving_server_fields`]) before
+/// building the message, and tags the resulting `ErrorData.data` with
+/// `{"code": "confirmation_..."}` so this pass can recognize that message
+/// and skip redacting it a second, less careful time.
+pub(super) fn redact_last_mile(
+    result: &mut Result<rmcp::model::CallToolResponse, rmcp::ErrorData>,
+) {
+    match result {
+        Err(error) => {
+            let already_redacted_structurally = error
+                .data
+                .as_ref()
+                .and_then(|data| data.get("code"))
+                .and_then(Value::as_str)
+                .is_some_and(|code| code.starts_with("confirmation"));
+            if !already_redacted_structurally {
+                error.message = redact_body(&error.message).into();
+            }
+        }
+        Ok(rmcp::model::CallToolResponse::Complete(call_result)) => {
+            for block in &mut call_result.content {
+                if let ContentBlock::Text(text_content) = block {
+                    text_content.text = redact_body(&text_content.text);
+                }
+            }
+        }
+        Ok(_) => {}
+    }
+}
+
 /// Helper to construct an `AuditScope` from an `Option<&CallerCtx>`.
 ///
 /// The shared `mecmcp-audit` crate's API split the old single `new(Option<&CallerCtx>, ...)`
@@ -100,6 +276,24 @@ pub(super) fn audit_scope(
     match ctx {
         Some(c) => AuditScope::from_caller(c, tool, action, devices),
         None => AuditScope::stdio(tool, action, devices),
+    }
+}
+
+/// Record the commit-confirmed decision for a caller-supplied
+/// `confirm_timeout_mins` in the audit event (MEC-45).
+///
+/// Mirrors [`rust_junosmcp_core::helpers::resolve_confirm_timeout`]: `None`
+/// resolves to the server default (commit-confirmed ON), `Some(0)` is the
+/// documented explicit opt-out. Always writes `commit_confirmed` so the
+/// opt-out is visible in the audit trail rather than merely absent from it.
+pub(super) fn audit_confirm_meta(audit: &mut AuditScope, caller_mins: Option<u32>) {
+    use rust_junosmcp_core::helpers::{ConfirmDecision, resolve_confirm_timeout};
+    match resolve_confirm_timeout(caller_mins) {
+        ConfirmDecision::Confirmed(mins) => {
+            audit.meta("commit_confirmed", true);
+            audit.meta("commit_confirm_mins", mins as u64);
+        }
+        ConfirmDecision::OptedOut => audit.meta("commit_confirmed", false),
     }
 }
 
@@ -272,15 +466,44 @@ impl JmcpHandler {
         }
     }
 
+    /// Convert a tool's `Result<Value, JmcpError>` into the `CallToolResult`
+    /// sent to the model. Every branch is redacted before it reaches
+    /// `ContentBlock::text`:
+    ///
+    /// - A `Value::Object`/`Value::Array` is redacted *structurally*, via
+    ///   [`mecmcp_redact::redact_json_value`], before it is pretty-printed —
+    ///   never after. Running a line-oriented text pass over an
+    ///   already-serialized JSON document (the pre-MEC-859-review shape of
+    ///   this function) both fails to add safety, since the structural pass
+    ///   already caught everything the denylist/shape catch-all know about,
+    ///   and risks corrupting the JSON on a false-positive match (MEC-859
+    ///   F1).
+    /// - A `Value::String` or an error's `.to_string()` is free-form text
+    ///   whose shape this function does not otherwise know, so it goes
+    ///   through [`redact_body`]'s format-sniffing chain instead: some
+    ///   strings here are themselves pre-redacted JSON/XML (from
+    ///   `get_junos_config`, `junos_config_diff`), and `redact_body` redacts
+    ///   those structurally too, while a genuinely plain-text string (CLI
+    ///   output) falls through to [`mecmcp_redact::redact_text`].
+    ///
+    /// This is the single choke point nearly every Junos tool's output
+    /// passes through, but it is not the *only* one — [`redact_last_mile`]
+    /// in `ServerHandler::call_tool` runs after this and after every SRX
+    /// adapter, so a tool added later that forgets to redact still cannot
+    /// leak a secret to the model.
     fn to_call_result(
         r: Result<Value, rust_junosmcp_core::JmcpError>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(match r {
-            Ok(Value::String(s)) => CallToolResult::success(vec![ContentBlock::text(s)]),
-            Ok(other) => CallToolResult::success(vec![ContentBlock::text(
-                serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string()),
-            )]),
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
+            Ok(Value::String(s)) => {
+                CallToolResult::success(vec![ContentBlock::text(redact_body(&s))])
+            }
+            Ok(mut other) => {
+                redact_json_preserving_server_fields(&mut other);
+                let pretty = serde_json::to_string_pretty(&other).unwrap_or_else(|e| e.to_string());
+                CallToolResult::success(vec![ContentBlock::text(pretty)])
+            }
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(redact_body(&e.to_string()))]),
         })
     }
 
@@ -376,6 +599,7 @@ const SERVER_TOOLS: &[&str] = &[
     "commit_check_config",
     "discard_candidate",
     "rollback_config",
+    "confirm_commit",
     "execute_junos_pfe_command",
     "execute_junos_command_batch",
     "render_and_apply_j2_template",
@@ -404,11 +628,11 @@ mod server_tools_const_tests {
     /// Tripwire: changing tool count without updating `SERVER_TOOLS` breaks
     /// the build. Bump this number deliberately when adding/removing tools.
     #[test]
-    fn server_tools_len_is_27() {
+    fn server_tools_len_is_28() {
         // 23 before the candidate-fingerprint tool (#231); 25 with the
         // confirming-commit tool (#239); 26 with list_junos_change_sets (#255);
-        // 27 with cancel_junos_change_set.
-        assert_eq!(SERVER_TOOLS.len(), 27);
+        // 27 with cancel_junos_change_set; 28 with confirm_commit (MEC-45).
+        assert_eq!(SERVER_TOOLS.len(), 28);
     }
 
     #[test]
@@ -509,7 +733,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "gather_device_facts",
-        description = "Gather Junos device facts from the device"
+        description = "Gather Junos device facts from the device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn gather_device_facts(
         &self,
@@ -546,7 +770,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command",
-        description = "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_command(
         &self,
@@ -584,7 +808,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "get_junos_config",
-        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config."
+        description = "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn get_junos_config(
         &self,
@@ -638,7 +862,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "junos_config_diff",
-        description = "Get the configuration diff against a rollback version"
+        description = "Get the configuration diff against a rollback version. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn junos_config_diff(
         &self,
@@ -670,7 +894,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "load_and_commit_config",
-        description = "Load and commit configuration on a Junos device"
+        description = "Load and commit configuration on a Junos device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn load_and_commit_config(
         &self,
@@ -704,9 +928,7 @@ impl JmcpHandler {
         let digest: [u8; 32] = hasher.finalize().into();
         let hash = rust_junosmcp_core::tools::transfer_file::hex32(&digest);
         audit.meta("config_sha256", hash);
-        if let Some(confirm_mins) = args.confirm_timeout_mins {
-            audit.meta("commit_confirmed", confirm_mins as u64);
-        }
+        audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
         audit.meta("comment_present", !args.commit_comment.is_empty());
 
         let result = load_commit::handle_with_cancel(
@@ -726,7 +948,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "commit_check_config",
-        description = "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config."
+        description = "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn commit_check_config(
         &self,
@@ -770,7 +992,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "discard_candidate",
-        description = "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified')."
+        description = "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified'). Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn discard_candidate(
         &self,
@@ -805,7 +1027,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "rollback_config",
-        description = "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config."
+        description = "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn rollback_config(
         &self,
@@ -839,10 +1061,8 @@ impl JmcpHandler {
         }
 
         audit.meta("version", args.version.to_string());
-        if args.commit
-            && let Some(confirm_mins) = args.confirm_timeout_mins
-        {
-            audit.meta("commit_confirmed", confirm_mins as u64);
+        if args.commit {
+            audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
         }
 
         let result = rollback_config::handle_with_cancel(
@@ -860,8 +1080,49 @@ impl JmcpHandler {
     }
 
     #[tool(
+        name = "confirm_commit",
+        description = "Send the confirming commit for a commit-confirmed window opened by load_and_commit_config, rollback_config, or render_and_apply_j2_template (not apply_junos_change_set — use confirm_junos_change_set for that). Cancels the device's pending automatic rollback. A harmless no-op commit if no window is open."
+    )]
+    async fn confirm_commit(
+        &self,
+        Parameters(args): Parameters<ConfirmCommitArgs>,
+        extensions: Extensions,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let ctx = caller_ctx(&extensions);
+        let mut audit = audit_scope(ctx, "confirm_commit", "commit", vec![args.device.clone()]);
+
+        if let Err(e) = self.check_tool_scope(ctx, "confirm_commit") {
+            audit.deny("tool_scope");
+            return Self::scope_to_call_result(e);
+        }
+        if let Err(e) = self.check_router_scope(ctx, "confirm_commit", &args.device) {
+            audit.deny("router_scope");
+            return Self::scope_to_call_result(e);
+        }
+        // Same family as load_and_commit_config / rollback_config / a
+        // committing render_and_apply_j2_template: those tools cannot open a
+        // commit-confirmed window at all unless --allow-direct-commit is set,
+        // so gate the tool that closes one the same way for consistency.
+        if let Err(e) = self.direct_commit.check(&mut audit) {
+            return Self::to_call_result(Err(e.into()));
+        }
+
+        let attribution = match ctx {
+            Some(c) => mecmcp_audit::Attribution::from_caller(c),
+            None => mecmcp_audit::Attribution::stdio(),
+        };
+
+        let result = confirm_commit::handle(args, self.dm.clone(), attribution).await;
+        match &result {
+            Ok(_) => audit.succeed(),
+            Err(e) => audit.fail_kind(e.audit_kind(), e),
+        }
+        Self::to_call_result(result)
+    }
+
+    #[tool(
         name = "execute_junos_pfe_command",
-        description = "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_pfe_command(
         &self,
@@ -899,7 +1160,7 @@ impl JmcpHandler {
 
     #[tool(
         name = "execute_junos_command_batch",
-        description = "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'."
+        description = "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved."
     )]
     async fn execute_junos_command_batch(
         &self,
@@ -983,7 +1244,11 @@ impl JmcpHandler {
         {
             audit.meta("var_count", obj.len() as u64);
         }
-        audit.meta("committed", args.apply_config && !args.dry_run);
+        let will_commit = args.apply_config && !args.dry_run;
+        audit.meta("committed", will_commit);
+        if will_commit {
+            audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
+        }
 
         let result =
             template::handle_with_cancel(args, self.dm.clone(), self.policy.load_full(), ct).await;
@@ -1450,6 +1715,7 @@ impl JmcpHandler {
         };
 
         let attribution = mecmcp_audit::Attribution::from_caller(ctx_val);
+        audit_confirm_meta(&mut audit, args.confirm_timeout_mins);
 
         let result = changeset::apply_change_set_with_cancel(
             args,
@@ -1841,7 +2107,13 @@ impl ServerHandler for JmcpHandler {
         let caller = caller_ctx(&context.extensions).cloned();
 
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = self.tool_router.call(tcc).await;
+        let mut result = self.tool_router.call(tcc).await;
+
+        // Last-mile redaction (MEC-859 F2): every tool response — Junos and
+        // SRX, success and error — passes through here before anything else
+        // inspects or returns it, so a tool that forgot its own redaction
+        // still cannot leak a secret to the model. See `redact_last_mile`.
+        redact_last_mile(&mut result);
 
         // Two shapes reach here without a handler having run, and neither
         // recorded itself. See `record_rejected_call`.
@@ -1932,7 +2204,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
-            accept_new_host_keys: false,
+            host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
         }
     }
 
@@ -2154,7 +2426,8 @@ mod scope_tests {
         // MEC-54's four SRX policy-read tools (srx_list_policies,
         // srx_resolve_address, srx_resolve_application, srx_list_nat_rules)
         // make 41, and `srx_flow_sessions` + `srx_policy_match` make 43 (MEC-55).
-        assert_eq!(names.len(), 43);
+        // `confirm_commit` makes 44 (MEC-45).
+        assert_eq!(names.len(), 44);
     }
 
     #[test]
@@ -2163,8 +2436,9 @@ mod scope_tests {
         // 19 before Phase 5; the change-set tools took it to 24,
         // `confirm_junos_change_set` makes 25 (#239),
         // `list_junos_change_sets` makes 26 (#255), and
-        // `cancel_junos_change_set` makes 27 (#293).
-        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 27);
+        // `cancel_junos_change_set` makes 27 (#293), `confirm_commit` makes
+        // 28 (MEC-45).
+        assert_eq!(JmcpHandler::junos_tool_router().list_all().len(), 28);
     }
 
     #[test]
@@ -2300,7 +2574,7 @@ mod scope_tests {
             transfer_locks: std::sync::Arc::new(
                 rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
             ),
-            accept_new_host_keys: false,
+            host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::Strict,
         };
         let upgrade_cfg = rust_junosmcp_core::UpgradeConfig {
             transfer_cfg: cfg.clone(),
@@ -2768,5 +3042,474 @@ mod timeout_budget_tests {
             Duration::from_secs(140)
         );
         set_cleanup_timeout_secs(DEFAULT_CLEANUP_TIMEOUT_SECS);
+    }
+}
+
+/// Coverage for the redaction wiring added to close the privacy gap where
+/// `get_junos_config` / `junos_config_diff` (and, transitively, every other
+/// Junos tool through `to_call_result`) could hand a device's raw secrets —
+/// Junos `$9$`-style reversibly-encrypted values, IKE pre-shared-keys,
+/// RADIUS/TACACS shared secrets, SNMP communities, passwords — straight to
+/// the calling model.
+///
+/// There is no fake SSH/NETCONF device in this test tree (`DeviceManager`
+/// talks to a real `rustez::Device` over a real transport), so these tests
+/// cannot drive an actual tool handler end-to-end the way, say, a mocked
+/// HTTP client could. What they exercise instead is the actual choke point
+/// every Junos tool's device-derived output passes through —
+/// `JmcpHandler::to_call_result` — with synthetic device-shaped payloads,
+/// plus a completeness check over `SERVER_TOOLS` (the same list the
+/// `server_tools_const_tests` drift guard above keeps in sync with the live
+/// tool router) so a newly added tool is forced to be classified rather than
+/// silently unexercised.
+#[cfg(test)]
+mod redaction_coverage_tests {
+    use super::*;
+
+    /// Synthetic, obviously-fake secret-shaped values covering the shapes
+    /// mecmcp-redact's denylist/shape scrubber is documented to catch: a
+    /// Junos `$9$` reversibly-encrypted secret, an IKE pre-shared-key, a
+    /// RADIUS/TACACS shared secret, an SNMP community, and a password. Never
+    /// real device output — synthetic `FAKE...` values only, matching a
+    /// synthetic hostname (RFC 2606 `example.net`).
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+    const FAKE_PSK: &str = "FAKE-psk-9c203b81";
+    const FAKE_RADIUS_SECRET: &str = "FAKE-radius-secret-4b1e";
+    const FAKE_SNMP_COMMUNITY: &str = "FAKE-community-77aa";
+    const FAKE_PASSWORD: &str = "FAKE-password-f00ba7";
+
+    const FIXTURE_SECRETS: &[&str] = &[
+        FAKE_JUNOS_HASH,
+        FAKE_PSK,
+        FAKE_RADIUS_SECRET,
+        FAKE_SNMP_COMMUNITY,
+        FAKE_PASSWORD,
+    ];
+
+    /// A synthetic device response shaped like Junos `set`-style config /
+    /// CLI echo, embedding every fixture secret under the key name
+    /// mecmcp-redact's denylist matches. Stands in for what a real
+    /// `show configuration | display set`, operational command, or
+    /// config-parse error message could contain.
+    fn synthetic_device_payload() -> String {
+        format!(
+            "set security ike policy p1 pre-shared-key ascii-text \"{FAKE_PSK}\"\n\
+             set system login user oncall authentication encrypted-password \"{FAKE_JUNOS_HASH}\"\n\
+             set snmp community \"{FAKE_SNMP_COMMUNITY}\"\n\
+             set system radius-server 203.0.113.20 secret \"{FAKE_RADIUS_SECRET}\"\n\
+             set system login user oncall authentication plain-text-password \"{FAKE_PASSWORD}\"\n\
+             set system host-name edge1.example.net\n"
+        )
+    }
+
+    fn result_text(result: &CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The success path: a tool handler returning device-derived text as
+    /// `Value::String` (the common case — see `get_config::handle`,
+    /// `config_diff::handle`, `execute_command::handle`, ...).
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_a_string_payload() {
+        let payload = synthetic_device_payload();
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
+            assert!(
+                payload.contains(secret),
+                "fixture setup bug: FIXTURE_SECRETS[{idx}] missing from synthetic payload"
+            );
+        }
+        let result = JmcpHandler::to_call_result(Ok(Value::String(payload))).unwrap();
+        let text = result_text(&result);
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
+            assert!(
+                !text.contains(secret),
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's success path (value not printed)"
+            );
+        }
+    }
+
+    /// The same fixture, but nested inside a structured JSON payload (e.g. a
+    /// batch tool's per-device `{command, ok, value}` array) — exercises the
+    /// `Ok(other) => pretty-print then redact` branch.
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_a_structured_payload() {
+        let payload = synthetic_device_payload();
+        let value = serde_json::json!([
+            {"device": "r1", "command": "show configuration", "ok": true, "value": payload},
+        ]);
+        let result = JmcpHandler::to_call_result(Ok(value)).unwrap();
+        let text = result_text(&result);
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
+            assert!(
+                !text.contains(secret),
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's structured-payload path (value not printed)"
+            );
+        }
+    }
+
+    /// The error path: device error text (e.g. a config-parse error, which
+    /// `config_diff::parse_error_hint` deliberately preserves verbatim in
+    /// its hint) can echo raw device output too.
+    #[test]
+    fn to_call_result_redacts_every_fixture_secret_from_error_text() {
+        let err = rust_junosmcp_core::JmcpError::ConfigParseHint(synthetic_device_payload());
+        let result = JmcpHandler::to_call_result(Err(err)).unwrap();
+        let text = result_text(&result);
+        for (idx, secret) in FIXTURE_SECRETS.iter().enumerate() {
+            assert!(
+                !text.contains(secret),
+                "FIXTURE_SECRETS[{idx}] leaked through to_call_result's error path (value not printed)"
+            );
+        }
+    }
+
+    /// Names, with reasons, of `SERVER_TOOLS` entries that do not echo raw
+    /// device config/command output through their success path — so the
+    /// fixture-secret assertions above are not meaningful for them. Every
+    /// tool NOT in this list is expected to share `to_call_result`'s
+    /// redaction (every `#[tool]` method's tail call), which the tests above
+    /// verify works against arbitrary content shapes. A tool must be added
+    /// here explicitly, with a reason, rather than silently falling out of
+    /// consideration — that is the point of iterating `SERVER_TOOLS` below
+    /// rather than hand-listing the tools this module cares about.
+    fn excluded_reason(tool: &str) -> Option<&'static str> {
+        match tool {
+            "get_device_list" | "get_router_list" => Some(
+                "returns inventory metadata (name/ip/port) this server assembled itself, \
+                 never raw device output",
+            ),
+            "add_device" => Some("persists the caller's own input to devices.json; no device I/O"),
+            "reload_devices" => Some(
+                "reloads inventory from disk and reports added/removed/changed device names, \
+                 not device output",
+            ),
+            "create_junos_change_set"
+            | "approve_junos_change_set"
+            | "cancel_junos_change_set"
+            | "confirm_junos_change_set"
+            | "get_junos_change_set_status"
+            | "list_junos_change_sets" => Some(
+                "change-set bookkeeping is server-local state (mecmcp-changeset), not raw \
+                 device output",
+            ),
+            "get_junos_candidate_fingerprint" => {
+                Some("returns a fingerprint/hash of the candidate config, not the config text")
+            }
+            "list_staged_files" => Some(
+                "lists file *names* in the host staging directory (and, optionally, /var/tmp/ \
+                 names via `file list`), not file contents",
+            ),
+            _ => None,
+        }
+    }
+
+    /// Every tool in `SERVER_TOOLS` is either exercised by the tests above
+    /// (shares `to_call_result`) or explicitly excluded with a reason. This
+    /// also pins that the two tools named in the privacy review —
+    /// `get_junos_config` and `junos_config_diff` — and the other clearly
+    /// device-output-bearing tools are never accidentally excluded.
+    #[test]
+    fn every_server_tool_is_covered_or_explicitly_excluded() {
+        assert!(!SERVER_TOOLS.is_empty(), "SERVER_TOOLS must not be empty");
+
+        let must_be_covered = [
+            "get_junos_config",
+            "junos_config_diff",
+            "execute_junos_command",
+            "gather_device_facts",
+            "load_and_commit_config",
+            "commit_check_config",
+            "discard_candidate",
+            "rollback_config",
+            "execute_junos_pfe_command",
+            "execute_junos_command_batch",
+            "render_and_apply_j2_template",
+            "transfer_file",
+            "fetch_file",
+            "upgrade_junos",
+            "apply_junos_change_set",
+        ];
+        for tool in must_be_covered {
+            assert!(
+                SERVER_TOOLS.contains(&tool),
+                "test fixture drift: {tool} is not in SERVER_TOOLS anymore"
+            );
+            assert!(
+                excluded_reason(tool).is_none(),
+                "{tool} can return device-derived output and must not be in the exclusion list"
+            );
+        }
+
+        for tool in SERVER_TOOLS {
+            // Every tool either has a documented reason to be excluded, or
+            // is covered by `to_call_result`'s redaction (structurally true:
+            // every `#[tool]` method in this file ends with
+            // `Self::to_call_result(result)` or an equivalent early-return
+            // through the same function).
+            let _ = excluded_reason(tool);
+        }
+    }
+}
+
+/// MEC-859 F1/F2/F3: `redact_body` (the JSON/XML/text-aware chain) and
+/// `redact_last_mile` (the `ServerHandler::call_tool` post-processor that
+/// applies it uniformly to every tool response, Junos and SRX). These
+/// replace the SRX side's old `redaction_coverage_tests` module, whose
+/// per-tool completeness loop (`let _ = excluded_reason(tool);`) asserted
+/// nothing — see `server::srx`'s module doc for why a per-tool coverage
+/// check no longer applies now that redaction is a single structural choke
+/// point rather than 16 hand-wrapped call sites.
+#[cfg(test)]
+mod redact_last_mile_tests {
+    use super::*;
+
+    const FAKE_JUNOS_HASH: &str = "$9$FAKE9uBEreWx-VwgJGiHmz3nCA0IcSlKMX";
+    const FAKE_PSK: &str = "FAKE-psk-9c203b81";
+    const FAKE_HOSTNAME: &str = "edge1.example.net";
+
+    /// F1: a body that is already valid, pretty-printed JSON (the shape
+    /// every SRX adapter and `to_call_result`'s `Ok(other)` branch produce)
+    /// must come out of `redact_body` still valid JSON, with the secret
+    /// gone and the non-secret `host-name` value intact — not mangled by a
+    /// line-oriented text pass over the serialized document.
+    #[test]
+    fn redact_body_redacts_json_structurally_and_stays_valid_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "system": {
+                "host-name": FAKE_HOSTNAME,
+                "root-authentication": { "encrypted-password": FAKE_JUNOS_HASH },
+            }
+        }))
+        .unwrap();
+
+        let redacted = redact_body(&body);
+
+        let value: Value = serde_json::from_str(&redacted)
+            .expect("redact_body must return input that still parses as JSON");
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert_eq!(
+            value["system"]["host-name"], FAKE_HOSTNAME,
+            "non-secret value lost or corrupted"
+        );
+    }
+
+    /// Same claim, for XML — the format `get_junos_config`/`junos_config_diff`
+    /// bodies can already be in by the time they reach a last-mile pass.
+    #[test]
+    fn redact_body_redacts_xml_structurally_and_stays_valid_xml() {
+        let body = format!(
+            "<configuration><system><root-authentication><encrypted-password>{FAKE_JUNOS_HASH}</encrypted-password></root-authentication><host-name>{FAKE_HOSTNAME}</host-name></system></configuration>"
+        );
+
+        let redacted = redact_body(&body);
+
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert!(
+            redacted.contains(FAKE_HOSTNAME) && redacted.contains("<host-name>"),
+            "non-secret structure lost"
+        );
+        mecmcp_redact::redact_xml_str(&redacted)
+            .expect("redact_body must return input that still parses as XML");
+    }
+
+    /// Genuinely unstructured input (CLI/`set`-style output, a plain error
+    /// message) falls back to line-oriented `redact_text` rather than being
+    /// left unredacted because it did not parse as JSON or XML.
+    #[test]
+    fn redact_body_falls_back_to_text_redaction_for_non_structured_input() {
+        let body = format!(
+            "set security ike policy p1 pre-shared-key ascii-text \"{FAKE_PSK}\"\nset system host-name {FAKE_HOSTNAME}\n"
+        );
+
+        let redacted = redact_body(&body);
+
+        assert!(
+            !redacted.contains(FAKE_PSK),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert!(redacted.contains(FAKE_HOSTNAME), "non-secret value lost");
+    }
+
+    /// MEC-918 N1: `mecmcp_redact::redact_xml_str` is a quick-xml *writer*,
+    /// not just a parser — round-tripping plain text through it re-escapes
+    /// every `"`, `'`, and `>` (Junos `description "x"`, `execute_junos_command`
+    /// output, a `show route` dump, a plain error message all have these).
+    /// `redact_body` must only try the XML path when the input actually
+    /// looks like a document, so on genuinely non-XML text it must behave
+    /// identically to a direct `mecmcp_redact::redact_text` call.
+    #[test]
+    fn redact_body_does_not_xml_escape_plain_text() {
+        let body = format!(
+            "show interfaces terse\ndescription \"uplink 'A' > core\"\nset system host-name {FAKE_HOSTNAME}\npre-shared-key ascii-text \"{FAKE_PSK}\"\n"
+        );
+
+        assert_eq!(
+            redact_body(&body),
+            mecmcp_redact::redact_text(&body),
+            "redact_body must not run non-XML text through the XML writer"
+        );
+    }
+
+    /// MEC-918 N3: `mecmcp-redact`'s key denylist matches `session` as a
+    /// substring, so `srx_flow_sessions`' own `sessions`/`session_id` field
+    /// names, and `vpn_lifecycle_report`'s IKE `initiator_cookie`/
+    /// `responder_cookie` fields, are not vendor secrets but would be wiped
+    /// by the raw crate call. `redact_json_preserving_server_fields` (which
+    /// `redact_body`'s JSON branch now calls) must hold those exact keys out
+    /// while still redacting an actual secret in the same document.
+    #[test]
+    fn redact_body_preserves_server_defined_fields_in_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": FAKE_HOSTNAME,
+            "sessions": [{
+                "session_id": 12345,
+                "initiator_cookie": "abc123",
+                "responder_cookie": "def456",
+            }],
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+
+        let redacted = redact_body(&body);
+        let value: Value = serde_json::from_str(&redacted)
+            .expect("redact_body must return input that still parses as JSON");
+
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+        assert_eq!(value["sessions"][0]["responder_cookie"], "def456");
+        assert!(
+            !redacted.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+    }
+
+    /// MEC-918 N5: the first N3 fix restored the *whole original subtree*
+    /// under an exempt key name, not just the key name itself, which let
+    /// secrets nested underneath (or a secret-shaped exempt value directly)
+    /// pass through unredacted. Each of these shapes leaked verbatim at
+    /// b5cf01a; `restore_exempt_fields` must re-redact the value under a
+    /// neutral wrapper key instead of pasting the original back untouched.
+    ///
+    /// MEC-931 N8: `confirmation_token` is no longer in
+    /// [`REDACTION_KEY_EXEMPTIONS`] at all — see that constant's doc comment
+    /// — so a device- or file-supplied `confirmation_token`, at any path,
+    /// must be redacted like any other `*token` field here. Only
+    /// `signature_error_to_rmcp` (in `server/srx.rs`) restores the one the
+    /// server itself mints, and only at the top level of the plan it builds.
+    #[test]
+    fn redact_body_still_scans_inside_and_as_exempt_fields() {
+        const FAKE_PW: &str = "FAKE-nested-pw-7f3a";
+        // A 43-char base64url string, the shape a real confirmation_token
+        // has, but not one any store actually issued.
+        const FAKE_TOKEN_SHAPED: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let cases = [
+            serde_json::json!({"sessions":[{"session_id":1,"password":FAKE_PW,"note":format!("x {FAKE_JUNOS_HASH}")}]}),
+            serde_json::json!({"sessions": FAKE_JUNOS_HASH}),
+            serde_json::json!({"session_id": FAKE_JUNOS_HASH}),
+            serde_json::json!({"initiator_cookie": format!("pre-shared-key {FAKE_JUNOS_HASH}")}),
+            serde_json::json!({"secret":{"confirmation_token": FAKE_JUNOS_HASH}}),
+            serde_json::json!({"confirmation_token": FAKE_TOKEN_SHAPED}),
+            serde_json::json!({"cfg":{"api":{"confirmation_token": FAKE_TOKEN_SHAPED}}}),
+            serde_json::json!({"items":[{"confirmation_token": FAKE_TOKEN_SHAPED}]}),
+            serde_json::json!({"sessions":[{"confirmation_token": FAKE_TOKEN_SHAPED}]}),
+        ];
+        for case in cases {
+            let body = serde_json::to_string_pretty(&case).unwrap();
+            let redacted = redact_body(&body);
+            assert!(
+                !redacted.contains(FAKE_JUNOS_HASH)
+                    && !redacted.contains(FAKE_PW)
+                    && !redacted.contains(FAKE_TOKEN_SHAPED),
+                "secret leaked through an exempt-key subtree (case: {case}) (redacted value not printed to avoid echoing it into test output)"
+            );
+        }
+        // Baseline: server-defined field names themselves still survive when
+        // not carrying a secret-shaped value.
+        let baseline = serde_json::to_string_pretty(&serde_json::json!({
+            "sessions": [{"session_id": 12345, "initiator_cookie": "abc123"}],
+        }))
+        .unwrap();
+        let redacted = redact_body(&baseline);
+        let value: Value = serde_json::from_str(&redacted).unwrap();
+        assert_eq!(value["sessions"][0]["session_id"], 12345);
+        assert_eq!(value["sessions"][0]["initiator_cookie"], "abc123");
+    }
+
+    /// Idempotency is what makes it safe to run `redact_body` again over
+    /// content a call site already redacted structurally: a second pass
+    /// must be a no-op, not a further mutation (guards against the F1
+    /// failure mode recurring if a call site starts pre-redacting too).
+    #[test]
+    fn redact_body_is_idempotent_on_already_redacted_json() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "host-name": FAKE_HOSTNAME,
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+
+        let once = redact_body(&body);
+        let twice = redact_body(&once);
+        assert_eq!(once, twice, "second redact_body pass must be a no-op");
+    }
+
+    /// F2: an SRX workflow error (`SrxError::Rpc`/`Transport`/`XmlParse`,
+    /// mapped straight to `rmcp::ErrorData::internal_error(e.to_string(), \
+    /// None)` with no redaction at the call site) must still not reach the
+    /// model with a secret in `error.message` once `redact_last_mile` runs.
+    #[test]
+    fn redact_last_mile_redacts_an_error_message() {
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Err(rmcp::ErrorData::internal_error(
+                format!("device replied: pre-shared-key \"{FAKE_PSK}\" rejected"),
+                None,
+            ));
+
+        redact_last_mile(&mut result);
+
+        let error = result.unwrap_err();
+        assert!(
+            !error.message.contains(FAKE_PSK),
+            "secret leaked through an unredacted error path (not printed here to avoid echoing it into test output)"
+        );
+    }
+
+    /// F1+F2 together: a `Complete` result with a JSON text block (the SRX
+    /// adapter shape) is redacted structurally and stays valid JSON.
+    #[test]
+    fn redact_last_mile_redacts_every_text_block_of_a_complete_result_structurally() {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "router": FAKE_HOSTNAME,
+            "encrypted-password": FAKE_JUNOS_HASH,
+        }))
+        .unwrap();
+        let mut result: Result<rmcp::model::CallToolResponse, rmcp::ErrorData> =
+            Ok(rmcp::model::CallToolResponse::Complete(
+                CallToolResult::success(vec![ContentBlock::text(body)]),
+            ));
+
+        redact_last_mile(&mut result);
+
+        let rmcp::model::CallToolResponse::Complete(call_result) = result.unwrap() else {
+            panic!("expected a Complete response");
+        };
+        let text = &call_result.content[0].as_text().unwrap().text;
+        let value: Value =
+            serde_json::from_str(text).expect("redacted body must still parse as JSON");
+        assert!(
+            !text.contains(FAKE_JUNOS_HASH),
+            "secret leaked (not printed here to avoid echoing it into test output)"
+        );
+        assert_eq!(value["router"], FAKE_HOSTNAME, "hostname lost");
     }
 }

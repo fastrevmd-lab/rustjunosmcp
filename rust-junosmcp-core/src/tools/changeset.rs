@@ -75,14 +75,19 @@ pub struct ApplyChangeSetArgs {
     /// Target device endpoint (device name from inventory).
     #[serde(alias = "router_name", alias = "router")]
     pub device: String,
-    /// Optional confirmed-commit window, in whole minutes.
+    /// Confirmed-commit window, in whole minutes.
     ///
-    /// When set, the device commits the change and schedules an automatic
-    /// rollback after this many minutes unless `confirm_junos_change_set` is
-    /// called first. Minutes, not seconds — that is what Junos schedules, and
-    /// it matches `rollback_config`'s existing `confirm_timeout_mins`.
+    /// The device commits the change and schedules an automatic rollback
+    /// after this many minutes unless `confirm_junos_change_set` is called
+    /// first. Minutes, not seconds — that is what Junos schedules, and it
+    /// matches `rollback_config`'s `confirm_timeout_mins`.
     ///
-    /// Omit for an ordinary commit with no rollback timer.
+    /// Defaults to the server's `--commit-confirm-default-mins` (10 unless
+    /// configured otherwise) when omitted — commit-confirmed is ON by
+    /// default. Pass `0` to explicitly opt out and issue a plain commit
+    /// instead; this is recorded in the audit trail as
+    /// `commit_confirmed=false`.
+    #[schemars(range(min = 0, max = 71_582_788))]
     pub confirm_timeout_mins: Option<u32>,
 }
 
@@ -800,6 +805,20 @@ pub async fn apply_change_set_with_cancel(
     let device_ip = device_entry.ip.clone();
     let device_port = device_entry.port;
 
+    // Commit-confirmed by default (MEC-45): a bad change-set apply reverts
+    // itself unless the caller explicitly opts out with
+    // `confirm_timeout_mins: 0`. Resolved and validated before any staging
+    // RPC — like `load_and_commit_config`'s mode gate — so a bad value never
+    // leaves a candidate staged with nothing to clean it up.
+    let confirm_mins_used = match crate::helpers::resolve_confirm_timeout(args.confirm_timeout_mins)
+    {
+        crate::helpers::ConfirmDecision::Confirmed(mins) => {
+            let secs = crate::helpers::confirm_timeout_to_secs(mins)?;
+            Some((mins, secs))
+        }
+        crate::helpers::ConfirmDecision::OptedOut => None,
+    };
+
     // Capture config authority for the audit record.
     let config_authority = serde_json::to_string(&device_entry.config_authority)
         .ok()
@@ -988,13 +1007,11 @@ pub async fn apply_change_set_with_cancel(
         }
     };
 
-    // A confirmed-commit window is expressed in whole minutes because that is
-    // what Junos schedules; the transaction layer refuses anything it cannot
-    // honour rather than rounding it.
+    // `confirm_mins_used` was resolved and validated at the top of this
+    // function, before any staging RPC.
     let commit_options = CommitOptions {
-        confirm_timeout: args
-            .confirm_timeout_mins
-            .map(|mins| std::time::Duration::from_secs(u64::from(mins) * 60)),
+        confirm_timeout: confirm_mins_used
+            .map(|(_, secs)| std::time::Duration::from_secs(u64::from(secs))),
     };
 
     // Check if validation succeeded. If it failed, refuse to commit.

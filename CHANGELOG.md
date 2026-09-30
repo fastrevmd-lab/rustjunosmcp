@@ -6,6 +6,95 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-09-30
+
+### Fixed
+
+- **Release workflows now build.** `release-image.yml` and
+  `release-sign-tarball.yml` pinned their `mecmcp` reusable workflow calls to
+  `34bc01f`, a commit that only ever existed on a deleted branch from an
+  abandoned mecmcp PR. GitHub silently rejects a workflow file that
+  references an unreachable ref (the job list comes back empty), so v0.27.0
+  tagged cleanly but published no GitHub release, no signed tarball, and no
+  container image. Both workflows are repinned to `mecmcp` `main@e97d10b`,
+  which is reachable and carries the same reusable workflow definitions
+  (#456). No code, tool behavior, or crate API changed from 0.27.0 — this
+  release exists solely to produce the artifacts 0.27.0 could not.
+
+## [0.27.0] - 2026-09-29
+
+### Security
+
+- **Redact device secrets from tool output.** `get_junos_config` and
+  `junos_config_diff` returned raw device configuration, including Junos
+  `$9$`-style reversibly-encrypted values, PSKs, SNMP communities, and
+  RADIUS/TACACS secrets, straight to the calling model (the README also
+  wrongly called these values "hashed" — they are symmetrically encrypted
+  and recoverable with the device's master key). Redaction is now applied
+  at the two tool-specific call sites and, as a last-mile safety net, in a
+  single `call_tool` post-processor covering every tool response, so a
+  newly added tool cannot silently skip it. Tool descriptions and the
+  README now say output is redacted (MEC-14).
+
+### Added
+
+- **`confirm_commit`** — new write tool that sends the confirming commit for
+  a commit-confirmed window opened by `load_and_commit_config`,
+  `rollback_config`, or `render_and_apply_j2_template`, cancelling the
+  pending auto-rollback (MEC-45).
+
+### Changed
+
+- **Behaviour change: commit-confirmed is on by default.**
+  `load_and_commit_config`, `rollback_config` (`commit=true`),
+  `render_and_apply_j2_template`, and `apply_junos_change_set` now issue
+  `commit confirmed <window>` unless the caller passes
+  `confirm_timeout_mins: 0`. Previously these committed directly with no
+  auto-rollback net unless the caller opted in. The window defaults to the
+  new `--commit-confirm-default-mins` flag (default 10 minutes); a per-call
+  `confirm_timeout_mins` overrides it. The opt-out is recorded in the audit
+  event as `commit_confirmed=false`. The response and change-set status both
+  report `rollback_deadline_unix` (MEC-45).
+- **`--ssh-accept-new-host-keys` now gives real TOFU for NETCONF SSH, not
+  no-verification-at-all.** Previously the flag pinned scp's known_hosts
+  entries on first contact (`HostKeyVerification::AcceptNew`) but set NETCONF
+  SSH to `HostKeyVerification::AcceptAll` — an operator reading the flag name
+  had no reason to expect that NETCONF connections were left completely
+  unverified. NETCONF now uses `AcceptNew` too: an unknown host's key is
+  pinned on first contact, and a host that later presents a *different* key
+  is refused, on both the scp and NETCONF paths, against the same
+  `known_hosts` file (MEC-44).
+  **Behaviour change for anyone relying on the old flag for key rotation:**
+  a device that rotates its host key (reimage, RE swap) will now be refused
+  on reconnect instead of being silently re-trusted. Re-run
+  `scripts/scan-known-hosts.sh`, or delete the stale line from
+  `known_hosts`, after a legitimate rotation.
+- **New `--ssh-insecure-accept-any-host-key` flag**, lab-only, carries the
+  old blanket `HostKeyVerification::AcceptAll` behavior for NETCONF SSH under
+  an honestly-named opt-in. Mutually exclusive with
+  `--ssh-accept-new-host-keys`. Logged loudly at startup and recorded as an
+  audit event.
+- **Container images now publish to `ghcr.io/mechubsec/rustjunosmcp`** —
+  the repo moved to the mechubsec organization, and images are renamed to
+  match. Older tags were copied from the previous name.
+
+### Fixed
+
+- **`--ssh-insecure-accept-any-host-key` now also disables host-key
+  verification for scp (`transfer_file` / `upgrade_junos`), not just
+  NETCONF SSH.** The MEC-44 landing (above) left scp on `AcceptNew` (TOFU)
+  under this flag, so a device presenting a changed key was still refused
+  over scp despite the flag's name promising to accept any key. Both
+  transports now share one `SshHostKeyMode` end-to-end
+  (`Strict` / `AcceptNew` / `AcceptAll`), so `--ssh-insecure-accept-any-host-key`
+  means the same thing on both paths.
+- **`srx_flow_sessions` fails closed on two more summary-parsing gaps**
+  (MEC-745): a node reporting no error but also no recognised session-count
+  element no longer has its missing count silently papered over by the
+  other nodes' totals, and an early warning-severity `rpc-error` on a node
+  can no longer mask a later error-severity one on the same node. Both
+  previously risked understating the true session count.
+
 ## [0.26.0] - 2026-09-28
 
 ### Added

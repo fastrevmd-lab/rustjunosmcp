@@ -121,6 +121,9 @@ async fn main() -> Result<()> {
         audit_redact: args.audit_redact.clone(),
         audit_hmac_key_file: args.audit_hmac_key_file.clone(),
         evidence: args.evidence.clone(),
+        // Not exposed as a rust-junosmcp CLI flag yet; no approval-digest
+        // coordinator is wired into this binary, so there is no key to pass.
+        approval_digest_key_file: None,
     };
     mecmcp_runtime::cli_validate::validate(&shared_cli).map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -144,6 +147,13 @@ async fn main() -> Result<()> {
         anyhow::bail!("--enable-metrics requires --transport streamable-http");
     }
 
+    // Validated the same way as a per-call `confirm_timeout_mins` (MEC-45):
+    // must convert to seconds without overflow. Set once, before any tool
+    // call can read it via `resolve_confirm_timeout`.
+    rust_junosmcp_core::helpers::confirm_timeout_to_secs(args.commit_confirm_default_mins)
+        .map_err(|e| anyhow::anyhow!("invalid --commit-confirm-default-mins: {e}"))?;
+    rust_junosmcp_core::helpers::set_commit_confirm_default_mins(args.commit_confirm_default_mins);
+
     let inv_path = args.device_mapping.clone();
     let (inventory, inv_hash) = rust_junosmcp_core::bootstrap::load_inventory(&inv_path)
         .map_err(anyhow::Error::from)
@@ -164,12 +174,22 @@ async fn main() -> Result<()> {
         "blocklist policy loaded"
     );
     // Mirror the scp host-key posture for NETCONF SSH:
-    //   default → strict KnownHosts lookup against --known-hosts-file
-    //   --ssh-accept-new-host-keys → lab/TOFU mode (AcceptAll)
-    // Without this opt-in the rustez/rustnetconf 0.11+ default is RejectAll
+    //   default                              → strict KnownHosts lookup against --known-hosts-file
+    //   --ssh-accept-new-host-keys           → real TOFU (AcceptNew): pin unknown hosts, refuse changed keys
+    //   --ssh-insecure-accept-any-host-key   → lab-only, no verification at all (AcceptAll)
+    // clap's conflicts_with on the two flags guarantees at most one is set.
+    // Without one of them the rustez/rustnetconf 0.11+ default is RejectAll
     // (fail-closed) and every op command would error `Unknown server key`.
+    use rust_junosmcp_core::bootstrap::SshHostKeyMode;
+    let host_key_mode = if args.ssh_accept_new_host_keys {
+        SshHostKeyMode::AcceptNew
+    } else if args.ssh_insecure_accept_any_host_key {
+        SshHostKeyMode::AcceptAll
+    } else {
+        SshHostKeyMode::Strict
+    };
     let host_key_policy = rust_junosmcp_core::bootstrap::build_host_key_policy(
-        args.ssh_accept_new_host_keys,
+        host_key_mode,
         args.known_hosts_file.clone(),
     );
     let dev_manager = Arc::new(
@@ -222,15 +242,30 @@ async fn main() -> Result<()> {
         _ => None,
     };
 
-    if args.ssh_accept_new_host_keys {
-        tracing::warn!(
-            "--ssh-accept-new-host-keys: scp pins unknown host keys on first contact (TOFU); NETCONF SSH uses HostKeyVerification::AcceptAll. Use only in lab environments."
-        );
-    } else {
-        tracing::info!(
-            known_hosts = %args.known_hosts_file.display(),
-            "ssh host-key policy: scp StrictHostKeyChecking=yes + NETCONF HostKeyVerification::KnownHosts (strict, default)"
-        );
+    match host_key_mode {
+        SshHostKeyMode::AcceptNew => {
+            tracing::warn!(
+                "--ssh-accept-new-host-keys: scp and NETCONF SSH both pin unknown host keys on \
+                 first contact (TOFU) and refuse a host presenting a different key afterward. \
+                 The first connection to a given host is unauthenticated."
+            );
+        }
+        SshHostKeyMode::AcceptAll => {
+            tracing::warn!(
+                target: "audit",
+                "--ssh-insecure-accept-any-host-key: NETCONF SSH and scp \
+                 (transfer_file/fetch_file/upgrade_junos) accept ANY device host key \
+                 unconditionally, with no known_hosts persistence and no mismatch detection. \
+                 This gives no protection against a man-in-the-middle. Lab-only — do not run \
+                 this against production devices."
+            );
+        }
+        SshHostKeyMode::Strict => {
+            tracing::info!(
+                known_hosts = %args.known_hosts_file.display(),
+                "ssh host-key policy: scp and NETCONF SSH both require a matching pinned key (strict, default)"
+            );
+        }
     }
     let transfer_cfg = TransferConfig {
         staging_dir: args.staging_dir.clone(),
@@ -240,7 +275,12 @@ async fn main() -> Result<()> {
         transfer_locks: std::sync::Arc::new(
             rust_junosmcp_core::tools::transfer_file::TransferLocks::default(),
         ),
-        accept_new_host_keys: args.ssh_accept_new_host_keys,
+        // scp shares the exact same host-key mode as NETCONF SSH above:
+        // `--ssh-insecure-accept-any-host-key` now gives scp a real
+        // mecmcp_scp::HostKeyVerification::AcceptAll, not TOFU (MEC-44
+        // follow-up — the flag name must mean the same thing on both
+        // transports).
+        host_key_mode,
     };
     let device_leases = std::sync::Arc::new(
         rust_junosmcp_core::DeviceLeaseManager::for_directory(&args.device_lease_dir)
@@ -537,6 +577,10 @@ async fn main() -> Result<()> {
                 max_requests_per_second_per_token: args.max_requests_per_second_per_token,
                 max_request_burst_per_token: args.max_request_burst_per_token,
                 max_inflight_requests_per_device: args.max_inflight_requests_per_router,
+                // Not exposed as a rust-junosmcp CLI flag yet: X-Forwarded-For
+                // is never trusted, matching this crate's own pre-trusted-proxy
+                // behavior (the peer address is always the rate-limit key).
+                trusted_proxies: Vec::new(),
                 max_sessions: args.max_sessions,
                 max_sessions_per_token: args.max_sessions_per_token,
                 session_idle_timeout_secs: args.session_idle_timeout_secs,

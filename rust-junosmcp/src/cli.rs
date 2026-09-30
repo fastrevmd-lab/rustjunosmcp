@@ -223,6 +223,25 @@ pub struct Cli {
     #[arg(long = "allow-direct-commit")]
     pub allow_direct_commit: bool,
 
+    /// Server-wide default confirm-commit window, in whole minutes.
+    ///
+    /// `load_and_commit_config`, `render_and_apply_j2_template` (when it
+    /// applies), `rollback_config` (when `commit=true`), and
+    /// `apply_junos_change_set` issue a Junos confirmed commit by default: the
+    /// device arms an automatic rollback that fires unless the confirming
+    /// commit lands within this window. A model-drafted change that cuts
+    /// management access reverts itself instead of requiring someone to drive
+    /// to the box (MEC-45).
+    ///
+    /// A caller can override this per call via `confirm_timeout_mins`, or opt
+    /// out of the confirm window entirely with `confirm_timeout_mins: 0`
+    /// (recorded in the audit trail as `commit_confirmed=false`).
+    ///
+    /// Validated the same way as a per-call `confirm_timeout_mins`: must be
+    /// >= 1 and convert to seconds without overflow.
+    #[arg(long = "commit-confirm-default-mins", default_value_t = 10)]
+    pub commit_confirm_default_mins: u32,
+
     /// Web approver settings (--web-enabled-approver).
     #[command(flatten)]
     pub web_approver: WebApproverArgs,
@@ -248,9 +267,27 @@ pub struct Cli {
     /// Accept and pin new device host keys on first contact (TOFU,
     /// `StrictHostKeyChecking=accept-new`). Off by default — the server
     /// uses `StrictHostKeyChecking=yes` and requires a pre-populated
-    /// `known_hosts` (see scripts/scan-known-hosts.sh). Lab-only.
-    #[arg(long)]
+    /// `known_hosts` (see scripts/scan-known-hosts.sh).
+    ///
+    /// Applies identically to scp transfers and NETCONF SSH: a device
+    /// presenting a key that differs from what's already pinned is refused
+    /// on both paths — this flag does not disable host-key verification.
+    /// Mutually exclusive with `--ssh-insecure-accept-any-host-key`.
+    #[arg(long, conflicts_with = "ssh_insecure_accept_any_host_key")]
     pub ssh_accept_new_host_keys: bool,
+
+    /// Accept ANY device host key unconditionally, with no known_hosts
+    /// persistence and no mismatch detection (`HostKeyVerification::AcceptAll`
+    /// for both NETCONF SSH and scp — `transfer_file` / `fetch_file` /
+    /// `upgrade_junos`). Off by default.
+    ///
+    /// **Lab-only — never use against production devices.** Unlike
+    /// `--ssh-accept-new-host-keys`, this gives no protection against a
+    /// man-in-the-middle: every connection, forever, trusts whatever key is
+    /// presented. Logged loudly at startup and recorded as an audit event.
+    /// Mutually exclusive with `--ssh-accept-new-host-keys`.
+    #[arg(long, conflicts_with = "ssh_accept_new_host_keys")]
+    pub ssh_insecure_accept_any_host_key: bool,
 
     /// Expose unauthenticated Prometheus metrics at /metrics (streamable-http only).
     #[arg(long)]
@@ -644,6 +681,34 @@ mod tests {
     fn ssh_accept_new_host_keys_parses_when_set() {
         let cli = Cli::parse_from(["rust-junosmcp", "--ssh-accept-new-host-keys"]);
         assert!(cli.ssh_accept_new_host_keys);
+    }
+
+    #[test]
+    fn ssh_insecure_accept_any_host_key_off_by_default() {
+        let cli = Cli::parse_from(["rust-junosmcp"]);
+        assert!(!cli.ssh_insecure_accept_any_host_key);
+    }
+
+    #[test]
+    fn ssh_insecure_accept_any_host_key_parses_when_set() {
+        let cli = Cli::parse_from(["rust-junosmcp", "--ssh-insecure-accept-any-host-key"]);
+        assert!(cli.ssh_insecure_accept_any_host_key);
+    }
+
+    #[test]
+    fn ssh_accept_new_and_insecure_accept_any_are_mutually_exclusive() {
+        // MEC-44: an operator must not be able to combine TOFU with
+        // no-verification-at-all; clap should refuse the combination before
+        // the server ever starts.
+        let result = Cli::try_parse_from([
+            "rust-junosmcp",
+            "--ssh-accept-new-host-keys",
+            "--ssh-insecure-accept-any-host-key",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected a clap error for combining both host-key flags"
+        );
     }
 
     #[test]

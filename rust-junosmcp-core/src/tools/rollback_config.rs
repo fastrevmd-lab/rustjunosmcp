@@ -9,7 +9,10 @@
 
 use crate::device_manager::DeviceManager;
 use crate::error::JmcpError;
-use crate::helpers::{confirm_timeout_to_secs, validate_rollback_version};
+use crate::helpers::{
+    ConfirmDecision, confirm_timeout_to_secs, resolve_confirm_timeout, rollback_deadline_unix,
+    validate_rollback_version,
+};
 use crate::tools::RollbackConfigArgs;
 use crate::tools::candidate_transaction::{self, CandidateMode, CandidateRequest, CandidateResult};
 use serde_json::{Value, json};
@@ -67,19 +70,26 @@ pub async fn handle_with_cancel(
     let timeout_dur = Duration::from_secs(args.timeout);
 
     let has_commit_comment = args.commit_comment.is_some();
-    let mode = if !args.commit {
-        // Preview: load rollback N, diff, discard.
-        CandidateMode::DryRun
-    } else if let Some(mins) = args.confirm_timeout_mins {
-        // Confirmed commit: auto-rollback after N minutes if not confirmed.
-        let secs = confirm_timeout_to_secs(mins)?;
-        CandidateMode::CommitConfirmed(secs)
+    // Commit-confirmed by default when committing (MEC-45): a bad rollback
+    // reverts itself unless the caller explicitly opts out with
+    // `confirm_timeout_mins: 0`. Preview mode never commits, so it is
+    // unaffected.
+    let (mode, confirmed) = if !args.commit {
+        (CandidateMode::DryRun, None)
     } else {
-        // Normal commit with comment.
-        let comment = args
-            .commit_comment
-            .unwrap_or_else(|| format!("rollback to {} via rollback_config", version));
-        CandidateMode::CommitWithComment(comment)
+        match resolve_confirm_timeout(args.confirm_timeout_mins) {
+            ConfirmDecision::Confirmed(mins) => {
+                let secs = confirm_timeout_to_secs(mins)?;
+                (CandidateMode::CommitConfirmed(secs), Some(mins))
+            }
+            ConfirmDecision::OptedOut => {
+                let comment = args
+                    .commit_comment
+                    .clone()
+                    .unwrap_or_else(|| format!("rollback to {} via rollback_config", version));
+                (CandidateMode::CommitWithComment(comment), None)
+            }
+        }
     };
 
     match candidate_transaction::run(
@@ -112,12 +122,13 @@ pub async fn handle_with_cancel(
                 "diff": diff,
                 "version": version
             });
-            if let Some(mins) = args.confirm_timeout_mins {
+            if let Some(mins) = confirmed {
                 result["confirmed"] = json!(true);
                 result["rollback_in_minutes"] = json!(mins);
+                result["rollback_deadline_unix"] = json!(rollback_deadline_unix(mins));
                 result["message"] = json!(format!(
                     "Commit confirmed: auto-rollback in {} minutes unless confirmed. \
-                     Send another commit to confirm.",
+                     Send another commit to confirm with confirm_commit.",
                     mins
                 ));
                 if has_commit_comment {

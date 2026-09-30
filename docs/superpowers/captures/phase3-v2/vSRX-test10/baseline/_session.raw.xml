@@ -343,7 +343,7 @@
 <date-time junos:seconds="1779843047">2026-05-27 00:50:47 UTC</date-time>
 </current-time>
 <time-source>
- LOCAL CLOCK 
+ LOCAL CLOCK
 </time-source>
 <system-booted-time>
 <date-time junos:seconds="1779727872">2026-05-25 16:51:12 UTC</date-time>
@@ -426,7 +426,7 @@
     <system xmlns="http://yang.juniper.net/junos-es/conf/system">
         <host-name>vSRX-test10</host-name>
         <root-authentication>
-            <encrypted-password>$6$FAKESALT1$FAKEHASHVALUEDONOTUSE00000000000000000000000000000000000000000000000000000</encrypted-password>
+            <encrypted-password>$6$FAKEREDACTEDLABCAPTURE</encrypted-password>
         </root-authentication>
         <login>
             <user>
@@ -447,7 +447,7 @@
                 <uid>2001</uid>
                 <class>super-user</class>
                 <authentication>
-                    <encrypted-password>$6$FAKESALT2$FAKEHASHVALUEDONOTUSE11111111111111111111111111111111111111111111111111111</encrypted-password>
+                    <encrypted-password>$6$FAKEREDACTEDLABCAPTURE</encrypted-password>
                     <ssh-ed25519>
                         <name>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGHHz1PiPRLN3o3oRqBNkw0t9+acY6L/h7jdbL3TgHl fastrevmd@example.com</name>
                     </ssh-ed25519>
@@ -557,7 +557,7 @@
                 <mode>main</mode>
                 <proposals>lab-ike-p1-proposal</proposals>
                 <pre-shared-key>
-                    <ascii-text>$9$FAKEPRESHAREDKEYDONOTUSE00000000000000000000000000000000000000000000000000000000000000000000000000000000</ascii-text>
+                    <ascii-text>$9$FAKEREDACTEDLABCAPTURE</ascii-text>
                 </pre-shared-key>
             </policy>
             <gateway>

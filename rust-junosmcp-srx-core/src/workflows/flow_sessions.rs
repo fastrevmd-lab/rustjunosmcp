@@ -104,6 +104,27 @@
 //! count to be dropped from the summary sum or its sessions dropped from the
 //! walk — both used to fail *open* on the cap (an undercounted summary looks
 //! like a smaller, safer table than it is) rather than closed.
+//!
+//! # Per-node fail-open fix (MEC-745, Percy re-review of MEC-55)
+//!
+//! Two more fail-open gaps in the same fatal-vs-skippable logic:
+//!
+//! - **N1**: a node with no `rpc-error` (or only a warning one) but *also*
+//!   no recognised count element (`displayed-session-count` /
+//!   `sessions-in-use`) used to be silently skipped — the same as a
+//!   cluster-secondary node's routine severity-less `rpc-error` — and the
+//!   other nodes' counts were summed as if that were the whole table.
+//!   [`parse_summary_total`] now returns `Ok(None)` in that case: the only
+//!   node allowed to be skipped without affecting the total is one with a
+//!   severity-less `rpc-error`. Anything else that isn't fatal must produce
+//!   a count, or the whole total is unavailable.
+//! - **N2**: [`extract_rpc_error`] read only the first `<rpc-error>` in a
+//!   node's fragment. A `warning`-severity element ahead of an
+//!   `error`-severity one on the same node made that node look like a
+//!   harmless warning, bypassing both the summary's explicit-error path and
+//!   the walk's fatal-node path. It now inspects every `<rpc-error>` in the
+//!   fragment: any `error`-severity element makes the node fatal regardless
+//!   of ordering, and every message is kept (not just the first).
 
 use crate::protocol::Protocol;
 use crate::{SrxError, SrxToolResponse};
@@ -594,11 +615,23 @@ fn compose_walk_raw(summary_xml: &str, walk_xml: &str, truncated: bool) -> Strin
 /// summing only the healthy nodes would under-count, and `plan_walk` could
 /// then let an unbounded walk proceed for the node that failed its summary
 /// (Percy F2, MEC-302 — fail closed).
+///
+/// Every node that isn't skipped this way — no `rpc-error` at all, or only
+/// a `warning`-severity one — must produce a recognised count element.
+/// A node satisfying that condition but carrying neither
+/// `displayed-session-count` nor `sessions-in-use` makes the whole total
+/// unavailable too, rather than being silently dropped from the sum: an
+/// unrecognised-but-healthy-looking reply from one node must not make the
+/// other nodes' partial sum look like the whole table's count (MEC-745 N1
+/// — fail closed one level down from MEC-302's per-reply fix).
 pub fn parse_summary_total(xml: &str) -> Result<Option<u64>, SrxError> {
     let re_nodes = crate::xml::multi_re_split(xml)?;
+    if re_nodes.is_empty() {
+        return Ok(None);
+    }
 
     let mut total: u64 = 0;
-    let mut any_found = false;
+    let mut any_counted = false;
     for re_node in &re_nodes {
         match extract_rpc_error(&re_node.inner_xml) {
             // An explicit error on any node: the total is unknowable.
@@ -622,12 +655,19 @@ pub fn parse_summary_total(xml: &str) -> Result<Option<u64>, SrxError> {
                     .and_then(|n| n.text())
                     .and_then(|t| t.trim().parse::<u64>().ok())
             });
-        if let Some(count) = count {
-            total = total.saturating_add(count);
-            any_found = true;
+        match count {
+            Some(count) => {
+                total = total.saturating_add(count);
+                any_counted = true;
+            }
+            // This node had no fatal/skippable rpc-error but also no
+            // recognised count element: the total is unknowable, not just
+            // this node's contribution to it (N1 fix — do not sum the
+            // other nodes' counts as if they were the whole table).
+            None => return Ok(None),
         }
     }
-    Ok(any_found.then_some(total))
+    Ok(any_counted.then_some(total))
 }
 
 /// Parse the full-walk reply into a typed `SrxToolResponse<FlowSessionQuery>`,
@@ -797,50 +837,68 @@ fn child_text(node: &roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-/// A node's `<rpc-error>`, if its fragment contains one.
+/// A node's `<rpc-error>` elements, if its fragment contains any.
 struct RpcErrorInfo {
+    /// Every `<error-message>` found, joined — a node can carry more than
+    /// one `<rpc-error>` (e.g. a warning notice alongside a real failure),
+    /// and dropping all but the first would misreport what actually
+    /// happened on that node.
     message: String,
-    /// True when `<error-severity>warning</error-severity>` — a warning is
-    /// informational and does not mean the node's reply lacks usable data,
-    /// unlike an absent severity or `error` (Junos's default when the
-    /// element is omitted).
+    /// True when every `<rpc-error>` present is `warning`-severity and none
+    /// is `error`-severity — a warning is informational and does not mean
+    /// the node's reply lacks usable data, unlike an absent severity or an
+    /// `error`-severity element (Junos's default when severity is omitted).
     is_warning: bool,
-    /// `<error-severity>error</error-severity>` explicitly present. A
-    /// severity-less rpc-error (e.g. the routine "node is secondary for all
-    /// relevant redundancy groups" reply from a cluster's secondary node) is
-    /// neither a warning nor an explicit error.
+    /// True when **any** `<rpc-error>` in the fragment is
+    /// `error`-severity, regardless of how many other `rpc-error` elements
+    /// (warning or severity-less) are also present. Reading only the first
+    /// `rpc-error` let a leading warning mask a later error on the same
+    /// node (MEC-745 N2 — fail closed on any error, not just the first).
     is_error: bool,
 }
 
-/// Extract a node's `<rpc-error>`, if the fragment contains one. `None`
-/// means the fragment is a normal (non-error) reply body.
+/// Extract a node's `<rpc-error>` elements, if the fragment contains any.
+/// `None` means the fragment is a normal (non-error) reply body.
 fn extract_rpc_error(xml: &str) -> Option<RpcErrorInfo> {
     let wrapped = ensure_single_root(xml);
     let doc = roxmltree::Document::parse(&wrapped).ok()?;
-    let err = doc
+    let errors: Vec<_> = doc
         .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "rpc-error")?;
-    let message = err
-        .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "error-message")
-        .and_then(|n| n.text())
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| "rpc-error (no error-message)".to_string());
-    let is_warning = err
-        .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
-        .and_then(|n| n.text())
-        .is_some_and(|t| t.trim().eq_ignore_ascii_case("warning"));
-    let is_error = err
-        .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
-        .and_then(|n| n.text())
-        .is_some_and(|t| t.trim().eq_ignore_ascii_case("error"));
+        .filter(|n| n.is_element() && n.tag_name().name() == "rpc-error")
+        .collect();
+    if errors.is_empty() {
+        return None;
+    }
+
+    let mut messages = Vec::with_capacity(errors.len());
+    let mut any_error = false;
+    let mut any_warning = false;
+    for err in &errors {
+        let message = err
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "error-message")
+            .and_then(|n| n.text())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "rpc-error (no error-message)".to_string());
+        messages.push(message);
+
+        let severity = err
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "error-severity")
+            .and_then(|n| n.text())
+            .map(|t| t.trim().to_ascii_lowercase());
+        match severity.as_deref() {
+            Some("error") => any_error = true,
+            Some("warning") => any_warning = true,
+            _ => {}
+        }
+    }
+
     Some(RpcErrorInfo {
-        message,
-        is_warning,
-        is_error,
+        message: messages.join("; "),
+        is_warning: any_warning && !any_error,
+        is_error: any_error,
     })
 }
 
@@ -1346,6 +1404,116 @@ mod tests {
             data.nodes[0].error.as_deref(),
             Some("deprecated command syntax"),
             "the warning is still surfaced, just not treated as fatal"
+        );
+    }
+
+    // ── MEC-745 N1: a node with no rpc-error and no recognised count element
+    // must not be silently skipped while the other nodes' counts are summed
+    // as if they were the whole table. ────────────────────────────────────────
+
+    #[test]
+    fn summary_total_unavailable_when_one_node_has_no_recognised_count() {
+        // node0 reports a real sessions-in-use count; node1 has no
+        // rpc-error at all but its reply uses an element this parser
+        // doesn't recognise (flow-session-summary-information/
+        // active-sessions rather than displayed-session-count or
+        // sessions-in-use). On main @ 2008623 this parsed Some(4) (node0's
+        // count only) instead of failing closed.
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>4</sessions-in-use>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <flow-session-summary-information>
+        <active-sessions>1500000</active-sessions>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(
+            parse_summary_total(xml).unwrap(),
+            None,
+            "an unrecognised count on a non-fatal node must make the whole \
+             total unavailable, not silently sum only the recognised nodes"
+        );
+        assert_eq!(
+            plan_walk(parse_summary_total(xml).unwrap(), 200),
+            WalkDecision::Refuse(RefusalReason::CountUnavailable),
+            "the walk must be refused, not proceed on node0's count alone"
+        );
+    }
+
+    // ── MEC-745 N2: extract_rpc_error must look at every rpc-error on a
+    // node, not just the first — an early warning must not mask a later
+    // error on the same node. ─────────────────────────────────────────────────
+
+    #[test]
+    fn summary_total_unavailable_when_warning_precedes_error_on_same_node() {
+        // node0 reports a real count; node1 carries a warning-severity
+        // rpc-error followed by an error-severity one. On main @ 2008623
+        // extract_rpc_error read only the first (warning) rpc-error, so
+        // node1 was treated as merely a warning and skipped for lack of a
+        // count instead of making the total unavailable, giving Some(4)
+        // instead of None.
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node0</re-name>
+      <flow-session-summary-information>
+        <sessions-in-use>4</sessions-in-use>
+      </flow-session-summary-information>
+    </multi-routing-engine-item>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-severity>warning</error-severity>
+        <error-message>deprecated command syntax</error-message>
+      </rpc-error>
+      <rpc-error>
+        <error-severity>error</error-severity>
+        <error-message>node1 summary unavailable</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        assert_eq!(
+            parse_summary_total(xml).unwrap(),
+            None,
+            "an error-severity rpc-error anywhere in a node's fragment must \
+             be fatal for that node, even behind an earlier warning"
+        );
+    }
+
+    #[test]
+    fn walk_reports_node_as_fatal_when_warning_precedes_error() {
+        let xml = r#"<rpc-reply>
+  <multi-routing-engine-results>
+    <multi-routing-engine-item>
+      <re-name>node1</re-name>
+      <rpc-error>
+        <error-severity>warning</error-severity>
+        <error-message>deprecated command syntax</error-message>
+      </rpc-error>
+      <rpc-error>
+        <error-severity>error</error-severity>
+        <error-message>node1 summary unavailable</error-message>
+      </rpc-error>
+    </multi-routing-engine-item>
+  </multi-routing-engine-results>
+</rpc-reply>"#;
+        let resp = parse_walk(xml, None, DEFAULT_CAP).unwrap();
+        let data = resp.data.expect("data present");
+        assert!(data.nodes[0].sessions.is_empty());
+        let error = data.nodes[0].error.as_deref().unwrap_or_default();
+        assert!(
+            error.contains("deprecated command syntax")
+                && error.contains("node1 summary unavailable"),
+            "both rpc-error messages must be kept, not just the first: {error:?}"
         );
     }
 

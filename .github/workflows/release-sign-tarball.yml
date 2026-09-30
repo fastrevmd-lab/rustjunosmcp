@@ -12,43 +12,14 @@ on:
     types: [published]
 
 jobs:
-  sign-tarball:
-    runs-on: ubuntu-24.04
+  sign:
     permissions:
       contents: write
       # Keyless cosign signing exchanges this job's OIDC token for a
       # short-lived Fulcio certificate; no key material is stored anywhere.
+      # A reusable workflow's permissions can only be narrowed by the
+      # caller, never widened, so this job must grant them itself -- see
+      # mecmcp's docs/RELEASE-WORKFLOWS.md.
       id-token: write
-    steps:
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Download release tarball
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz'
-          shopt -s nullglob
-          tarballs=(*.tar.gz)
-          if [ "${#tarballs[@]}" -eq 0 ]; then
-            echo "No .tar.gz asset found on release $TAG; nothing to sign." >&2
-            exit 1
-          fi
-
-      - name: Sign tarball (keyless)
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          for f in *.tar.gz; do
-            cosign sign-blob --yes --bundle "${f}.cosign.bundle" "$f"
-          done
-
-      - name: Upload signature bundle to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
-          REPO: ${{ github.repository }}
-        run: gh release upload "$TAG" --repo "$REPO" *.cosign.bundle
+    # Pinned to mecmcp main after #440 merged (squash). Repin to a mecmcp tag once one is cut.
+    uses: mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@8ede62a31917ad4d5f41ca2a664601280b2ddc41

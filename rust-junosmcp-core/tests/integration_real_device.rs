@@ -260,6 +260,7 @@ async fn live_render_show_version_template_dry_run() {
         dry_run: true,
         config_format: None,
         mode: "merge".into(),
+        confirm_timeout_mins: None,
         timeout: 360,
     };
 
@@ -361,7 +362,7 @@ fn setup_real_transfer_env() -> (Arc<DeviceManager>, TransferConfig, String) {
         // `#[ignore]`-gated real-device test; host key is pinned in the
         // operator's known_hosts. accept-new keeps first-contact runs
         // working when the file is fresh.
-        accept_new_host_keys: true,
+        host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::AcceptNew,
     };
 
     (dm, cfg, device_name)

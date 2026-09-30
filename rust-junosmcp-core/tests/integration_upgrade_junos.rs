@@ -46,7 +46,7 @@ async fn live_upgrade_round_trip() {
         transfer_locks: Arc::new(TransferLocks::default()),
         // Integration test is `#[ignore]`-gated and runs against a real
         // lab device whose host key is pre-pinned; accept-new is safe.
-        accept_new_host_keys: true,
+        host_key_mode: rust_junosmcp_core::bootstrap::SshHostKeyMode::AcceptNew,
     };
     let lease_dir = std::env::var("JMCP_DEVICE_LEASE_DIR")
         .unwrap_or_else(|_| "/var/lib/jmcp/device-leases".to_string());

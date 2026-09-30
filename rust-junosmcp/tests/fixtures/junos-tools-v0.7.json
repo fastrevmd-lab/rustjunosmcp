@@ -149,13 +149,14 @@
           "type": "string"
         },
         "confirm_timeout_mins": {
-          "description": "Optional confirmed-commit window, in whole minutes.\n\nWhen set, the device commits the change and schedules an automatic\nrollback after this many minutes unless `confirm_junos_change_set` is\ncalled first. Minutes, not seconds — that is what Junos schedules, and\nit matches `rollback_config`'s existing `confirm_timeout_mins`.\n\nOmit for an ordinary commit with no rollback timer.",
+          "description": "Confirmed-commit window, in whole minutes.\n\nThe device commits the change and schedules an automatic rollback\nafter this many minutes unless `confirm_junos_change_set` is called\nfirst. Minutes, not seconds — that is what Junos schedules, and it\nmatches `rollback_config`'s `confirm_timeout_mins`.\n\nDefaults to the server's `--commit-confirm-default-mins` (10 unless\nconfigured otherwise) when omitted — commit-confirmed is ON by\ndefault. Pass `0` to explicitly opt out and issue a plain commit\ninstead; this is recorded in the audit trail as\n`commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 71582788
         },
         "router_name": {
           "description": "Target device endpoint (device name from inventory).\n\nAlias for `device`; accepted for backward compatibility.",
@@ -278,7 +279,7 @@
   },
   "commit_check_config": {
     "name": "commit_check_config",
-    "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config.",
+    "description": "Validate a candidate configuration on a Junos device without committing (commit check). Loads config into a candidate, runs commit-check, returns {success, diff, error?}, then discards the candidate. Never activates config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -337,6 +338,57 @@
         }
       },
       "additionalProperties": false
+    }
+  },
+  "confirm_commit": {
+    "name": "confirm_commit",
+    "description": "Send the confirming commit for a commit-confirmed window opened by load_and_commit_config, rollback_config, or render_and_apply_j2_template (not apply_junos_change_set — use confirm_junos_change_set for that). Cancels the device's pending automatic rollback. A harmless no-op commit if no window is open.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "device"
+              ]
+            },
+            {
+              "required": [
+                "router_name"
+              ]
+            },
+            {
+              "required": [
+                "router"
+              ]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "device": {
+          "description": "The device with a pending confirm-commit window.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Connection timeout in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 360
+        },
+        "router_name": {
+          "description": "The device with a pending confirm-commit window.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        },
+        "router": {
+          "description": "The device with a pending confirm-commit window.\n\nAlias for `device`; accepted for backward compatibility.",
+          "type": "string"
+        }
+      }
     }
   },
   "confirm_junos_change_set": {
@@ -508,7 +560,7 @@
   },
   "discard_candidate": {
     "name": "discard_candidate",
-    "description": "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified').",
+    "description": "Discard uncommitted candidate configuration changes on a Junos device (rollback 0), returning the candidate to the running config. Never changes the running config. Use to recover a candidate left dirty (e.g. 'configuration database modified'). Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -559,7 +611,7 @@
   },
   "execute_junos_command": {
     "name": "execute_junos_command",
-    "description": "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Execute a Junos command on the device. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -642,7 +694,7 @@
   },
   "execute_junos_command_batch": {
     "name": "execute_junos_command_batch",
-    "description": "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Run N operational CLI commands across M devices, parallel across devices, sequential per device. Returns a per-device array of {command, ok, value?, error?} entries. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -809,7 +861,7 @@
   },
   "execute_junos_pfe_command": {
     "name": "execute_junos_pfe_command",
-    "description": "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'.",
+    "description": "Execute a single PFE-shell command on one device via 'request pfe execute target <fpc> command \"<cmd>\"'. Supports optional max_lines/max_bytes/tail output caps, and honors trailing '| last N' / '| count'. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -973,7 +1025,7 @@
   },
   "gather_device_facts": {
     "name": "gather_device_facts",
-    "description": "Gather Junos device facts from the device",
+    "description": "Gather Junos device facts from the device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -1128,7 +1180,7 @@
   },
   "get_junos_config": {
     "name": "get_junos_config",
-    "description": "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config.",
+    "description": "Get the configuration of the device. Returns the full running config by default. Pass config_path (also accepted as 'filter'; e.g. 'system services', 'security policies', 'interfaces ge-0/0/0') to retrieve only a subtree, reducing token usage and limiting exposure to secrets the caller did not ask for. Supports optional max_lines/max_bytes/tail output caps. Invalid paths, and arguments this tool does not recognise, return an error rather than silently falling back to the full config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -1242,7 +1294,7 @@
   },
   "junos_config_diff": {
     "name": "junos_config_diff",
-    "description": "Get the configuration diff against a rollback version",
+    "description": "Get the configuration diff against a rollback version. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -1425,7 +1477,7 @@
   },
   "load_and_commit_config": {
     "name": "load_and_commit_config",
-    "description": "Load and commit configuration on a Junos device",
+    "description": "Load and commit configuration on a Junos device. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -1478,13 +1530,13 @@
           "default": "Configuration loaded via MCP"
         },
         "confirm_timeout_mins": {
-          "description": "If set, uses confirmed commit with auto-rollback after N minutes.\nThe device will automatically revert if not confirmed within this window.",
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Defaults to the\nserver's `--commit-confirm-default-mins` (10 unless configured\notherwise) when omitted — commit-confirmed is ON by default. Pass `0`\nto explicitly opt out and issue a plain commit instead; this is\nrecorded in the audit trail as `commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 71582788,
           "default": null
         },
@@ -1626,6 +1678,17 @@
           "type": "string",
           "default": "merge"
         },
+        "confirm_timeout_mins": {
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Only meaningful\nwith `apply_config=true` and `dry_run=false`. Defaults to the server's\n`--commit-confirm-default-mins` (10 unless configured otherwise) when\nomitted — commit-confirmed is ON by default. Pass `0` to explicitly\nopt out and issue a plain commit instead; this is recorded in the\naudit trail as `commit_confirmed=false`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "maximum": 71582788,
+          "default": null
+        },
         "timeout": {
           "description": "Connection timeout in seconds (per-device).",
           "type": "integer",
@@ -1666,7 +1729,7 @@
   },
   "rollback_config": {
     "name": "rollback_config",
-    "description": "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config.",
+    "description": "Load a Junos rollback archive (rollback N, 0-49) into the candidate. Preview mode (commit=false, default): loads, diffs, discards — stateless and safe. Commit mode (commit=true): loads and commits, CHANGING THE RUNNING CONFIGURATION and potentially disrupting connectivity; supports confirmed-commit with auto-rollback after N minutes. Version 0 = candidate vs running (discard); N>=1 = Nth-previous archived config. NOTE: Restores a previously-committed archived configuration and does NOT re-apply the config blocklist. This scope should be treated as full config-change authority, equivalent to load_and_commit_config. Output is redacted: config values matching known secret patterns (Junos type-9 reversibly-encrypted secrets, PSKs, SNMP communities, RADIUS/TACACS secrets, and similar) are replaced before being returned; structure, hostnames, and non-secret values are preserved.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -1710,13 +1773,13 @@
           "default": false
         },
         "confirm_timeout_mins": {
-          "description": "If set with commit=true, uses confirmed commit with auto-rollback after N\nminutes if not confirmed within this window.",
+          "description": "Confirmed-commit window in minutes, with auto-rollback if not\nconfirmed (via `confirm_commit`) within this window. Only meaningful\nwith `commit=true`. Defaults to the server's\n`--commit-confirm-default-mins` (10 unless configured otherwise) when\nomitted — commit-confirmed is ON by default. Pass `0` to explicitly\nopt out and issue a plain commit instead; this is recorded in the\naudit trail as `commit_confirmed=false`.",
           "type": [
             "integer",
             "null"
           ],
           "format": "uint32",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 71582788,
           "default": null
         },

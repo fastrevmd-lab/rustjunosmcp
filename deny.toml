@@ -34,4 +34,9 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # the interfaces stabilise enough to publish. `unknown-git = "deny"` above still
 # rejects every other git source, so this is one named exception rather than a
 # blanket allowance. Remove it once mecmcp-auth is on crates.io.
-allow-git = ["https://github.com/mechubsec/mecmcp"]
+#
+# rustnetconf is pinned to a rev (MEC-44) carrying `HostKeyVerification::AcceptNew`
+# (mechubsec/rustnetconf#108), ahead of a tagged release. Remove this entry and
+# the `[patch.crates-io]` block in Cargo.toml once rustnetconf cuts a release
+# that includes it.
+allow-git = ["https://github.com/mechubsec/mecmcp", "https://github.com/mechubsec/rustnetconf"]
