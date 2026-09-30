@@ -91,10 +91,12 @@ pub async fn handle_with_cancel(
                 line_number,
             });
         }
-        Decision::DenyAllowlist { .. } => unreachable!(
-            "check_config's config domain is always a fail-open blocklist, unaffected by \
-             CommandMode; it never returns DenyAllowlist"
-        ),
+        Decision::DenyAllowlist { .. } => {
+            return Err(JmcpError::ConfigDomainAllowlistInvariant {
+                tool: "load_and_commit_config",
+                router: args.device.clone(),
+            });
+        }
     }
 
     // `mode` is validated and gated before any payload is built or RPC is

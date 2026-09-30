@@ -238,9 +238,11 @@ rejected pre-flight in that case.
 `_blocklist_defaults` (and, going forward, this key only — see the
 per-device restriction below) may carry a `mode` of `"allowlist"` or
 `"blocklist"`. This governs `execute_junos_command`,
-`execute_junos_command_batch`, and `execute_junos_pfe_command` only; the
-`config` domain used by `load_and_commit_config` stays a fail-open
-blocklist regardless of `mode`.
+`execute_junos_command_batch`, `execute_junos_pfe_command`, and also
+`get_junos_config` (it runs `show configuration [path] [| display
+<format>]` through the same `commands` allowlist/blocklist — see "Config
+output format and load mode" below); the `config` domain used by
+`load_and_commit_config` stays a fail-open blocklist regardless of `mode`.
 
 - **`allowlist` (fail-closed, the default for new configs)** — a command is
   denied unless it matches a literal, whitespace-tokenized prefix in
@@ -303,6 +305,20 @@ separate code path for the new formats.
 ```json
 { "router_name": "core-1", "config_path": "system services", "format": "set" }
 ```
+
+**Under `mode: allowlist`, `get_junos_config` is governed by the
+`commands` allowlist, not a separate rule.** The rendered command is
+`show configuration [config_path] [| display set|xml|json]`, checked the
+same way as any other `execute_junos_command` input: `show configuration`
+must be a prefix in `allow`, and — if a `format` other than the default
+`text` is requested — `display set`/`display xml`/`display json` must be
+a prefix in `allowed_pipes`. The starter allowlist in
+[`devices-template.json`](devices-template.json) does **not** include
+`show configuration`, so copying it as-is refuses `get_junos_config`
+entirely (fails closed, so it is safe, but easy to miss). Add
+`"show configuration"` to `allow` (and the `display` variants you need to
+`allowed_pipes`) to enable it — and note that doing so exposes the full
+running configuration, including hashed secrets, to the model.
 
 `load_and_commit_config`, `render_and_apply_j2_template`, and
 `create_junos_change_set`'s per-action `payload` all take an optional

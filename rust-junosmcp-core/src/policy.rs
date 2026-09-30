@@ -34,6 +34,19 @@
 //! `execute-junos-command`); under `CommandMode::Allowlist` it therefore
 //! fails closed with an empty allowlist unless/until a follow-up adds one.
 //! This is flagged explicitly in the PR description for review.
+//!
+//! # Deny rules are a carve-out on top of the allowlist (MEC-1096 F1)
+//!
+//! `mecmcp_policy::Policy::check_command`/`check_pfe_command` never consult
+//! the `commands`/`pfe_commands` blocklist once the mode is `Allowlist` — an
+//! operator who writes `allow: ["request system"]` plus a
+//! `commands: [{deny, "request system reboot*"}]` carve-out would otherwise
+//! see the deny silently ignored (a wider hole than no carve-out at all: the
+//! operator believes the destructive command is fenced off). `Policy::
+//! check_command`/`check_pfe_command` in this module close that gap: an
+//! `Allow` from the library's allowlist is re-checked against that device's
+//! effective deny rules, which demotes it to `Deny` on a match. See
+//! `Policy::check_command`.
 
 use crate::error::JmcpError;
 use crate::helpers::excerpt;
@@ -321,20 +334,63 @@ impl Policy {
     }
 
     /// Decide whether `command` is allowed on `router`.
+    ///
+    /// Under [`CommandMode::Allowlist`], an `Allow` from the library's
+    /// prefix-match allowlist is still subject to this device's `commands`
+    /// deny rules as a carve-out (see module docs / MEC-1096 F1): an
+    /// operator who writes `allow: ["request system"]` plus a
+    /// `commands: [{deny, "request system reboot*"}]` carve-out expects the
+    /// deny to win, but `mecmcp_policy::Policy::check_command` never
+    /// consults the blocklist once the mode is `Allowlist`.
     pub fn check_command<'a>(&'a self, router: &str, command: &str) -> Decision<'a, Action> {
-        self.policy_for(router)
-            .check_command(router, command, Action::Deny)
+        let policy = self.policy_for(router);
+        let decision = policy.check_command(router, command, Action::Deny);
+        self.apply_allowlist_deny_carveout(policy, router, command, decision, |p, d| {
+            p.command_rules_for(d)
+        })
     }
 
     /// Decide whether `pfe_command` is allowed on `router`. Independent from
-    /// `check_command`.
+    /// `check_command`. See `check_command`'s docs for the allowlist deny
+    /// carve-out.
     pub fn check_pfe_command<'a>(
         &'a self,
         router: &str,
         pfe_command: &str,
     ) -> Decision<'a, Action> {
-        self.policy_for(router)
-            .check_pfe_command(router, pfe_command, Action::Deny)
+        let policy = self.policy_for(router);
+        let decision = policy.check_pfe_command(router, pfe_command, Action::Deny);
+        self.apply_allowlist_deny_carveout(policy, router, pfe_command, decision, |p, d| {
+            p.pfe_command_rules_for(d)
+        })
+    }
+
+    /// Under [`CommandMode::Allowlist`], demote an `Allow` decision to
+    /// `Deny` if a `commands`/`pfe_commands` deny rule (picked by
+    /// `rules_for`) also matches. A no-op under [`CommandMode::Blocklist`]
+    /// (the library already consulted those same rules to produce
+    /// `decision`) or when `decision` is already a denial.
+    fn apply_allowlist_deny_carveout<'a>(
+        &'a self,
+        policy: &'a mecmcp_policy::Policy<Action>,
+        router: &str,
+        raw_input: &str,
+        decision: Decision<'a, Action>,
+        rules_for: impl FnOnce(&'a mecmcp_policy::Policy<Action>, &str) -> Vec<&'a CompiledRule<Action>>,
+    ) -> Decision<'a, Action> {
+        if self.command_mode != CommandMode::Allowlist || !decision.is_allowed() {
+            return decision;
+        }
+        let rules = rules_for(policy, router);
+        let normalized = normalize_input(raw_input);
+        match mecmcp_policy::evaluate(&rules, &normalized) {
+            Some(rule) if rule.action == Action::Deny => Decision::Deny {
+                rule,
+                source: rule.source,
+                line_number: None,
+            },
+            _ => decision,
+        }
     }
 
     /// Decide whether `config_text` is allowed on `router` for the given
@@ -602,6 +658,41 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn allowlist_mode_deny_rule_carves_out_of_a_broader_allow_prefix() {
+        // MEC-1096 F1: mecmcp_policy::Policy::check_command never consults
+        // the blocklist under CommandMode::Allowlist, so a broad `allow`
+        // prefix plus an explicit deny carve-out used to silently allow the
+        // denied command. Verify the carve-out now wins.
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "allowlist",
+                    "allow": ["request system"],
+                    "commands": [{"action":"deny","pattern":"request system reboot*"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            p.check_command("r1", "request system software validate")
+                .is_allowed(),
+            "commands allowed by the prefix but not denied must still be allowed"
+        );
+        match p.check_command("r1", "request system reboot") {
+            Decision::Deny { rule, .. } => assert_eq!(rule.pattern, "request system reboot*"),
+            other => panic!("expected Deny (carve-out), got {other:?}"),
+        }
+    }
+
+    // No pfe_commands equivalent of the test above: pfe_commands has no
+    // `allow`/`allowed_pipes` config key (module docs, "known scope gap"),
+    // so its allowlist is always empty under CommandMode::Allowlist and
+    // check_pfe_command's first-stage decision is never `Allow` for the
+    // carve-out to act on. `check_pfe_command` still runs the same
+    // `apply_allowlist_deny_carveout` path as `check_command`, so it is
+    // exercised automatically once a follow-up adds a `pfe_allow` key.
 
     #[test]
     fn per_device_allow_merges_with_defaults() {

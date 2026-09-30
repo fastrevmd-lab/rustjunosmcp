@@ -479,6 +479,24 @@ pub enum JmcpError {
         reason: String,
     },
 
+    /// `Policy::check_config` returned `Decision::DenyAllowlist`, which the
+    /// config domain (a fail-open blocklist, unaffected by `CommandMode`)
+    /// contracts to never produce (MEC-1096 F4). This should be
+    /// unreachable with the current `mecmcp-policy` version; refused rather
+    /// than `unreachable!()`-panicking on a device-action request path, so a
+    /// future library change that violates the contract fails closed
+    /// instead of aborting mid-transaction.
+    #[error(
+        "policy invariant violated: {tool} on '{router}': check_config returned \
+         DenyAllowlist, which the config domain must never produce"
+    )]
+    ConfigDomainAllowlistInvariant {
+        /// Name of the MCP tool that hit the invariant violation.
+        tool: &'static str,
+        /// Name of the device the tool call was targeting.
+        router: String,
+    },
+
     /// Destructive operation refused on a plane-owned device.
     ///
     /// This device's `config_authority` indicates it is managed by a plane (Mist,
@@ -722,6 +740,7 @@ impl JmcpError {
             // which of the library's three allowlist-deny reasons fired.
             Self::DeniedAllowlist { reason, .. } => reason,
             Self::AllowlistEntryInvalid { .. } => "invalid_input",
+            Self::ConfigDomainAllowlistInvariant { .. } => "blocked",
             Self::PlaneOwnedDevice { .. } => "blocked",
             Self::DirectCommitDisabled(_) => "blocked",
             Self::ConfigFormatNotAllowedWithRules { .. } => "invalid_input",
