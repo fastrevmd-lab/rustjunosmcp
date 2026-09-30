@@ -600,6 +600,9 @@ pub async fn create_change_set_with_cancel(
                         line_number,
                     });
                 }
+                Decision::DenyAllowlist { .. } => unreachable!(
+                    "check_config's config domain is always a fail-open blocklist, unaffected                      by CommandMode; it never returns DenyAllowlist"
+                ),
             }
         }
         // Rollback actions do not need policy checks - they reference pre-existing config.
@@ -853,6 +856,9 @@ pub async fn apply_change_set_with_cancel(
                         line_number,
                     });
                 }
+                Decision::DenyAllowlist { .. } => unreachable!(
+                    "check_config's config domain is always a fail-open blocklist, unaffected                      by CommandMode; it never returns DenyAllowlist"
+                ),
             }
 
             let requested_mode = crate::helpers::parse_load_mode(payload.mode.as_deref())?;

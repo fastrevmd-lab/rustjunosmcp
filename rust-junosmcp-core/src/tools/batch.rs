@@ -47,8 +47,7 @@ impl BatchRunner for DeviceManagerRunner {
     }
 }
 
-use crate::helpers::excerpt;
-use crate::policy::{Decision, Policy};
+use crate::policy::{Policy, enforce_decision};
 use crate::tools::ExecuteBatchArgs;
 use serde::Serialize;
 use serde_json::Value;
@@ -159,26 +158,7 @@ pub async fn handle_with_runner(
     for &idx in &valid_indices {
         let r = &args.devices[idx];
         for c in &args.commands {
-            if let Decision::Deny { rule, source, .. } = policy.check_command(r, c) {
-                let pattern = rule.pattern.clone();
-                let source_str = source.as_str();
-                tracing::warn!(
-                    tool = "execute_junos_command_batch",
-                    router = %r,
-                    matched_rule = %pattern,
-                    rule_source = %source_str,
-                    input_excerpt = %excerpt(c),
-                    "blocklist denied request",
-                );
-                return Err(JmcpError::Denied {
-                    tool: "execute_junos_command_batch",
-                    router: r.clone(),
-                    pattern,
-                    rule_source: source_str,
-                    input_excerpt: excerpt(c),
-                    line_number: None,
-                });
-            }
+            enforce_decision(policy.check_command(r, c), "execute_junos_command_batch", r, c)?;
         }
     }
 

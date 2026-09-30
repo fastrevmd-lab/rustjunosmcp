@@ -199,6 +199,10 @@ pub async fn handle_with_cancel(
                 }));
                 continue;
             }
+            crate::policy::Decision::DenyAllowlist { .. } => unreachable!(
+                "check_config's config domain is always a fail-open blocklist, unaffected by \
+                 CommandMode; it never returns DenyAllowlist"
+            ),
         }
 
         let row = match commit_one(

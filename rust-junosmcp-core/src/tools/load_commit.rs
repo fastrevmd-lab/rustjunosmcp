@@ -91,6 +91,10 @@ pub async fn handle_with_cancel(
                 line_number,
             });
         }
+        Decision::DenyAllowlist { .. } => unreachable!(
+            "check_config's config domain is always a fail-open blocklist, unaffected by \
+             CommandMode; it never returns DenyAllowlist"
+        ),
     }
 
     // `mode` is validated and gated before any payload is built or RPC is
