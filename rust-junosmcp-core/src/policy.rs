@@ -101,12 +101,14 @@ fn compile_domain_rules(
     device: Option<(&str, &[RuleSpec])>,
     scope_prefix: &str,
 ) -> Result<mecmcp_policy::DomainRules<Action>, JmcpError> {
-    let mut domain = mecmcp_policy::DomainRules::default();
-    domain.defaults = compile_rules(
-        defaults,
-        &format!("_blocklist_defaults.{scope_prefix}"),
-        RuleSource::Defaults,
-    )?;
+    let mut domain = mecmcp_policy::DomainRules {
+        defaults: compile_rules(
+            defaults,
+            &format!("_blocklist_defaults.{scope_prefix}"),
+            RuleSource::Defaults,
+        )?,
+        ..Default::default()
+    };
     if let Some((name, rules)) = device
         && !rules.is_empty()
     {

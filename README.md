@@ -233,6 +233,65 @@ rejected pre-flight in that case.
 > `blocklist` are not cross-compatible with Juniper/junos-mcp-server's
 > inventory format. Files without these fields remain drop-in compatible.
 
+### `execute_junos_command` authorization mode: allowlist (default) vs. blocklist
+
+`_blocklist_defaults` (and, going forward, this key only — see the
+per-device restriction below) may carry a `mode` of `"allowlist"` or
+`"blocklist"`. This governs `execute_junos_command`,
+`execute_junos_command_batch`, and `execute_junos_pfe_command` only; the
+`config` domain used by `load_and_commit_config` stays a fail-open
+blocklist regardless of `mode`.
+
+- **`allowlist` (fail-closed, the default for new configs)** — a command is
+  denied unless it matches a literal, whitespace-tokenized prefix in
+  `allow` (globs are rejected at load time, not just ignored). Each stage
+  after a `|` in the command must independently match a prefix in
+  `allowed_pipes`, or the whole command is refused; forbidden shell
+  metacharacters (`;`, redirects, backticks, newlines) are refused
+  outright, before any prefix match. `allow`/`allowed_pipes` merge the same
+  way `commands` deny rules do today: `_blocklist_defaults` ∪ the device's
+  own list. A per-device `allow` addition never leaks to other devices —
+  each device gets its own compiled allowlist policy.
+- **`blocklist` (fail-open, legacy)** — the pre-MEC-93 behavior: a command
+  is denied only if it matches a `commands` (or `pfe_commands`) deny glob;
+  everything else is allowed.
+
+**Migration:** a `devices.json` with `commands`/`pfe_commands` deny rules
+but no `mode` key loads as `blocklist` and logs one startup `WARN` that
+blocklist mode is fail-open, with a pointer back to this section. A file
+with no `_blocklist_defaults` at all, or a freshly generated sample
+config, loads as `allowlist`. `mode` is only valid on
+`_blocklist_defaults` — setting it on a per-device `blocklist` is a
+load-time error, since the underlying policy engine picks one command mode
+for the whole file and a per-device override would silently do nothing.
+
+Every refusal — allowlist or blocklist — writes an audit record via the
+existing audit path, tagged with a stable reason code
+(`not_allowlisted`, `pipe_not_allowlisted`, `forbidden_metachar`, or the
+legacy `blocked`).
+
+A minimal read-only starter allowlist:
+
+```json
+"_blocklist_defaults": {
+    "mode": "allowlist",
+    "allow": [
+        "show version",
+        "show interfaces",
+        "show route",
+        "show security policies",
+        "show chassis"
+    ]
+}
+```
+
+> **Known gap:** `pfe_commands` has no dedicated `allow`/`allowed_pipes`
+> key yet. Since `mode` is shared across the `commands` and `pfe_commands`
+> domains, an inventory that relies on `execute_junos_pfe_command` today
+> will find it fails closed (refuses everything) once it moves to
+> `mode: allowlist`, until a follow-up adds a `pfe_allow` key. Pin
+> `mode: blocklist` explicitly if you need PFE commands before that lands.
+
 ## Config output format and load mode
 
 `get_junos_config` takes an optional `format`: `text` (default, unchanged),
