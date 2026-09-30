@@ -870,6 +870,8 @@ sha256sum -c "rust-junosmcp_${version}_amd64.tar.gz.sha256"
 cosign verify-blob \
   --certificate-identity "https://github.com/mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@8ede62a31917ad4d5f41ca2a664601280b2ddc41" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-github-workflow-repository "mechubsec/rustjunosmcp" \
+  --certificate-github-workflow-trigger "release" \
   --bundle "rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle" \
   "rust-junosmcp_${version}_amd64.tar.gz"
 ```
@@ -882,9 +884,19 @@ references via its `uses:` line — not this repo's own workflow file, and not
 a branch ref. That pin moves whenever the `sign:` job is repinned to a newer
 mecmcp SHA or tag, so don't trust this README's SHA to stay accurate forever;
 check the `uses:` line in `.github/workflows/release-sign-tarball.yml` for
-the current pin. `cosign verify-blob` exits non-zero on any mismatch — wrong
-identity, wrong issuer, or a tarball that does not match the bundle — so a
-failure here means do not install, not "probably fine."
+the current pin.
+
+Because that reusable workflow lives in a public repo, any GitHub repository
+can call it and get a certificate with the same identity, so the identity
+alone does not prove the tarball came from *this* repo's release.
+`--certificate-github-workflow-repository` and
+`--certificate-github-workflow-trigger` close that gap: they check the
+certificate's calling-repository and triggering-event fields, which must be
+`mechubsec/rustjunosmcp` and `release`. Do not drop them.
+
+`cosign verify-blob` exits non-zero on any mismatch — wrong identity, wrong
+issuer, wrong calling repository or trigger, or a tarball that does not match
+the bundle — so a failure here means do not install, not "probably fine."
 
 **Edit the inventory:**
 
