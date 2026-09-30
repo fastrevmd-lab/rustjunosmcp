@@ -152,16 +152,18 @@ mod tests {
             pol,
         )
         .await;
-        match r {
-            Err(e @ JmcpError::DeniedAllowlist {
-                tool,
-                router,
-                reason,
-                ..
-            }) => {
-                assert_eq!(tool, "execute_junos_command");
+        match &r {
+            Err(
+                e @ JmcpError::DeniedAllowlist {
+                    tool,
+                    router,
+                    reason,
+                    ..
+                },
+            ) => {
+                assert_eq!(*tool, "execute_junos_command");
                 assert_eq!(router, "r1");
-                assert_eq!(reason, "not_allowlisted");
+                assert_eq!(*reason, "not_allowlisted");
                 assert_eq!(e.audit_kind(), "not_allowlisted");
             }
             other => panic!("expected DeniedAllowlist, got {other:?}"),

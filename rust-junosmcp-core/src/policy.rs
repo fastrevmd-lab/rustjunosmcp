@@ -170,9 +170,23 @@ impl Policy {
             Some(CommandModeConfig::Allowlist) => CommandMode::Allowlist,
             Some(CommandModeConfig::Blocklist) => CommandMode::Blocklist,
             None => {
+                // "Has deny rules" spans the whole config file, not just
+                // `_blocklist_defaults` — a config with no defaults section
+                // but a device-level `blocklist.commands` deny rule is still
+                // an existing deny-rule config that must keep working
+                // fail-open, not suddenly start refusing everything under
+                // the new fail-closed default.
+                let any_device_has_rules = inv.names().iter().any(|name| {
+                    inv.get(name).is_ok_and(|entry| {
+                        entry.blocklist.as_ref().is_some_and(|b| {
+                            !b.commands.is_empty() || !b.config.is_empty() || !b.pfe_commands.is_empty()
+                        })
+                    })
+                });
                 let legacy_deny_only = !default_commands_specs.is_empty()
                     || !default_config_specs.is_empty()
-                    || !default_pfe_specs.is_empty();
+                    || !default_pfe_specs.is_empty()
+                    || any_device_has_rules;
                 if legacy_deny_only {
                     tracing::warn!(
                         "_blocklist_defaults has deny rules but no explicit `mode` key; \
