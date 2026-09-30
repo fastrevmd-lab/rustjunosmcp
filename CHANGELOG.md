@@ -6,6 +6,21 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-09-30
+
+### Fixed
+
+- **Release workflows now build.** `release-image.yml` and
+  `release-sign-tarball.yml` pinned their `mecmcp` reusable workflow calls to
+  `34bc01f`, a commit that only ever existed on a deleted branch from an
+  abandoned mecmcp PR. GitHub silently rejects a workflow file that
+  references an unreachable ref (the job list comes back empty), so v0.27.0
+  tagged cleanly but published no GitHub release, no signed tarball, and no
+  container image. Both workflows are repinned to `mecmcp` `main@e97d10b`,
+  which is reachable and carries the same reusable workflow definitions
+  (#456). No code, tool behavior, or crate API changed from 0.27.0 — this
+  release exists solely to produce the artifacts 0.27.0 could not.
+
 ## [0.27.0] - 2026-09-29
 
 ### Security
