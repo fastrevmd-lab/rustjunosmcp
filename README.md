@@ -704,6 +704,21 @@ Images published before 2026-09-29 were signed by the workflow under
 `github.com/fastrevmd-lab/RustJunosMCP`, so verifying an older tag needs that
 identity instead.
 
+**Verifying the SBOM attestation:** on release, a CycloneDX SBOM of the Rust
+dependency graph (not the image's distroless runtime base) is attached to the
+GitHub release and also pushed as an in-toto attestation on the image, signed
+keylessly the same way as above. This attestation is signed by the
+`release-sbom.yml` workflow, a **different identity** from the image
+signature's `release-image.yml` identity above, because it is a separate job
+that runs after the image is already pushed:
+
+```bash
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity-regexp '^https://github\.com/mechubsec/rustjunosmcp/\.github/workflows/release-sbom\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/mechubsec/rustjunosmcp:<version>
+```
+
 The state mount holds staged upload/download files, the shared destructive
 operation leases, and `known_hosts`. Do not delete its lease files while a
 server is running. Strict host-key checking is the default. For an isolated lab
