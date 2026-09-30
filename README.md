@@ -868,17 +868,23 @@ curl -LO "${base}/rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle"
 sha256sum -c "rust-junosmcp_${version}_amd64.tar.gz.sha256"
 
 cosign verify-blob \
-  --certificate-identity "https://github.com/mechubsec/rustjunosmcp/.github/workflows/release-sign-tarball.yml@refs/heads/main" \
+  --certificate-identity "https://github.com/mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@8ede62a31917ad4d5f41ca2a664601280b2ddc41" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --bundle "rust-junosmcp_${version}_amd64.tar.gz.cosign.bundle" \
   "rust-junosmcp_${version}_amd64.tar.gz"
 ```
 
-As with the image, `--certificate-identity` names the signing workflow's ref
-(`@refs/heads/main`, since that workflow itself lives and runs from `main`),
-not the release tag being verified. `cosign verify-blob` exits non-zero on any
-mismatch — wrong identity, wrong issuer, or a tarball that does not match the
-bundle — so a failure here means do not install, not "probably fine."
+Unlike the image workflow above, the `sign` job in this repo's own
+`release-sign-tarball.yml` delegates the actual signing to mecmcp's reusable
+workflow, so the OIDC certificate subject is *that* workflow's path, pinned
+to the exact commit SHA `release-sign-tarball.yml`'s `sign:` job currently
+references via its `uses:` line — not this repo's own workflow file, and not
+a branch ref. That pin moves whenever the `sign:` job is repinned to a newer
+mecmcp SHA or tag, so don't trust this README's SHA to stay accurate forever;
+check the `uses:` line in `.github/workflows/release-sign-tarball.yml` for
+the current pin. `cosign verify-blob` exits non-zero on any mismatch — wrong
+identity, wrong issuer, or a tarball that does not match the bundle — so a
+failure here means do not install, not "probably fine."
 
 **Edit the inventory:**
 
