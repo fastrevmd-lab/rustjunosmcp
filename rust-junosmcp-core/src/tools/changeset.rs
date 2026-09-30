@@ -605,6 +605,12 @@ pub async fn create_change_set_with_cancel(
                         line_number,
                     });
                 }
+                Decision::DenyAllowlist { .. } => {
+                    return Err(JmcpError::ConfigDomainAllowlistInvariant {
+                        tool: "create_junos_change_set",
+                        router: args.device.clone(),
+                    });
+                }
             }
         }
         // Rollback actions do not need policy checks - they reference pre-existing config.
@@ -870,6 +876,12 @@ pub async fn apply_change_set_with_cancel(
                         rule_source: source_str,
                         input_excerpt: denied_excerpt,
                         line_number,
+                    });
+                }
+                Decision::DenyAllowlist { .. } => {
+                    return Err(JmcpError::ConfigDomainAllowlistInvariant {
+                        tool: "apply_junos_change_set",
+                        router: args.device.clone(),
                     });
                 }
             }
