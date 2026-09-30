@@ -158,7 +158,12 @@ pub async fn handle_with_runner(
     for &idx in &valid_indices {
         let r = &args.devices[idx];
         for c in &args.commands {
-            enforce_decision(policy.check_command(r, c), "execute_junos_command_batch", r, c)?;
+            enforce_decision(
+                policy.check_command(r, c),
+                "execute_junos_command_batch",
+                r,
+                c,
+            )?;
         }
     }
 

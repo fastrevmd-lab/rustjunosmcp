@@ -160,7 +160,8 @@ impl Policy {
         let defaults = inv.blocklist_defaults();
         let default_commands_specs: &[RuleSpec] =
             defaults.map(|d| d.commands.as_slice()).unwrap_or(&[]);
-        let default_config_specs: &[RuleSpec] = defaults.map(|d| d.config.as_slice()).unwrap_or(&[]);
+        let default_config_specs: &[RuleSpec] =
+            defaults.map(|d| d.config.as_slice()).unwrap_or(&[]);
         let default_pfe_specs: &[RuleSpec] =
             defaults.map(|d| d.pfe_commands.as_slice()).unwrap_or(&[]);
         let default_allow: &[String] = defaults.map(|d| d.allow.as_slice()).unwrap_or(&[]);
@@ -179,7 +180,9 @@ impl Policy {
                 let any_device_has_rules = inv.names().iter().any(|name| {
                     inv.get(name).is_ok_and(|entry| {
                         entry.blocklist.as_ref().is_some_and(|b| {
-                            !b.commands.is_empty() || !b.config.is_empty() || !b.pfe_commands.is_empty()
+                            !b.commands.is_empty()
+                                || !b.config.is_empty()
+                                || !b.pfe_commands.is_empty()
                         })
                     })
                 });
@@ -242,7 +245,11 @@ impl Policy {
             let merged_pipes: Vec<String> = default_pipes
                 .iter()
                 .cloned()
-                .chain(device_bl.map(|b| b.allowed_pipes.clone()).unwrap_or_default())
+                .chain(
+                    device_bl
+                        .map(|b| b.allowed_pipes.clone())
+                        .unwrap_or_default(),
+                )
                 .collect();
             let allow_entries =
                 compile_allowlist(&merged_allow, &format!("device '{name}'.allow"))?;
@@ -268,11 +275,11 @@ impl Policy {
             per_device.insert(name.clone(), lib_policy);
         }
 
-        let default_commands_rules = compile_domain_rules(default_commands_specs, None, "commands")?;
+        let default_commands_rules =
+            compile_domain_rules(default_commands_specs, None, "commands")?;
         let default_config_rules = compile_domain_rules(default_config_specs, None, "config")?;
         let default_pfe_rules = compile_domain_rules(default_pfe_specs, None, "pfe_commands")?;
-        let default_allow_entries =
-            compile_allowlist(default_allow, "_blocklist_defaults.allow")?;
+        let default_allow_entries = compile_allowlist(default_allow, "_blocklist_defaults.allow")?;
         let default_pipe_entries =
             compile_allowlist(default_pipes, "_blocklist_defaults.allowed_pipes")?;
         let default_policy = mecmcp_policy::Policy::new(
@@ -588,7 +595,9 @@ mod tests {
                 reason: AllowlistDenyReason::NotAllowlisted,
                 ..
             } => {}
-            other => panic!("expected DenyAllowlist(NotAllowlisted) for abbreviation, got {other:?}"),
+            other => {
+                panic!("expected DenyAllowlist(NotAllowlisted) for abbreviation, got {other:?}")
+            }
         }
     }
 
@@ -606,10 +615,16 @@ mod tests {
         );
         // r1 gets both the default and its own addition.
         assert!(p.check_command("r1", "show version").is_allowed());
-        assert!(p.check_command("r1", "show interfaces ge-0/0/0").is_allowed());
+        assert!(
+            p.check_command("r1", "show interfaces ge-0/0/0")
+                .is_allowed()
+        );
         // r2 only gets the default; the device-scoped addition must not leak.
         assert!(p.check_command("r2", "show version").is_allowed());
-        assert!(!p.check_command("r2", "show interfaces ge-0/0/0").is_allowed());
+        assert!(
+            !p.check_command("r2", "show interfaces ge-0/0/0")
+                .is_allowed()
+        );
     }
 
     #[test]
@@ -625,7 +640,10 @@ mod tests {
         )
         .unwrap();
         let err = Inventory::load(f.path()).unwrap_err();
-        assert!(matches!(err, JmcpError::InventoryInvalid(ref s) if s.contains("blocklist.mode")), "got {err:?}");
+        assert!(
+            matches!(err, JmcpError::InventoryInvalid(ref s) if s.contains("blocklist.mode")),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -660,9 +678,10 @@ mod tests {
                 "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
             }"#,
         );
-        assert!(!p
-            .check_command("r1", "  request   system\treboot  ")
-            .is_allowed());
+        assert!(
+            !p.check_command("r1", "  request   system\treboot  ")
+                .is_allowed()
+        );
     }
 
     #[test]
@@ -803,8 +822,8 @@ mod tests {
             }"#,
         );
         let decision = p.check_command("r1", "  sh   ver  ");
-        let err = enforce_decision(decision, "execute_junos_command", "r1", "  sh   ver  ")
-            .unwrap_err();
+        let err =
+            enforce_decision(decision, "execute_junos_command", "r1", "  sh   ver  ").unwrap_err();
         match err {
             JmcpError::DeniedAllowlist {
                 tool,
