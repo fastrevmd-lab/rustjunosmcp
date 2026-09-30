@@ -8,6 +8,21 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [0.27.2] - 2026-09-30
 
+### Changed
+
+- **`execute_junos_command`/`pfe_command` now enforce an allowlist by
+  default instead of a fail-open blocklist.** Command and PFE-command
+  authorization is wired to `mecmcp-policy`'s `Policy<Action>`, compiled
+  per device from `defaults.allow` merged with each device's own `allow`
+  list. A device config with deny rules but no explicit `mode` key keeps
+  loading as the legacy fail-open blocklist (with a startup warning); a
+  config with no policy section at all now defaults to the new fail-closed
+  allowlist. An explicit deny rule on top of a broader allow prefix (e.g.
+  `allow: ["request system"]` plus a deny on `request system reboot*`) is
+  now honored instead of being silently ignored. `pfe_command` has no
+  dedicated allow-list config key yet, so it fails closed under the new
+  default until a follow-up adds one (#465).
+
 ### Fixed
 
 - **Release tarball now built and uploaded automatically.** The LXC release
@@ -17,8 +32,7 @@ All notable user-facing changes are recorded here. Format loosely follows
   download" and v0.27.1 shipped a GitHub release and a container image but no
   tarball, checksum, or signature. `release-sign-tarball.yml` now builds the
   Debian 13 LXC tarball itself and uploads it to the release before signing,
-  so signing always has something to work with (#464). No code, tool
-  behavior, or crate API changed from 0.27.1.
+  so signing always has something to work with (#464).
 
 ## [0.27.1] - 2026-09-30
 
