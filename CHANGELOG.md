@@ -6,6 +6,20 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-09-30
+
+### Fixed
+
+- **Release tarball now built and uploaded automatically.** The LXC release
+  tarball used to be attached to a GitHub release by hand, after the tag push
+  and the `Release image` workflow had already run; that manual step was
+  skipped for v0.27.1, so the sign-tarball workflow failed with "no assets to
+  download" and v0.27.1 shipped a GitHub release and a container image but no
+  tarball, checksum, or signature. `release-sign-tarball.yml` now builds the
+  Debian 13 LXC tarball itself and uploads it to the release before signing,
+  so signing always has something to work with (#464). No code, tool
+  behavior, or crate API changed from 0.27.1.
+
 ## [0.27.1] - 2026-09-30
 
 ### Fixed
