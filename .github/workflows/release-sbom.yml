@@ -8,6 +8,11 @@ name: Release SBOM
 # in-toto attestation on the image itself that `cosign verify-attestation`
 # can check against the exact digest that was pulled.
 #
+# The SBOM covers only the Rust dependency graph (from rust-junosmcp's
+# Cargo.toml), not the image's runtime base (gcr.io/distroless/cc-debian13:
+# glibc, libgcc, libssl, ca-certificates). Call it a "Rust dependency SBOM"
+# anywhere a reader might otherwise take it as a full image SBOM.
+#
 # Triggered on `release: published`, matching release-sign-tarball.yml's
 # reasoning: the release does not exist at tag-push time, and by the time a
 # maintainer publishes it the tag-triggered `Release image` build has
@@ -60,12 +65,6 @@ jobs:
             exit 1
           }
 
-      - name: Attach SBOM to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" rust-junosmcp/rust-junosmcp.cdx.json --repo "${{ github.repository }}"
-
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
@@ -81,6 +80,14 @@ jobs:
       # semver tag docker/metadata-action derived from this same release tag
       # (v1.2.3 -> 1.2.3), not `latest`, which a concurrent release could have
       # already moved.
+      #
+      # This runs, and the attest step below it runs, before the release
+      # asset is uploaded: if `Release image` hasn't finished yet, resolving
+      # the digest fails closed here with no release asset uploaded, and a
+      # plain job re-run can pick up cleanly. Uploading the SBOM first would
+      # leave a release with an asset but no attestation on a re-run failure,
+      # and gh release upload without --clobber would then refuse to
+      # re-upload it.
       - name: Resolve image digest
         id: image
         env:
@@ -98,3 +105,11 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository }}
           DIGEST: ${{ steps.image.outputs.digest }}
         run: cosign attest --yes --predicate rust-junosmcp/rust-junosmcp.cdx.json --type cyclonedx "${IMAGE}@${DIGEST}"
+
+      - name: Attach SBOM to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        # --clobber: a re-run after a partial failure must be able to
+        # re-upload without deleting the asset by hand first.
+        run: gh release upload "$TAG" rust-junosmcp/rust-junosmcp.cdx.json --repo "${{ github.repository }}" --clobber
