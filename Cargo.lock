@@ -918,7 +918,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1570,18 +1570,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "internal-russh-num-bigint"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8e22120c32fb4d19ec55fba35015f57095cd95a2e3b732e44457f5915b2ee8"
-dependencies = [
- "num-integer",
- "num-traits",
- "rand 0.10.3",
- "rand_core 0.10.1",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1887,7 +1875,7 @@ dependencies = [
  "base64 0.23.1",
  "hmac",
  "mecmcp-secret",
- "russh 0.63.3",
+ "russh",
  "rustix",
  "sha1",
  "tempfile",
@@ -2527,7 +2515,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2825,76 +2813,6 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.62.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9decb68e4e44e1079700e54f17c8f23806ec53d7e0db73ab1c71d9dabc666812"
-dependencies = [
- "aes",
- "bitflags",
- "block-padding",
- "byteorder",
- "bytes",
- "cbc",
- "cipher",
- "crypto-bigint",
- "ctr",
- "curve25519-dalek",
- "data-encoding",
- "delegate",
- "der",
- "digest",
- "ecdsa",
- "ed25519-dalek",
- "elliptic-curve",
- "enum_dispatch",
- "flate2",
- "futures",
- "generic-array 1.4.4",
- "getrandom 0.4.3",
- "ghash",
- "hex-literal",
- "hmac",
- "inout",
- "internal-russh-num-bigint",
- "keccak",
- "log",
- "md5",
- "ml-kem",
- "module-lattice",
- "num-bigint 0.4.8",
- "p256",
- "p384",
- "p521",
- "pageant",
- "pbkdf2",
- "pkcs5",
- "pkcs8",
- "polyval",
- "rand 0.10.3",
- "rand_core 0.10.1",
- "ring",
- "russh-cryptovec",
- "russh-util",
- "salsa20",
- "scrypt",
- "sec1",
- "sha1",
- "sha2",
- "sha3 0.12.0",
- "signature",
- "spki",
- "ssh-encoding",
- "ssh-key",
- "subtle",
- "thiserror",
- "tokio",
- "typenum",
- "universal-hash",
- "zeroize",
-]
-
-[[package]]
-name = "russh"
 version = "0.63.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "036204edbd199552a5b3832f63c60dcdf395dc44c7f06b4af1c0e8139cc11bce"
@@ -3071,7 +2989,7 @@ dependencies = [
  "minijinja",
  "regex",
  "rmcp",
- "russh 0.63.3",
+ "russh",
  "rust-junosmcp-auth",
  "rustez",
  "rustnetconf",
@@ -3134,9 +3052,9 @@ dependencies = [
 
 [[package]]
 name = "rustez"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90b358f7c991e2819f548144ea89a6b59e1ae6ce3a398ee7b085f6fe717c7da0"
+checksum = "fcedbbae20827257ceb0956cafc4756a8fe53155388ccd1b96c9f2b66e7501d4"
 dependencies = [
  "quick-xml 0.42.0",
  "rustnetconf",
@@ -3165,7 +3083,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3206,14 +3124,15 @@ dependencies = [
 
 [[package]]
 name = "rustnetconf"
-version = "0.17.0"
-source = "git+https://github.com/mechubsec/rustnetconf?rev=29373d652386cc96d6e7b7c79e70515aec324a2a#29373d652386cc96d6e7b7c79e70515aec324a2a"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5da05ed236d6211753c2e7b9d7aaba39a8689c7c32fef796f011ef194f54cef"
 dependencies = [
  "async-trait",
  "base64ct",
  "quick-xml 0.42.0",
  "ring",
- "russh 0.62.7",
+ "russh",
  "thiserror",
  "tokio",
  "tracing",
@@ -3676,10 +3595,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -8,6 +8,18 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ### Changed
 
+- **Security: russh >= 0.63.2 (CVE-2026-102823).** Bumped `rustnetconf` to
+  `0.18.1` (dropping the now-obsolete `[patch.crates-io]` git override — its
+  `HostKeyVerification::AcceptNew` addition has shipped since `0.18.0`) and
+  `rustez` to `0.19.0` (the first release whose own `rustnetconf` requirement
+  reaches `0.18`). This converges the whole workspace onto a single
+  `rustnetconf`/`russh` line; previously `rustez 0.18.0`'s `rustnetconf =
+  "0.17"` requirement kept a second, vulnerable `russh 0.62.7` resolvable
+  alongside the patched copy. No source changes were needed — this repo's
+  `HostKeyVerification` match arms were already written against the
+  `AcceptNew` shape. Also tightened `rust-junosmcp-core`'s `russh` dev-dependency
+  to `>=0.63.2, <0.64` to match.
+
 - **The container image now pre-provisions its audit HMAC key.** The
   `rust-junosmcp` binary generates `--audit-hmac-key-file` on first run if
   it is absent or empty (mirroring `packaging/lxc/install.sh`'s own
