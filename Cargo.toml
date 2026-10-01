@@ -54,7 +54,7 @@ async-trait      = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 schemars     = "1.0"
 anyhow       = "1"
-rustez       = "0.18"
+rustez       = "0.19"
 # `version` is redundant for resolution alongside `tag`, but cargo-deny reads a
 # versionless dependency as a wildcard and rejects it under [bans].
 # All mecmcp crates MUST resolve to the same git ref. Cargo keys a git
@@ -112,23 +112,8 @@ ureq             = "2"
 minijinja        = { version = "2", default-features = false, features = ["builtins", "loader", "serde"] }
 dashmap          = "6"
 http-body        = "1"
-rustnetconf      = "0.17"
+rustnetconf      = "0.18.1"
 rustix           = "1.1"
-
-# TEMPORARY: rustnetconf's `HostKeyVerification::AcceptNew` (MEC-43) merged to
-# mechubsec/rustnetconf#108 but has not shipped a tagged release yet — the
-# crates.io `0.17` line above still resolves to the pre-AcceptNew 0.17.0.
-# `[patch.crates-io]` overrides EVERY crates.io-sourced `rustnetconf` in the
-# graph, including the one pulled in transitively through `rustez` (which
-# depends on `rustnetconf = "0.17"` itself) — without this, rustjunosmcp and
-# rustez would each get a different `HostKeyVerification` type with a
-# different TypeId, and `rust-junosmcp-core::bootstrap::build_host_key_policy`
-# wouldn't type-check against what `rustez::Device` expects.
-# Replace this patch with a plain version bump once rustnetconf cuts a
-# release that includes #108, and drop the `russh` dev-dependency pin note in
-# rust-junosmcp-core's Cargo.toml alongside it if that version also moves.
-[patch.crates-io]
-rustnetconf = { git = "https://github.com/mechubsec/rustnetconf", rev = "29373d652386cc96d6e7b7c79e70515aec324a2a" }
 
 # Release build profile: LTO + strip for smaller binaries.
 #

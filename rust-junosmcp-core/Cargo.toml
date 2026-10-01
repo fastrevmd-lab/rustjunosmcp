@@ -68,7 +68,6 @@ uuid         = "1"
 # Test-only fixture SSH server for tests/ssh_host_key_fixture.rs (MEC-44):
 # proves `SshHostKeyMode::AcceptNew` refuses a changed host key end-to-end,
 # not just that it maps to the right enum variant. Same version rustnetconf
-# depends on (see the workspace `[patch.crates-io]` note); never shipped in
-# the server binary.
+# depends on; never shipped in the server binary.
 russh        = { version = "0.63", default-features = false, features = ["ring"] }
 zeroize      = "1"

@@ -6,6 +6,18 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **`rustnetconf` bumped to 0.18.1**, picking up its `russh >= 0.63.2, < 0.64`
+  fix for CVE-2026-102823. This also drops the temporary
+  `[patch.crates-io]` override for `HostKeyVerification::AcceptNew`
+  (MEC-43 / rustnetconf#108), which has shipped in a tagged release since
+  0.18.0.
+- **`rustez` bumped to 0.19**, the published version whose own `rustnetconf`
+  requirement moved to `^0.18` (0.18.0 still required `0.17`) — without this
+  the resolved dependency graph kept a second, vulnerable `rustnetconf
+  0.17.0` / `russh 0.62.7` pulled in transitively through `rustez`.
+
 ### Changed
 
 - **The container image now pre-provisions its audit HMAC key.** The
