@@ -146,6 +146,9 @@ async fn main() -> Result<()> {
         audit_log_file: args.audit_log_file.clone(),
         redaction,
         journald: args.audit_journald,
+        // rust-junosmcp does not expose `--otel-endpoint`; OTel export stays
+        // off until this server's CLI wires it through.
+        otel: None,
     };
     let audit_sink =
         mecmcp_audit::init_tracing(&audit_cfg).context("initializing audit tracing")?;
@@ -177,6 +180,11 @@ async fn main() -> Result<()> {
         audit_journald: args.audit_journald,
         audit_redact: args.audit_redact.clone(),
         audit_hmac_key_file: args.audit_hmac_key_file.clone(),
+        // Not exposed as a rust-junosmcp CLI flag yet, same as above: no
+        // `--otel-endpoint`/`--otel-service-name` flags exist on this
+        // binary's own `Cli`, so OTel export stays disabled.
+        otel_endpoint: None,
+        otel_service_name: "mecmcp".to_string(),
         evidence: args.evidence.clone(),
         // Not exposed as a rust-junosmcp CLI flag yet; no approval-digest
         // coordinator is wired into this binary, so there is no key to pass.
