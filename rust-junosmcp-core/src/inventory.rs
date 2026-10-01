@@ -337,6 +337,19 @@ pub struct BlocklistRules {
     /// stage is allowlisted. Merged the same way as `allow`.
     #[serde(default)]
     pub allowed_pipes: Vec<String>,
+    /// Token-prefix allowlist entries for the `pfe_commands` domain,
+    /// consulted under `mode: allowlist`. Same matching/merge rules as
+    /// `allow`, but independent of it — `execute_junos_pfe_command` is
+    /// gated by this list, not `allow`. Defaults to empty, so a config that
+    /// doesn't set this refuses every PFE command under allowlist mode
+    /// (fail-closed).
+    #[serde(default)]
+    pub pfe_allow: Vec<String>,
+    /// Token-prefix entries each `|`-separated pipe stage of a PFE command
+    /// after the first must match, under `mode: allowlist`. Defaults to
+    /// empty. Merged the same way as `allow`/`pfe_allow`.
+    #[serde(default)]
+    pub pfe_allowed_pipes: Vec<String>,
 }
 
 fn default_port() -> u16 {

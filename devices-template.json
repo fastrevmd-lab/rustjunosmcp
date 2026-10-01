@@ -8,6 +8,9 @@
             "show security policies",
             "show chassis"
         ],
+        "pfe_allow": [
+            "show cos"
+        ],
         "config": [
             {"action": "deny", "pattern": "delete *"}
         ]
