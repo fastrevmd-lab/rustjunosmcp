@@ -284,6 +284,22 @@ output format and load mode" below); the `config` domain used by
   is denied only if it matches a `commands` (or `pfe_commands`) deny glob;
   everything else is allowed.
 
+**Token separator: ASCII space only (MEC-1337).** The allowlist's
+whitespace-tokenized prefix match only treats the literal ASCII space
+(`U+0020`) as a token boundary. A command containing any other character
+`char::is_whitespace()` or `char::is_control()` considers whitespace or a
+control character — a tab, NBSP (`U+00A0`), another Unicode space separator
+(e.g. `U+2000`–`U+200A`, `U+202F`, `U+3000`), NEL (`U+0085`), or a C0/C1
+control byte — is refused outright (`forbidden_metachar`), the same as the
+existing `;`/redirect/backtick/newline check. This is a deliberately
+conservative, fail-closed choice: this project has not been able to
+confirm on a lab device whether the Junos CLI parser treats those bytes as
+token boundaries the same way this crate's tokenizer does over NETCONF, and
+a disagreement between the two parsers is an authorization bypass, not a
+cosmetic quirk — see "Parser differentials" in the engineering lenses this
+project follows. If you need lab-device evidence confirming (or
+overturning) this for a specific separator, see MEC-1337.
+
 **Migration:** a `devices.json` with `commands`/`pfe_commands` deny rules
 but no `mode` key loads as `blocklist` and logs one startup `WARN` that
 blocklist mode is fail-open, with a pointer back to this section. A file

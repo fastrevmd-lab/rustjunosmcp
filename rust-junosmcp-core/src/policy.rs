@@ -382,6 +382,9 @@ impl Policy {
     /// consults the blocklist once the mode is `Allowlist`.
     pub fn check_command<'a>(&'a self, router: &str, command: &str) -> Decision<'a, Action> {
         let policy = self.policy_for(router);
+        if let Some(decision) = self.deny_ambiguous_separator(command) {
+            return decision;
+        }
         let decision = policy.check_command(router, command, Action::Deny);
         self.apply_allowlist_deny_carveout(policy, router, command, decision, |p, d| {
             p.command_rules_for(d)
@@ -397,9 +400,54 @@ impl Policy {
         pfe_command: &str,
     ) -> Decision<'a, Action> {
         let policy = self.policy_for(router);
+        if let Some(decision) = self.deny_ambiguous_separator(pfe_command) {
+            return decision;
+        }
         let decision = policy.check_pfe_command(router, pfe_command, Action::Deny);
         self.apply_allowlist_deny_carveout(policy, router, pfe_command, decision, |p, d| {
             p.pfe_command_rules_for(d)
+        })
+    }
+
+    /// Under [`CommandMode::Allowlist`], refuse a command outright if it
+    /// contains any separator-or-control character whose tokenization
+    /// behavior in the real Junos CLI parser (over NETCONF) has not been
+    /// verified against this crate's assumption (MEC-1337).
+    ///
+    /// `mecmcp_policy`'s allowlist tokenizer (`normalize_input` plus
+    /// `split_whitespace`) treats every Unicode `White_Space` character —
+    /// not just the plain ASCII space `' '` — as a token boundary equivalent
+    /// to a single space. That is an assumption, not a confirmed fact: if
+    /// the on-device Junos CLI parser tokenizes a byte like NBSP (U+00A0),
+    /// a Unicode space separator (e.g. U+2000-U+200A), NEL (U+0085), or a
+    /// C0/C1 control character differently — as part of a token rather than
+    /// a boundary, or not at all — a command string can prefix-match an
+    /// allowed entry locally while the device executes a different,
+    /// unvetted token sequence. See the "Parser differentials" and "Fail
+    /// closed" engineering lenses: on this kind of ambiguity, refuse rather
+    /// than guess which side is right.
+    ///
+    /// Plain ASCII space is exempt because it is the separator the
+    /// allowlist's own documentation and fixtures are written in. Returns
+    /// `None` outside [`CommandMode::Allowlist`] (blocklist mode's
+    /// `whitespace_is_normalized_in_blocklist_mode` test intentionally
+    /// exercises tab-as-separator in the fail-open deny-glob path, which
+    /// this check does not touch) and when `raw` contains no such
+    /// character.
+    fn deny_ambiguous_separator<'a>(&'a self, raw: &str) -> Option<Decision<'a, Action>> {
+        if self.command_mode != CommandMode::Allowlist {
+            return None;
+        }
+        if !raw
+            .chars()
+            .any(|c| c != ' ' && (c.is_whitespace() || c.is_control()))
+        {
+            return None;
+        }
+        Some(Decision::DenyAllowlist {
+            mode: CommandMode::Allowlist,
+            reason: AllowlistDenyReason::ForbiddenMetachar,
+            normalized: normalize_input(raw),
         })
     }
 
@@ -1082,5 +1130,121 @@ mod tests {
             }
             other => panic!("expected DeniedAllowlist, got {other:?}"),
         }
+    }
+
+    // --- MEC-1337: ambiguous separator / control-character fail-closed ---
+
+    fn allowlist_policy_for_show_version() -> Policy {
+        build_policy(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","allow":["show version"]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        )
+    }
+
+    #[test]
+    fn allowlist_mode_allows_plain_ascii_space() {
+        let p = allowlist_policy_for_show_version();
+        assert!(p.check_command("r1", "show version").is_allowed());
+    }
+
+    #[test]
+    fn allowlist_mode_denies_nbsp_separator() {
+        // U+00A0 NO-BREAK SPACE: Unicode `White_Space`, so Rust's
+        // `char::is_whitespace()` (what `mecmcp_policy::normalize_input`
+        // and the allowlist tokenizer use) treats it as a token boundary.
+        // Whether the on-device Junos CLI parser agrees is unconfirmed
+        // (MEC-1337) — must fail closed rather than prefix-match "show
+        // version" through it.
+        let p = allowlist_policy_for_show_version();
+        let decision = p.check_command("r1", "show\u{00A0}version");
+        assert!(!decision.is_allowed());
+        match decision {
+            Decision::DenyAllowlist { reason, .. } => {
+                assert_eq!(reason.as_str(), "forbidden_metachar");
+            }
+            other => panic!("expected DenyAllowlist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_denies_unicode_space_separators() {
+        let p = allowlist_policy_for_show_version();
+        // En quad (U+2000), narrow no-break space (U+202F), ideographic
+        // space (U+3000): all Unicode `White_Space`, none confirmed to be
+        // treated as a separator by the device's own parser.
+        for sep in ['\u{2000}', '\u{202F}', '\u{3000}', '\u{0085}'] {
+            let cmd = format!("show{sep}version");
+            assert!(
+                !p.check_command("r1", &cmd).is_allowed(),
+                "expected deny for separator U+{:04X}",
+                sep as u32
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_denies_tab_separator() {
+        // Tab is normalized to a space by `mecmcp_policy::normalize_input`
+        // the same as NBSP; unlike blocklist mode (see
+        // `whitespace_is_normalized_in_blocklist_mode`), the fail-closed
+        // allowlist path cannot assume the device's parser treats a literal
+        // tab byte in a NETCONF `<command>` element as a separator.
+        let p = allowlist_policy_for_show_version();
+        assert!(!p.check_command("r1", "show\tversion").is_allowed());
+    }
+
+    #[test]
+    fn allowlist_mode_denies_control_characters() {
+        // Not Unicode `White_Space`, so the existing tokenizer leaves these
+        // inside a token (no local match either way) — but MEC-1337 asks
+        // for these to fail closed explicitly and visibly rather than rely
+        // on "the token won't match" as an accidental side effect.
+        let p = allowlist_policy_for_show_version();
+        for raw in [
+            "show\u{0000}version",
+            "show\u{001B}version",
+            "show\u{007F}version",
+        ] {
+            assert!(
+                !p.check_command("r1", raw).is_allowed(),
+                "expected deny for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_ambiguous_separator_check_applies_to_pfe_commands_too() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","pfe_allow":["show cos"]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(p.check_pfe_command("r1", "show cos").is_allowed());
+        assert!(!p.check_pfe_command("r1", "show\u{00A0}cos").is_allowed());
+    }
+
+    #[test]
+    fn blocklist_mode_is_unaffected_by_ambiguous_separator_check() {
+        // The fail-closed guard is scoped to `CommandMode::Allowlist`
+        // (MEC-1337's risk direction: a parser differential turning a
+        // locally-denied string into a device-allowed one). Blocklist mode
+        // keeps its pre-existing, intentionally lenient whitespace
+        // normalization (`whitespace_is_normalized_in_blocklist_mode`).
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "blocklist",
+                    "commands":[{"action":"deny","pattern":"request system reboot"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            !p.check_command("r1", "request\u{00A0}system\u{00A0}reboot")
+                .is_allowed()
+        );
     }
 }
