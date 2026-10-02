@@ -284,6 +284,12 @@ output format and load mode" below); the `config` domain used by
   is denied only if it matches a `commands` (or `pfe_commands`) deny glob;
   everything else is allowed.
 
+**Allowed characters (MEC-1337).** In allowlist mode, a command may only
+use printable ASCII characters with the literal ASCII space (`U+0020`) as
+the token separator. Any other character is refused outright
+(`forbidden_metachar`), the same as the existing `;`/redirect/backtick/
+newline check.
+
 **Migration:** a `devices.json` with `commands`/`pfe_commands` deny rules
 but no `mode` key loads as `blocklist` and logs one startup `WARN` that
 blocklist mode is fail-open, with a pointer back to this section. A file
