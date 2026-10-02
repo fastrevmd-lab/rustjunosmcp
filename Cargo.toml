@@ -71,20 +71,24 @@ rustez       = "0.19"
 # capture (mecmcp#288), which populates model_id/session_id/client_name for
 # clients that declare MCP 2026-07-28 and are routed without a session header.
 # mecmcp 0.17.0: adds resolve_token_path and find_stale_secrets to mecmcp-auth.
+# mecmcp 0.26.0: mecmcp-redact gains a Junos profile (`mecmcp_redact::junos`)
+# covering the two gaps this repo's own support-bundle redactor filled by
+# hand: a bare `<value>` element (NTP authentication-key secret) and a
+# config-syntax-aware line redactor for non-XML support-bundle artefacts.
 #
 # mecmcp is consumed at an exact pinned tag; all crates must resolve to the
 # same git ref (see the TypeId note above).
-mecmcp-audit = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-auth  = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-transport = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-runtime = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-policy = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-inventory = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-device = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-changeset = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-scp = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-secret = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
-mecmcp-redact = { version = "0.25.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.25.0" }
+mecmcp-audit = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-auth  = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-transport = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-runtime = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-policy = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-inventory = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-device = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-changeset = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-scp = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-secret = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
+mecmcp-redact = { version = "0.26.0", git = "https://github.com/mechubsec/mecmcp", tag = "v0.26.0" }
 globset      = "0.4"
 regex        = "1"
 metrics                     = "0.24.6"
