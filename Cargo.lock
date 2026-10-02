@@ -3008,6 +3008,7 @@ dependencies = [
  "base64ct",
  "flate2",
  "ipnet",
+ "mecmcp-redact",
  "pretty_assertions",
  "quick-xml",
  "rand 0.10.3",

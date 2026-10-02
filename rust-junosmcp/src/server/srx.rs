@@ -15,9 +15,11 @@
 //! `redact_last_mile` uses [`super::redact_body`]'s JSON-first chain instead,
 //! so it redacts these already-serialized bodies structurally.
 //! `collect_jtac_support_bundle` additionally has its own dedicated, more
-//! precise redaction pass (`workflows::support_bundle::redact`) applied
-//! earlier, before the tarball is built; the last-mile pass on its summary
-//! response is a second, cheap safety net, not a replacement for that pass.
+//! precise redaction pass (`mecmcp_redact::junos`, via
+//! `workflows::support_bundle::{redact_rpc_reply, redact_generic_payload}`,
+//! MEC-1232) applied earlier, before the tarball is built; the last-mile
+//! pass on its summary response is a second, cheap safety net, not a
+//! replacement for that pass.
 
 use super::{JmcpHandler, audit_scope, caller_ctx, mint_request_id};
 
