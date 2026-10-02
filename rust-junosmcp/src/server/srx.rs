@@ -1269,7 +1269,9 @@ mod scope_tests {
     fn make_handler(authorization_required: bool) -> JmcpHandler {
         let inventory = Arc::new(rust_junosmcp_core::Inventory::empty());
         let dm = Arc::new(DeviceManager::new(inventory.clone()));
-        let policy = Arc::new(rust_junosmcp_core::Policy::build(&inventory).unwrap());
+        let policy = Arc::new(arc_swap::ArcSwap::from(Arc::new(
+            rust_junosmcp_core::Policy::build(&inventory).unwrap(),
+        )));
         let transfer_cfg = rust_junosmcp_core::TransferConfig {
             staging_dir: std::path::PathBuf::from("/tmp/staging"),
             known_hosts_file: std::path::PathBuf::from("/tmp/known_hosts"),
