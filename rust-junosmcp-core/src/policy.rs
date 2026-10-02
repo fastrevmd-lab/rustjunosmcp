@@ -382,6 +382,9 @@ impl Policy {
     /// consults the blocklist once the mode is `Allowlist`.
     pub fn check_command<'a>(&'a self, router: &str, command: &str) -> Decision<'a, Action> {
         let policy = self.policy_for(router);
+        if let Some(decision) = self.deny_disallowed_character(command) {
+            return decision;
+        }
         let decision = policy.check_command(router, command, Action::Deny);
         self.apply_allowlist_deny_carveout(policy, router, command, decision, |p, d| {
             p.command_rules_for(d)
@@ -397,9 +400,31 @@ impl Policy {
         pfe_command: &str,
     ) -> Decision<'a, Action> {
         let policy = self.policy_for(router);
+        if let Some(decision) = self.deny_disallowed_character(pfe_command) {
+            return decision;
+        }
         let decision = policy.check_pfe_command(router, pfe_command, Action::Deny);
         self.apply_allowlist_deny_carveout(policy, router, pfe_command, decision, |p, d| {
             p.pfe_command_rules_for(d)
+        })
+    }
+
+    /// Under [`CommandMode::Allowlist`], refuse a command outright unless
+    /// every character is printable ASCII or the literal ASCII space
+    /// (`' '`) used as the token separator (MEC-1337). Returns `None`
+    /// outside [`CommandMode::Allowlist`] and when `raw` is already
+    /// entirely printable ASCII plus space.
+    fn deny_disallowed_character<'a>(&'a self, raw: &str) -> Option<Decision<'a, Action>> {
+        if self.command_mode != CommandMode::Allowlist {
+            return None;
+        }
+        if !raw.chars().any(|c| c != ' ' && !c.is_ascii_graphic()) {
+            return None;
+        }
+        Some(Decision::DenyAllowlist {
+            mode: CommandMode::Allowlist,
+            reason: AllowlistDenyReason::ForbiddenMetachar,
+            normalized: normalize_input(raw),
         })
     }
 
@@ -1082,5 +1107,104 @@ mod tests {
             }
             other => panic!("expected DeniedAllowlist, got {other:?}"),
         }
+    }
+
+    // --- MEC-1337: disallowed-character fail-closed in allowlist mode ---
+
+    fn allowlist_policy_for_show_version() -> Policy {
+        build_policy(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","allow":["show version"]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        )
+    }
+
+    #[test]
+    fn allowlist_mode_allows_plain_ascii_space() {
+        let p = allowlist_policy_for_show_version();
+        assert!(p.check_command("r1", "show version").is_allowed());
+    }
+
+    #[test]
+    fn allowlist_mode_denies_nbsp_separator() {
+        let p = allowlist_policy_for_show_version();
+        let decision = p.check_command("r1", "show\u{00A0}version");
+        assert!(!decision.is_allowed());
+        match decision {
+            Decision::DenyAllowlist { reason, .. } => {
+                assert_eq!(reason.as_str(), "forbidden_metachar");
+            }
+            other => panic!("expected DenyAllowlist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_denies_non_ascii_separators() {
+        let p = allowlist_policy_for_show_version();
+        for sep in ['\u{2000}', '\u{202F}', '\u{3000}', '\u{0085}'] {
+            let cmd = format!("show{sep}version");
+            assert!(
+                !p.check_command("r1", &cmd).is_allowed(),
+                "expected deny for separator U+{:04X}",
+                sep as u32
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_denies_tab_separator() {
+        let p = allowlist_policy_for_show_version();
+        assert!(!p.check_command("r1", "show\tversion").is_allowed());
+    }
+
+    #[test]
+    fn allowlist_mode_denies_control_characters() {
+        let p = allowlist_policy_for_show_version();
+        for raw in [
+            "show\u{0000}version",
+            "show\u{001B}version",
+            "show\u{007F}version",
+        ] {
+            assert!(
+                !p.check_command("r1", raw).is_allowed(),
+                "expected deny for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_mode_denies_zero_width_space() {
+        let p = allowlist_policy_for_show_version();
+        assert!(!p.check_command("r1", "show\u{200B}version").is_allowed());
+    }
+
+    #[test]
+    fn allowlist_mode_disallowed_character_check_applies_to_pfe_commands_too() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","pfe_allow":["show cos"]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(p.check_pfe_command("r1", "show cos").is_allowed());
+        assert!(!p.check_pfe_command("r1", "show\u{00A0}cos").is_allowed());
+    }
+
+    #[test]
+    fn blocklist_mode_is_unaffected_by_disallowed_character_check() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "blocklist",
+                    "commands":[{"action":"deny","pattern":"request system reboot"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            !p.check_command("r1", "request\u{00A0}system\u{00A0}reboot")
+                .is_allowed()
+        );
     }
 }
