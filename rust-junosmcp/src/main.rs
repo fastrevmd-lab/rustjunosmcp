@@ -18,6 +18,7 @@ mod tls;
 mod token_cmd;
 
 use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
 use cli::{Command, Transport};
 use rmcp::ServiceExt;
 use rust_junosmcp::server::JmcpHandler;
@@ -229,8 +230,8 @@ async fn main() -> Result<()> {
         "loaded inventory"
     );
 
-    let policy = Arc::new(Policy::build(&inventory).context("compiling blocklist policy")?);
-    let counts = policy.rule_counts();
+    let built_policy = Policy::build(&inventory).context("compiling blocklist policy")?;
+    let counts = built_policy.rule_counts();
     tracing::info!(
         default_command_rules = counts.default_commands,
         default_config_rules = counts.default_config,
@@ -238,6 +239,12 @@ async fn main() -> Result<()> {
         total_devices = inventory.names().len(),
         "blocklist policy loaded"
     );
+    // Shared with the SIGHUP hot-reload path below: `add_device`,
+    // `reload_devices`, and the SIGHUP inventory re-read all store a
+    // freshly-built policy into this same `ArcSwap` after a successful
+    // mutation, so every path the handler reads from (`self.policy`) sees
+    // the update.
+    let policy = Arc::new(ArcSwap::from(Arc::new(built_policy)));
     // Mirror the scp host-key posture for NETCONF SSH:
     //   default                              → strict KnownHosts lookup against --known-hosts-file
     //   --ssh-accept-new-host-keys           → real TOFU (AcceptNew): pin unknown hosts, refuse changed keys
@@ -507,7 +514,7 @@ async fn main() -> Result<()> {
 
     let handler = JmcpHandler::new(
         dev_manager.clone(),
-        policy,
+        policy.clone(),
         transfer_cfg,
         upgrade_cfg,
         coordinator,
@@ -537,7 +544,7 @@ async fn main() -> Result<()> {
         };
         // Inventory is now mutable at runtime (add_device / reload_devices).
         let dm = dev_manager.clone();
-        let hup_handler = handler.clone();
+        let hup_policy = policy.clone();
         let hup_audit_sink = audit_sink.clone();
         tokio::spawn(async move {
             let mut hup = match tokio::signal::unix::signal(
@@ -567,18 +574,21 @@ async fn main() -> Result<()> {
                 let Some(store_file) = &store_and_path else {
                     continue;
                 };
-                // Reload inventory FIRST so the token store sees current routers.
+                // Reload inventory and rebuild the policy from it together, so the
+                // token store below never sees a half-updated state. A policy build
+                // failure fails the whole reload: both the inventory and the
+                // policy stay exactly as they were.
                 match rust_junosmcp_core::tools::reload_devices::reload_current_from_disk(
                     dm.clone(),
+                    hup_policy.clone(),
                 )
                 .await
                 {
                     Ok(result) => {
-                        hup_handler.rebuild_policy();
-                        tracing::info!(?result, "inventory reloaded");
+                        tracing::info!(?result, "inventory and policy reloaded");
                     }
                     Err(e) => {
-                        tracing::error!(error = %e, "inventory reload failed; keeping previous inventory");
+                        tracing::error!(error = %e, "inventory reload failed; keeping previous inventory and policy");
                     }
                 }
                 // Reload the token store. The shared TokenStoreFile's reload()
