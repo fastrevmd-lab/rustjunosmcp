@@ -1094,14 +1094,19 @@ pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
     }
 }
 
-/// Atomically write JSON to disk via same-filesystem rename.
+/// Write `value` (pretty-printed + trailing newline) to a temp file in the
+/// same directory as `path`, sync it, and return it without renaming it into
+/// place. Preserves `path`'s existing file mode bits on Unix. Accepts an
+/// arbitrary `serde_json::Value` rather than a typed struct so callers can
+/// preserve unknown top-level keys (`_blocklist_defaults`, future extensions).
 ///
-/// Writes `value` (pretty-printed + trailing newline) to a temp file in the
-/// same directory as `path`, syncs it, then renames over `path`. Preserves
-/// existing file mode bits on Unix. Accepts an arbitrary `serde_json::Value`
-/// rather than a typed struct so callers can preserve unknown top-level keys
-/// (`_blocklist_defaults`, future extensions). Used by `add_device`.
-pub fn write_atomic(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+/// Lets a caller validate the staged content (e.g. re-parse it and rebuild
+/// the policy from it) before committing with [`NamedTempFile::persist`], so
+/// a validation failure never touches the file at `path`.
+pub fn stage_atomic(
+    path: &Path,
+    value: &serde_json::Value,
+) -> std::io::Result<tempfile::NamedTempFile> {
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1135,6 +1140,16 @@ pub fn write_atomic(path: &Path, value: &serde_json::Value) -> std::io::Result<(
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(mode))?;
     }
 
+    Ok(tmp)
+}
+
+/// Atomically write JSON to disk via same-filesystem rename.
+///
+/// Stages `value` via [`stage_atomic`] and immediately persists it over
+/// `path` with no validation step. Used by callers that have already
+/// validated `value` is well-formed, or do not need to.
+pub fn write_atomic(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+    let tmp = stage_atomic(path, value)?;
     // Surface the underlying io::Error from rename(2) (EXDEV, EACCES, ENOSPC,
     // …) untouched rather than stringifying through PersistError.
     tmp.persist(path).map_err(|e| e.error)?;

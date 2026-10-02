@@ -6,7 +6,9 @@ use crate::inventory::AuthConfig;
 use crate::inventory::validation::{
     is_valid_auth_path, is_valid_device_name, is_valid_ip_or_hostname, is_valid_ssh_username,
 };
+use crate::policy::Policy;
 use crate::tools::AddDeviceArgs;
+use arc_swap::ArcSwap;
 use std::sync::Arc;
 
 /// Resolved and validated `add_device` arguments.
@@ -122,12 +124,19 @@ pub fn validate(args: &AddDeviceArgs, dm: &DeviceManager) -> Result<ResolvedAdd,
 ///
 /// Validates arguments, takes the device manager write lock, reads the current
 /// inventory from disk, checks the hash matches (TOCTOU guard), inserts the new
-/// device entry, writes atomically (temp + rename), re-hashes, reloads the
-/// inventory, and swaps it into the device manager. Returns `{added, inventory_path,
-/// router_count}`.
+/// device entry, and stages it to a temp file. The staged file is loaded back
+/// and the policy is rebuilt from it *before* anything durable happens: if
+/// either fails (e.g. a malformed per-device blocklist glob), the staged file
+/// is discarded and this returns `Err` without touching the on-disk inventory,
+/// the in-memory inventory, or the policy — the mutation that would have made
+/// the inventory and the policy disagree never happens. Only once both
+/// succeed is the staged file renamed into place and the device manager and
+/// policy swapped in together, still under the write lock. Returns
+/// `{added, inventory_path, router_count}`.
 pub async fn handle(
     args: AddDeviceArgs,
     dm: Arc<DeviceManager>,
+    policy: Arc<ArcSwap<Policy>>,
 ) -> Result<serde_json::Value, JmcpError> {
     let resolved = validate(&args, &dm)?;
 
@@ -161,8 +170,19 @@ pub async fn handle(
         &resolved.auth,
     )?;
 
-    crate::inventory::write_atomic(&path, &updated)
+    let tmp = crate::inventory::stage_atomic(&path, &updated)
         .map_err(|e| JmcpError::InventoryWrite(e.to_string()))?;
+
+    // Validate the staged content fully (parse + policy build) before this
+    // mutation becomes visible anywhere. On failure, `tmp` is dropped here
+    // and cleans up its own file; `path` and the device manager are
+    // untouched.
+    let staged_inv = crate::inventory::Inventory::load(tmp.path())
+        .map_err(|e| JmcpError::InventoryParse(e.to_string()))?;
+    let new_policy = Policy::build(&staged_inv)?;
+
+    tmp.persist(&path)
+        .map_err(|e| JmcpError::InventoryWrite(e.error.to_string()))?;
 
     let new_hash =
         crate::inventory::hash_file(&path).map_err(|e| JmcpError::InventoryRead(e.to_string()))?;
@@ -171,6 +191,7 @@ pub async fn handle(
             .map_err(|e| JmcpError::InventoryParse(e.to_string()))?,
     );
     dm.store_inventory(new_inv, path.clone(), new_hash);
+    policy.store(Arc::new(new_policy));
 
     Ok(serde_json::json!({
         "added": resolved.device_name,
@@ -196,6 +217,10 @@ mod tests {
             readonly,
             allow_pw,
         ))
+    }
+
+    fn test_policy(inv: &Inventory) -> Arc<ArcSwap<Policy>> {
+        Arc::new(ArcSwap::from(Arc::new(Policy::build(inv).unwrap())))
     }
 
     fn args_full() -> AddDeviceArgs {
@@ -368,7 +393,8 @@ mod tests {
         args.auth = Some(AuthConfig::SshKey {
             private_key_path: key.path().to_path_buf(),
         });
-        let r = handle(args, dm.clone()).await.unwrap();
+        let policy = test_policy(&dm.inventory());
+        let r = handle(args, dm.clone(), policy.clone()).await.unwrap();
         assert_eq!(r["added"], "core-3");
         assert_eq!(dm.inventory().len(), 2);
         // Verify disk was updated.
@@ -376,6 +402,75 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dm.inventory_path()).unwrap()).unwrap();
         assert!(on_disk.get("core-3").is_some());
         // key tempfile must stay alive until after handle() returns.
+        drop(key);
+    }
+
+    /// If the post-add inventory can't produce a working policy, the add must
+    /// fail closed: no on-disk write, no in-memory inventory swap, no policy
+    /// swap. Before this fix, the inventory swap happened unconditionally and
+    /// a separate, best-effort `rebuild_policy()` call only logged (or even
+    /// silently discarded) the build failure, leaving the newly-added device
+    /// live under a policy that had never seen it.
+    #[tokio::test]
+    async fn add_device_rejected_when_resulting_policy_fails_to_build() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let inv_path = dir.path().join("devices.json");
+        // `Inventory::load` does not compile glob patterns (only
+        // `Policy::build` does), so this loads fine but can never produce a
+        // working policy.
+        let bad_json = r#"{
+            "_blocklist_defaults": {"mode":"blocklist","commands":[{"action":"deny","pattern":"[unterminated"}]},
+            "core-1":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}
+        }"#;
+        crate::helpers::write_restricted_fixture(&inv_path, bad_json);
+        let inv = Arc::new(Inventory::load(&inv_path).unwrap());
+        let hash = crate::inventory::hash_file(&inv_path).unwrap();
+        let dm = Arc::new(DeviceManager::with_path(
+            inv,
+            inv_path.clone(),
+            hash,
+            false,
+            true,
+        ));
+
+        // Stand-in for "the last policy that built successfully". This test
+        // only asserts it is left in place on failure, not what it permits.
+        let policy = test_policy(&Inventory::empty());
+        let policy_before = policy.load_full();
+
+        let key = tempfile::NamedTempFile::new().unwrap();
+        let mut args = args_full();
+        args.auth = Some(AuthConfig::SshKey {
+            private_key_path: key.path().to_path_buf(),
+        });
+
+        let r = handle(args, dm.clone(), policy.clone()).await;
+        assert!(
+            matches!(r, Err(JmcpError::BlocklistRuleInvalid { .. })),
+            "expected BlocklistRuleInvalid, got {r:?}"
+        );
+
+        assert_eq!(
+            dm.inventory().len(),
+            1,
+            "device must not be added to the in-memory inventory"
+        );
+        assert!(dm.inventory().get("core-3").is_err());
+        assert_eq!(
+            dm.inventory_hash(),
+            hash,
+            "in-memory hash must be unchanged"
+        );
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&inv_path).unwrap()).unwrap();
+        assert!(
+            on_disk.get("core-3").is_none(),
+            "on-disk inventory must not be mutated"
+        );
+        assert!(
+            Arc::ptr_eq(&policy.load_full(), &policy_before),
+            "policy must not be swapped when the rebuild fails"
+        );
         drop(key);
     }
 
@@ -400,7 +495,8 @@ mod tests {
             dm.inventory_path(),
             r#"{"sneaky":{"ip":"127.0.0.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
         );
-        let r = handle(args_full(), dm).await;
+        let policy = test_policy(&dm.inventory());
+        let r = handle(args_full(), dm, policy).await;
         assert!(matches!(r, Err(JmcpError::InventoryDriftedOnDisk)));
     }
 }
