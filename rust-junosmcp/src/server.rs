@@ -460,10 +460,20 @@ impl JmcpHandler {
 
     /// Rebuild the blocklist policy from the current inventory and store it.
     /// Called after inventory mutations (add_device, reload_devices, SIGHUP).
-    pub fn rebuild_policy(&self) {
-        if let Ok(new_policy) = Policy::build(&self.dm.inventory()) {
-            self.policy.store(Arc::new(new_policy));
-        }
+    ///
+    /// Returns the [`Policy::build`] error on failure instead of swallowing
+    /// it. The previously-stored policy is left in place either way — a
+    /// stale-but-known-good policy is safer than one half-updated — but
+    /// callers must not report the triggering inventory mutation as a plain
+    /// success when this returns `Err`: the running policy no longer matches
+    /// the running inventory (e.g. a newly added device falls back to the
+    /// defaults-only policy, silently losing any device-specific deny
+    /// carve-out it was meant to get), and an operator who isn't told that
+    /// has no way to know their config change didn't take effect.
+    pub fn rebuild_policy(&self) -> Result<(), rust_junosmcp_core::JmcpError> {
+        let new_policy = Policy::build(&self.dm.inventory())?;
+        self.policy.store(Arc::new(new_policy));
+        Ok(())
     }
 
     /// Convert a tool's `Result<Value, JmcpError>` into the `CallToolResult`
@@ -1296,19 +1306,32 @@ impl JmcpHandler {
         }
 
         let result = add_device::handle(args, self.dm.clone()).await;
-        match &result {
-            Ok(_) => {
-                self.rebuild_policy();
-                audit.succeed();
-            }
+        let result = match result {
+            Ok(v) => match self.rebuild_policy() {
+                Ok(()) => {
+                    audit.succeed();
+                    Ok(v)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "policy rebuild failed after add_device; device was added to the \
+                         inventory but is not governed by the rebuilt policy -- refusing to \
+                         report success"
+                    );
+                    audit.fail_kind(e.audit_kind(), &e);
+                    Err(e)
+                }
+            },
             Err(e) => {
                 if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
                     audit.deny("inventory_readonly");
                 } else {
-                    audit.fail_kind(e.audit_kind(), e);
+                    audit.fail_kind(e.audit_kind(), &e);
                 }
+                Err(e)
             }
-        }
+        };
         Self::to_call_result(result)
     }
 
@@ -1330,25 +1353,37 @@ impl JmcpHandler {
         }
 
         let result = reload_devices::handle(args, self.dm.clone()).await;
-        match &result {
-            Ok(v) => {
-                self.rebuild_policy();
-                if let Some(added) = v.get("added").and_then(|a| a.as_array())
-                    && let Some(removed) = v.get("removed").and_then(|r| r.as_array())
-                {
-                    let total = added.len() + removed.len();
-                    audit.meta("device_count", total as u64);
+        let result = match result {
+            Ok(v) => match self.rebuild_policy() {
+                Ok(()) => {
+                    if let Some(added) = v.get("added").and_then(|a| a.as_array())
+                        && let Some(removed) = v.get("removed").and_then(|r| r.as_array())
+                    {
+                        let total = added.len() + removed.len();
+                        audit.meta("device_count", total as u64);
+                    }
+                    audit.succeed();
+                    Ok(v)
                 }
-                audit.succeed();
-            }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "policy rebuild failed after reload_devices; inventory was reloaded \
+                         but is not governed by the rebuilt policy -- refusing to report success"
+                    );
+                    audit.fail_kind(e.audit_kind(), &e);
+                    Err(e)
+                }
+            },
             Err(e) => {
                 if matches!(e, rust_junosmcp_core::JmcpError::InventoryReadonly) {
                     audit.deny("inventory_readonly");
                 } else {
-                    audit.fail_kind(e.audit_kind(), e);
+                    audit.fail_kind(e.audit_kind(), &e);
                 }
+                Err(e)
             }
-        }
+        };
         Self::to_call_result(result)
     }
 
@@ -2904,6 +2939,104 @@ mod scope_tests {
                 }
             }
         }
+    }
+
+    // --- MEC-1338: rebuild_policy must not silently discard a build error ---
+
+    fn write_inventory(
+        json: &str,
+    ) -> (tempfile::NamedTempFile, Arc<rust_junosmcp_core::Inventory>) {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut f, json.as_bytes()).unwrap();
+        let inv = Arc::new(rust_junosmcp_core::Inventory::load(f.path()).unwrap());
+        (f, inv)
+    }
+
+    /// Before this fix, `rebuild_policy` was `-> ()` and discarded a
+    /// `Policy::build` error via `if let Ok(..) = ...`. A device whose
+    /// blocklist contained a glob that failed to compile (a realistic typo,
+    /// not a theoretical input) would silently keep the server running on
+    /// the policy from before the mutation, with no error, no log, and a
+    /// success response to whoever triggered the reload.
+    #[test]
+    fn rebuild_policy_returns_err_instead_of_swallowing_build_failure() {
+        let handler = make_handler();
+
+        // "[unterminated" is the same malformed glob policy.rs's own
+        // `compile_rules_errors_with_scope_on_bad_glob` test uses to prove
+        // `Policy::build` surfaces a `BlocklistRuleInvalid` error.
+        let (_f, bad_inv) = write_inventory(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "blocklist",
+                    "commands": [{"action":"deny","pattern":"[unterminated"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        handler
+            .dm
+            .store_inventory(bad_inv, std::path::PathBuf::new(), [0u8; 32]);
+
+        let err = handler
+            .rebuild_policy()
+            .expect_err("a device whose blocklist fails to compile must surface the error");
+        match err {
+            rust_junosmcp_core::JmcpError::BlocklistRuleInvalid { ref pattern, .. } => {
+                assert_eq!(pattern, "[unterminated");
+            }
+            other => panic!("expected BlocklistRuleInvalid, got {other:?}"),
+        }
+    }
+
+    /// The flip side: a stale-but-valid policy is kept rather than left in a
+    /// half-updated state. `rebuild_policy`'s contract is "error and leave
+    /// the previous policy in place", not "error and leave the policy
+    /// half-built" — this pins that the old, known-good policy still governs
+    /// `r1` after a failed rebuild.
+    #[test]
+    fn rebuild_policy_failure_leaves_previous_policy_in_effect() {
+        let handler = make_handler();
+        let (_f, good_inv) = write_inventory(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","allow":["show version"]},
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        handler
+            .dm
+            .store_inventory(good_inv, std::path::PathBuf::new(), [0u8; 32]);
+        handler.rebuild_policy().unwrap();
+        assert!(
+            handler
+                .policy
+                .load()
+                .check_command("r1", "show version")
+                .is_allowed()
+        );
+
+        let (_f, bad_inv) = write_inventory(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "blocklist",
+                    "commands": [{"action":"deny","pattern":"[unterminated"}]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        handler
+            .dm
+            .store_inventory(bad_inv, std::path::PathBuf::new(), [0u8; 32]);
+        assert!(handler.rebuild_policy().is_err());
+
+        assert!(
+            handler
+                .policy
+                .load()
+                .check_command("r1", "show version")
+                .is_allowed(),
+            "a failed rebuild must not leave r1 governed by a half-built or empty policy"
+        );
     }
 }
 

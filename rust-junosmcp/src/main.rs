@@ -574,8 +574,14 @@ async fn main() -> Result<()> {
                 .await
                 {
                     Ok(result) => {
-                        hup_handler.rebuild_policy();
                         tracing::info!(?result, "inventory reloaded");
+                        if let Err(e) = hup_handler.rebuild_policy() {
+                            tracing::error!(
+                                error = %e,
+                                "SIGHUP policy rebuild failed; keeping previous policy, which \
+                                 may not reflect the reloaded inventory"
+                            );
+                        }
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "inventory reload failed; keeping previous inventory");
