@@ -23,17 +23,22 @@
 //! the same way deny rules do, this module compiles one
 //! `mecmcp_policy::Policy<Action>` **per device**, each sharing the same
 //! `CommandMode` but carrying a device-tailored allowlist (defaults' `allow`
-//! ∪ that device's own `allow`, same for `allowed_pipes`). Building one
-//! global `Policy` whose allowlist was the union of every device's entries
-//! was considered and rejected: it would let a command scoped as
-//! extra-allowed on device B silently also work on device A, which is a
-//! real security regression, not a convenience.
+//! ∪ that device's own `allow`, same for `allowed_pipes`; `pfe_allow` and
+//! `pfe_allowed_pipes` merge the same way, independently, for the
+//! `pfe_commands` domain). Building one global `Policy` whose allowlist was
+//! the union of every device's entries was considered and rejected: it
+//! would let a command scoped as extra-allowed on device B silently also
+//! work on device A, which is a real security regression, not a
+//! convenience.
 //!
-//! The `pfe_commands` domain does not get its own `allow`/`allowed_pipes`
-//! config key in this change (the MEC-93 spec is scoped to
-//! `execute-junos-command`); under `CommandMode::Allowlist` it therefore
-//! fails closed with an empty allowlist unless/until a follow-up adds one.
-//! This is flagged explicitly in the PR description for review.
+//! The `pfe_commands` domain has its own `pfe_allow`/`pfe_allowed_pipes`
+//! config keys (MEC-1303), independent from `commands`' `allow`/
+//! `allowed_pipes` — a command allowlisted for `execute_junos_command` is
+//! not implicitly allowlisted for `execute_junos_pfe_command` or vice
+//! versa. A config with neither key set still fails closed under
+//! `CommandMode::Allowlist` (empty allowlist), which was the behavior
+//! before this config key existed and remains correct: fail-closed is the
+//! safe default for an unconfigured domain.
 //!
 //! # Deny rules are a carve-out on top of the allowlist (MEC-1096 F1)
 //!
@@ -181,6 +186,10 @@ impl Policy {
             defaults.map(|d| d.pfe_commands.as_slice()).unwrap_or(&[]);
         let default_allow: &[String] = defaults.map(|d| d.allow.as_slice()).unwrap_or(&[]);
         let default_pipes: &[String] = defaults.map(|d| d.allowed_pipes.as_slice()).unwrap_or(&[]);
+        let default_pfe_allow: &[String] = defaults.map(|d| d.pfe_allow.as_slice()).unwrap_or(&[]);
+        let default_pfe_pipes: &[String] = defaults
+            .map(|d| d.pfe_allowed_pipes.as_slice())
+            .unwrap_or(&[]);
 
         let command_mode = match defaults.and_then(|d| d.mode) {
             Some(CommandModeConfig::Allowlist) => CommandMode::Allowlist,
@@ -271,6 +280,27 @@ impl Policy {
             let pipe_entries =
                 compile_allowlist(&merged_pipes, &format!("device '{name}'.allowed_pipes"))?;
 
+            let merged_pfe_allow: Vec<String> = default_pfe_allow
+                .iter()
+                .cloned()
+                .chain(device_bl.map(|b| b.pfe_allow.clone()).unwrap_or_default())
+                .collect();
+            let merged_pfe_pipes: Vec<String> = default_pfe_pipes
+                .iter()
+                .cloned()
+                .chain(
+                    device_bl
+                        .map(|b| b.pfe_allowed_pipes.clone())
+                        .unwrap_or_default(),
+                )
+                .collect();
+            let pfe_allow_entries =
+                compile_allowlist(&merged_pfe_allow, &format!("device '{name}'.pfe_allow"))?;
+            let pfe_pipe_entries = compile_allowlist(
+                &merged_pfe_pipes,
+                &format!("device '{name}'.pfe_allowed_pipes"),
+            )?;
+
             let commands_domain = mecmcp_policy::CommandDomain {
                 blocklist: commands_rules,
                 allowlist: mecmcp_policy::CommandAllowlist {
@@ -278,11 +308,12 @@ impl Policy {
                     allowed_pipes: pipe_entries,
                 },
             };
-            // See module docs: pfe_commands has no dedicated allow config
-            // yet, so it fails closed under CommandMode::Allowlist.
             let pfe_domain = mecmcp_policy::CommandDomain {
                 blocklist: pfe_rules,
-                allowlist: mecmcp_policy::CommandAllowlist::default(),
+                allowlist: mecmcp_policy::CommandAllowlist {
+                    entries: pfe_allow_entries,
+                    allowed_pipes: pfe_pipe_entries,
+                },
             };
 
             let lib_policy =
@@ -297,6 +328,10 @@ impl Policy {
         let default_allow_entries = compile_allowlist(default_allow, "_blocklist_defaults.allow")?;
         let default_pipe_entries =
             compile_allowlist(default_pipes, "_blocklist_defaults.allowed_pipes")?;
+        let default_pfe_allow_entries =
+            compile_allowlist(default_pfe_allow, "_blocklist_defaults.pfe_allow")?;
+        let default_pfe_pipe_entries =
+            compile_allowlist(default_pfe_pipes, "_blocklist_defaults.pfe_allowed_pipes")?;
         let default_policy = mecmcp_policy::Policy::new(
             command_mode,
             mecmcp_policy::CommandDomain {
@@ -309,7 +344,10 @@ impl Policy {
             default_config_rules,
             mecmcp_policy::CommandDomain {
                 blocklist: default_pfe_rules,
-                allowlist: mecmcp_policy::CommandAllowlist::default(),
+                allowlist: mecmcp_policy::CommandAllowlist {
+                    entries: default_pfe_allow_entries,
+                    allowed_pipes: default_pfe_pipe_entries,
+                },
             },
         );
 
@@ -686,13 +724,126 @@ mod tests {
         }
     }
 
-    // No pfe_commands equivalent of the test above: pfe_commands has no
-    // `allow`/`allowed_pipes` config key (module docs, "known scope gap"),
-    // so its allowlist is always empty under CommandMode::Allowlist and
-    // check_pfe_command's first-stage decision is never `Allow` for the
-    // carve-out to act on. `check_pfe_command` still runs the same
-    // `apply_allowlist_deny_carveout` path as `check_command`, so it is
-    // exercised automatically once a follow-up adds a `pfe_allow` key.
+    // --- MEC-1303: pfe_commands gets its own allow/allowed_pipes keys ---
+
+    #[test]
+    fn no_blocklist_defaults_selects_allowlist_and_refuses_all_pfe_commands() {
+        // Pre-fix baseline (MEC-1303): a fresh config with no policy section
+        // at all defaults to CommandMode::Allowlist (MEC-93) and, since
+        // `pfe_allow` defaults to empty, refuses every PFE command. This is
+        // the documented fail-closed regression the issue describes — still
+        // correct behavior for an unconfigured domain, just worth pinning so
+        // a future change that accidentally widens the default is caught.
+        let p = build_policy(
+            r#"{"r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}}"#,
+        );
+        assert_eq!(p.command_mode(), CommandMode::Allowlist);
+        assert!(
+            !p.check_pfe_command("r1", "show cos").is_allowed(),
+            "empty pfe_allow must refuse even a benign PFE read"
+        );
+    }
+
+    #[test]
+    fn pfe_allow_permits_listed_command_and_refuses_unlisted_with_audit_reason() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "allowlist",
+                    "pfe_allow": ["show cos"]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            p.check_pfe_command("r1", "show cos classifier")
+                .is_allowed()
+        );
+        match p.check_pfe_command("r1", "show route") {
+            Decision::DenyAllowlist {
+                reason: AllowlistDenyReason::NotAllowlisted,
+                ..
+            } => {}
+            other => panic!("expected DenyAllowlist(NotAllowlisted), got {other:?}"),
+        }
+        let decision = p.check_pfe_command("r1", "show route");
+        let err = enforce_decision(decision, "execute_junos_pfe_command", "r1", "show route")
+            .unwrap_err();
+        match err {
+            JmcpError::DeniedAllowlist { reason, .. } => assert_eq!(reason, "not_allowlisted"),
+            other => panic!("expected DeniedAllowlist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pfe_allow_and_commands_allow_are_independent_domains() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "allowlist",
+                    "allow": ["show version"],
+                    "pfe_allow": ["show cos"]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            !p.check_pfe_command("r1", "show version").is_allowed(),
+            "commands allow must not leak into the pfe_commands domain"
+        );
+        assert!(
+            !p.check_command("r1", "show cos").is_allowed(),
+            "pfe_allow must not leak into the commands domain"
+        );
+    }
+
+    #[test]
+    fn per_device_pfe_allow_merges_with_defaults() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {"mode":"allowlist","pfe_allow":["show cos"]},
+                "r1":{
+                    "ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"},
+                    "blocklist": {"pfe_allow": ["show route forwarding-table"]}
+                },
+                "r2":{"ip":"1.1.1.2","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(p.check_pfe_command("r1", "show cos").is_allowed());
+        assert!(
+            p.check_pfe_command("r1", "show route forwarding-table")
+                .is_allowed()
+        );
+        assert!(p.check_pfe_command("r2", "show cos").is_allowed());
+        assert!(
+            !p.check_pfe_command("r2", "show route forwarding-table")
+                .is_allowed(),
+            "device-scoped pfe_allow must not leak to other devices"
+        );
+    }
+
+    #[test]
+    fn pfe_allowed_pipes_gates_piped_pfe_commands() {
+        let p = build_policy(
+            r#"{
+                "_blocklist_defaults": {
+                    "mode": "allowlist",
+                    "pfe_allow": ["show cos"],
+                    "pfe_allowed_pipes": ["match foo"]
+                },
+                "r1":{"ip":"1.1.1.1","username":"u","auth":{"type":"password","password":"x"}}
+            }"#,
+        );
+        assert!(
+            p.check_pfe_command("r1", "show cos | match foo")
+                .is_allowed()
+        );
+        assert!(
+            !p.check_pfe_command("r1", "show cos | match bar")
+                .is_allowed(),
+            "pipe stage not in pfe_allowed_pipes must be refused"
+        );
+    }
 
     #[test]
     fn per_device_allow_merges_with_defaults() {

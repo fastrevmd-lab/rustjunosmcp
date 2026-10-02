@@ -271,6 +271,15 @@ output format and load mode" below); the `config` domain used by
   way `commands` deny rules do today: `_blocklist_defaults` ∪ the device's
   own list. A per-device `allow` addition never leaks to other devices —
   each device gets its own compiled allowlist policy.
+
+  `execute_junos_pfe_command` is gated by its own, independent pair of
+  keys: `pfe_allow`/`pfe_allowed_pipes`. They merge the same way as
+  `allow`/`allowed_pipes` (defaults ∪ device), but an entry in `allow` does
+  not allowlist anything for PFE commands and vice versa — the two domains
+  never share state. A config that sets `allow` but not `pfe_allow` still
+  refuses every PFE command under allowlist mode — that is fail-closed by
+  default for an unconfigured domain, not a bug; add a `pfe_allow` list if
+  you need `execute_junos_pfe_command`.
 - **`blocklist` (fail-open, legacy)** — the pre-MEC-93 behavior: a command
   is denied only if it matches a `commands` (or `pfe_commands`) deny glob;
   everything else is allowed.
@@ -300,16 +309,12 @@ A minimal read-only starter allowlist:
         "show route",
         "show security policies",
         "show chassis"
+    ],
+    "pfe_allow": [
+        "show cos"
     ]
 }
 ```
-
-> **Known gap:** `pfe_commands` has no dedicated `allow`/`allowed_pipes`
-> key yet. Since `mode` is shared across the `commands` and `pfe_commands`
-> domains, an inventory that relies on `execute_junos_pfe_command` today
-> will find it fails closed (refuses everything) once it moves to
-> `mode: allowlist`, until a follow-up adds a `pfe_allow` key. Pin
-> `mode: blocklist` explicitly if you need PFE commands before that lands.
 
 ## Config output format and load mode
 

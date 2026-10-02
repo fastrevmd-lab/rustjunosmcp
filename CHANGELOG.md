@@ -6,6 +6,16 @@ All notable user-facing changes are recorded here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`pfe_commands` now has its own `pfe_allow`/`pfe_allowed_pipes` config
+  keys**, merged per-device the same way `allow`/`allowed_pipes` are for
+  `commands` (MEC-1303). Previously the allowlist authorization mode
+  (default since 0.27.2) had no dedicated allow-list for PFE commands and
+  refused all of them unless a config pinned `mode: blocklist`; an
+  inventory that wants `execute_junos_pfe_command` under allowlist mode
+  should now add `pfe_allow` instead.
+
 ### Security
 
 - **`rustnetconf` bumped to 0.18.1**, picking up its `russh >= 0.63.2, < 0.64`
